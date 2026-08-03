@@ -2,8 +2,8 @@
 
 GI Scenario Studio handles engineering models that may contain sensitive asset,
 drainage, rainfall, cost, and location information. Cloud observability is an
-explicit product requirement, but it does not transfer engineering authority to
-W&B.
+optional collaboration capability; it does not transfer engineering authority
+to W&B.
 
 > The local project SQLite database and content-addressed artifact store are the
 > authoritative engineering record. W&B Models and Weave are a user-controlled
@@ -15,12 +15,13 @@ exports. The broader policy
 below is the release contract; conceptual GIS/data-asset persistence and cloud
 projection are not complete yet.
 
-## Required W&B project binding
+## Optional W&B project binding
 
-A production project cannot enter Home until it is bound to a verified W&B
-project with `Restricted` visibility. Restricted access limits a project to
-explicitly invited team members; a public or merely discoverable project is not
-an acceptable destination. See W&B's
+A production project may remain local and enter Home without W&B. Cloud sync
+and the Evidence Assistant stay disabled until the project is bound to a W&B
+project with visibility verified exactly as `Restricted`. Restricted access
+limits a project to explicitly invited team members; a public or merely
+discoverable project is not an acceptable destination. See W&B's
 [restricted-project guidance](https://docs.wandb.ai/guides/hosting/iam/access-management/restricted-projects/).
 
 W&B SDK `0.28.1` does not expose that exact scope through its documented Public
@@ -71,6 +72,10 @@ storage and deletion behavior. W&B notes that cloud artifacts are encrypted and
 that deleted artifacts may remain recoverable for a retention period; review
 the current [artifact privacy and compliance guidance](https://docs.wandb.ai/models/artifacts/data-privacy-and-compliance/)
 before accepting the policy.
+
+Choosing local-only mode or disconnecting prevents new W&B and Weave activity.
+It does not delete evidence that the user previously uploaded; retention and
+deletion remain governed by the selected W&B deployment.
 
 ## What is never project evidence
 

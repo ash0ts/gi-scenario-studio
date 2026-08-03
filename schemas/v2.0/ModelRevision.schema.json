@@ -100,8 +100,16 @@
       "type": "string"
     },
     "observability_binding_id": {
-      "title": "Observability Binding Id",
-      "type": "string"
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Observability Binding Id"
     },
     "parent_revision_id": {
       "anyOf": [
@@ -150,7 +158,6 @@
     "project_id",
     "reason",
     "model_sha256",
-    "observability_binding_id",
     "created_by"
   ],
   "title": "ModelRevision",

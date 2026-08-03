@@ -74,11 +74,35 @@ describe("practitioner exact-analysis setup", () => {
         "rain/event.dat": "sources/imported/model/rain/event.dat",
       },
     });
-    expect(initialStormCases(models)[0]).toMatchObject({
+    expect(initialStormCases(models, models[0].projectPath)[0]).toMatchObject({
       stormId: "reference",
       modelPath: "sources/imported/model/reference.inp",
       included: true,
+      stormEligible: true,
+      modelRole: "authoritative_base",
     });
+  });
+
+  it("keeps non-selected INPs classified as companions and out of storm analysis", () => {
+    const models = importedModelSummaries([
+      { model_path: "base.inp", references: [], resolved: [], missing: [] },
+      { model_path: "storm-looking-name.inp", references: [], resolved: [], missing: [] },
+    ]);
+
+    expect(initialStormCases(models, models[0].projectPath)).toEqual([
+      expect.objectContaining({
+        displayPath: "base.inp",
+        included: true,
+        stormEligible: true,
+        modelRole: "authoritative_base",
+      }),
+      expect.objectContaining({
+        displayPath: "storm-looking-name.inp",
+        included: false,
+        stormEligible: false,
+        modelRole: "unclassified_companion",
+      }),
+    ]);
   });
 
   it("does not turn blank engineering quantities into silent defaults", () => {
@@ -122,14 +146,16 @@ describe("practitioner exact-analysis setup", () => {
     });
   });
 
-  it("requires validation evidence for every selected storm", () => {
-    const storms = initialStormCases(importedModelSummaries([
+  it("requires validation evidence for the authoritative analysis case", () => {
+    const models = importedModelSummaries([
       { model_path: "a.inp", references: [], resolved: [], missing: [] },
       { model_path: "b.inp", references: [], resolved: [], missing: [] },
-    ]));
-    storms[0].validation = acceptedValidation();
+    ]);
+    const storms = initialStormCases(models, models[0].projectPath);
     expect(aggregateValidation(storms)).toBeNull();
-    storms[1].validation = { ...acceptedValidation(), blocking_count: 1, structurally_runnable: false };
+    storms[0].validation = acceptedValidation();
+    expect(aggregateValidation(storms)).toMatchObject({ blocking_count: 0, structurally_runnable: true });
+    storms[0].validation = { ...acceptedValidation(), blocking_count: 1, structurally_runnable: false };
     expect(aggregateValidation(storms)).toMatchObject({ blocking_count: 1, structurally_runnable: false });
   });
 

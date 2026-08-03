@@ -19,9 +19,11 @@ also does not expose an exact project-visibility scope. Because
 closed before probes and uploads until a supported resolver returns the exact
 `RESTRICTED` scope.
 
-## First-use binding
+## Optional project binding
 
-The production desktop presents the connection wizard before Home:
+The production desktop opens in `LOCAL_ONLY` mode. A user may open the
+connection wizard from Home or an active project when collaboration and cloud
+lineage are useful:
 
 1. Select W&B Cloud, Dedicated Cloud, or Self-Managed and the API base URL.
 2. Enter a personal W&B API key in the host-owned masked prompt; the host stores
@@ -32,6 +34,11 @@ The production desktop presents the connection wizard before Home:
 6. Review the full engineering-evidence categories and permanent exclusions.
 7. Test W&B Models and Weave access.
 8. Confirm and persist an `ObservabilityBinding` without the credential.
+
+Choosing **Work locally** ends the active cloud session and prevents new
+uploads and assistant calls. A local project can be bound later; the binding is
+recorded against that project and its current model revision rather than only
+against an account-level UI state.
 
 The default external project name is:
 
@@ -53,12 +60,13 @@ The application exposes one concise state everywhere:
 
 | State | Meaning | Engineering work |
 |---|---|---|
+| `LOCAL_ONLY` | No active cloud binding or session; evidence remains on this device | Enabled; sync and assistant disabled |
 | `CONNECTED` | Binding and credentials are valid; outbox is current | Enabled |
 | `SYNCING` | A deterministic outbox batch is uploading | Enabled |
-| `SYNC_QUEUED_OFFLINE` | Local work is committed and waiting for a connection | Enabled after initial binding |
+| `SYNC_QUEUED_OFFLINE` | A previously bound project has local work waiting for a connection | Enabled |
 | `FAILED_RETRYING` | Upload failed and a durable retry is scheduled | Enabled; cloud links may be stale |
 | `AUTHENTICATION_REQUIRED` | Key is missing or expired | Existing local work remains readable; binding actions blocked |
-| `BLOCKED_PROJECT_POLICY` | Destination is not Restricted or violates classification policy | New project cannot enter Home; no upload |
+| `BLOCKED_PROJECT_POLICY` | Destination is not Restricted or violates classification policy | Local work enabled; sync and assistant blocked |
 
 A green indicator means only that cloud synchronization is current. It does not
 mean the model is fit, QA passed, or an alternative is acceptable.

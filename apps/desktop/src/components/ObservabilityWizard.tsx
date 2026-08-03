@@ -1,11 +1,22 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { localObservabilityState, observabilityDetail, observabilityLabel, parseObservabilityAccountState, wandbProjectSettingsUrl } from "../lib/observability";
+import {
+  bindOpenProject,
+  chooseLocalWorkspace,
+  localObservabilityState,
+  observabilityDetail,
+  observabilityLabel,
+  parseObservabilityAccountState,
+  wandbProjectSettingsUrl,
+  type ActiveObservabilityProject,
+  type ObservabilityRpcRequest,
+  type ProjectCloudSyncState,
+} from "../lib/observability";
 import { transport } from "../lib/transport";
 import type { ObservabilityState } from "../types";
 import { Icon } from "./Icons";
 
-type SetupChoice = "preview" | "cloud";
+type SetupChoice = "local" | "cloud";
 type Deployment = "wandb_cloud" | "dedicated_cloud" | "self_managed";
 
 const credentialIdFor = (deployment: Deployment, baseUrl: string) => {
@@ -27,12 +38,14 @@ interface ObservabilityWizardProps {
   open: boolean;
   state: ObservabilityState;
   required?: boolean;
+  activeProject?: ActiveObservabilityProject | null;
   onClose: () => void;
   onChange: (state: ObservabilityState) => void;
+  onProjectCloudChange?: (state: ProjectCloudSyncState | null) => void;
 }
 
-export function ObservabilityWizard({ open, state, required = false, onClose, onChange }: ObservabilityWizardProps) {
-  const [choice, setChoice] = useState<SetupChoice>(window.__TAURI_INTERNALS__ ? "cloud" : "preview");
+export function ObservabilityWizard({ open, state, required = false, activeProject = null, onClose, onChange, onProjectCloudChange }: ObservabilityWizardProps) {
+  const [choice, setChoice] = useState<SetupChoice>(state.mode === "connected" ? "cloud" : "local");
   const [entity, setEntity] = useState(state.entity ?? "");
   const [project, setProject] = useState(state.project ?? "");
   const [deployment, setDeployment] = useState<Deployment>(state.deployment ?? "wandb_cloud");
@@ -48,13 +61,14 @@ export function ObservabilityWizard({ open, state, required = false, onClose, on
   const isDesktop = Boolean(window.__TAURI_INTERNALS__);
   const credentialId = credentialIdFor(deployment, apiBaseUrl);
   const projectSettingsUrl = wandbProjectSettingsUrl(webBaseUrl, entity, project);
+  const request: ObservabilityRpcRequest = (method, params, options) => transport.request<unknown>(method, params, options);
 
   useEffect(() => {
     if (!open) {
       previousFocus.current?.focus();
       return;
     }
-    setChoice(isDesktop ? "cloud" : "preview");
+    setChoice(state.mode === "connected" ? "cloud" : "local");
     setEntity(state.entity ?? "");
     setProject(state.project ?? "");
     setDisclosureAccepted(state.disclosureAccepted);
@@ -115,33 +129,20 @@ export function ObservabilityWizard({ open, state, required = false, onClose, on
         if (connected.state !== "CONNECTED" || connected.mode !== "connected" || !connected.configured) {
           throw new Error("The worker did not confirm both Restricted W&B Models and Weave access.");
         }
-        next = connected;
-      } else {
-        if (isDesktop) {
-          throw new Error("A verified Restricted W&B project is required before desktop use.");
+        if (activeProject) {
+          const projectState = await bindOpenProject(request, activeProject);
+          onProjectCloudChange?.(projectState);
         }
-        next = await transport.request<ObservabilityState>("observability.preview_interface", {
-          entity,
-          project,
-          weaveProject: project,
-          disclosureAccepted,
-        });
-      }
+        next = connected;
+      } else if (choice === "local" && isDesktop) {
+        const local = await chooseLocalWorkspace(request, activeProject);
+        onProjectCloudChange?.(local.project);
+        next = local.account;
+      } else next = localObservabilityState();
       onChange(next);
       onClose();
     } catch (reason) {
-      if (choice === "preview" && !isDesktop) {
-        onChange({
-          mode: "demo",
-          configured: true,
-          provider: "wandb-weave",
-          disclosureAccepted: true,
-          message: "Interface-only Cedar Trace preview; no project is bound and no upload occurs.",
-        });
-        onClose();
-      } else {
-        setError(reason instanceof Error ? reason.message : "The observability choice could not be saved.");
-      }
+      setError(reason instanceof Error ? reason.message : "The observability choice could not be saved.");
     } finally {
       setBusy(false);
     }
@@ -151,17 +152,12 @@ export function ObservabilityWizard({ open, state, required = false, onClose, on
     setBusy(true);
     setError(null);
     try {
+      const local = await chooseLocalWorkspace(request, activeProject);
+      onProjectCloudChange?.(local.project);
+      onChange(local.account);
       const result = await invoke<CredentialStatus>("credential_delete", { credentialId });
       setCredentialStored(result.stored);
-      if (!result.stored) {
-        onChange({
-          ...localObservabilityState(false),
-          state: "AUTHENTICATION_REQUIRED",
-          scope: "account",
-          schemaVersion: "2.0",
-          message: "The W&B credential was removed from the operating-system keychain. Reconnect before creating another project.",
-        });
-      }
+      if (result.stored) throw new Error("The operating-system keychain still reports this credential as stored.");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "The stored credential could not be removed.");
     } finally {
@@ -170,7 +166,7 @@ export function ObservabilityWizard({ open, state, required = false, onClose, on
   };
 
   const connectionReady = entity.trim() !== "" && project.trim() !== "" && apiBaseUrl.trim() !== "" && webBaseUrl.trim() !== "" && disclosureAccepted;
-  const canSave = choice === "preview" ? !isDesktop : connectionReady;
+  const canSave = choice === "local" || (isDesktop && connectionReady);
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
@@ -179,9 +175,9 @@ export function ObservabilityWizard({ open, state, required = false, onClose, on
       <section ref={dialogRef} className="observability-wizard" role="dialog" aria-modal="true" aria-labelledby="observability-title" aria-describedby="observability-description">
         <header className="wizard-header">
           <div>
-            <p className="eyebrow">Required project connection</p>
-            <h2 id="observability-title" ref={titleRef} tabIndex={-1}>Connect a Restricted W&amp;B project</h2>
-            <p id="observability-description">W&amp;B is the collaboration mirror. This source MVP projects imported bundles, an open-time guided snapshot, completed analyses, and worker-created exports; the local SQLite ledger and hashed artifacts remain authoritative.</p>
+            <p className="eyebrow">Evidence location</p>
+            <h2 id="observability-title" ref={titleRef} tabIndex={-1}>Choose where project evidence lives</h2>
+            <p id="observability-description">Local files and SQLite are always the authoritative engineering record. Add W&amp;B only when you want a verified collaboration and observability mirror.</p>
           </div>
           {!required && <button className="icon-button" onClick={onClose} aria-label="Close observability setup"><Icon name="close" /></button>}
         </header>
@@ -192,23 +188,23 @@ export function ObservabilityWizard({ open, state, required = false, onClose, on
         </div>
 
         <fieldset className="connection-choices">
-          <legend>Connection path</legend>
+          <legend>Workspace mode</legend>
+          <label className={choice === "local" ? "selected" : ""}>
+            <input type="radio" name="observability-mode" checked={choice === "local"} onChange={() => setChoice("local")} />
+            <span><Icon name="file" /></span>
+            <div><strong>Work locally</strong><small>Import, validate, plan, run, compare, and export on this device. Cloud sync and the Evidence Assistant stay off.</small></div>
+          </label>
           <label className={choice === "cloud" ? "selected" : ""}>
             <input type="radio" name="observability-mode" checked={choice === "cloud"} onChange={() => setChoice("cloud")} disabled={!isDesktop} />
             <span><Icon name="trace" /></span>
-            <div><strong>W&amp;B Models + Weave</strong><small>Required in the desktop application. The target project must be verified Restricted.</small></div>
+            <div><strong>W&amp;B Models + Weave</strong><small>{isDesktop ? "Optional cloud mirror. Sync and assistant access remain off until the target is exactly verified Restricted." : "Desktop app required. Browser preview cannot access the keychain, verify a Restricted project, or upload evidence."}</small></div>
           </label>
-          {!isDesktop && <label className={choice === "preview" ? "selected" : ""}>
-            <input type="radio" name="observability-mode" checked={choice === "preview"} onChange={() => setChoice("preview")} />
-            <span><Icon name="spark" /></span>
-            <div><strong>Interface preview</strong><small>Explore the public Cedar Trace UI only; this is not a bound engineering project.</small></div>
-          </label>}
         </fieldset>
 
-        {choice === "preview" && (
+        {choice === "local" && (
           <div className="wizard-disclosure">
-            <Icon name="info" />
-            <div><strong>Browser preview only</strong><p>No credential, project binding, upload, or assistant provider is available. Install the desktop build to create or open a project.</p></div>
+            <Icon name="shield" />
+            <div><strong>Keep new engineering evidence on this device</strong><p>Continuing locally stops new W&amp;B uploads and turns off the Evidence Assistant for this session. Versions already uploaded remain in W&amp;B under that deployment's storage and deletion policy. Local models, runs, QA records, and exports remain usable and authoritative.</p></div>
           </div>
         )}
 
@@ -221,10 +217,10 @@ export function ObservabilityWizard({ open, state, required = false, onClose, on
             <label>Deployment <select value={deployment} onChange={(event) => setDeployment(event.target.value as Deployment)}><option value="wandb_cloud">W&amp;B Cloud</option><option value="dedicated_cloud">Dedicated Cloud</option><option value="self_managed">Self-Managed</option></select></label>
             <div className="form-row"><label>API base URL<input value={apiBaseUrl} onChange={(event) => setApiBaseUrl(event.target.value)} inputMode="url" autoComplete="off" /></label><label>Web base URL<input value={webBaseUrl} onChange={(event) => setWebBaseUrl(event.target.value)} inputMode="url" autoComplete="off" /></label></div>
             {isDesktop ? <>
-              <div className="credential-boundary"><Icon name="shield" /><p><strong>{credentialStored ? "API key stored securely." : "API key required."}</strong> When you continue, the native host opens a masked operating-system dialog and stores the key under <code>{credentialId}</code>. Plaintext never enters React state or the worker process environment.</p>{credentialStored && <button type="button" className="text-button" onClick={deleteCredential} disabled={busy}>Remove stored key</button>}</div>
+              <div className="credential-boundary"><Icon name="shield" /><p><strong>{credentialStored ? "API key stored securely." : "API key required."}</strong> The native host collects the key in a masked dialog and stores it under <code>{credentialId}</code>. React never receives it. The host transfers it to the worker in memory, and the worker exposes it only temporarily to the W&amp;B SDK during authenticated calls.</p>{credentialStored && <button type="button" className="text-button" onClick={deleteCredential} disabled={busy}>Remove stored key</button>}</div>
             </> : <div className="credential-boundary"><Icon name="shield" /><p><strong>No API key in browser preview.</strong> This path validates labels and W&B/Weave links locally; it cannot authenticate or send data.</p></div>}
             <div className="wizard-disclosure"><Icon name="info" /><div><strong>Authorized evidence scope</strong><p>The release contract covers models, GIS/data assets, storms, INP/RPT/OUT files, exact results, QA, search traces, decisions, and exports. Conceptual-data projection, guided interaction events, and browser-downloaded learning summaries remain unfinished. Secrets, environment contents, local absolute paths, and raw console logs are excluded.</p></div></div>
-            <div className="wizard-disclosure"><Icon name="warning" /><div><strong>Exact-scope gate</strong><p>The application accepts only an authoritative <code>Restricted</code> visibility value. The pinned W&amp;B Public API does not currently expose that scope, so this source build fails closed before probes or uploads unless the deployment supplies a supported exact-scope resolver.</p></div></div>
+            <div className="wizard-disclosure"><Icon name="warning" /><div><strong>Exact-scope gate</strong><p>The application accepts only an authoritative <code>Restricted</code> visibility result. A private label or user attestation is not enough. If the deployment cannot prove the exact scope, the project stays local and no upload or assistant call is permitted.</p></div></div>
             {projectSettingsUrl && <div className="credential-boundary"><Icon name="trace" /><p><strong>Set visibility in W&amp;B.</strong> Open the project settings, select <code>Restricted</code>, then return here to verify. W&amp;B currently exposes this control in its application rather than its supported Models SDK.</p><a className="text-button" href={projectSettingsUrl} target="_blank" rel="noreferrer">Open W&amp;B project settings</a></div>}
             <label className="disclosure-check"><input type="checkbox" checked={disclosureAccepted} onChange={(event) => setDisclosureAccepted(event.target.checked)} /><span><Icon name="check" /></span><p>I authorize full engineering-evidence synchronization to this user-owned Restricted project and understand its storage and deletion policy.</p></label>
           </div>
@@ -233,9 +229,9 @@ export function ObservabilityWizard({ open, state, required = false, onClose, on
         {error && <div className="wizard-error" role="alert"><Icon name="warning" /> {error}</div>}
 
         <footer className="wizard-footer">
-          <p>{choice === "preview" ? "This opens only the public interface preview." : "The binding becomes immutable after the first successful artifact upload. Credentials are never written to browser storage."}</p>
+          <p>{choice === "local" ? "You can add a verified cloud mirror later without changing local engineering evidence." : "The binding becomes immutable after the first successful artifact upload. Credentials are never written to browser storage, SQLite, logs, or exports."}</p>
           <button className="primary-button" disabled={!canSave || busy} onClick={save}>
-            {busy ? "Checking…" : choice === "preview" ? "Open interface preview" : !credentialStored ? "Enter key and verify project" : "Verify Restricted project"}
+            {busy ? "Checking…" : choice === "local" ? "Continue locally" : !credentialStored ? "Enter key and verify project" : activeProject ? "Verify and bind project" : "Verify Restricted project"}
             <Icon name="arrow" />
           </button>
         </footer>

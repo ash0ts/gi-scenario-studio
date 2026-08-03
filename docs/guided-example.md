@@ -131,11 +131,12 @@ A rerun is conditional on the host having a configured SWMM 5.2.4 executable who
 
 The static fixture cannot claim that a suitable solver is installed. A disabled rerun action must state the missing requirement rather than failing silently or falling back to fabricated values.
 
-## Required W&B and Weave record
+## Optional W&B and Weave record
 
-The production contract requires a user-owned W&B project verified as
-`Restricted`. The source MVP queues one `guided_session` snapshot when
-`guided.open` succeeds. Its `guided_checkpoints` Table records the fixture's
+The guided replay works entirely in `LOCAL_ONLY` mode. If the user deliberately
+binds the project to a user-owned W&B project verified exactly as `Restricted`,
+the source MVP queues one `guided_session` snapshot when `guided.open`
+succeeds. Its `guided_checkpoints` Table records the fixture's
 initial checkpoint definitions and status; it does not yet record later
 completion, duration, backtracking, Evidence Rail opens, comparisons, rerun
 status, or browser-download completion. The browser learning summary is local

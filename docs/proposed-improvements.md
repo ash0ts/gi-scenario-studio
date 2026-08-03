@@ -2,7 +2,7 @@
 
 > **Historical design input — superseded by the schema 2.0 public MVP.** This
 > document is preserved as the research review that informed the current
-> implementation. Its readiness ladder, optional W&B/Weave architecture,
+> implementation. Its readiness ladder, earlier W&B/Weave architecture,
 > pre-v2 repository inventory, and related recommendations are not current
 > product requirements. The current sources of truth are the
 > [README](../README.md), [product principles](product-principles.md),
@@ -10,9 +10,9 @@
 > [data governance](data-governance.md),
 > [observability contract](observability.md), and
 > [guided example](guided-example.md). Schema 2.0 uses an independent Model
-> Fitness Passport, requires every production project to bind to a user-owned
-> W&B project verified as `Restricted`, mirrors full engineering evidence, and
-> prohibits untraced Evidence Assistant responses.
+> Fitness Passport, supports local-only engineering work, permits an optional
+> full-evidence mirror only to a user-owned W&B project verified exactly as
+> `Restricted`, and prohibits untraced Evidence Assistant responses.
 
 ## Executive answer
 

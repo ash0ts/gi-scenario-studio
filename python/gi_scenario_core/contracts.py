@@ -1093,18 +1093,19 @@ class WeaveTraceReference(ContractModel):
 class CloudSyncState(ContractModel):
     project_id: str
     state: Literal[
+        "LOCAL_ONLY",
         "CONNECTED",
         "SYNCING",
         "SYNC_QUEUED_OFFLINE",
         "FAILED_RETRYING",
         "AUTHENTICATION_REQUIRED",
         "BLOCKED_PROJECT_POLICY",
-    ] = "AUTHENTICATION_REQUIRED"
-    binding_required: Literal[True] = True
+    ] = "LOCAL_ONLY"
+    binding_required: bool = False
     binding: ObservabilityBinding | None = None
-    can_enter_home: bool = False
-    can_open_project: bool = False
-    can_run_local: bool = False
+    can_enter_home: bool = True
+    can_open_project: bool = True
+    can_run_local: bool = True
     can_sync: bool = False
     can_use_assistant: bool = False
     online: bool = False
@@ -1115,9 +1116,17 @@ class CloudSyncState(ContractModel):
     local_authority: Literal[True] = True
 
     def _validate_contract(self) -> None:
-        if self.can_enter_home and (self.binding is None or not self.binding.verified):
-            raise ValueError("Home is available only after a verified Restricted W&B binding")
-        if self.can_use_assistant and (not self.online or self.binding is None):
+        if not self.can_enter_home or not self.can_open_project or not self.can_run_local:
+            raise ValueError("local engineering work must remain available in every cloud state")
+        if self.binding_required:
+            raise ValueError("a W&B binding cannot be required for local engineering work")
+        if self.state == "LOCAL_ONLY" and self.binding is not None:
+            raise ValueError("local-only project state cannot claim a cloud binding")
+        if self.can_sync and (not self.online or self.binding is None or not self.binding.verified):
+            raise ValueError("cloud sync requires an online verified Restricted binding")
+        if self.can_use_assistant and (
+            not self.online or self.binding is None or not self.binding.verified
+        ):
             raise ValueError("Evidence Assistant requires an online verified binding")
 
 
@@ -1126,7 +1135,7 @@ class ObservabilityAccountState(ContractModel):
 
     schemaVersion: Literal["2.0"] = "2.0"
     scope: Literal["account"] = "account"
-    state: Literal["CONNECTED", "AUTHENTICATION_REQUIRED", "BLOCKED_PROJECT_POLICY"]
+    state: Literal["LOCAL_ONLY", "CONNECTED", "AUTHENTICATION_REQUIRED", "BLOCKED_PROJECT_POLICY"]
     mode: Literal["local", "connected", "error"]
     configured: bool
     provider: Literal["none", "wandb-weave"]
@@ -1161,6 +1170,11 @@ class ObservabilityAccountState(ContractModel):
                 raise ValueError(
                     "connected account observability requires verified provider fields"
                 )
+        elif self.state == "LOCAL_ONLY":
+            if not self.configured or self.mode != "local" or self.provider != "none":
+                raise ValueError("local-only account state must be configured without a provider")
+            if self.probes or self.disclosureAccepted:
+                raise ValueError("local-only account state cannot claim cloud probes or consent")
         elif self.configured or self.mode == "connected":
             raise ValueError("an unconnected account cannot be configured as connected")
 
@@ -1287,7 +1301,7 @@ class ModelRevision(ContractModel):
     model_sha256: str
     dependency_hashes: dict[str, str] = Field(default_factory=dict)
     semantic_diff: SemanticModelDiff | None = None
-    observability_binding_id: str
+    observability_binding_id: str | None = None
     created_by: str
     created_at: datetime = Field(default_factory=utc_now)
 
@@ -1299,6 +1313,8 @@ class ModelRevision(ContractModel):
             _require_sha256(digest, label=f"model revision dependency {name!r}")
         if not self.created_by.strip():
             raise ValueError("model revision creator cannot be empty")
+        if self.reason == "rebind" and not self.observability_binding_id:
+            raise ValueError("an observability rebind revision must identify its new binding")
 
 
 # Internal persistence records. They are not public RPC contracts.

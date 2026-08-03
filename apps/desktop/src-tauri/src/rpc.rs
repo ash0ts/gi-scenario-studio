@@ -17,6 +17,7 @@ const ALLOWED_METHODS: &[&str] = &[
     "project.get_state",
     "bundle.inspect",
     "bundle.import",
+    "bundle.select_base_model",
     "data_asset.add",
     "data_asset.download",
     "concept.preview",
@@ -44,6 +45,7 @@ const ALLOWED_METHODS: &[&str] = &[
     "guided.resume",
     "model.attest",
     "model.get_fitness",
+    "observability.bind_project",
     "observability.connect",
     "observability.disconnect",
     "observability.get_status",
@@ -232,6 +234,13 @@ mod tests {
             timeout_ms: None,
         };
         assert!(valid.validate().is_ok());
+
+        let bind_open_project = WorkerRequest {
+            method: "observability.bind_project".to_owned(),
+            params: Some(json!({"project_directory": "/project", "project_id": "project_1"})),
+            timeout_ms: None,
+        };
+        assert!(bind_open_project.validate().is_ok());
 
         let unknown = WorkerRequest {
             method: "shell.execute".to_owned(),

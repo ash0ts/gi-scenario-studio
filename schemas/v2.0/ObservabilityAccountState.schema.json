@@ -154,6 +154,7 @@
     },
     "state": {
       "enum": [
+        "LOCAL_ONLY",
         "CONNECTED",
         "AUTHENTICATION_REQUIRED",
         "BLOCKED_PROJECT_POLICY"

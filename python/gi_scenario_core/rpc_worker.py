@@ -136,6 +136,7 @@ class RPCDispatcher:
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="gi-solver")
         self._background: dict[str, dict[str, Any]] = {}
         self._background_lock = threading.RLock()
+        self._cloud_lifecycle_lock = threading.RLock()
         self.require_observability_session = require_observability_session
         self._observability_account: dict[str, Any] | None = None
         self._observability_account_block: dict[str, Any] | None = None
@@ -153,6 +154,7 @@ class RPCDispatcher:
             "project.get_state": self.project_get_state,
             "bundle.inspect": self.bundle_inspect,
             "bundle.import": self.bundle_import,
+            "bundle.select_base_model": self.bundle_select_base_model,
             "data_asset.add": self.data_asset_add,
             "data_asset.download": self.data_asset_download,
             "concept.preview": self.concept_preview,
@@ -171,6 +173,7 @@ class RPCDispatcher:
             "results.decision_board": self.results_decision_board,
             "evidence.resolve": self.evidence_resolve,
             "observability.connect": self.observability_connect,
+            "observability.bind_project": self.observability_bind_project,
             "observability.disconnect": self.observability_disconnect,
             "observability.validate_binding": self.observability_validate_binding,
             "observability.get_status": self.observability_get_status,
@@ -433,16 +436,6 @@ class RPCDispatcher:
         return {"name": name, "schema": schemas[name]}
 
     def project_create(self, params: dict[str, Any]) -> dict[str, Any]:
-        if self.require_observability_session and self._observability_account is None:
-            raise ValueError("connect and verify a Restricted W&B destination before Home")
-        if (
-            self.require_observability_session
-            and self._observability_account is not None
-            and self._observability_account.get("consumed_project_id")
-        ):
-            raise ValueError(
-                "this W&B destination is already bound; select a separate Restricted project"
-            )
         kind = params.get("kind", params.get("project_kind"))
         if kind is not None and kind not in {"existing", "conceptual", "demo"}:
             raise ValueError("kind must be existing, conceptual, or demo")
@@ -455,10 +448,10 @@ class RPCDispatcher:
             )
         if kind == "demo":
             existing_project_id: str | None = None
-            if self._observability_account is not None:
-                existing_project_id = str(params.get("project_id") or new_id("project"))
-                documents = self._account_binding_documents(existing_project_id)
-                assert documents is not None
+            prospective_project_id = str(params.get("project_id") or new_id("project"))
+            documents = self._account_binding_documents(prospective_project_id)
+            if documents is not None:
+                existing_project_id = prospective_project_id
                 policy, binding = documents
                 repository = ProjectRepository(directory)
                 try:
@@ -541,7 +534,8 @@ class RPCDispatcher:
         if account is None:
             return None
         documents = self._account_binding_documents(project_id)
-        assert documents is not None
+        if documents is None:
+            return None
         policy, binding = documents
         repository.upsert_project_data_policy(policy)
         repository.connect_observability_binding(binding)
@@ -554,6 +548,9 @@ class RPCDispatcher:
     ) -> tuple[ProjectDataPolicy, ObservabilityBinding] | None:
         account = self._observability_account
         if account is None:
+            return None
+        consumed_project_id = account.get("consumed_project_id")
+        if consumed_project_id not in {None, project_id}:
             return None
         template = account["binding"]
         policy = ProjectDataPolicy(
@@ -623,6 +620,313 @@ class RPCDispatcher:
             expected_sha256=expected_sha256,
             expected_bytes=expected_bytes,
         ).to_dict()
+
+    def _activate_imported_base_model(
+        self,
+        *,
+        repository: ProjectRepository,
+        project_directory: Path,
+        project_id: str,
+        state: dict[str, Any],
+        candidate: dict[str, Any],
+        created_by: str,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Create the immutable revision and default passport for one imported candidate."""
+
+        project_path = str(candidate.get("project_path", ""))
+        model_sha256 = str(candidate.get("model_sha256", ""))
+        dependencies = candidate.get("dependencies")
+        dependency_hashes = candidate.get("dependency_hashes")
+        if (
+            not project_path
+            or not re.fullmatch(r"[0-9a-f]{64}", model_sha256)
+            or not isinstance(dependencies, dict)
+            or not isinstance(dependency_hashes, dict)
+            or set(dependencies) != set(dependency_hashes)
+        ):
+            raise ValueError("the imported base-model candidate record is incomplete")
+
+        base_model = self.require_contained_path(
+            project_directory,
+            project_path,
+            purpose="imported base model",
+        )
+        if not base_model.is_file() or base_model.is_symlink():
+            raise ValueError("the selected imported base model is not a regular project file")
+        if _sha256_path(base_model) != model_sha256:
+            raise ValueError("the selected imported base model changed after bundle import")
+
+        normalized_dependencies: dict[str, str] = {}
+        normalized_dependency_hashes: dict[str, str] = {}
+        for reference, relative_source in dependencies.items():
+            if not isinstance(reference, str) or not reference.strip():
+                raise ValueError("the imported dependency map contains an invalid target")
+            if not isinstance(relative_source, str):
+                raise TypeError("the imported dependency map contains an invalid source")
+            expected_hash = dependency_hashes.get(reference)
+            if not isinstance(expected_hash, str) or not re.fullmatch(
+                r"[0-9a-f]{64}", expected_hash
+            ):
+                raise ValueError("the imported dependency record has an invalid hash")
+            dependency = self.require_contained_path(
+                project_directory,
+                relative_source,
+                purpose="imported model dependency",
+            )
+            if not dependency.is_file() or dependency.is_symlink():
+                raise ValueError("an imported model dependency is not a regular project file")
+            if _sha256_path(dependency) != expected_hash:
+                raise ValueError("an imported model dependency changed after bundle import")
+            normalized_dependencies[reference] = dependency.relative_to(
+                project_directory
+            ).as_posix()
+            normalized_dependency_hashes[reference] = expected_hash
+
+        document = SwmmDocument.parse(base_model.read_text(encoding="utf-8-sig", errors="replace"))
+        validation = validate_model(document)
+        subcatchment_ids = sorted(
+            {row.tokens[0] for row in document.data_rows("SUBCATCHMENTS") if row.tokens}
+        )
+        lid_control_ids = sorted(
+            {row.tokens[0] for row in document.data_rows("LID_CONTROLS") if row.tokens}
+        )
+        existing_lid_usage: list[dict[str, Any]] = []
+        for row in document.data_rows("LID_USAGE"):
+            if len(row.tokens) < 3:
+                continue
+            try:
+                parsed_count = float(row.tokens[2])
+                unit_count = int(parsed_count) if parsed_count.is_integer() else None
+            except ValueError:
+                unit_count = None
+            existing_lid_usage.append(
+                {
+                    "subcatchment_id": row.tokens[0],
+                    "lid_control": row.tokens[1],
+                    "unit_count": unit_count,
+                    "raw_unit_count": row.tokens[2],
+                }
+            )
+        state["selected_base_model"] = base_model.relative_to(project_directory).as_posix()
+        state["selected_model_dependencies"] = normalized_dependencies
+        state["base_model_selection_required"] = False
+        state["imported_model_roles"] = {
+            str(item["project_path"]): (
+                "authoritative_base"
+                if item.get("project_path") == state["selected_base_model"]
+                else "unclassified_companion"
+            )
+            for item in state.get("base_model_candidates", [])
+            if isinstance(item, dict) and isinstance(item.get("project_path"), str)
+        }
+        state["import_preflight"] = {
+            "blocking_count": validation.blocking_count,
+            "warning_count": validation.warning_count,
+            "structurally_runnable": validation.structurally_runnable,
+            "section_names": validation.section_names,
+            "object_counts": validation.object_counts,
+            "checks": [item.model_dump(mode="json") for item in validation.checks],
+            "issues": [item.model_dump(mode="json") for item in validation.issues],
+            "setup_options": {
+                "source": "parsed_model",
+                "subcatchment_ids": subcatchment_ids,
+                "lid_control_ids": lid_control_ids,
+                "existing_lid_usage": existing_lid_usage,
+            },
+        }
+        try:
+            binding_id = repository.get_observability_binding(project_id)["binding_id"]
+        except KeyError:
+            binding_id = None
+        revision = ModelRevision(
+            project_id=project_id,
+            reason="import",
+            model_sha256=model_sha256,
+            dependency_hashes=normalized_dependency_hashes,
+            observability_binding_id=binding_id,
+            created_by=created_by,
+        )
+        passport = ModelFitnessPassport(
+            project_id=project_id,
+            model_revision_id=revision.revision_id,
+            intended_use=(
+                "Unreviewed imported SWMM model; exact runs may be used for learning "
+                "evidence only until an engineer attests fitness for a stated use."
+            ),
+            permitted_outputs=["learning evidence package"],
+            prohibited_uses=[
+                "design",
+                "permitting",
+                "flood-risk determination",
+                "regulatory approval",
+            ],
+            unresolved_limitations=[
+                (
+                    "Model fitness, calibration, reference reproduction, assumptions, "
+                    "and intended-use suitability have not been assessed."
+                )
+            ],
+        )
+        state["current_model_revision_id"] = revision.revision_id
+        state["current_model_sha256"] = model_sha256
+        state["model_fitness_passport_id"] = passport.passport_id
+        repository.store_imported_model_record(revision, passport, state)
+        return state, state["import_preflight"]
+
+    def bundle_select_base_model(self, params: dict[str, Any]) -> dict[str, Any]:
+        _require_only(params, {"project_directory", "project_id", "model_path"})
+        project_directory = self.require_project_directory(_required(params, "project_directory"))
+        project_id = str(_required(params, "project_id"))
+        requested_model_path = str(_required(params, "model_path"))
+        repository = ProjectRepository(project_directory)
+        cloud_sync: dict[str, Any] = {"state": "local_only"}
+        try:
+            project = repository.get_project(project_id)
+            if project["project_kind"] != ProjectKind.EXISTING.value:
+                raise ValueError("base-model selection requires an existing-model project")
+            state = dict(project["state"])
+            if not state.get("bundle_imported"):
+                raise ValueError("base-model selection requires an imported portable bundle")
+            candidates = state.get("base_model_candidates")
+            if not isinstance(candidates, list) or not candidates:
+                raise ValueError("the imported bundle has no persisted base-model candidates")
+            matching = [
+                item
+                for item in candidates
+                if isinstance(item, dict) and item.get("project_path") == requested_model_path
+            ]
+            if len(matching) != 1:
+                raise ValueError(
+                    "the selected base model is not one of this project's imported candidates"
+                )
+            if not state.get("base_model_selection_required"):
+                if state.get("selected_base_model") != requested_model_path:
+                    raise ValueError(
+                        "this project already has a different authoritative base model"
+                    )
+                return {
+                    "project_state": state,
+                    "model_validation": state.get("import_preflight"),
+                }
+            state, validation = self._activate_imported_base_model(
+                repository=repository,
+                project_directory=project_directory,
+                project_id=project_id,
+                state=state,
+                candidate=matching[0],
+                created_by="bundle.select_base_model",
+            )
+            try:
+                binding = repository.get_observability_binding(project_id)
+            except KeyError:
+                pass
+            else:
+                try:
+                    revision_id = str(state["current_model_revision_id"])
+                    passport_id = str(state["model_fitness_passport_id"])
+                    selected_source = self.require_contained_path(
+                        project_directory,
+                        str(matching[0]["project_path"]),
+                        purpose="selected base-model cloud evidence",
+                    )
+                    manifests = [
+                        self._cloud_manifest_for_file(
+                            repository,
+                            project_id=project_id,
+                            category="model",
+                            source_object_id=revision_id,
+                            logical_name=f"model-revision/{revision_id}/base.inp",
+                            source=selected_source,
+                        )
+                    ]
+                    for index, relative_source in enumerate(
+                        sorted(set(matching[0]["dependencies"].values()))
+                    ):
+                        dependency_source = self.require_contained_path(
+                            project_directory,
+                            relative_source,
+                            purpose="selected base-model dependency cloud evidence",
+                        )
+                        manifests.append(
+                            self._cloud_manifest_for_file(
+                                repository,
+                                project_id=project_id,
+                                category="model",
+                                source_object_id=revision_id,
+                                logical_name=(
+                                    f"model-revision/{revision_id}/dependencies/"
+                                    f"{index:03d}-{dependency_source.name}"
+                                ),
+                                source=dependency_source,
+                            )
+                        )
+                    model_rows = sorted(
+                        [
+                            [
+                                str(item["project_path"]),
+                                state["imported_model_roles"].get(
+                                    str(item["project_path"]), "unclassified_companion"
+                                ),
+                                str(item["model_sha256"]),
+                            ]
+                            for item in candidates
+                            if isinstance(item, dict) and isinstance(item.get("project_path"), str)
+                        ],
+                        key=lambda row: row[0],
+                    )
+                    stable = hashlib.sha256(
+                        f"{project_id}|base-model-selection|{revision_id}".encode()
+                    ).hexdigest()[:24]
+                    envelope = TelemetryEnvelope(
+                        envelope_id=f"envelope_{stable}",
+                        project_id=project_id,
+                        binding_id=binding["binding_id"],
+                        category="engineering_evidence",
+                        event_type="bundle_import",
+                        subject_id=revision_id,
+                        idempotency_key=f"base-model-selection:{revision_id}",
+                        metadata={
+                            "schema_version": "2.0",
+                            "event_phase": "base_model_selection",
+                            "selection_policy": (
+                                "single_authoritative_base_with_unclassified_companions_blocked"
+                            ),
+                            "selected_base_model": state["selected_base_model"],
+                            "model_revision_id": revision_id,
+                            "model_sha256": state["current_model_sha256"],
+                            "model_fitness_passport_id": passport_id,
+                            "dependency_hashes": matching[0]["dependency_hashes"],
+                            "tables": {
+                                "imported_models": {
+                                    "columns": ["project_path", "role", "sha256"],
+                                    "rows": model_rows,
+                                }
+                            },
+                        },
+                        artifacts=manifests,
+                    )
+                    queued = self._enqueue_and_schedule_telemetry(repository, envelope)
+                    cloud_sync = {
+                        "outbox_id": queued["outbox_id"],
+                        "envelope_id": envelope.envelope_id,
+                        "state": queued["state"],
+                    }
+                except Exception as cloud_error:  # noqa: BLE001 - selection remains local truth
+                    cloud_sync = {
+                        "state": "projection_failed",
+                        "error_code": type(cloud_error).__name__.upper()[:64],
+                    }
+        finally:
+            repository.close()
+        self.emit(
+            "project.updated",
+            {"project_id": project_id, "selected_base_model": requested_model_path},
+        )
+        return {
+            "project_state": state,
+            "model_validation": validation,
+            "cloud_sync": cloud_sync,
+        }
 
     def bundle_import(self, params: dict[str, Any]) -> dict[str, Any]:
         _require_only(
@@ -694,43 +998,17 @@ class RPCDispatcher:
                         payload={"bytes": item.size},
                     )
                     file_rows.append([item.path, item.role, item.size, item.sha256])
-                state = dict(project["state"])
-                state.update(
-                    {
-                        "bundle_imported": True,
-                        "bundle_sha256": inspection.archive_sha256,
-                        "base_models": [model.model_path for model in inspection.models],
-                        "bundle_file_count": len(inspection.files),
-                        "bundle_dependency_complete": inspection.valid,
-                    }
-                )
-                if len(inspection.models) == 1:
-                    selected_model = inspection.models[0]
-                    base_model = self.require_contained_path(
-                        destination,
-                        selected_model.model_path,
-                        purpose="imported base model",
-                    )
-                    validation = validate_model(
-                        base_model.read_text(encoding="utf-8-sig", errors="replace")
-                    )
-                    state["selected_base_model"] = base_model.relative_to(
-                        project_directory
-                    ).as_posix()
-                    state["import_preflight"] = {
-                        "blocking_count": validation.blocking_count,
-                        "warning_count": validation.warning_count,
-                        "structurally_runnable": validation.structurally_runnable,
-                        "issues": [item.model_dump(mode="json") for item in validation.issues],
-                    }
-                    # Preserve the target names exactly as referenced by the
-                    # INP while resolving each source to a project-contained
-                    # path. Exact solver jobs can now materialize portable
-                    # dependencies without asking the renderer to reconstruct
-                    # archive topology.
-                    if len(selected_model.references) != len(selected_model.resolved):
+                file_hashes = {item.path: item.sha256 for item in inspection.files}
+                base_model_candidates: list[dict[str, Any]] = []
+                for model in inspection.models:
+                    if len(model.references) != len(model.resolved):
                         raise ValueError("the imported dependency map is incomplete")
-                    state["selected_model_dependencies"] = {
+                    project_model = self.require_contained_path(
+                        destination,
+                        model.model_path,
+                        purpose="imported base-model candidate",
+                    )
+                    dependencies = {
                         reference: self.require_contained_path(
                             destination,
                             resolved,
@@ -739,118 +1017,118 @@ class RPCDispatcher:
                         .relative_to(project_directory)
                         .as_posix()
                         for reference, resolved in zip(
-                            selected_model.references,
-                            selected_model.resolved,
+                            model.references,
+                            model.resolved,
                             strict=True,
                         )
                     }
-                    file_hashes = {item.path: item.sha256 for item in inspection.files}
-                    model_sha256 = file_hashes[selected_model.model_path]
-                    binding = repository.get_observability_binding(project_id)
-                    revision = ModelRevision(
+                    base_model_candidates.append(
+                        {
+                            "model_path": model.model_path,
+                            "project_path": project_model.relative_to(project_directory).as_posix(),
+                            "model_sha256": file_hashes[model.model_path],
+                            "dependencies": dependencies,
+                            "dependency_hashes": {
+                                reference: file_hashes[resolved]
+                                for reference, resolved in zip(
+                                    model.references,
+                                    model.resolved,
+                                    strict=True,
+                                )
+                            },
+                        }
+                    )
+                state = dict(project["state"])
+                state.update(
+                    {
+                        "bundle_imported": True,
+                        "bundle_sha256": inspection.archive_sha256,
+                        "base_models": [model.model_path for model in inspection.models],
+                        "base_model_candidates": base_model_candidates,
+                        "bundle_file_count": len(inspection.files),
+                        "bundle_dependency_complete": inspection.valid,
+                    }
+                )
+                if len(inspection.models) == 1:
+                    state, payload["model_validation"] = self._activate_imported_base_model(
+                        repository=repository,
+                        project_directory=project_directory,
                         project_id=project_id,
-                        reason="import",
-                        model_sha256=model_sha256,
-                        dependency_hashes={
-                            reference: file_hashes[resolved]
-                            for reference, resolved in zip(
-                                selected_model.references,
-                                selected_model.resolved,
-                                strict=True,
-                            )
-                        },
-                        observability_binding_id=binding["binding_id"],
+                        state=state,
+                        candidate=base_model_candidates[0],
                         created_by="bundle.import",
                     )
-                    passport = ModelFitnessPassport(
-                        project_id=project_id,
-                        model_revision_id=revision.revision_id,
-                        intended_use=(
-                            "Unreviewed imported SWMM model; exact runs may be used for learning "
-                            "evidence only until an engineer attests fitness for a stated use."
-                        ),
-                        permitted_outputs=["learning evidence package"],
-                        prohibited_uses=[
-                            "design",
-                            "permitting",
-                            "flood-risk determination",
-                            "regulatory approval",
-                        ],
-                        unresolved_limitations=[
-                            (
-                                "Model fitness, calibration, reference reproduction, assumptions, "
-                                "and intended-use suitability have not been assessed."
-                            )
-                        ],
-                    )
-                    state["current_model_revision_id"] = revision.revision_id
-                    state["current_model_sha256"] = model_sha256
-                    state["model_fitness_passport_id"] = passport.passport_id
-                    repository.store_imported_model_record(revision, passport, state)
-                    payload["model_validation"] = state["import_preflight"]
                 else:
-                    state["base_model_selection_required"] = len(inspection.models) > 1
+                    state["base_model_selection_required"] = True
+                    state["imported_model_roles"] = {
+                        str(item["project_path"]): "unclassified_companion"
+                        for item in base_model_candidates
+                    }
                     repository.set_project_state(project_id, state)
                 payload["project_state"] = state
                 try:
-                    manifests = [
-                        self._cloud_manifest_for_file(
-                            repository,
-                            project_id=project_id,
-                            category="model" if item.role == "swmm_model" else "storm",
-                            source_object_id=f"bundle:{project_id}",
-                            logical_name=f"source-bundle/{item.path}",
-                            source=self.require_contained_path(
-                                destination,
-                                item.path,
-                                purpose="extracted bundle cloud evidence",
-                            ),
-                        )
-                        for item in inspection.files
-                    ]
                     binding = repository.get_observability_binding(project_id)
-                    envelope_id = (
-                        "envelope_"
-                        + hashlib.sha256(
-                            f"{project_id}|bundle|{state['bundle_sha256']}".encode()
-                        ).hexdigest()[:24]
-                    )
-                    envelope = TelemetryEnvelope(
-                        envelope_id=envelope_id,
-                        project_id=project_id,
-                        binding_id=binding["binding_id"],
-                        category="engineering_evidence",
-                        event_type="bundle_import",
-                        subject_id=f"bundle:{state['bundle_sha256']}",
-                        idempotency_key=f"bundle-import:{state['bundle_sha256']}",
-                        metadata={
-                            "schema_version": "2.0",
-                            "bundle_sha256": state["bundle_sha256"],
-                            "file_count": len(inspection.files),
-                            "model_count": len(inspection.models),
-                            "dependency_complete": inspection.valid,
-                            "model_revision_id": state.get("current_model_revision_id"),
-                            "model_fitness_passport_id": state.get("model_fitness_passport_id"),
-                            "tables": {
-                                "source_files": {
-                                    "columns": ["path", "role", "bytes", "sha256"],
-                                    "rows": file_rows,
-                                }
+                except KeyError:
+                    payload["cloud_sync"] = {"state": "local_only"}
+                else:
+                    try:
+                        manifests = [
+                            self._cloud_manifest_for_file(
+                                repository,
+                                project_id=project_id,
+                                category="model" if item.role == "swmm_model" else "storm",
+                                source_object_id=f"bundle:{project_id}",
+                                logical_name=f"source-bundle/{item.path}",
+                                source=self.require_contained_path(
+                                    destination,
+                                    item.path,
+                                    purpose="extracted bundle cloud evidence",
+                                ),
+                            )
+                            for item in inspection.files
+                        ]
+                        envelope_id = (
+                            "envelope_"
+                            + hashlib.sha256(
+                                f"{project_id}|bundle|{state['bundle_sha256']}".encode()
+                            ).hexdigest()[:24]
+                        )
+                        envelope = TelemetryEnvelope(
+                            envelope_id=envelope_id,
+                            project_id=project_id,
+                            binding_id=binding["binding_id"],
+                            category="engineering_evidence",
+                            event_type="bundle_import",
+                            subject_id=f"bundle:{state['bundle_sha256']}",
+                            idempotency_key=f"bundle-import:{state['bundle_sha256']}",
+                            metadata={
+                                "schema_version": "2.0",
+                                "bundle_sha256": state["bundle_sha256"],
+                                "file_count": len(inspection.files),
+                                "model_count": len(inspection.models),
+                                "dependency_complete": inspection.valid,
+                                "model_revision_id": state.get("current_model_revision_id"),
+                                "model_fitness_passport_id": state.get("model_fitness_passport_id"),
+                                "tables": {
+                                    "source_files": {
+                                        "columns": ["path", "role", "bytes", "sha256"],
+                                        "rows": file_rows,
+                                    }
+                                },
                             },
-                        },
-                        artifacts=manifests,
-                    )
-                    queued = self._enqueue_and_schedule_telemetry(repository, envelope)
-                    payload["cloud_sync"] = {
-                        "outbox_id": queued["outbox_id"],
-                        "envelope_id": envelope.envelope_id,
-                        "state": queued["state"],
-                    }
-                except Exception as cloud_error:  # noqa: BLE001 - import remains authoritative
-                    payload["cloud_sync"] = {
-                        "state": "projection_failed",
-                        "error_code": type(cloud_error).__name__.upper()[:64],
-                    }
+                            artifacts=manifests,
+                        )
+                        queued = self._enqueue_and_schedule_telemetry(repository, envelope)
+                        payload["cloud_sync"] = {
+                            "outbox_id": queued["outbox_id"],
+                            "envelope_id": envelope.envelope_id,
+                            "state": queued["state"],
+                        }
+                    except Exception as cloud_error:  # noqa: BLE001 - import remains authoritative
+                        payload["cloud_sync"] = {
+                            "state": "projection_failed",
+                            "error_code": type(cloud_error).__name__.upper()[:64],
+                        }
             finally:
                 repository.close()
         self.emit("project.updated", {"bundle_valid": inspection.valid})
@@ -1231,10 +1509,44 @@ class RPCDispatcher:
                 raise ValueError(
                     "active model revision metadata is inconsistent with project state"
                 )
+            selected_base_model = project["state"].get("selected_base_model")
+            if project["project_kind"] == ProjectKind.EXISTING.value:
+                if not isinstance(selected_base_model, str):
+                    raise TypeError(
+                        "exact planning requires one persisted authoritative base model"
+                    )
+                selected_dependencies = project["state"].get("selected_model_dependencies", {})
+                if not isinstance(selected_dependencies, dict):
+                    raise TypeError("the authoritative base-model dependency record is invalid")
+                for storm_payload in storm_payloads:
+                    if storm_payload["model_path"] != selected_base_model:
+                        raise ValueError(
+                            "storm analysis cannot use an unclassified companion INP; "
+                            "only the authoritative base model is eligible until a worker "
+                            "semantic check proves storm-only equivalence"
+                        )
+                    if storm_payload["dependencies"] != selected_dependencies:
+                        raise ValueError(
+                            "storm analysis dependencies must match the authoritative base revision"
+                        )
+            passport_id = project["state"].get("model_fitness_passport_id")
+            if passport_id is not None:
+                if not isinstance(passport_id, str):
+                    raise TypeError("the active model-fitness passport identifier is invalid")
+                passport = repository.get_model_fitness_passport_by_id(passport_id)
+                if (
+                    passport["project_id"] != project_id
+                    or passport["model_revision_id"] != model_revision_id
+                ):
+                    raise ValueError(
+                        "active model-fitness passport is inconsistent with the model revision"
+                    )
             analysis_payload = {
                 "contract": "exact-swmm-analysis-v2",
                 "model_revision_id": model_revision_id,
                 "model_sha256": model_sha256,
+                "model_fitness_passport_id": passport_id,
+                "authoritative_base_model": selected_base_model,
                 "metric_extractor_version": METRIC_EXTRACTOR_VERSION,
                 "candidate_slots": [item.model_dump(mode="json") for item in slots],
                 "design_vectors": vectors,
@@ -1249,11 +1561,6 @@ class RPCDispatcher:
                 "seed": budget.seed,
                 "budget": budget.model_dump(mode="json"),
             }
-            cloud_state = self.observability.status(repository, project_id)
-            if not cloud_state.can_enter_home:
-                raise ValueError(
-                    "a verified Restricted W&B project binding is required before exact planning"
-                )
             analysis = repository.create_analysis(
                 project_id,
                 payload=analysis_payload,
@@ -1856,6 +2163,10 @@ class RPCDispatcher:
         return validated.model_dump(mode="json")
 
     def observability_connect(self, params: dict[str, Any]) -> dict[str, Any]:
+        with self._cloud_lifecycle_lock:
+            return self._observability_connect_locked(params)
+
+    def _observability_connect_locked(self, params: dict[str, Any]) -> dict[str, Any]:
         scope = str(_required(params, "scope"))
         if scope == "account":
             _require_only(
@@ -1957,25 +2268,26 @@ class RPCDispatcher:
         if scope != "project":
             raise ValueError("observability.connect scope must be account or project")
         _require_only(params, {"scope", "project_directory", "policy", "binding", "revision"})
-        repository = ProjectRepository(
-            self.require_project_directory(_required(params, "project_directory"))
-        )
-        try:
-            if params.get("revision") is not None:
-                state = self.observability.rebind(
-                    repository,
-                    policy=_required(params, "policy"),
-                    binding=_required(params, "binding"),
-                    revision=params["revision"],
-                )
-            else:
-                state = self.observability.connect(
-                    repository,
-                    policy=_required(params, "policy"),
-                    binding=_required(params, "binding"),
-                )
-        finally:
-            repository.close()
+        with self._cloud_lifecycle_lock:
+            repository = ProjectRepository(
+                self.require_project_directory(_required(params, "project_directory"))
+            )
+            try:
+                if params.get("revision") is not None:
+                    state = self.observability.rebind(
+                        repository,
+                        policy=_required(params, "policy"),
+                        binding=_required(params, "binding"),
+                        revision=params["revision"],
+                    )
+                else:
+                    state = self.observability.connect(
+                        repository,
+                        policy=_required(params, "policy"),
+                        binding=_required(params, "binding"),
+                    )
+            finally:
+                repository.close()
         self.emit(
             "project.updated",
             {
@@ -1992,14 +2304,106 @@ class RPCDispatcher:
         }
         return self._account_observability_status()
 
+    def observability_bind_project(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Bind an already-open local project to the exactly verified account target."""
+
+        _require_only(params, {"project_directory", "project_id"})
+        project_id = str(_required(params, "project_id"))
+        project_directory = self.require_project_directory(_required(params, "project_directory"))
+        with self._cloud_lifecycle_lock:
+            account = self._observability_account
+            if account is None or not self.observability.credentials.configured:
+                raise ValueError("connect and verify a Restricted W&B account before binding")
+            consumed_project_id = account.get("consumed_project_id")
+            if consumed_project_id not in {None, project_id}:
+                raise ValueError("this W&B destination is already assigned to another GI project")
+            repository = ProjectRepository(project_directory)
+            try:
+                repository.get_project(project_id)
+                template = account["binding"]
+                try:
+                    policy = ProjectDataPolicy.model_validate(
+                        repository.get_project_data_policy(project_id)
+                    )
+                except KeyError:
+                    policy = ProjectDataPolicy(
+                        project_id=project_id,
+                        classification=account["classification"],
+                        deployment=template["deployment"],
+                        acknowledged_by=account["acknowledged_by"],
+                    )
+                if policy.classification != account["classification"]:
+                    raise ValueError(
+                        "the verified account classification conflicts with this project's data policy"
+                    )
+                if policy.deployment != template["deployment"]:
+                    raise ValueError(
+                        "the verified W&B deployment conflicts with this project's data policy"
+                    )
+                binding = ObservabilityBinding(
+                    project_id=project_id,
+                    data_policy_id=policy.policy_id,
+                    entity=template["entity"],
+                    external_project=template["external_project"],
+                    external_project_id=template["external_project_id"],
+                    api_base_url=template["api_base_url"],
+                    web_base_url=template["web_base_url"],
+                    deployment=template["deployment"],
+                    mode="online",
+                    verified=True,
+                    verified_at=template["verified_at"],
+                )
+                state = self.observability.connect(
+                    repository,
+                    policy=policy,
+                    binding=binding,
+                )
+                account["consumed_project_id"] = project_id
+            finally:
+                repository.close()
+        self.emit(
+            "project.updated",
+            {
+                "project_id": project_id,
+                "cloud_binding_verified": state.can_sync,
+                "cloud_sync_state": state.state,
+            },
+        )
+        return state.model_dump(mode="json")
+
     def observability_disconnect(self, params: dict[str, Any]) -> dict[str, Any]:
-        _require_only(params, {"scope"})
-        if params.get("scope") != "account":
-            raise ValueError("observability.disconnect scope must be account")
-        self.observability.clear_credentials()
-        self._observability_account = None
-        self._observability_account_block = None
-        return self._account_observability_status()
+        scope = str(_required(params, "scope"))
+        if scope == "account":
+            _require_only(params, {"scope"})
+            with self._cloud_lifecycle_lock:
+                self.observability.clear_credentials()
+                self._observability_account = None
+                self._observability_account_block = None
+            return self._account_observability_status()
+        if scope != "project":
+            raise ValueError("observability.disconnect scope must be account or project")
+        _require_only(params, {"scope", "project_directory", "project_id"})
+        project_id = str(_required(params, "project_id"))
+        project_directory = self.require_project_directory(_required(params, "project_directory"))
+        with self._cloud_lifecycle_lock:
+            repository = ProjectRepository(project_directory)
+            try:
+                repository.deactivate_observability_binding(project_id)
+                state = self.observability.status(repository, project_id)
+            finally:
+                repository.close()
+            self.observability.clear_credentials()
+            self._observability_account = None
+            self._observability_account_block = None
+        self.emit(
+            "project.updated",
+            {
+                "project_id": project_id,
+                "cloud_binding_verified": False,
+                "cloud_sync_state": "LOCAL_ONLY",
+            },
+        )
+        return state.model_dump(mode="json")
 
     def _account_observability_status(self) -> dict[str, Any]:
         if self._observability_account_block is not None:
@@ -2015,12 +2419,15 @@ class RPCDispatcher:
         account = self._observability_account
         if account is None:
             return ObservabilityAccountState(
-                state="AUTHENTICATION_REQUIRED",
+                state="LOCAL_ONLY",
                 mode="local",
-                configured=False,
+                configured=True,
                 provider="none",
                 disclosureAccepted=False,
-                message="A W&B credential and Restricted destination are required.",
+                message=(
+                    "Working locally. Exact SWMM runs and engineering evidence stay on this "
+                    "device; W&B sync and the Weave assistant are off."
+                ),
             ).model_dump(mode="json")
         binding = account["binding"]
         root = binding["web_base_url"].rstrip("/")
@@ -2088,17 +2495,18 @@ class RPCDispatcher:
 
     def observability_sync(self, params: dict[str, Any]) -> dict[str, Any]:
         _require_only(params, {"project_directory", "envelope", "preview_sha256"})
-        repository = ProjectRepository(
-            self.require_project_directory(_required(params, "project_directory"))
-        )
-        try:
-            result = self.observability.sync(
-                repository,
-                envelope=_required(params, "envelope"),
-                preview_sha256=str(_required(params, "preview_sha256")),
+        with self._cloud_lifecycle_lock:
+            repository = ProjectRepository(
+                self.require_project_directory(_required(params, "project_directory"))
             )
-        finally:
-            repository.close()
+            try:
+                result = self.observability.sync(
+                    repository,
+                    envelope=_required(params, "envelope"),
+                    preview_sha256=str(_required(params, "preview_sha256")),
+                )
+            finally:
+                repository.close()
         self.emit(
             "project.updated",
             {"cloud_envelope_id": result["envelope_id"], "cloud_sync_state": result["state"]},
@@ -2107,30 +2515,36 @@ class RPCDispatcher:
 
     def observability_retry(self, params: dict[str, Any]) -> dict[str, Any]:
         _require_only(params, {"project_directory", "project_id", "outbox_id"})
-        repository = ProjectRepository(
-            self.require_project_directory(_required(params, "project_directory"))
-        )
-        project_root = repository.root
-        try:
-            if params.get("outbox_id") is not None:
-                result = self.observability.retry(repository, str(params["outbox_id"]))
-            else:
+        with self._cloud_lifecycle_lock:
+            repository = ProjectRepository(
+                self.require_project_directory(_required(params, "project_directory"))
+            )
+            project_root = repository.root
+            try:
                 project_id = str(_required(params, "project_id"))
-                repository.get_project(project_id)
-                failed = repository.list_telemetry_outbox(
-                    project_id,
-                    states=["failed", "blocked"],
-                )
-                retry_ids = [item["outbox_id"] for item in failed]
-                for outbox_id in retry_ids:
-                    repository.retry_telemetry_outbox_item(outbox_id)
-                result = {
-                    "project_id": project_id,
-                    "state": "retry_scheduled" if retry_ids else "nothing_to_retry",
-                    "scheduled_outbox_ids": retry_ids,
-                }
-        finally:
-            repository.close()
+                status = self.observability.status(repository, project_id)
+                if not status.can_sync:
+                    raise ValueError("reconnect this project before retrying cloud evidence")
+                if params.get("outbox_id") is not None:
+                    requested = repository.get_telemetry_outbox_item(str(params["outbox_id"]))
+                    if requested["envelope"]["project_id"] != project_id:
+                        raise ValueError("cloud outbox item belongs to a different project")
+                    result = self.observability.retry(repository, str(params["outbox_id"]))
+                else:
+                    failed = repository.list_telemetry_outbox(
+                        project_id,
+                        states=["failed", "blocked"],
+                    )
+                    retry_ids = [item["outbox_id"] for item in failed]
+                    for outbox_id in retry_ids:
+                        repository.retry_telemetry_outbox_item(outbox_id)
+                    result = {
+                        "project_id": project_id,
+                        "state": "retry_scheduled" if retry_ids else "nothing_to_retry",
+                        "scheduled_outbox_ids": retry_ids,
+                    }
+            finally:
+                repository.close()
         for outbox_id in result.get("scheduled_outbox_ids", []):
             self._schedule_telemetry_sync(project_root, outbox_id)
         self.emit(
@@ -2228,34 +2642,35 @@ class RPCDispatcher:
                     return
 
         def execute() -> None:
-            repository = ProjectRepository(project_directory)
-            try:
-                item = repository.get_telemetry_outbox_item(outbox_id)
-                envelope = TelemetryEnvelope.model_validate(item["envelope"])
-                preview = self.observability.preview_upload(repository, envelope)
-                result = self.observability.sync(
-                    repository,
-                    envelope=envelope,
-                    preview_sha256=preview["payload_sha256"],
-                )
-                self.emit(
-                    "project.updated",
-                    {
-                        "project_id": envelope.project_id,
-                        "cloud_envelope_id": envelope.envelope_id,
-                        "cloud_sync_state": result["state"],
-                    },
-                )
-            except Exception as exc:  # noqa: BLE001 - background cloud failure is isolated
-                self.emit(
-                    "project.updated",
-                    {
-                        "cloud_sync_state": "failed",
-                        "cloud_error_code": type(exc).__name__.upper()[:64],
-                    },
-                )
-            finally:
-                repository.close()
+            with self._cloud_lifecycle_lock:
+                repository = ProjectRepository(project_directory)
+                try:
+                    item = repository.get_telemetry_outbox_item(outbox_id)
+                    envelope = TelemetryEnvelope.model_validate(item["envelope"])
+                    preview = self.observability.preview_upload(repository, envelope)
+                    result = self.observability.sync(
+                        repository,
+                        envelope=envelope,
+                        preview_sha256=preview["payload_sha256"],
+                    )
+                    self.emit(
+                        "project.updated",
+                        {
+                            "project_id": envelope.project_id,
+                            "cloud_envelope_id": envelope.envelope_id,
+                            "cloud_sync_state": result["state"],
+                        },
+                    )
+                except Exception as exc:  # noqa: BLE001 - cloud failure is isolated
+                    self.emit(
+                        "project.updated",
+                        {
+                            "cloud_sync_state": "failed",
+                            "cloud_error_code": type(exc).__name__.upper()[:64],
+                        },
+                    )
+                finally:
+                    repository.close()
 
         background = {"future": None, "kind": "telemetry-sync"}
         with self._background_lock:
@@ -2390,7 +2805,12 @@ class RPCDispatcher:
         project_id: str,
         analysis_id: str,
     ) -> list[dict[str, Any]]:
-        binding = repository.get_observability_binding(project_id)
+        try:
+            binding = repository.get_observability_binding(project_id)
+        except KeyError:
+            return []
+        analysis = repository.get_analysis(analysis_id)
+        analysis_payload = analysis["payload"]
         jobs = repository._connection.execute(
             "SELECT j.job_id,j.design_id,j.storm_id,j.state,j.payload_json,d.sequence "
             "FROM solver_jobs j JOIN designs d ON d.analysis_id=j.analysis_id "
@@ -2518,6 +2938,10 @@ class RPCDispatcher:
                 idempotency_key=f"analysis:{analysis_id}:exact-batch:{batch_index}",
                 metadata={
                     "schema_version": "2.0",
+                    "model_revision_id": analysis_payload.get("model_revision_id"),
+                    "model_sha256": analysis_payload.get("model_sha256"),
+                    "model_fitness_passport_id": analysis_payload.get("model_fitness_passport_id"),
+                    "authoritative_base_model": analysis_payload.get("authoritative_base_model"),
                     "batch_index": batch_index,
                     "batch_count": len(batches),
                     "job_count": len(batch),
@@ -2618,6 +3042,16 @@ class RPCDispatcher:
         )
         try:
             project = repository.get_project(project_id)
+            cloud_status = self.observability.status(repository, project_id)
+            if cloud_status.binding is None or not cloud_status.binding.verified:
+                raise RPCFault(
+                    -32010,
+                    (
+                        "Evidence Assistant is off until this project has an online, "
+                        "exactly verified Restricted W&B binding and Weave access."
+                    ),
+                    {"code": "ASSISTANT_DISABLED_WEAVE_UNAVAILABLE"},
+                )
             draft = _assistant_draft(
                 repository,
                 project,
@@ -2636,14 +3070,15 @@ class RPCDispatcher:
                 "prior_answer_id": prior_answer_id,
             }
             try:
-                trace = self.observability.trace_assistant_call(
-                    repository,
-                    project_id=project_id,
-                    call_id=call_id,
-                    operation=operation,
-                    inputs=trace_inputs,
-                    output={**draft, "validation": prevalidation},
-                )
+                with self._cloud_lifecycle_lock:
+                    trace = self.observability.trace_assistant_call(
+                        repository,
+                        project_id=project_id,
+                        call_id=call_id,
+                        operation=operation,
+                        inputs=trace_inputs,
+                        output={**draft, "validation": prevalidation},
+                    )
             except Exception as exc:
                 raise RPCFault(
                     -32010,
@@ -2689,18 +3124,19 @@ class RPCDispatcher:
             )
             call_id = new_id("assistantfeedback")
             try:
-                trace = self.observability.trace_assistant_call(
-                    repository,
-                    project_id=project_id,
-                    call_id=call_id,
-                    operation="feedback",
-                    inputs={
-                        "answer_id": answer["answer_id"],
-                        "feedback": feedback,
-                        "notes": params.get("notes"),
-                    },
-                    output={"recorded": True},
-                )
+                with self._cloud_lifecycle_lock:
+                    trace = self.observability.trace_assistant_call(
+                        repository,
+                        project_id=project_id,
+                        call_id=call_id,
+                        operation="feedback",
+                        inputs={
+                            "answer_id": answer["answer_id"],
+                            "feedback": feedback,
+                            "notes": params.get("notes"),
+                        },
+                        output={"recorded": True},
+                    )
             except Exception as exc:
                 raise RPCFault(
                     -32010,
@@ -2732,8 +3168,6 @@ class RPCDispatcher:
         try:
             project_id = str(_required(params, "project_id"))
             status = self.observability.status(repository, project_id)
-            if not status.can_enter_home:
-                raise ValueError("a verified Restricted W&B project is required before Home")
             project = repository.get_project(project_id)
             checkpoints = repository.list_guided_checkpoints(project_id)
             if not checkpoints:
@@ -2764,20 +3198,23 @@ class RPCDispatcher:
                     "fixture_sha256": fixture_sha256,
                     "preview_mode": None,
                 }
-                try:
-                    session_id, outbox = self._queue_guided_session_telemetry(
-                        repository, project_id, checkpoints
-                    )
-                    guided_telemetry = {
-                        "guided_session_id": session_id,
-                        "cloud_envelope_id": outbox["envelope"]["envelope_id"],
-                        "cloud_sync_state": outbox["state"],
-                    }
-                except Exception as cloud_error:  # noqa: BLE001 - replay remains local
-                    guided_telemetry = {
-                        "cloud_sync_state": "projection_failed",
-                        "cloud_error_code": type(cloud_error).__name__.upper()[:64],
-                    }
+                if status.binding is None or not status.binding.verified:
+                    guided_telemetry = {"cloud_sync_state": "local_only"}
+                else:
+                    try:
+                        session_id, outbox = self._queue_guided_session_telemetry(
+                            repository, project_id, checkpoints
+                        )
+                        guided_telemetry = {
+                            "guided_session_id": session_id,
+                            "cloud_envelope_id": outbox["envelope"]["envelope_id"],
+                            "cloud_sync_state": outbox["state"],
+                        }
+                    except Exception as cloud_error:  # noqa: BLE001 - replay remains local
+                        guided_telemetry = {
+                            "cloud_sync_state": "projection_failed",
+                            "cloud_error_code": type(cloud_error).__name__.upper()[:64],
+                        }
         finally:
             repository.close()
         return {
@@ -2812,9 +3249,6 @@ class RPCDispatcher:
             project = repository.get_project(project_id)
             if project["project_kind"] != ProjectKind.DEMO.value:
                 raise ValueError("guided.rerun is limited to the Cedar Trace teaching project")
-            status = self.observability.status(repository, project_id)
-            if not status.can_enter_home:
-                raise ValueError("a verified Restricted W&B binding is required before rerun")
         finally:
             repository.close()
         validation = _required(params, "validation")
@@ -2854,13 +3288,16 @@ class RPCDispatcher:
                 if revision["model_sha256"] != guided_model_sha256:
                     raise ValueError("guided model revision hash changed")
             except KeyError:
-                binding = repository.get_observability_binding(project_id)
+                try:
+                    binding_id = repository.get_observability_binding(project_id)["binding_id"]
+                except KeyError:
+                    binding_id = None
                 revision_model = ModelRevision(
                     revision_id=guided_revision_id,
                     project_id=project_id,
                     reason="import",
                     model_sha256=guided_model_sha256,
-                    observability_binding_id=binding["binding_id"],
+                    observability_binding_id=binding_id,
                     created_by="guided-fixture",
                 )
                 passport = ModelFitnessPassport(
@@ -3336,61 +3773,66 @@ class RPCDispatcher:
         cloud_projection: dict[str, Any] | None = None
         repository = ProjectRepository(project_directory)
         try:
-            binding = repository.get_observability_binding(analysis_row["project_id"])
-            manifests = [
-                self._cloud_manifest_for_file(
-                    repository,
-                    project_id=analysis_row["project_id"],
-                    category="export",
-                    source_object_id=result.manifest.export_id,
-                    logical_name=f"exports/{result.manifest.export_id}/{name}",
-                    source=self.require_allowed_path(path, purpose="evidence export file"),
-                )
-                for name, path in sorted(result.files.items())
-            ]
-            envelope = TelemetryEnvelope(
-                envelope_id=f"envelope_{result.manifest.export_id}",
-                project_id=analysis_row["project_id"],
-                analysis_id=analysis_id,
-                binding_id=binding["binding_id"],
-                category="engineering_evidence",
-                event_type="evidence_export",
-                subject_id=result.manifest.export_id,
-                idempotency_key=f"evidence-export:{result.manifest.export_id}",
-                metadata={
-                    "schema_version": "2.0",
-                    "package_type": result.manifest.package_type,
-                    "file_count": len(manifests),
-                    "solver_sha256": result.manifest.solver_sha256,
-                    "model_revision_id": result.manifest.model_revision_id,
-                    "export_eligibility_id": result.manifest.export_eligibility_id,
-                    "tables": {
-                        "evidence_claims": {
-                            "columns": ["run_id", "qa_status", "storm_id"],
-                            "rows": [
-                                [
-                                    item["result"].run_id,
-                                    item["result"].qa_status,
-                                    item["result"].storm_id,
-                                ]
-                                for item in authoritative_runs
-                            ],
-                        }
-                    },
-                },
-                artifacts=manifests,
-            )
-            queued = self._enqueue_and_schedule_telemetry(repository, envelope)
-            cloud_projection = {
-                "outbox_id": queued["outbox_id"],
-                "envelope_id": queued["envelope"]["envelope_id"],
-                "state": queued["state"],
-            }
-        except Exception as cloud_error:  # noqa: BLE001 - export remains locally authoritative
-            cloud_projection = {
-                "state": "projection_failed",
-                "error_code": type(cloud_error).__name__.upper()[:64],
-            }
+            try:
+                binding = repository.get_observability_binding(analysis_row["project_id"])
+            except KeyError:
+                cloud_projection = {"state": "local_only"}
+            else:
+                try:
+                    manifests = [
+                        self._cloud_manifest_for_file(
+                            repository,
+                            project_id=analysis_row["project_id"],
+                            category="export",
+                            source_object_id=result.manifest.export_id,
+                            logical_name=f"exports/{result.manifest.export_id}/{name}",
+                            source=self.require_allowed_path(path, purpose="evidence export file"),
+                        )
+                        for name, path in sorted(result.files.items())
+                    ]
+                    envelope = TelemetryEnvelope(
+                        envelope_id=f"envelope_{result.manifest.export_id}",
+                        project_id=analysis_row["project_id"],
+                        analysis_id=analysis_id,
+                        binding_id=binding["binding_id"],
+                        category="engineering_evidence",
+                        event_type="evidence_export",
+                        subject_id=result.manifest.export_id,
+                        idempotency_key=f"evidence-export:{result.manifest.export_id}",
+                        metadata={
+                            "schema_version": "2.0",
+                            "package_type": result.manifest.package_type,
+                            "file_count": len(manifests),
+                            "solver_sha256": result.manifest.solver_sha256,
+                            "model_revision_id": result.manifest.model_revision_id,
+                            "export_eligibility_id": result.manifest.export_eligibility_id,
+                            "tables": {
+                                "evidence_claims": {
+                                    "columns": ["run_id", "qa_status", "storm_id"],
+                                    "rows": [
+                                        [
+                                            item["result"].run_id,
+                                            item["result"].qa_status,
+                                            item["result"].storm_id,
+                                        ]
+                                        for item in authoritative_runs
+                                    ],
+                                }
+                            },
+                        },
+                        artifacts=manifests,
+                    )
+                    queued = self._enqueue_and_schedule_telemetry(repository, envelope)
+                    cloud_projection = {
+                        "outbox_id": queued["outbox_id"],
+                        "envelope_id": queued["envelope"]["envelope_id"],
+                        "state": queued["state"],
+                    }
+                except Exception as cloud_error:  # noqa: BLE001 - local export stays authoritative
+                    cloud_projection = {
+                        "state": "projection_failed",
+                        "error_code": type(cloud_error).__name__.upper()[:64],
+                    }
         finally:
             repository.close()
         self.emit(
@@ -4404,7 +4846,7 @@ def main(argv: list[str] | None = None) -> int:
         solver_sha256=args.solver_sha256,
         guided_fixture_path=args.guided_fixture,
         guided_evidence_directory=args.guided_evidence_directory,
-        require_observability_session=True,
+        require_observability_session=False,
     )
 
 

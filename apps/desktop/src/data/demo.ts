@@ -182,6 +182,27 @@ const stormEvidence: Record<string, EvidenceItem> = Object.fromEntries(
 const evidence: Record<string, EvidenceItem> = {
   ...alternativeEvidence,
   ...stormEvidence,
+  "guided-manifest": {
+    id: "guided-manifest",
+    kind: "qa",
+    eyebrow: "Pinned exact-run manifest",
+    title: "Cedar Trace fixture accounting",
+    subtitle: `${fixture.job_accounting.completed_jobs} direct SWMM jobs reconciled against one hashed manifest`,
+    status: "exact",
+    claim: "The guided replay projects only exact results recorded in the pinned fixture manifest.",
+    artifactsAvailable: true,
+    artifacts: [{ label: "Exact fixture manifest", path: "benchmarks/guided_exact/manifest.json", available: true }],
+    fields: [
+      { label: "Fixture ID", value: fixture.fixture_id, mono: true },
+      { label: "Completed / expected jobs", value: `${fixture.job_accounting.completed_jobs} / ${fixture.job_accounting.expected_jobs}`, mono: true },
+      { label: "Untouched baselines", value: String(fixture.job_accounting.baseline_jobs), mono: true },
+      { label: "Alternative designs", value: String(fixture.job_accounting.unique_alternative_designs), mono: true },
+      { label: "Storm cases", value: String(fixture.job_accounting.storm_cases), mono: true },
+      { label: "Manifest SHA-256", value: shortHash(fixture.source_manifest_sha256), mono: true },
+      { label: "Solver SHA-256", value: shortHash(fixture.solver.sha256), mono: true },
+      { label: "Metric extractor", value: `${fixture.extractor.version} · ${shortHash(fixture.extractor.script_sha256)}`, mono: true },
+    ],
+  },
   "guided-model": {
     id: "guided-model",
     kind: "model",

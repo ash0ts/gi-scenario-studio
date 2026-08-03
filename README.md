@@ -8,8 +8,9 @@ stormwater, and water-resources engineers. Its professional outcome is narrow
 and useful:
 
 > Turn a fit-for-purpose SWMM model into a defensible GI shortlist, with every
-> hydraulic claim traceable to a direct SWMM run and every computational or AI
-> workflow observable in the engineer's Restricted W&B project.
+> hydraulic claim traceable to a direct SWMM run and, when the engineer enables
+> cloud collaboration, computational and AI workflows mirrored to a Restricted
+> W&B project.
 
 The core engineering invariant is strict:
 
@@ -30,7 +31,7 @@ The primary user already has a SWMM model suitable for alternatives screening.
 The application leads with the decision—not a generic optimizer:
 
 ```text
-Connect W&B -> Open bundle -> Decision brief -> Model fitness and baseline
+Work locally or connect W&B -> Open bundle -> Decision brief -> Model fitness and baseline
 -> Storms -> Opportunities and feasibility -> Goals and costs
 -> Run plan -> Run -> Decision board -> Evidence package
 ```
@@ -56,14 +57,16 @@ ledger, and join the same workflow after repair and review. The source MVP shows
 that route's safety gates as a disabled, source-empty preview; GIS ingestion,
 generation, repair, persisted provenance, and cloud projection are not complete.
 
-## Required W&B and Weave boundary
+## Optional W&B and Weave boundary
 
-The production contract requires a W&B account and a user-owned W&B project
-whose visibility is verified as `Restricted`. The binding wizard selects W&B
-Cloud, Dedicated Cloud, or Self-Managed; verifies Models and Weave access;
-previews synchronized data categories; and stores the W&B API key in the
-operating-system keychain. Critical-infrastructure-restricted projects require
-Dedicated Cloud or Self-Managed W&B.
+The application starts in `LOCAL_ONLY` mode and does not require a W&B account
+for hydraulic work or local evidence. Engineers who want the cloud mirror bind
+their GI project to a user-owned W&B project whose visibility is verified
+exactly as `Restricted`. The binding wizard selects W&B Cloud, Dedicated Cloud,
+or Self-Managed; verifies Models and Weave access; previews synchronized data
+categories; and stores the W&B API key in the operating-system keychain.
+Critical-infrastructure-restricted projects require Dedicated Cloud or
+Self-Managed W&B.
 
 The intended mirror covers models, GIS/data assets, storms, candidate and cost
 records, exact INP/RPT/OUT artifacts, metrics, QA, search traces, decision
@@ -82,7 +85,8 @@ until a supported resolver returns exactly `RESTRICTED`. A successful access or
 upload probe is not used as a privacy substitute.
 
 The local SQLite database and content-addressed artifact store remain
-authoritative. W&B [Runs](https://docs.wandb.ai/models/runs),
+authoritative, and the application can be used entirely in `LOCAL_ONLY` mode.
+When a project is deliberately bound, W&B [Runs](https://docs.wandb.ai/models/runs),
 [Tables](https://docs.wandb.ai/models/tables/log_tables),
 [Artifacts](https://docs.wandb.ai/models/artifacts/explore-and-traverse-an-artifact-graph),
 and [Registry](https://docs.wandb.ai/models/registry) provide the collaboration
@@ -213,10 +217,12 @@ The following boundaries are intentionally visible rather than papered over:
   closed until repository-backed CostBasis, full-network review, and reference-
   comparison services can prove those claims. Learning evidence remains
   available and revision-pinned.
-- Bundles containing multiple INP models still need a persisted base-model
-  selection RPC, and restart recovery needs a dedicated analysis-status read
-  RPC; the current UI labels the former and derives live job progress from the
-  durable result ledger.
+- Bundles containing multiple INP models require an explicit persisted base-
+  model selection. Other INP files remain unclassified companions and are not
+  treated as storm variants until a future semantic equivalence service proves
+  storm-only differences. Restart recovery still needs a dedicated analysis-
+  status read RPC; the current UI derives live job progress from the durable
+  result ledger.
 - W&B `0.28.1` does not expose an authoritative exact project-visibility scope;
   `PRIVATE` is never inferred to mean `Restricted`, so production binding and
   upload remain blocked until a supported resolver is available.

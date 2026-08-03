@@ -14,7 +14,7 @@ export function App() {
   const [project, setProject] = useState<ProjectSummary | null>(null);
   const [guidedData, setGuidedData] = useState<GuidedData | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [observability, setObservability] = useState<ObservabilityState>(localObservabilityState(false));
+  const [observability, setObservability] = useState<ObservabilityState>(localObservabilityState());
   const [observabilityReady, setObservabilityReady] = useState(false);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [projectCloudSync, setProjectCloudSync] = useState<ProjectCloudSyncState | null>(null);
@@ -30,15 +30,12 @@ export function App() {
         if (!active) return;
         const status = transport.mode === "tauri" ? parseObservabilityAccountState(raw) : raw as ObservabilityState;
         setObservability(status);
-        setWizardOpen(!status.configured);
+        setWizardOpen(false);
       })
       .catch(() => {
         if (!active) return;
-        setObservability({
-          ...localObservabilityState(false),
-          message: "W&B authentication is required; the current worker could not verify a binding.",
-        });
-        setWizardOpen(true);
+        setObservability(localObservabilityState());
+        setWizardOpen(false);
       })
       .finally(() => active && setObservabilityReady(true));
     return () => { active = false; };
@@ -113,16 +110,9 @@ export function App() {
   const start = async (kind: ProjectKind) => {
     setError(null);
     try {
-      if (observability.mode !== "connected" && !(transport.mode === "browser-demo" && kind === "demo")) {
-        setWizardOpen(true);
-        throw new Error("Connect a verified Restricted W&B project before opening engineering work.");
-      }
       if (kind === "demo") {
         const created = await transport.request<ProjectSummary>("project.create", { kind });
         const cloudStatus = await readProjectCloudSync(created);
-        if (cloudStatus && !cloudStatus.can_enter_home) {
-          throw new Error("The new project does not yet have a verified Restricted W&B binding.");
-        }
         const opened = await transport.request<{
           fixture: GuidedFixture;
           cloud_sync_state?: string;
@@ -203,15 +193,13 @@ export function App() {
             warningCount: validation?.warning_count,
             structurallyRunnable: validation?.structurally_runnable,
             models,
+            baseModelSelectionRequired: imported.project_state?.base_model_selection_required ?? false,
             currentModelRevisionId: imported.project_state?.current_model_revision_id,
             modelFitnessPassportId: imported.project_state?.model_fitness_passport_id,
           },
         };
       }
       const cloudStatus = await readProjectCloudSync(openedProject);
-      if (cloudStatus && !cloudStatus.can_enter_home) {
-        throw new Error("The new project does not yet have a verified Restricted W&B binding.");
-      }
       setGuidedData(null);
       setProjectCloudSync(cloudStatus);
       setProjectCloudSyncError(null);
@@ -226,15 +214,23 @@ export function App() {
       <a className="skip-link" href="#main-content">Skip to main content</a>
       {error && <div className="global-error" role="alert">{error}</div>}
       {project
-        ? <Suspense fallback={<main className="workspace-loading" id="main-content" aria-busy="true">Opening the evidence workspace…</main>}><Workspace project={project} guidedData={guidedData} observability={observability} projectCloudSync={projectCloudSync} projectCloudSyncBusy={projectCloudSyncBusy} projectCloudSyncError={projectCloudSyncError} onRefreshProjectCloudSync={handleProjectCloudAction} onObservability={openWizard} onHome={() => { setProject(null); setGuidedData(null); setProjectCloudSync(null); setProjectCloudSyncError(null); }} /></Suspense>
+        ? <Suspense fallback={<main className="workspace-loading" id="main-content" aria-busy="true">Opening the evidence workspace…</main>}><Workspace project={project} onProjectUpdate={setProject} guidedData={guidedData} observability={observability} projectCloudSync={projectCloudSync} projectCloudSyncBusy={projectCloudSyncBusy} projectCloudSyncError={projectCloudSyncError} onRefreshProjectCloudSync={handleProjectCloudAction} onObservability={openWizard} onHome={() => { setProject(null); setGuidedData(null); setProjectCloudSync(null); setProjectCloudSyncError(null); }} /></Suspense>
         : <Home observability={observability} desktopAvailable={transport.mode === "tauri"} onObservability={openWizard} onStart={start} />}
       {observabilityReady && (
         <ObservabilityWizard
           open={wizardOpen}
           state={observability}
-          required={!observability.configured}
+          required={false}
+          activeProject={project?.projectDirectory ? {
+            id: project.id,
+            projectDirectory: project.projectDirectory,
+          } : null}
           onClose={closeWizard}
           onChange={handleObservabilityChange}
+          onProjectCloudChange={(next) => {
+            setProjectCloudSync(next);
+            setProjectCloudSyncError(null);
+          }}
         />
       )}
     </>

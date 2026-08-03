@@ -1,4 +1,4 @@
-"""Required W&B project binding and durable implemented-evidence cloud projection.
+"""Optional verified W&B binding and durable engineering-evidence cloud projection.
 
 SQLite plus the local content-addressed store remain authoritative.  A cloud
 failure changes only the durable outbox state; it never changes engineering
@@ -614,7 +614,9 @@ class ObservabilityService:
         state = repository.observability_status(project_id)
         binding = state["binding"]
         counts = state["outbox_counts"]
-        if binding is None or not binding.get("verified") or not self.credentials.configured:
+        if binding is None:
+            connection_state = "LOCAL_ONLY"
+        elif not binding.get("verified") or not self.credentials.configured:
             connection_state = "AUTHENTICATION_REQUIRED"
         elif binding.get("mode") == ObservabilityMode.OFFLINE_QUEUE.value:
             connection_state = "SYNC_QUEUED_OFFLINE"
@@ -633,10 +635,11 @@ class ObservabilityService:
         return CloudSyncState(
             project_id=project_id,
             state=connection_state,
+            binding_required=False,
             binding=binding,
-            can_enter_home=state["can_enter_home"],
-            can_open_project=verified,
-            can_run_local=verified,
+            can_enter_home=True,
+            can_open_project=True,
+            can_run_local=True,
             can_sync=verified and online,
             can_use_assistant=verified and online and self.credentials.configured,
             online=online,

@@ -72,6 +72,7 @@ const setupStepLabels: Record<StepId, string> = {
 
 interface WorkspaceProps {
   project: ProjectSummary;
+  onProjectUpdate: (project: ProjectSummary) => void;
   guidedData: GuidedData | null;
   observability: ObservabilityState;
   projectCloudSync: ProjectCloudSyncState | null;
@@ -103,13 +104,15 @@ const setupEvidence = (project: ProjectSummary): EvidenceItem => ({
   ],
 });
 
-export function Workspace({ project, guidedData, observability, projectCloudSync, projectCloudSyncBusy, projectCloudSyncError, onRefreshProjectCloudSync, onObservability, onHome }: WorkspaceProps) {
+export function Workspace({ project, onProjectUpdate, guidedData, observability, projectCloudSync, projectCloudSyncBusy, projectCloudSyncError, onRefreshProjectCloudSync, onObservability, onHome }: WorkspaceProps) {
   const isGuided = project.kind === "demo";
   if (isGuided && !guidedData) {
     throw new Error("A guided workspace requires evidence returned by guided.open.");
   }
   const data = guidedData as GuidedData | null;
-  const steps = isGuided ? guidedSteps(data as GuidedData) : workflowSteps();
+  const steps = isGuided
+    ? guidedSteps(data as GuidedData)
+    : workflowSteps().map((item) => item.id === "goals" ? { ...item, label: "Alternatives", short: "Exact test set" } : item);
   const [step, setStep] = useState<StepId>(isGuided ? "overview" : "model");
   const [unlockedIndex, setUnlockedIndex] = useState(0);
   const [completedSteps, setCompletedSteps] = useState<Set<StepId>>(new Set());
@@ -126,7 +129,12 @@ export function Workspace({ project, guidedData, observability, projectCloudSync
   const [practitionerValidation, setPractitionerValidation] = useState<ModelValidationResult | null>(null);
   const [practitionerValidationBusy, setPractitionerValidationBusy] = useState(false);
   const [practitionerValidationError, setPractitionerValidationError] = useState<string | null>(null);
-  const [practitionerStorms, setPractitionerStorms] = useState<PractitionerStormCase[]>(() => initialStormCases(project.bundle?.models ?? []));
+  const [practitionerStorms, setPractitionerStorms] = useState<PractitionerStormCase[]>(() => {
+    const authoritativeModelPath = project.bundle?.models.find(
+      (model) => model.modelPath === project.bundle?.baseModel,
+    )?.projectPath;
+    return initialStormCases(project.bundle?.models ?? [], authoritativeModelPath);
+  });
   const [practitionerCandidates, setPractitionerCandidates] = useState<CandidateSlotDraft[]>([]);
   const [practitionerVectors, setPractitionerVectors] = useState<number[][]>([]);
   const [practitionerBudget, setPractitionerBudget] = useState(1000);
@@ -163,7 +171,7 @@ export function Workspace({ project, guidedData, observability, projectCloudSync
   const cloudDetail = projectCloudSync ? projectCloudSyncDetail(projectCloudSync) : observabilityDetail(observability);
   const cloudTone = projectCloudSync ? `cloud-${projectCloudSyncTone(projectCloudSync)}` : `mode-${observability.mode}`;
   const cloudActionLabel = projectCloudSync ? projectCloudActionLabel(projectCloudSync) : "Configure W&B";
-  const cloudNeedsAccountAction = projectCloudSync?.state === "AUTHENTICATION_REQUIRED" || projectCloudSync?.state === "BLOCKED_PROJECT_POLICY";
+  const cloudNeedsAccountAction = projectCloudSync?.state === "LOCAL_ONLY" || projectCloudSync?.state === "AUTHENTICATION_REQUIRED" || projectCloudSync?.state === "BLOCKED_PROJECT_POLICY";
   const handleCloudAction = projectCloudSync && !cloudNeedsAccountAction ? onRefreshProjectCloudSync : onObservability;
   const canRunLocally = transport.mode === "tauri" && Boolean(project.projectDirectory) && Boolean(projectCloudSync?.can_run_local);
 
@@ -280,7 +288,7 @@ export function Workspace({ project, guidedData, observability, projectCloudSync
       setFitnessError(reason instanceof Error ? reason.message : "Model fitness evidence could not be read.");
     });
     return () => { active = false; };
-  }, [project.kind, project.projectDirectory, project.id]);
+  }, [project.kind, project.projectDirectory, project.id, project.bundle?.modelFitnessPassportId]);
 
   useEffect(() => {
     if (project.kind !== "existing" || !fitnessPassport || typeof fitnessPassport.disposition !== "string") return;
@@ -484,8 +492,81 @@ export function Workspace({ project, guidedData, observability, projectCloudSync
     return `${directory}/${relativePath.replace(/^[\\/]+/, "")}`;
   };
 
+  const selectPractitionerBaseModel = async (modelPath: string) => {
+    if (!project.projectDirectory || !project.bundle) {
+      setPractitionerValidationError("The authoritative imported project is unavailable.");
+      return;
+    }
+    const selected = project.bundle.models.find((model) => model.projectPath === modelPath);
+    if (!selected) {
+      setPractitionerValidationError("Choose one of the project-contained SWMM models.");
+      return;
+    }
+    setPractitionerValidationBusy(true);
+    setPractitionerValidationError(null);
+    try {
+      const result = await transport.request<{
+        project_state: {
+          selected_base_model: string;
+          selected_model_dependencies?: Record<string, string>;
+          current_model_revision_id: string;
+          model_fitness_passport_id: string;
+          base_model_selection_required: boolean;
+        };
+        model_validation: ModelValidationResult;
+      }>("bundle.select_base_model", {
+        project_directory: project.projectDirectory,
+        project_id: project.id,
+        model_path: selected.projectPath,
+      });
+      if (result.project_state.selected_base_model !== selected.projectPath) {
+        throw new Error("The worker selected a different base model than requested.");
+      }
+      const models = project.bundle.models.map((model) => model.projectPath === selected.projectPath
+        ? { ...model, dependencies: result.project_state.selected_model_dependencies ?? model.dependencies }
+        : model);
+      onProjectUpdate({
+        ...project,
+        location: `Imported · ${project.bundle.fileCount} files · base model selected`,
+        modelFile: selected.modelPath,
+        bundle: {
+          ...project.bundle,
+          baseModel: selected.modelPath,
+          baseModelSelectionRequired: result.project_state.base_model_selection_required,
+          blockingCount: result.model_validation.blocking_count,
+          warningCount: result.model_validation.warning_count,
+          structurallyRunnable: result.model_validation.structurally_runnable,
+          models,
+          currentModelRevisionId: result.project_state.current_model_revision_id,
+          modelFitnessPassportId: result.project_state.model_fitness_passport_id,
+        },
+      });
+      setPractitionerValidation(result.model_validation);
+      setPractitionerStorms(initialStormCases(models, selected.projectPath).map((storm) =>
+        storm.modelPath === selected.projectPath
+          ? {
+              ...storm,
+              dependencies: result.project_state.selected_model_dependencies ?? storm.dependencies,
+              validation: result.model_validation,
+            }
+          : storm,
+      ));
+      setFitnessPassport(undefined);
+      setFitnessError(null);
+      resetPlannedAnalysis();
+    } catch (reason) {
+      setPractitionerValidationError(reason instanceof Error ? reason.message : "Base-model selection failed.");
+    } finally {
+      setPractitionerValidationBusy(false);
+    }
+  };
+
   const validatePractitionerModel = async () => {
-    const selected = project.bundle?.models.find((model) => model.modelPath === project.bundle?.baseModel) ?? project.bundle?.models[0];
+    if (project.bundle?.baseModelSelectionRequired) {
+      setPractitionerValidationError("Select and persist the authoritative base model before running checks.");
+      return;
+    }
+    const selected = project.bundle?.models.find((model) => model.modelPath === project.bundle?.baseModel);
     if (!selected) {
       setPractitionerValidationError("The imported bundle has no selected SWMM model.");
       return;
@@ -553,7 +634,11 @@ export function Workspace({ project, guidedData, observability, projectCloudSync
   };
 
   const updatePractitionerStorm = (index: number, patch: Partial<PractitionerStormCase>) => {
-    setPractitionerStorms((current) => current.map((storm, itemIndex) => itemIndex === index ? { ...storm, ...patch } : storm));
+    setPractitionerStorms((current) => current.map((storm, itemIndex) => {
+      if (itemIndex !== index) return storm;
+      if (patch.included === true && !storm.stormEligible) return storm;
+      return { ...storm, ...patch };
+    }));
     resetPlannedAnalysis();
   };
 
@@ -863,7 +948,7 @@ export function Workspace({ project, guidedData, observability, projectCloudSync
         )}
         <div className="workspace-content">
           {step === "overview" && isGuided && <OverviewScreen data={data as GuidedData} observability={observability} projectCloudSync={projectCloudSync} onRefreshProjectCloudSync={onRefreshProjectCloudSync} onObservability={onObservability} onEvidence={showEvidence} onStep={advance} />}
-          {step === "model" && project.kind === "existing" && <PractitionerModelScreen project={project} validation={practitionerValidation} passport={fitnessPassport} busy={practitionerValidationBusy} fitnessBusy={fitnessBusy} error={practitionerValidationError} fitnessError={fitnessError} onValidate={validatePractitionerModel} onAttest={attestPractitionerFitness} onEvidence={() => showEvidence("import-model")} onStep={advance} />}
+          {step === "model" && project.kind === "existing" && <PractitionerModelScreen project={project} validation={practitionerValidation} passport={fitnessPassport} busy={practitionerValidationBusy} fitnessBusy={fitnessBusy} error={practitionerValidationError} fitnessError={fitnessError} onSelectBaseModel={selectPractitionerBaseModel} onValidate={validatePractitionerModel} onAttest={attestPractitionerFitness} onEvidence={() => showEvidence("import-model")} onStep={advance} />}
           {step === "model" && project.kind !== "existing" && <ModelScreen data={data ?? undefined} kind={project.kind} project={project} fitnessDisposition={project.fitnessDisposition} onEvidence={showEvidence} onStep={advance} />}
           {step === "storms" && project.kind === "existing" && <PractitionerStormsScreen storms={practitionerStorms} busy={practitionerValidationBusy} error={practitionerValidationError} onChange={updatePractitionerStorm} onValidate={validatePractitionerStorms} onStep={advance} />}
           {step === "storms" && project.kind !== "existing" && <StormsScreen data={data ?? undefined} isGuided={isGuided} onEvidence={showEvidence} onStep={advance} />}

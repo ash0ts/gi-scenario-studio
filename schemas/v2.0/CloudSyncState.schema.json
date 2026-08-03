@@ -146,23 +146,22 @@
       "default": null
     },
     "binding_required": {
-      "const": true,
-      "default": true,
+      "default": false,
       "title": "Binding Required",
       "type": "boolean"
     },
     "can_enter_home": {
-      "default": false,
+      "default": true,
       "title": "Can Enter Home",
       "type": "boolean"
     },
     "can_open_project": {
-      "default": false,
+      "default": true,
       "title": "Can Open Project",
       "type": "boolean"
     },
     "can_run_local": {
-      "default": false,
+      "default": true,
       "title": "Can Run Local",
       "type": "boolean"
     },
@@ -230,8 +229,9 @@
       "type": "string"
     },
     "state": {
-      "default": "AUTHENTICATION_REQUIRED",
+      "default": "LOCAL_ONLY",
       "enum": [
+        "LOCAL_ONLY",
         "CONNECTED",
         "SYNCING",
         "SYNC_QUEUED_OFFLINE",

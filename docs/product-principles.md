@@ -28,14 +28,16 @@ parameters, declare compliance, or provide a reportable hydraulic value.
 The Evidence Rail is both a UX pattern and a system invariant. A result that
 cannot resolve its solver job, inputs, QA, and assumptions is not a result.
 
-## W&B is required, but it is not engineering authority
+## W&B is an optional mirror, not engineering authority
 
-Every production project is bound to a user-owned W&B project whose visibility
-is verified as `Restricted`. W&B Models and Weave mirror computation, evidence,
-lineage, and assistant traces; local SQLite state and content-addressed bytes
-remain the authoritative engineering record. After the initial verified
-binding, an outage may queue synchronization but cannot change SWMM inputs,
-candidate order, exact results, QA, costs, or export content.
+Engineering work is local-first. A project may remain `LOCAL_ONLY`, or the user
+may bind it to a user-owned W&B project whose visibility is verified exactly as
+`Restricted`. W&B Models and Weave then mirror computation, evidence, lineage,
+and assistant traces; local SQLite state and content-addressed bytes remain the
+authoritative engineering record. Disconnecting stops new cloud activity. An
+outage may queue synchronization only for a project that was already bound, and
+cloud state cannot change SWMM inputs, candidate order, exact results, QA,
+costs, or export content.
 
 ## Open source is a trust mechanism
 

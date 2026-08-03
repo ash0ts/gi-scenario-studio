@@ -82,4 +82,26 @@ describe("exact guided fixture projection", () => {
     }
     expect(evidence["ALT-207"].subtitle).toBe("Candidate to carry forward for site and feasibility review.");
   });
+
+  it("resolves the fixture-wide export claim to the pinned manifest", () => {
+    expect(evidence["guided-manifest"]).toMatchObject({
+      id: "guided-manifest",
+      eyebrow: "Pinned exact-run manifest",
+      title: "Cedar Trace fixture accounting",
+      artifacts: [
+        {
+          label: "Exact fixture manifest",
+          path: "benchmarks/guided_exact/manifest.json",
+          available: true,
+        },
+      ],
+    });
+    expect(evidence["guided-manifest"].fields).toEqual(
+      expect.arrayContaining([
+        { label: "Completed / expected jobs", value: "884 / 884", mono: true },
+        { label: "Alternative designs", value: "220", mono: true },
+        { label: "Storm cases", value: "4", mono: true },
+      ]),
+    );
+  });
 });

@@ -22,22 +22,22 @@ const paths = [
     detail: "ZIP with INP + referenced rainfall, climate, interface, and hot-start files",
   },
   {
-    kind: "conceptual" as const,
-    number: "02",
-    icon: "map" as const,
-    title: "Conceptual model starter · planned",
-    copy: "Inspect the intended planning workflow and safety gates. GIS ingestion, generation, repair, and persisted provenance are not operational in this source MVP.",
-    action: "Inspect planned workflow",
-    detail: "Source-empty preview · no generated hydraulic model",
-  },
-  {
     kind: "demo" as const,
-    number: "03",
+    number: "02",
     icon: "spark" as const,
     title: "Run guided example",
     copy: `Learn the decision workflow with Cedar Trace, a public teaching catchment backed by ${guidedSummary.completedJobs} accepted EPA SWMM ${guidedSummary.solverVersion} executions.`,
     action: "Open exact fixture",
     detail: `${guidedSummary.alternativeDesigns} alternatives · ${guidedSummary.stormCases} synthetic storms · verified fixture replay`,
+  },
+  {
+    kind: "conceptual" as const,
+    number: "03",
+    icon: "map" as const,
+    title: "Conceptual model starter · roadmap",
+    copy: "A planning-level GIS-to-SWMM workflow is designed, but generation and model-repair tools are not yet operational. This release does not create a hydraulic model from a map.",
+    action: "Not available in this release",
+    detail: "Planned capability · no model is generated",
   },
 ];
 
@@ -88,7 +88,7 @@ export function Home({ onStart, observability, onObservability, desktopAvailable
       <section className="entry-paths" aria-labelledby="entry-title">
         <div className="path-intro">
           <p className="eyebrow" id="entry-title">Choose where you’re starting</p>
-          <p>Professional import, planned model starter, or exact guided replay.</p>
+          <p>Open a professional model, learn with the exact replay, or see what is still on the roadmap.</p>
         </div>
         <div className="path-grid">
           {paths.map((path) => (
@@ -96,11 +96,15 @@ export function Home({ onStart, observability, onObservability, desktopAvailable
               <div className="path-card-top"><span>{path.number}</span><Icon name={path.icon} /></div>
               <h2>{path.title}</h2>
               <p>{path.copy}</p>
-              <button onClick={() => start(path.kind)} disabled={loading !== null || (!desktopAvailable && path.kind !== "demo")}>
-                <span>{!desktopAvailable && path.kind !== "demo" ? "Desktop app required" : loading === path.kind ? "Preparing workspace…" : path.action}</span>
-                <Icon name="arrow" />
-              </button>
-              <small>{!desktopAvailable && path.kind !== "demo" ? "Browser preview cannot access engineering files or create projects" : path.detail}</small>
+              {path.kind === "conceptual" ? (
+                <div className="path-roadmap" aria-label="Conceptual Model Starter is not available in this release"><Icon name="info" /><span>{path.action}</span></div>
+              ) : (
+                <button onClick={() => start(path.kind)} disabled={loading !== null || (!desktopAvailable && path.kind !== "demo")}>
+                  <span>{!desktopAvailable && path.kind !== "demo" ? "Desktop app required" : loading === path.kind ? "Preparing workspace…" : path.action}</span>
+                  <Icon name="arrow" />
+                </button>
+              )}
+              <small>{!desktopAvailable && path.kind === "existing" ? "Browser preview cannot access engineering files or create projects" : path.detail}</small>
             </article>
           ))}
         </div>
@@ -108,7 +112,7 @@ export function Home({ onStart, observability, onObservability, desktopAvailable
 
       <footer className="home-footer">
         <span>GI Scenario Studio <b>v0.2 source MVP</b></span>
-        <span>Targets EPA SWMM 5.2.4 · Local evidence authority · Restricted W&amp;B mirror required for production</span>
+        <span>Targets EPA SWMM 5.2.4 · Local evidence authority · Optional cloud mirror only after policy verification</span>
       </footer>
     </main>
   );

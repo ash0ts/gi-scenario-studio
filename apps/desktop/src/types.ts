@@ -4,7 +4,7 @@ export type StepId = "overview" | "model" | "storms" | "opportunities" | "goals"
 export type EvidenceKind = "run" | "model" | "storm" | "assumption" | "qa" | "alternative";
 
 export type ObservabilityMode = "local" | "demo" | "connected" | "error";
-export type CloudConnectionState = "CONNECTED" | "SYNCING" | "SYNC_QUEUED_OFFLINE" | "FAILED_RETRYING" | "AUTHENTICATION_REQUIRED" | "BLOCKED_PROJECT_POLICY";
+export type CloudConnectionState = "LOCAL_ONLY" | "CONNECTED" | "SYNCING" | "SYNC_QUEUED_OFFLINE" | "FAILED_RETRYING" | "AUTHENTICATION_REQUIRED" | "BLOCKED_PROJECT_POLICY";
 
 export interface ObservabilityState {
   schemaVersion?: "2.0";
@@ -88,6 +88,7 @@ export interface ProjectSummary {
     structurallyRunnable?: boolean;
     /** Project-contained models discovered by the secure bundle importer. */
     models: ImportedModelSummary[];
+    baseModelSelectionRequired?: boolean;
     currentModelRevisionId?: string;
     modelFitnessPassportId?: string;
   };
@@ -138,6 +139,7 @@ export interface BundleInspection {
     selected_base_model?: string;
     selected_model_dependencies?: Record<string, string>;
     current_model_revision_id?: string;
+    current_model_sha256?: string;
     model_fitness_passport_id?: string;
     base_models?: string[];
     base_model_selection_required?: boolean;

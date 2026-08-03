@@ -22,8 +22,23 @@ interface EvidenceRailProps {
 }
 
 function explanationFor(item: EvidenceItem): string {
+  if (item.id === "guided-manifest") {
+    return "Use this record to audit the replay as a whole. Its job totals reconcile four untouched baselines plus 220 alternatives across four storms, and its hashes bind the source manifest, solver, and metric extractor. Open an individual alternative when you need storm-level values and artifacts.";
+  }
+  if (item.id === "ALT-017") {
+    return "Use this record to see why the cheapest-looking option can still fail. ALT-017 reduces aggregate volume by only 4.14%, below the 6% target, and raises the long-event OUT1 peak from 3.14 to 3.21 cfs. Open its storm-specific run record in this rail to inspect the exact input, output, report, and QA hashes.";
+  }
+  if (item.id === "ALT-207") {
+    return "Use this record to justify a screening hand-off, not a design decision. ALT-207 passes the four teaching rules across its four exact runs, so it may move to site and feasibility review. It still needs drainage confirmation, utility locating, soils testing, constructability review, and professional model review.";
+  }
+  if (item.id === "qa-continuity") {
+    return "Use this record to separate numerical acceptance from model fitness. Passing the fixture QA policy means the stored runs met its solver and continuity checks; it does not establish calibration, adopted boundary conditions, regulatory acceptance, or real-world flood safety.";
+  }
+  if (item.id === "cost-basis") {
+    return "Use this record only to interpret the teaching cost comparison. Check its currency, horizon, discount rate, source, maintenance, and replacement assumptions before comparing alternatives. These synthetic values are not a bid, estimate, or local cost basis.";
+  }
   if (item.status === "exact") {
-    return "Use this record when you need to defend a displayed hydraulic value. The run IDs identify the exact storm executions; the hashes bind their inputs and outputs; QA says whether those executions were accepted. It does not prove calibration, regulatory acceptance, or real-world performance.";
+    return `Use this ${item.title} record when you need to defend the displayed result. The run IDs identify the exact storm executions; the hashes bind their inputs and outputs; QA records how each execution was classified. It does not prove calibration, regulatory acceptance, or real-world performance.`;
   }
   if (item.kind === "assumption") {
     return "This record affects how alternatives are ranked or interpreted, but it is not a hydraulic observation. Confirm its source, units, vintage, and reviewer status before using it in professional work.";
@@ -37,6 +52,7 @@ function explanationFor(item: EvidenceItem): string {
 export function EvidenceRail({ item, projectKind, observability, projectCloudSync, open, onClose }: EvidenceRailProps) {
   const exactEvidence = item.status === "exact";
   const [explanationOpen, setExplanationOpen] = useState(false);
+  const railRef = useRef<HTMLElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const cloudLabel = projectCloudSync ? projectCloudSyncLabel(projectCloudSync) : observabilityLabel(observability);
   const cloudDetail = projectCloudSync ? projectCloudSyncDetail(projectCloudSync) : "No project-level cloud status is available in this interface preview";
@@ -45,11 +61,14 @@ export function EvidenceRail({ item, projectKind, observability, projectCloudSyn
 
   useEffect(() => {
     setExplanationOpen(false);
-    if (open) window.requestAnimationFrame(() => headingRef.current?.focus({ preventScroll: true }));
+    if (open) window.requestAnimationFrame(() => {
+      railRef.current?.scrollTo({ top: 0 });
+      headingRef.current?.focus({ preventScroll: true });
+    });
   }, [item.id, open]);
 
   return (
-    <aside className={`evidence-rail ${open ? "is-open" : ""}`} aria-label="Evidence details" aria-hidden={!open} aria-live="polite">
+    <aside ref={railRef} className={`evidence-rail ${open ? "is-open" : ""}`} aria-label="Evidence details" aria-hidden={!open} aria-live="polite">
       <div className="evidence-topline">
         <div className="evidence-mark"><Icon name="trace" /></div>
         <span>Evidence rail</span>
@@ -105,7 +124,7 @@ export function EvidenceRail({ item, projectKind, observability, projectCloudSyn
       ) : item.runIds && item.runIds.length > 0 && (
         <section className="rail-section">
           <div className="section-label"><Icon name="play" /> Exact run IDs</div>
-          <ul className="run-id-list">{item.runIds.map((runId) => <li key={runId}><code>{runId}</code><span>accepted</span></li>)}</ul>
+          <ul className="run-id-list">{item.runIds.map((runId) => <li key={runId}><code>{runId}</code><span>recorded</span></li>)}</ul>
         </section>
       )}
 
@@ -125,7 +144,7 @@ export function EvidenceRail({ item, projectKind, observability, projectCloudSyn
           <ol>
             <li><span>01</span><div><strong>Materialized input</strong><small>Content-addressed and locally stored</small></div></li>
             <li><span>02</span><div><strong>Exact simulation</strong><small>Executed by the recorded SWMM binary</small></div></li>
-            <li><span>03</span><div><strong>Accepted metric</strong><small>Bound to QA and artifact fingerprints</small></div></li>
+            <li><span>03</span><div><strong>QA-classified metric</strong><small>Bound to QA and artifact fingerprints</small></div></li>
           </ol>
         ) : (
           <ol>

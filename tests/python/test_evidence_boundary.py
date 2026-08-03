@@ -271,7 +271,7 @@ def test_evidence_resolve_rejects_renderer_supplied_claims_and_unknown_jobs(tmp_
         )
 
 
-def test_analysis_plan_rejects_idempotency_reuse_after_model_revision_changes(tmp_path):
+def test_local_analysis_plan_persists_and_rejects_reuse_after_model_revision_changes(tmp_path):
     root = tmp_path / "project"
     repository = ProjectRepository(root)
     repository.create_project(
@@ -279,32 +279,11 @@ def test_analysis_plan_rejects_idempotency_reuse_after_model_revision_changes(tm
         project_kind=ProjectKind.EXISTING,
         project_id="project_1",
     )
-    policy = ProjectDataPolicy(
-        policy_id="policy_1",
-        project_id="project_1",
-        classification="standard_engineering",
-        deployment="wandb_cloud",
-        acknowledged_by="Engineer A",
-    )
-    repository.upsert_project_data_policy(policy)
-    binding = ObservabilityBinding(
-        binding_id="binding_1",
-        project_id="project_1",
-        data_policy_id=policy.policy_id,
-        entity="example-team",
-        external_project="revision-planning",
-        external_project_id="wandb-project-1",
-        deployment="wandb_cloud",
-        verified=True,
-        verified_at="2026-01-01T00:00:00+00:00",
-    )
-    repository.connect_observability_binding(binding)
     first_revision = ModelRevision(
         revision_id=MODEL_REVISION_ID,
         project_id="project_1",
         reason="import",
         model_sha256=MODEL_SHA256,
-        observability_binding_id=binding.binding_id,
         created_by="Engineer A",
     )
     repository.store_model_revision(first_revision)
@@ -313,10 +292,13 @@ def test_analysis_plan_rejects_idempotency_reuse_after_model_revision_changes(tm
         {
             "current_model_revision_id": first_revision.revision_id,
             "current_model_sha256": first_revision.model_sha256,
+            "selected_base_model": "storm.inp",
+            "selected_model_dependencies": {},
         },
     )
     model_path = root / "storm.inp"
     model_path.write_bytes(Path("benchmarks/cc0_reference/reference.inp").read_bytes())
+    (root / "companion.inp").write_bytes(model_path.read_bytes())
     repository.close()
 
     solver = tmp_path / "runswmm"
@@ -357,6 +339,21 @@ def test_analysis_plan_rejects_idempotency_reuse_after_model_revision_changes(tm
         "validation": {"blocking_count": 0},
         "idempotency_key": "same-user-request",
     }
+    with pytest.raises(RPCFault, match="unclassified companion INP"):
+        dispatcher.dispatch(
+            "analysis.plan",
+            params
+            | {
+                "storm_cases": [
+                    {
+                        "storm_id": "companion",
+                        "model_path": "companion.inp",
+                        "dependencies": {},
+                    }
+                ],
+                "idempotency_key": "unclassified-companion-request",
+            },
+        )
     first_plan = dispatcher.dispatch("analysis.plan", params)
     assert first_plan["run_plan"]["model_revision_id"] == MODEL_REVISION_ID
 
@@ -367,7 +364,6 @@ def test_analysis_plan_rejects_idempotency_reuse_after_model_revision_changes(tm
         parent_revision_id=MODEL_REVISION_ID,
         reason="import",
         model_sha256="c" * 64,
-        observability_binding_id=binding.binding_id,
         created_by="Engineer B",
     )
     repository.store_model_revision(second_revision)
@@ -376,6 +372,8 @@ def test_analysis_plan_rejects_idempotency_reuse_after_model_revision_changes(tm
         {
             "current_model_revision_id": second_revision.revision_id,
             "current_model_sha256": second_revision.model_sha256,
+            "selected_base_model": "storm.inp",
+            "selected_model_dependencies": {},
         },
     )
     repository.close()

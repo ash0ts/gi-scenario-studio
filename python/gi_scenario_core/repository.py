@@ -396,6 +396,25 @@ CREATE TABLE IF NOT EXISTS guided_checkpoints (
 """
 
 
+MIGRATION_3 = """
+CREATE TABLE model_revisions_v3 (
+    revision_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
+    parent_revision_id TEXT REFERENCES model_revisions(revision_id),
+    observability_binding_id TEXT REFERENCES observability_bindings(binding_id),
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+INSERT INTO model_revisions_v3(
+    revision_id,project_id,parent_revision_id,observability_binding_id,payload_json,created_at
+)
+SELECT revision_id,project_id,parent_revision_id,observability_binding_id,payload_json,created_at
+FROM model_revisions;
+DROP TABLE model_revisions;
+ALTER TABLE model_revisions_v3 RENAME TO model_revisions;
+"""
+
+
 class ProjectRepository:
     def __init__(self, project_directory: str | Path) -> None:
         self.root = Path(project_directory).resolve()
@@ -444,6 +463,32 @@ class ProjectRepository:
         if version < 2:
             self._connection.executescript(MIGRATION_2)
             self._connection.execute("PRAGMA user_version=2")
+            version = 2
+        if version < 3:
+            # SQLite cannot remove a NOT NULL constraint in place. Rebuild the
+            # revision table while foreign-key enforcement is paused. Execute
+            # each statement inside our own transaction so a failed rebuild or
+            # graph audit cannot leave a committed, half-migrated version 3 DB.
+            self._connection.execute("PRAGMA foreign_keys=OFF")
+            try:
+                self._connection.execute("BEGIN IMMEDIATE")
+                for statement in MIGRATION_3.split(";"):
+                    if statement.strip():
+                        self._connection.execute(statement)
+                violations = self._connection.execute("PRAGMA foreign_key_check").fetchall()
+                if violations:
+                    raise RuntimeError("schema migration found a foreign-key violation")
+                self._connection.execute("PRAGMA user_version=3")
+                self._connection.execute("COMMIT")
+            except BaseException:
+                if self._connection.in_transaction:
+                    self._connection.execute("ROLLBACK")
+                raise
+            finally:
+                self._connection.execute("PRAGMA foreign_keys=ON")
+        violations = self._connection.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            raise RuntimeError("project database contains a foreign-key violation")
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
@@ -1359,6 +1404,54 @@ class ProjectRepository:
                     ),
                 )
             return self.get_observability_binding(validated.project_id)
+
+        previous = self._connection.execute(
+            "SELECT * FROM observability_bindings WHERE project_id=? ORDER BY created_at DESC",
+            (validated.project_id,),
+        ).fetchall()
+        same_destination = next(
+            (
+                row
+                for row in previous
+                if row["entity"] == validated.entity
+                and row["external_project_id"] == validated.external_project_id
+            ),
+            None,
+        )
+        if same_destination is not None:
+            if same_destination["data_policy_id"] != validated.data_policy_id:
+                raise ValueError("reactivated binding must retain the project's data policy")
+            payload["binding_id"] = same_destination["binding_id"]
+            payload["first_upload_at"] = same_destination["first_upload_at"]
+            payload["previous_binding_id"] = same_destination["previous_binding_id"]
+            with self.transaction() as connection:
+                connection.execute(
+                    "UPDATE observability_bindings SET mode=?,verified=1,verified_at=?,"
+                    "active=1,payload_json=?,updated_at=? WHERE binding_id=?",
+                    (
+                        payload["mode"],
+                        payload["verified_at"],
+                        _json(payload),
+                        payload["updated_at"],
+                        same_destination["binding_id"],
+                    ),
+                )
+                connection.execute(
+                    "UPDATE telemetry_outbox SET state='pending',last_error_code=NULL,"
+                    "next_attempt_at=NULL,updated_at=? WHERE project_id=? AND binding_id=? "
+                    "AND state='blocked' AND last_error_code='LOCAL_MODE_ENABLED'",
+                    (
+                        _now(),
+                        validated.project_id,
+                        same_destination["binding_id"],
+                    ),
+                )
+            return self.get_observability_binding(validated.project_id)
+
+        if any(row["first_upload_at"] for row in previous):
+            raise ValueError(
+                "binding destination is immutable after first upload; create a rebind revision"
+            )
         with self.transaction() as connection:
             connection.execute(
                 "INSERT INTO observability_bindings("
@@ -1387,6 +1480,38 @@ class ProjectRepository:
                 ),
             )
         return self.get_observability_binding(validated.project_id)
+
+    def deactivate_observability_binding(self, project_id: str) -> dict[str, Any] | None:
+        """Stop new project cloud work while preserving auditable binding history."""
+
+        self.get_project(project_id)
+        current = self._connection.execute(
+            "SELECT * FROM observability_bindings WHERE project_id=? AND active=1",
+            (project_id,),
+        ).fetchone()
+        if current is None:
+            return None
+        now = _now()
+        with self.transaction() as connection:
+            connection.execute(
+                "UPDATE telemetry_outbox SET state='blocked',"
+                "last_error_code='LOCAL_MODE_ENABLED',next_attempt_at=NULL,updated_at=? "
+                "WHERE project_id=? AND state!='synced'",
+                (now, project_id),
+            )
+            connection.execute(
+                "UPDATE observability_bindings SET active=0,updated_at=? WHERE binding_id=?",
+                (now, current["binding_id"]),
+            )
+        payload = json.loads(current["payload_json"])
+        payload.update(
+            {
+                "binding_id": current["binding_id"],
+                "active": False,
+                "first_upload_at": current["first_upload_at"],
+            }
+        )
+        return payload
 
     def get_observability_binding(self, project_id: str) -> dict[str, Any]:
         row = self._connection.execute(
@@ -1821,12 +1946,13 @@ class ProjectRepository:
         validated = ModelRevision.model_validate(revision)
         payload = validated.model_dump(mode="json")
         with self.transaction() as connection:
-            binding = connection.execute(
-                "SELECT project_id FROM observability_bindings WHERE binding_id=?",
-                (payload["observability_binding_id"],),
-            ).fetchone()
-            if binding is None or binding["project_id"] != payload["project_id"]:
-                raise ValueError("model revision must use a binding owned by the same project")
+            if payload["observability_binding_id"] is not None:
+                binding = connection.execute(
+                    "SELECT project_id FROM observability_bindings WHERE binding_id=?",
+                    (payload["observability_binding_id"],),
+                ).fetchone()
+                if binding is None or binding["project_id"] != payload["project_id"]:
+                    raise ValueError("model revision binding must belong to the same project")
             if payload["parent_revision_id"] is not None:
                 parent = connection.execute(
                     "SELECT project_id FROM model_revisions WHERE revision_id=?",
@@ -1877,12 +2003,15 @@ class ProjectRepository:
             raise ValueError("bundle import may create only an unassessed fitness passport")
 
         with self.transaction() as connection:
-            binding = connection.execute(
-                "SELECT project_id FROM observability_bindings WHERE binding_id=?",
-                (revision_payload["observability_binding_id"],),
-            ).fetchone()
-            if binding is None or binding["project_id"] != revision_payload["project_id"]:
-                raise ValueError("imported model revision must use its project's W&B binding")
+            if revision_payload["observability_binding_id"] is not None:
+                binding = connection.execute(
+                    "SELECT project_id FROM observability_bindings WHERE binding_id=?",
+                    (revision_payload["observability_binding_id"],),
+                ).fetchone()
+                if binding is None or binding["project_id"] != revision_payload["project_id"]:
+                    raise ValueError(
+                        "imported model revision binding must belong to the same project"
+                    )
             connection.execute(
                 "INSERT INTO model_revisions(revision_id,project_id,parent_revision_id,"
                 "observability_binding_id,payload_json,created_at) VALUES(?,?,?,?,?,?)",
@@ -2090,7 +2219,7 @@ class ProjectRepository:
         ).fetchone()
         return {
             "binding": binding,
-            "can_enter_home": bool(binding and binding.get("verified")),
+            "can_enter_home": True,
             "outbox_counts": {row["state"]: int(row["count"]) for row in counts},
             "pending_artifact_bytes": pending_bytes,
             "last_synced_at": last_synced,

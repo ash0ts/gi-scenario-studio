@@ -45,6 +45,9 @@ export interface PractitionerStormCase {
   displayPath: string;
   dependencies: Record<string, string>;
   included: boolean;
+  /** Only the worker-selected authoritative base can enter analysis in the MVP. */
+  stormEligible: boolean;
+  modelRole: "authoritative_base" | "unclassified_companion";
   authorityStatus: "adopted" | "preliminary" | "sensitivity" | "user_defined";
   source: string;
   validation?: ModelValidationResult;
@@ -405,7 +408,10 @@ const safeStormId = (path: string, index: number) => {
   return normalized || `storm-${index + 1}`;
 };
 
-export function initialStormCases(models: ImportedModelSummary[]): PractitionerStormCase[] {
+export function initialStormCases(
+  models: ImportedModelSummary[],
+  authoritativeModelPath?: string,
+): PractitionerStormCase[] {
   const used = new Set<string>();
   return models.map((model, index) => {
     const base = safeStormId(model.modelPath, index);
@@ -413,15 +419,20 @@ export function initialStormCases(models: ImportedModelSummary[]): PractitionerS
     let suffix = 2;
     while (used.has(stormId.toLocaleLowerCase())) stormId = `${base}-${suffix++}`;
     used.add(stormId.toLocaleLowerCase());
+    const authoritative = model.projectPath === authoritativeModelPath;
     return {
       stormId,
       name: model.modelPath.split("/").at(-1) ?? stormId,
       modelPath: model.projectPath,
       displayPath: model.modelPath,
       dependencies: { ...model.dependencies },
-      included: true,
+      included: authoritative,
+      stormEligible: authoritative,
+      modelRole: authoritative ? "authoritative_base" : "unclassified_companion",
       authorityStatus: "user_defined",
-      source: "Imported portable SWMM bundle",
+      source: authoritative
+        ? "Worker-selected authoritative base revision"
+        : "Imported companion INP; semantic role not established",
     };
   });
 }

@@ -400,16 +400,103 @@ def test_account_disconnect_clears_worker_session_and_credentials(tmp_path) -> N
 
     disconnected = dispatcher.dispatch("observability.disconnect", {"scope": "account"})
 
-    assert disconnected["state"] == "AUTHENTICATION_REQUIRED"
+    assert disconnected["state"] == "LOCAL_ONLY"
+    assert disconnected["mode"] == "local"
+    assert disconnected["configured"] is True
+    assert disconnected["provider"] == "none"
+    assert disconnected["disclosureAccepted"] is False
     assert dispatcher.observability.credentials._api_key is None
     assert dispatcher._observability_account is None
 
 
-def test_repository_bootstraps_the_complete_v2_cloud_schema(tmp_path) -> None:
+def test_open_local_project_binds_and_local_mode_authoritatively_stops_sync(tmp_path) -> None:
+    root, project_id, _, _ = _seed_project(tmp_path)
+    dispatcher = _dispatcher(tmp_path)
+
+    account = dispatcher.dispatch("observability.connect", _account_connection_params())
+    assert account["state"] == "CONNECTED"
+    connected = dispatcher.dispatch(
+        "observability.bind_project",
+        {"project_directory": str(root), "project_id": project_id},
+    )
+    assert connected["binding"]["verified"] is True
+    assert connected["can_sync"] is True
+    assert connected["can_use_assistant"] is True
+
+    repository = ProjectRepository(root)
+    try:
+        binding_id = repository.get_observability_binding(project_id)["binding_id"]
+        queued = repository.enqueue_telemetry_envelope(_envelope(root))
+        assert queued["state"] == "pending"
+        first_upload_at = repository.record_first_cloud_upload(project_id)["first_upload_at"]
+    finally:
+        repository.close()
+
+    local = dispatcher.dispatch(
+        "observability.disconnect",
+        {
+            "scope": "project",
+            "project_directory": str(root),
+            "project_id": project_id,
+        },
+    )
+
+    assert local["state"] == "LOCAL_ONLY"
+    assert local["binding"] is None
+    assert local["can_sync"] is False
+    assert local["can_use_assistant"] is False
+    assert (
+        dispatcher.dispatch("observability.get_status", {"scope": "account"})["state"]
+        == "LOCAL_ONLY"
+    )
+    assert dispatcher.observability.credentials._api_key is None
+    repository = ProjectRepository(root)
+    try:
+        with pytest.raises(KeyError, match="active observability binding"):
+            repository.get_observability_binding(project_id)
+        history = repository.list_observability_bindings(project_id)
+        assert len(history) == 1
+        assert history[0]["binding_id"] == binding_id
+        assert history[0]["active"] is False
+        blocked = repository.get_telemetry_outbox_item(queued["outbox_id"])
+        assert blocked["state"] == "blocked"
+        assert blocked["last_error_code"] == "LOCAL_MODE_ENABLED"
+    finally:
+        repository.close()
+
+    with pytest.raises(RPCFault, match="reconnect this project"):
+        dispatcher.dispatch(
+            "observability.retry",
+            {
+                "project_directory": str(root),
+                "project_id": project_id,
+                "outbox_id": queued["outbox_id"],
+            },
+        )
+
+    dispatcher.dispatch("observability.connect", _account_connection_params())
+    reconnected = dispatcher.dispatch(
+        "observability.bind_project",
+        {"project_directory": str(root), "project_id": project_id},
+    )
+    assert reconnected["binding"]["binding_id"] == binding_id
+    assert datetime.fromisoformat(
+        reconnected["binding"]["first_upload_at"]
+    ) == datetime.fromisoformat(first_upload_at)
+    repository = ProjectRepository(root)
+    try:
+        assert len(repository.list_observability_bindings(project_id)) == 1
+        assert repository.get_telemetry_outbox_item(queued["outbox_id"])["state"] == ("pending")
+    finally:
+        repository.close()
+    dispatcher._executor.shutdown(wait=True)
+
+
+def test_repository_bootstraps_the_complete_v3_local_and_cloud_schema(tmp_path) -> None:
     root = tmp_path / "fresh-v2"
     repository = ProjectRepository(root)
     try:
-        assert repository._connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert repository._connection.execute("PRAGMA user_version").fetchone()[0] == 3
         tables = {
             row[0]
             for row in repository._connection.execute(
@@ -428,11 +515,19 @@ def test_repository_bootstraps_the_complete_v2_cloud_schema(tmp_path) -> None:
             "decision_briefs",
             "guided_checkpoints",
         }.issubset(tables)
+        revision_columns = {
+            row["name"]: row
+            for row in repository._connection.execute(
+                "PRAGMA table_info(model_revisions)"
+            ).fetchall()
+        }
+        assert revision_columns["observability_binding_id"]["notnull"] == 0
+        assert repository._connection.execute("PRAGMA foreign_key_check").fetchall() == []
     finally:
         repository.close()
 
 
-def test_connect_is_required_restricted_and_status_unlocks_home(tmp_path) -> None:
+def test_local_work_is_available_and_verified_restricted_binding_unlocks_sync(tmp_path) -> None:
     root, project_id, _, _ = _seed_project(tmp_path)
     wandb = FakeWandb()
     dispatcher = _dispatcher(tmp_path, wandb)
@@ -440,16 +535,25 @@ def test_connect_is_required_restricted_and_status_unlocks_home(tmp_path) -> Non
         "observability.get_status",
         {"scope": "project", "project_directory": str(root), "project_id": project_id},
     )
-    assert before["binding_required"] is True
-    assert before["can_enter_home"] is False
-    with pytest.raises(RPCFault, match="verified Restricted W&B"):
-        dispatcher.dispatch(
-            "guided.open",
-            {"project_directory": str(root), "project_id": project_id},
-        )
+    assert before["state"] == "LOCAL_ONLY"
+    assert before["binding_required"] is False
+    assert before["binding"] is None
+    assert before["can_enter_home"] is True
+    assert before["can_open_project"] is True
+    assert before["can_run_local"] is True
+    assert before["can_sync"] is False
+    assert before["can_use_assistant"] is False
+    guided = dispatcher.dispatch(
+        "guided.open",
+        {"project_directory": str(root), "project_id": project_id},
+    )
+    assert guided["current_step_id"] == "overview"
 
+    dispatcher.observability.credentials.configure("a" * 32, "https://api.wandb.ai")
     connected = _connect(dispatcher, root)
     assert connected["can_enter_home"] is True
+    assert connected["binding_required"] is False
+    assert connected["can_sync"] is True
     assert connected["binding"]["access"] == "Restricted"
     assert connected["binding"]["verified"] is True
     assert wandb.validation_calls == 1

@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 from gi_scenario_core.demo import create_demo_project
+from gi_scenario_core.repository import ProjectRepository
 from gi_scenario_core.rpc_worker import (
     RPCDispatcher,
     _candidate_slots,
@@ -48,6 +49,31 @@ def test_ui_friendly_project_create_never_auto_assesses_model_fitness(tmp_path):
     assert all(
         item["fitnessDisposition"] == "not_assessed" for item in (conceptual, existing, demo)
     )
+
+
+def test_unbound_guided_replay_stays_local_and_queues_no_cloud_work(tmp_path):
+    dispatcher = RPCDispatcher(data_root=tmp_path)
+    project = dispatcher.dispatch("project.create", {"kind": "demo"})
+
+    opened = dispatcher.dispatch(
+        "guided.open",
+        {
+            "project_directory": project["projectDirectory"],
+            "project_id": project["id"],
+        },
+    )
+
+    assert opened["current_step_id"] == "overview"
+    assert opened["cloud_sync_state"] == "local_only"
+    assert opened["fixture"]["fixture_id"] == "cedar_trace_exact_v2"
+    repository = ProjectRepository(project["projectDirectory"])
+    try:
+        assert repository.list_guided_checkpoints(project["id"])
+        assert repository.table_counts()["telemetry_outbox"] == 0
+        with pytest.raises(KeyError):
+            repository.get_observability_binding(project["id"])
+    finally:
+        repository.close()
 
 
 def test_low_level_project_create_requires_explicit_project_kind(tmp_path):

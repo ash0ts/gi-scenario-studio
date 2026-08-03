@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  bindOpenProject,
+  chooseLocalWorkspace,
   formatCloudArtifactBytes,
   hasObservabilityDeepLinks,
   localObservabilityState,
@@ -7,6 +9,7 @@ import {
   observabilityLabel,
   parseObservabilityAccountState,
   parseProjectCloudSyncState,
+  projectCloudActionLabel,
   projectCloudPendingCount,
   projectCloudSyncDetail,
   projectCloudSyncLabel,
@@ -15,11 +18,35 @@ import {
 } from "./observability";
 
 describe("observability presentation", () => {
-  it("keeps the required binding state explicit", () => {
+  it("makes local engineering work the configured default", () => {
     const state = localObservabilityState(true);
-    expect(observabilityLabel(state)).toBe("W&B required");
-    expect(observabilityDetail(state)).toBe("Authentication required");
+    expect(state.state).toBe("LOCAL_ONLY");
+    expect(observabilityLabel(state)).toBe("Local workspace");
+    expect(observabilityDetail(state)).toBe("Cloud sync and assistant are off");
     expect(hasObservabilityDeepLinks(state)).toBe(false);
+  });
+
+  it("validates an unbound project as runnable local evidence", () => {
+    const state = parseProjectCloudSyncState({
+      project_id: "project_local",
+      state: "LOCAL_ONLY",
+      binding_required: false,
+      binding: null,
+      can_enter_home: true,
+      can_open_project: true,
+      can_run_local: true,
+      can_sync: false,
+      can_use_assistant: false,
+      online: false,
+      outbox_counts: {},
+      pending_artifact_bytes: 0,
+      local_authority: true,
+    });
+
+    expect(projectCloudSyncLabel(state)).toBe("Local evidence only");
+    expect(projectCloudSyncDetail(state)).toContain("stay on this device");
+    expect(projectCloudActionLabel(state)).toBe("Connect W&B");
+    expect(projectCloudWandbUrl(state)).toBeNull();
   });
 
   it("labels browser-safe link previews without claiming a cloud connection", () => {
@@ -40,7 +67,7 @@ describe("observability presentation", () => {
     const state = parseProjectCloudSyncState({
       project_id: "project_1",
       state: "FAILED_RETRYING",
-      binding_required: true,
+      binding_required: false,
       binding: {
         binding_id: "binding_1",
         project_id: "project_1",
@@ -76,6 +103,7 @@ describe("observability presentation", () => {
   });
 
   it("validates the account onboarding response through the generated contract", () => {
+    expect(parseObservabilityAccountState(localObservabilityState()).state).toBe("LOCAL_ONLY");
     const state = parseObservabilityAccountState({
       schemaVersion: "2.0",
       scope: "account",
@@ -111,5 +139,97 @@ describe("observability presentation", () => {
     );
     expect(wandbProjectSettingsUrl("javascript:alert(1)", "team", "project")).toBeNull();
     expect(wandbProjectSettingsUrl("https://user:secret@wandb.example", "team", "project")).toBeNull();
+  });
+
+  it("uses the worker to turn an open connected project into honest local-only mode", async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const request = async (method: string, params: Record<string, unknown>) => {
+      calls.push({ method, params });
+      if (method === "observability.disconnect") {
+        return {
+          project_id: "project_1",
+          state: "LOCAL_ONLY",
+          binding_required: false,
+          binding: null,
+          can_enter_home: true,
+          can_open_project: true,
+          can_run_local: true,
+          can_sync: false,
+          can_use_assistant: false,
+          online: false,
+          outbox_counts: { blocked: 2, synced: 1 },
+          pending_artifact_bytes: 512,
+          last_error_code: "LOCAL_MODE_ENABLED",
+          local_authority: true,
+        };
+      }
+      return localObservabilityState();
+    };
+
+    const result = await chooseLocalWorkspace(request, {
+      id: "project_1",
+      projectDirectory: "/project",
+    });
+
+    expect(result.project?.state).toBe("LOCAL_ONLY");
+    expect(result.account.state).toBe("LOCAL_ONLY");
+    expect(calls).toEqual([
+      {
+        method: "observability.disconnect",
+        params: {
+          scope: "project",
+          project_directory: "/project",
+          project_id: "project_1",
+        },
+      },
+      { method: "observability.get_status", params: { scope: "account" } },
+    ]);
+  });
+
+  it("binds the already-open project only when the worker confirms verified sync", async () => {
+    const request = async (method: string, params: Record<string, unknown>) => {
+      expect(method).toBe("observability.bind_project");
+      expect(params).toEqual({ project_directory: "/project", project_id: "project_1" });
+      return {
+        project_id: "project_1",
+        state: "CONNECTED",
+        binding_required: false,
+        binding: {
+          binding_id: "binding_1",
+          project_id: "project_1",
+          data_policy_id: "policy_1",
+          entity: "stormwater-team",
+          external_project: "gi-project",
+          external_project_id: "provider-project-1",
+          api_base_url: "https://api.wandb.ai",
+          web_base_url: "https://wandb.ai",
+          access: "Restricted",
+          deployment: "wandb_cloud",
+          mode: "online",
+          verified: true,
+          immutable_after_first_upload: true,
+          verified_at: "2026-08-03T12:00:00Z",
+          updated_at: "2026-08-03T12:00:00Z",
+        },
+        can_enter_home: true,
+        can_open_project: true,
+        can_run_local: true,
+        can_sync: true,
+        can_use_assistant: true,
+        online: true,
+        outbox_counts: {},
+        pending_artifact_bytes: 0,
+        local_authority: true,
+      };
+    };
+
+    const result = await bindOpenProject(request, {
+      id: "project_1",
+      projectDirectory: "/project",
+    });
+
+    expect(result.binding?.verified).toBe(true);
+    expect(result.can_sync).toBe(true);
+    expect(result.can_use_assistant).toBe(true);
   });
 });

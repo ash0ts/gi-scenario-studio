@@ -15,7 +15,7 @@ from gi_scenario_core.contracts import (
 )
 from gi_scenario_core.observability import WandbUploadReceipt
 from gi_scenario_core.repository import ProjectRepository
-from gi_scenario_core.rpc_worker import RPCDispatcher
+from gi_scenario_core.rpc_worker import RPCDispatcher, RPCFault
 
 
 class FailingWandb:
@@ -103,8 +103,9 @@ def _seed_completed_analysis(
     *,
     job_count: int,
     analysis_id: str = "analysis_1",
+    analysis_payload: dict[str, object] | None = None,
 ) -> None:
-    repository.create_analysis("project_1", analysis_id=analysis_id)
+    repository.create_analysis("project_1", analysis_id=analysis_id, payload=analysis_payload or {})
     designs = [
         {
             "design_id": f"design_{index:03d}",
@@ -250,6 +251,159 @@ FLOW_UNITS CFS
         repository.close()
 
 
+def test_multi_model_import_requires_and_persists_explicit_base_selection(tmp_path) -> None:
+    root = tmp_path / "project"
+    repository = _new_bound_project(root)
+    repository.close()
+    archive = tmp_path / "multi-model-bundle.zip"
+    model_without_dependency = """[OPTIONS]
+FLOW_UNITS CFS
+[RAINGAGES]
+RG1 INTENSITY 0:05 1 TIMESERIES TS1
+"""
+    selected_model = """[RAINGAGES]
+RG1 INTENSITY 0:05 1 FILE "rain\\event.dat" STA MM
+[OPTIONS]
+FLOW_UNITS CFS
+"""
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+        bundle.writestr("model/base.inp", model_without_dependency)
+        bundle.writestr("model/storm.inp", selected_model)
+        bundle.writestr("model/rain/event.dat", "rain")
+
+    dispatcher = RPCDispatcher(data_root=tmp_path, allowed_roots=[tmp_path])
+    imported = dispatcher.dispatch(
+        "bundle.import",
+        {
+            "archive_path": str(archive),
+            "expected_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+            "expected_bytes": archive.stat().st_size,
+            "destination": str(root / "sources" / "imported-bundle"),
+            "project_directory": str(root),
+            "project_id": "project_1",
+        },
+    )
+
+    assert imported["project_state"]["base_model_selection_required"] is True
+    assert "selected_base_model" not in imported["project_state"]
+    assert "current_model_revision_id" not in imported["project_state"]
+    assert "bundle.select_base_model" in dispatcher.methods
+    with pytest.raises(RPCFault, match="not one of this project's imported candidates"):
+        dispatcher.dispatch(
+            "bundle.select_base_model",
+            {
+                "project_directory": str(root),
+                "project_id": "project_1",
+                "model_path": "sources/imported-bundle/model/not-imported.inp",
+            },
+        )
+
+    selected = dispatcher.dispatch(
+        "bundle.select_base_model",
+        {
+            "project_directory": str(root),
+            "project_id": "project_1",
+            "model_path": "sources/imported-bundle/model/storm.inp",
+        },
+    )
+
+    state = selected["project_state"]
+    assert state["base_model_selection_required"] is False
+    assert state["selected_base_model"] == "sources/imported-bundle/model/storm.inp"
+    assert state["imported_model_roles"] == {
+        "sources/imported-bundle/model/base.inp": "unclassified_companion",
+        "sources/imported-bundle/model/storm.inp": "authoritative_base",
+    }
+    assert state["selected_model_dependencies"] == {
+        r"rain\event.dat": "sources/imported-bundle/model/rain/event.dat"
+    }
+    assert selected["model_validation"] == state["import_preflight"]
+    assert selected["model_validation"]["blocking_count"] > 0
+    repeated = dispatcher.dispatch(
+        "bundle.select_base_model",
+        {
+            "project_directory": str(root),
+            "project_id": "project_1",
+            "model_path": "sources/imported-bundle/model/storm.inp",
+        },
+    )
+    assert (
+        repeated["project_state"]["current_model_revision_id"] == state["current_model_revision_id"]
+    )
+    repository = ProjectRepository(root)
+    try:
+        revision = repository.get_model_revision(state["current_model_revision_id"])
+        passport = repository.get_model_fitness_passport("project_1")
+        assert revision["created_by"] == "bundle.select_base_model"
+        assert revision["model_sha256"] == hashlib.sha256(selected_model.encode()).hexdigest()
+        assert revision["dependency_hashes"] == {
+            r"rain\event.dat": hashlib.sha256(b"rain").hexdigest()
+        }
+        assert passport is not None
+        assert passport["model_revision_id"] == revision["revision_id"]
+        assert passport["disposition"] == "not_assessed"
+        selection_item = repository.get_telemetry_outbox_item(selected["cloud_sync"]["outbox_id"])
+        metadata = selection_item["envelope"]["metadata"]
+        assert selection_item["envelope"]["event_type"] == "bundle_import"
+        assert metadata["event_phase"] == "base_model_selection"
+        assert metadata["model_revision_id"] == revision["revision_id"]
+        assert metadata["model_fitness_passport_id"] == passport["passport_id"]
+        assert metadata["selected_base_model"] == state["selected_base_model"]
+        assert metadata["tables"]["imported_models"]["rows"] == [
+            [
+                "sources/imported-bundle/model/base.inp",
+                "unclassified_companion",
+                hashlib.sha256(model_without_dependency.encode()).hexdigest(),
+            ],
+            [
+                "sources/imported-bundle/model/storm.inp",
+                "authoritative_base",
+                hashlib.sha256(selected_model.encode()).hexdigest(),
+            ],
+        ]
+        assert len(selection_item["envelope"]["artifacts"]) == 2
+    finally:
+        repository.close()
+
+
+def test_base_selection_rejects_source_changed_after_import(tmp_path) -> None:
+    root = tmp_path / "project"
+    repository = _new_bound_project(root)
+    repository.close()
+    archive = tmp_path / "multi-model-bundle.zip"
+    model = "[OPTIONS]\nFLOW_UNITS CFS\n"
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+        bundle.writestr("one.inp", model)
+        bundle.writestr("two.inp", model)
+
+    dispatcher = RPCDispatcher(data_root=tmp_path, allowed_roots=[tmp_path])
+    dispatcher.dispatch(
+        "bundle.import",
+        {
+            "archive_path": str(archive),
+            "expected_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+            "expected_bytes": archive.stat().st_size,
+            "destination": str(root / "sources" / "imported-bundle"),
+            "project_directory": str(root),
+            "project_id": "project_1",
+        },
+    )
+    (root / "sources" / "imported-bundle" / "two.inp").write_text(
+        f"{model}; changed after import\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RPCFault, match="changed after bundle import"):
+        dispatcher.dispatch(
+            "bundle.select_base_model",
+            {
+                "project_directory": str(root),
+                "project_id": "project_1",
+                "model_path": "sources/imported-bundle/two.inp",
+            },
+        )
+
+
 def test_model_attestation_must_target_the_active_imported_revision(tmp_path) -> None:
     root = tmp_path / "project"
     repository = _new_bound_project(root)
@@ -384,13 +538,30 @@ def test_guided_session_upload_failure_does_not_change_replay_evidence(tmp_path)
 def test_completed_analysis_uses_128_job_batches_and_exact_distinct_counts(tmp_path) -> None:
     root = tmp_path / "project"
     repository = _new_bound_project(root)
-    _seed_completed_analysis(repository, job_count=129)
+    _seed_completed_analysis(
+        repository,
+        job_count=129,
+        analysis_payload={
+            "model_revision_id": "revision_selected",
+            "model_sha256": "a" * 64,
+            "model_fitness_passport_id": "fitness_selected",
+            "authoritative_base_model": "sources/imported/model/base.inp",
+        },
+    )
     dispatcher = RPCDispatcher(data_root=tmp_path, allowed_roots=[tmp_path])
 
     queued = dispatcher._queue_completed_analysis_telemetry(repository, "project_1", "analysis_1")
     repeated = dispatcher._queue_completed_analysis_telemetry(repository, "project_1", "analysis_1")
 
     assert [item["envelope"]["metadata"]["job_count"] for item in queued] == [128, 1]
+    expected_lineage = {
+        "model_revision_id": "revision_selected",
+        "model_sha256": "a" * 64,
+        "model_fitness_passport_id": "fitness_selected",
+        "authoritative_base_model": "sources/imported/model/base.inp",
+    }
+    metadata = queued[0]["envelope"]["metadata"]
+    assert {key: metadata[key] for key in expected_lineage} == expected_lineage
     assert [item["outbox_id"] for item in repeated] == [item["outbox_id"] for item in queued]
     assert repository.table_counts()["telemetry_outbox"] == 2
     alternatives = queued[0]["envelope"]["metadata"]["tables"]["evaluated_alternatives"]

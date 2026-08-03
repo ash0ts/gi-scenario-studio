@@ -33,6 +33,7 @@ export function PractitionerModelScreen({
   fitnessBusy,
   error,
   fitnessError,
+  onSelectBaseModel,
   onValidate,
   onAttest,
   onEvidence,
@@ -45,14 +46,18 @@ export function PractitionerModelScreen({
   fitnessBusy: boolean;
   error: string | null;
   fitnessError: string | null;
+  onSelectBaseModel: (modelPath: string) => void;
   onValidate: () => void;
   onAttest: (draft: FitnessAttestationDraft) => void;
   onEvidence: () => void;
   onStep: (step: StepId) => void;
 }) {
   const bundle = project.bundle;
-  const canContinue = Boolean(validation?.structurally_runnable && validation.blocking_count === 0);
+  const selectionRequired = Boolean(bundle?.baseModelSelectionRequired);
+  const selectedModel = bundle?.models.find((model) => model.modelPath === bundle.baseModel);
+  const canContinue = Boolean(!selectionRequired && selectedModel && validation?.structurally_runnable && validation.blocking_count === 0);
   const issues = validation?.issues ?? [];
+  const [selectionDraft, setSelectionDraft] = useState(selectedModel?.projectPath ?? "");
   const [attestationOpen, setAttestationOpen] = useState(false);
   const [reviewer, setReviewer] = useState("");
   const [intendedUse, setIntendedUse] = useState("GI alternatives screening for field and feasibility review");
@@ -67,11 +72,23 @@ export function PractitionerModelScreen({
       copy="The worker reparses the project-contained INP and reports object-level blocking findings, review findings, and corrective actions. Structural acceptance is not calibration or a fitness attestation."
       action={<button className="secondary-button" onClick={onEvidence}><Icon name="trace" /> Inspect import receipt</button>}
     />
+    {selectionRequired && <section className="paper-panel base-model-selection-panel" aria-labelledby="base-model-selection-heading">
+      <div className="panel-heading"><div><p className="eyebrow">Required before checks</p><h2 id="base-model-selection-heading">Choose the unchanged reference model</h2></div><span className="mini-state notice">Selection required</span></div>
+      <p className="base-model-selection-copy">The selected INP becomes the authoritative base revision used for model fitness and unchanged baseline comparisons. Every other INP remains an unclassified companion model and is blocked from analysis until a worker semantic check can prove that it differs only by reviewed storm inputs.</p>
+      <fieldset className="base-model-options">
+        <legend className="sr-only">Imported SWMM models</legend>
+        {bundle?.models.map((model) => <label key={model.projectPath} className={selectionDraft === model.projectPath ? "base-model-option selected" : "base-model-option"}>
+          <input type="radio" name="base-model" value={model.projectPath} checked={selectionDraft === model.projectPath} onChange={() => setSelectionDraft(model.projectPath)} disabled={busy} />
+          <span><strong>{model.modelPath}</strong><small>{Object.keys(model.dependencies).length} resolved dependenc{Object.keys(model.dependencies).length === 1 ? "y" : "ies"}</small></span>
+        </label>)}
+      </fieldset>
+      <div className="button-row"><button className="primary-button" disabled={!selectionDraft || busy} onClick={() => onSelectBaseModel(selectionDraft)}>{busy ? "Recording selection…" : "Use selected model and run checks"}</button><span className="footer-progress"><Icon name="info" /> This creates a new immutable model revision and unassessed fitness passport.</span></div>
+    </section>}
     <section className="model-file-strip">
       <div className="file-glyph"><Icon name="file" /></div>
-      <div><strong>{bundle?.baseModel ?? bundle?.models[0]?.modelPath ?? "No selected model"}</strong><span>{bundle?.displayName ?? "No portable bundle"} · {bundle?.fileCount ?? 0} hashed files</span></div>
+      <div><strong>{selectedModel?.modelPath ?? (selectionRequired ? "Select a base model above" : "No selected model")}</strong><span>{bundle?.displayName ?? "No portable bundle"} · {bundle?.fileCount ?? 0} hashed files</span></div>
       <div className="file-hash"><span>Bundle SHA-256</span><code>{bundle ? `${bundle.sha256.slice(0, 16)}…` : "unavailable"}</code></div>
-      <button className="text-button" onClick={onValidate} disabled={busy || !bundle?.models.length}>{busy ? "Checking…" : validation ? "Run checks again" : "Run model checks"} <Icon name="chevron" /></button>
+      <button className="text-button" onClick={onValidate} disabled={busy || selectionRequired || !selectedModel}>{busy ? "Checking…" : validation ? "Run checks again" : "Run model checks"} <Icon name="chevron" /></button>
     </section>
     {errorText(error)}
     <div className="practitioner-summary-grid">
@@ -86,15 +103,15 @@ export function PractitionerModelScreen({
         <div className="rail-notice"><Icon name="info" /><p>Passing parser checks means the model is structurally runnable. It does not establish calibration, reference matching, intended-use fitness, or regulatory acceptance.</p></div>
       </section>
       <section className="paper-panel practitioner-status-panel">
-        <div className="panel-heading"><div><p className="eyebrow">Imported variants</p><h2>{bundle?.models.length ?? 0} project-contained INP file{bundle?.models.length === 1 ? "" : "s"}</h2></div><span className="mini-state review">Immutable source</span></div>
-        <ul className="compact-file-list">{bundle?.models.map((model) => <li key={model.projectPath}><Icon name="file" /><div><strong>{model.modelPath}</strong><small>{Object.keys(model.dependencies).length} isolated-run dependenc{Object.keys(model.dependencies).length === 1 ? "y" : "ies"}</small></div></li>)}</ul>
+        <div className="panel-heading"><div><p className="eyebrow">Imported model inventory</p><h2>{bundle?.models.length ?? 0} project-contained INP file{bundle?.models.length === 1 ? "" : "s"}</h2></div><span className="mini-state review">Immutable source</span></div>
+        <ul className="compact-file-list">{bundle?.models.map((model) => <li key={model.projectPath}><Icon name="file" /><div><strong>{model.modelPath}</strong><small>{model.projectPath === selectedModel?.projectPath ? "Authoritative base model · analysis eligible · " : "Unclassified companion · excluded from analysis · "}{Object.keys(model.dependencies).length} isolated-run dependenc{Object.keys(model.dependencies).length === 1 ? "y" : "ies"}</small></div></li>)}</ul>
       </section>
     </div>
     <section className="paper-panel practitioner-table-panel">
       <div className="panel-heading"><div><p className="eyebrow">Preflight findings</p><h2>{validation ? `${issues.length} findings` : "Run checks to see object-level evidence"}</h2></div></div>
       <div className="table-wrap"><table><thead><tr><th>Level</th><th>Location</th><th>Finding</th><th>Corrective action</th></tr></thead><tbody>
         {issues.map((issue, index) => <tr key={`${issue.code}-${issue.object_id ?? index}`}><td><span className={`mini-state ${issue.severity === "blocking" ? "notice" : issue.severity === "warning" ? "review" : "pass"}`}>{issue.severity}</span></td><td className="mono">{[issue.section, issue.object_id].filter(Boolean).join(" / ") || "Model"}</td><td>{issue.message}</td><td>{issue.remediation ?? "Review in EPA SWMM."}</td></tr>)}
-        {validation && !issues.length && <tr><td colSpan={4}><div className="table-empty"><strong>No parser findings</strong><span>Continue to confirm which imported models represent the storm cases.</span></div></td></tr>}
+        {validation && !issues.length && <tr><td colSpan={4}><div className="table-empty"><strong>No parser findings</strong><span>Continue to confirm the authoritative analysis case.</span></div></td></tr>}
         {!validation && <tr><td colSpan={4}><div className="table-empty"><strong>No current validation record</strong><span>Run worker checks against the project-contained model.</span></div></td></tr>}
       </tbody></table></div>
     </section>
@@ -113,7 +130,7 @@ export function PractitionerModelScreen({
         <div className="button-row"><button className="primary-button" disabled={!canAttest || fitnessBusy} onClick={() => onAttest({ reviewer: reviewer.trim(), intendedUse: intendedUse.trim(), disposition, limitations: limitations.split(/\r?\n/).map((item) => item.trim()).filter(Boolean) })}>{fitnessBusy ? "Recording…" : "Record versioned attestation"}</button><span className="footer-progress"><Icon name="info" /> Fit-for-stated-use is withheld until a richer evidence capture supports it.</span></div>
       </div>}
     </section>
-    <div className="screen-footer-action"><span className="footer-progress"><Icon name={canContinue ? "check" : "info"} /> {canContinue ? "Zero blocking structural findings" : "A zero-blocker worker report is required"}</span><button className="primary-button" disabled={!canContinue} onClick={() => onStep("storms")}>Confirm storm scope <Icon name="arrow" /></button></div>
+    <div className="screen-footer-action"><span className="footer-progress"><Icon name={canContinue ? "check" : "info"} /> {canContinue ? "Zero blocking structural findings" : selectionRequired ? "Select the authoritative base model before continuing" : "A zero-blocker worker report is required"}</span><button className="primary-button" disabled={!canContinue} onClick={() => onStep("storms")}>Confirm storm scope <Icon name="arrow" /></button></div>
   </div>;
 }
 
@@ -144,28 +161,28 @@ export function PractitionerStormsScreen({
   const ready = selected.length > 0 && !duplicateIds.size && selected.every((storm) => storm.stormId.trim() && storm.validation?.blocking_count === 0);
   return <div className="screen-stack practitioner-screen">
     <PageHeading
-      eyebrow={`Storms / ${selected.length} selected`}
-      title="Confirm the exact model used for each storm"
-      copy="Each checked INP becomes one immutable storm case. The worker copies its resolved dependencies into an isolated run directory and reparses every materialized alternative before execution."
-      action={<button className="secondary-button" onClick={onValidate} disabled={busy || !selected.length}><Icon name="shield" /> {busy ? "Validating selected models…" : "Validate selected models"}</button>}
+      eyebrow={`Storm scope / ${selected.length} analysis case${selected.length === 1 ? "" : "s"}`}
+      title="Confirm the authoritative event case"
+      copy="The MVP runs alternatives only against the worker-selected base revision. Other imported INPs stay visible for provenance, but they are not assumed to be storms and cannot enter analysis without a future semantic compatibility check."
+      action={<button className="secondary-button" onClick={onValidate} disabled={busy || !selected.length}><Icon name="shield" /> {busy ? "Validating base case…" : "Validate base case"}</button>}
     />
     {errorText(error)}
     <section className="paper-panel practitioner-table-panel">
-      <div className="panel-heading"><div><p className="eyebrow">Imported storm variants</p><h2>Select only models that belong in this comparison</h2></div><span className="mini-state notice">Engineer confirmation</span></div>
-      <div className="table-wrap"><table><thead><tr><th>Use</th><th>Storm ID</th><th>Project-contained model</th><th>Dependencies</th><th>Authority</th><th>Worker checks</th></tr></thead><tbody>
+      <div className="panel-heading"><div><p className="eyebrow">Imported model inventory</p><h2>One authoritative case; companions remain blocked</h2></div><span className="mini-state notice">Conservative scope</span></div>
+      <div className="table-wrap"><table><thead><tr><th>Analysis use</th><th>Case ID</th><th>Project-contained model</th><th>Model role</th><th>Dependencies</th><th>Worker checks</th></tr></thead><tbody>
         {storms.map((storm, index) => <tr key={storm.modelPath} className={storm.included ? "selected-row" : ""}>
-          <td><input type="checkbox" checked={storm.included} onChange={(event) => onChange(index, { included: event.target.checked, validation: undefined })} aria-label={`Use ${storm.displayPath} as a storm case`} /></td>
-          <td><label className="table-field"><span className="sr-only">Storm ID for {storm.displayPath}</span><input value={storm.stormId} disabled={!storm.included} onChange={(event) => onChange(index, { stormId: event.target.value, validation: undefined })} aria-invalid={duplicateIds.has(storm.stormId)} /></label>{duplicateIds.has(storm.stormId) && <small className="field-error">Use a unique ID</small>}</td>
+          <td>{storm.stormEligible ? <span className="mini-state pass">Included</span> : <span className="mini-state notice">Blocked</span>}</td>
+          <td><label className="table-field"><span className="sr-only">Case ID for {storm.displayPath}</span><input value={storm.stormId} disabled={!storm.stormEligible} onChange={(event) => onChange(index, { stormId: event.target.value, validation: undefined })} aria-invalid={duplicateIds.has(storm.stormId)} /></label>{duplicateIds.has(storm.stormId) && <small className="field-error">Use a unique ID</small>}</td>
           <td><strong>{storm.displayPath}</strong><small className="table-subcopy">{storm.source}</small></td>
+          <td><span className={`mini-state ${storm.stormEligible ? "pass" : "review"}`}>{storm.modelRole === "authoritative_base" ? "authoritative base" : "unclassified companion"}</span></td>
           <td className="mono">{Object.keys(storm.dependencies).length}</td>
-          <td><span className="mini-state review">{storm.authorityStatus.replace("_", " ")}</span></td>
-          <td>{!storm.included ? "Excluded" : !storm.validation ? <span className="mini-state review">Not checked</span> : storm.validation.blocking_count ? <span className="mini-state notice">{storm.validation.blocking_count} blocking</span> : <span className="mini-state pass">Accepted structurally</span>}</td>
+          <td>{!storm.stormEligible ? "Semantic check required" : !storm.validation ? <span className="mini-state review">Not checked</span> : storm.validation.blocking_count ? <span className="mini-state notice">{storm.validation.blocking_count} blocking</span> : <span className="mini-state pass">Accepted structurally</span>}</td>
         </tr>)}
       </tbody></table></div>
-      <p className="table-note">Storm IDs label exact jobs; they do not assign recurrence intervals or regulatory authority. Imported source metadata remains user-defined until a richer storm-provenance write contract is available.</p>
+      <p className="table-note">The case ID labels exact jobs; it does not assign a recurrence interval or regulatory authority. Companion INPs are retained and hashed, but excluded because filename differences alone cannot establish storm-only equivalence.</p>
     </section>
-    <section className="paper-panel adverse-strip"><Icon name="info" /><div><strong>One model can be one valid event case</strong><span>If the INP already contains its rainfall and simulation window, selecting that model creates one exact baseline job plus one job per selected alternative. Multiple INPs should differ only in intended storm inputs and reviewed boundary conditions.</span></div></section>
-    <div className="screen-footer-action"><span className="footer-progress"><Icon name={ready ? "check" : "info"} /> {ready ? `${selected.length} structurally accepted storm case${selected.length === 1 ? "" : "s"}` : "Select, label, and validate at least one storm model"}</span><button className="primary-button" disabled={!ready} onClick={() => onStep("opportunities")}>Define feasible GI slots <Icon name="arrow" /></button></div>
+    <section className="paper-panel adverse-strip"><Icon name="info" /><div><strong>What this analysis will test</strong><span>If the authoritative INP already contains rainfall and a simulation window, it creates one exact baseline job plus one job per selected alternative. Add additional storm cases only after the application can prove and record storm-only semantic differences.</span></div></section>
+    <div className="screen-footer-action"><span className="footer-progress"><Icon name={ready ? "check" : "info"} /> {ready ? "Authoritative case accepted structurally" : "Validate the authoritative base case before continuing"}</span><button className="primary-button" disabled={!ready} onClick={() => onStep("opportunities")}>Define feasible GI slots <Icon name="arrow" /></button></div>
   </div>;
 }
 
@@ -229,13 +246,18 @@ export function PractitionerOpportunitiesScreen({
             <label>Existing units{candidateField(selected, "baseUnits", (patch) => onChange(selectedIndex, patch), { inputMode: "numeric" })}</label>
             <label>Additional-unit range<div className="inline-number-pair">{candidateField(selected, "minimumAdditionalUnits", (patch) => onChange(selectedIndex, patch), { inputMode: "numeric", "aria-label": "Minimum additional units" })}<span>to</span>{candidateField(selected, "maximumAdditionalUnits", (patch) => onChange(selectedIndex, patch), { inputMode: "numeric", "aria-label": "Maximum additional units" })}</div></label>
             <label>Unit area <small>model area units</small>{candidateField(selected, "unitArea", (patch) => onChange(selectedIndex, patch), { inputMode: "decimal" })}</label>
-            <label>Surface width <small>model length units</small>{candidateField(selected, "surfaceWidth", (patch) => onChange(selectedIndex, patch), { inputMode: "decimal" })}</label>
-            <label>From impervious{candidateField(selected, "fromImperviousPercent", (patch) => onChange(selectedIndex, patch), { inputMode: "decimal" })}<small>%</small></label>
-            <label>Initial saturation{candidateField(selected, "initialSaturationPercent", (patch) => onChange(selectedIndex, patch), { inputMode: "decimal" })}<small>%</small></label>
-            <label>Drain-to object <small>optional</small>{candidateField(selected, "drainTo", (patch) => onChange(selectedIndex, patch))}</label>
-            <label>Displaced surface area{candidateField(selected, "displacedSurfaceArea", (patch) => onChange(selectedIndex, patch), { inputMode: "decimal" })}</label>
-            <label className="plain-checkbox"><input type="checkbox" checked={selected.fromPervious} onChange={(event) => onChange(selectedIndex, { fromPervious: event.target.checked })} />Receive runoff from the pervious area</label>
-            <label className="plain-checkbox"><input type="checkbox" checked={selected.routeToPervious} onChange={(event) => onChange(selectedIndex, { routeToPervious: event.target.checked })} />Route treated outflow to the pervious area</label>
+            <details className="form-span practitioner-advanced-fields">
+              <summary>Advanced SWMM LID_USAGE fields <small>Review when the imported usage or routing differs from the defaults</small></summary>
+              <div className="practitioner-form-grid">
+                <label>Surface width <small>model length units</small>{candidateField(selected, "surfaceWidth", (patch) => onChange(selectedIndex, patch), { inputMode: "decimal" })}</label>
+                <label>From impervious{candidateField(selected, "fromImperviousPercent", (patch) => onChange(selectedIndex, patch), { inputMode: "decimal" })}<small>%</small></label>
+                <label>Initial saturation{candidateField(selected, "initialSaturationPercent", (patch) => onChange(selectedIndex, patch), { inputMode: "decimal" })}<small>%</small></label>
+                <label>Drain-to object <small>optional</small>{candidateField(selected, "drainTo", (patch) => onChange(selectedIndex, patch))}</label>
+                <label>Displaced surface area{candidateField(selected, "displacedSurfaceArea", (patch) => onChange(selectedIndex, patch), { inputMode: "decimal" })}</label>
+                <label className="plain-checkbox"><input type="checkbox" checked={selected.fromPervious} onChange={(event) => onChange(selectedIndex, { fromPervious: event.target.checked })} />Receive runoff from the pervious area</label>
+                <label className="plain-checkbox"><input type="checkbox" checked={selected.routeToPervious} onChange={(event) => onChange(selectedIndex, { routeToPervious: event.target.checked })} />Route treated outflow to the pervious area</label>
+              </div>
+            </details>
             <label className="form-span">Feasibility basis<textarea value={selected.feasibilityBasis} onChange={(event) => onChange(selectedIndex, { feasibilityBasis: event.target.value })} placeholder="Record the reviewed footprint, source, known conflicts, and conditions." /></label>
           </div>
           <label className="review-check practitioner-attestation"><input type="checkbox" checked={selected.engineerApproved} onChange={(event) => onChange(selectedIndex, { engineerApproved: event.target.checked })} /><span><Icon name="check" /></span>I confirm this exact subcatchment/control pair and its bounds are approved for screening.</label>
@@ -392,7 +414,7 @@ export function PractitionerCompareScreen({
       <section className="paper-panel practitioner-table-panel"><div className="panel-heading"><div><p className="eyebrow">Alternative-by-alternative</p><h2>Exact hydraulic summaries</h2></div><span className="exact-stamp"><Icon name="shield" /> Direct runs</span></div><div className="table-wrap"><table><thead><tr><th>Design vector</th><th>Aggregate outfall volume</th><th>Δ from baseline</th><th>Maximum outfall peak</th><th>Δ from baseline</th><th>Adverse peak findings</th><th>Exact run evidence</th></tr></thead><tbody>
         {board.alternatives.map((design) => { const volume = aggregateMetric(design, "outfall_volume"); const peak = aggregateMetric(design, "outfall_peak"); return <tr key={design.design_id}><td><strong className="mono">[{design.vector.join(", ")}]</strong><small className="table-subcopy">{design.design_id}</small></td><td className="mono">{formatMetric(volume)}</td><td className="mono">{deltaFrom(baselineVolume, volume)}</td><td className="mono">{formatMetric(peak)}</td><td className="mono">{deltaFrom(baselinePeak, peak)}</td><td>{design.adverse_peak_changes?.length ? <span className="mini-state notice">{design.adverse_peak_changes.length} increases</span> : <span className="mini-state pass">None above tolerance</span>}</td><td><div className="job-chip-list">{traceButtons(design)}</div></td></tr>; })}
         {!board.alternatives.length && <tr><td colSpan={7}><div className="table-empty"><strong>No complete alternative ensembles</strong><span>Inspect excluded designs and exact job states below.</span></div></td></tr>}
-      </tbody></table></div><p className="table-note">Volume sums and maximum peaks are calculated by the worker from the selected exact storm runs. Percent deltas shown here are arithmetic comparisons of those worker-returned values.</p></section>
+      </tbody></table></div><p className="table-note">Volume sums and maximum peaks are calculated by the worker from the selected exact storm runs. Percent deltas shown here are arithmetic comparisons of those worker-returned values.</p><div className="rail-notice caution"><Icon name="warning" /><p>A succeeded solver job may still carry nonblocking QA warnings. Open each storm chip before using an alternative outside this comparison; the Evidence Rail shows its QA classification and findings.</p></div></section>
       {board.baseline && <section className="paper-panel practitioner-status-panel"><div className="panel-heading"><div><p className="eyebrow">Untouched baseline</p><h2>Trace every storm before interpreting deltas</h2></div><div className="job-chip-list">{traceButtons(board.baseline)}</div></div></section>}
       {board.excluded_designs.length > 0 && <section className="paper-panel practitioner-table-panel"><div className="panel-heading"><div><p className="eyebrow">Incomplete evidence</p><h2>{board.excluded_designs.length} designs excluded from the main comparison</h2></div></div><div className="table-wrap"><table><thead><tr><th>Design</th><th>Reason</th><th>Storm job states</th></tr></thead><tbody>{board.excluded_designs.map((design) => <tr key={design.design_id}><td className="mono">{design.design_id}</td><td>{design.reason.replaceAll("_", " ")}</td><td className="mono">{Object.entries(design.job_states).map(([storm, state]) => `${storm}: ${state}`).join(" · ")}</td></tr>)}</tbody></table></div></section>}
       <div className="screen-footer-action"><span className="footer-progress"><Icon name="info" /> Export eligibility remains repository-derived</span><button className="primary-button" onClick={() => onStep("export")}>Check evidence-package gates <Icon name="arrow" /></button></div>
@@ -432,7 +454,7 @@ export function PractitionerExportScreen({
     <PageHeading eyebrow="Export / repository gate" title="Let the evidence decide whether a package can be created" copy="The worker reconstructs selected runs, rehashes artifacts, checks model fitness and adverse-review evidence, then creates the package inside the authoritative project. The renderer cannot supply hydraulic values or hashes." />
     {errorText(error)}
     <div className="export-grid">
-      <section className="paper-panel practitioner-status-panel"><div className="panel-heading"><div><p className="eyebrow">Requested package</p><h2>Choose the claim boundary</h2></div></div><div className="practitioner-form-grid compact"><label>Package type<select value={mode} onChange={(event) => onMode(event.target.value as typeof mode)}><option value="learning">Learning evidence</option><option value="screening">Alternatives screening</option><option value="verified_alternatives">Verified alternatives</option></select></label><label className="plain-checkbox"><input type="checkbox" checked={includeArtifacts} onChange={(event) => onIncludeArtifacts(event.target.checked)} />Include selected INP, RPT, and OUT files</label></div><dl className="practitioner-facts"><div><dt>Selected exact jobs</dt><dd className="mono">{exactJobCount}</dd></div><div><dt>Model Fitness Passport</dt><dd>{passport === undefined ? "Checking…" : passportMissing ? "Not stored" : String(passport.disposition ?? "Stored")}</dd></div><div><dt>Full-network review</dt><dd>{passportMissing ? "Cannot attest through current UI" : "Derived from Decision Brief"}</dd></div></dl><button className="secondary-button" onClick={onValidate} disabled={busy || passportMissing || exactJobCount === 0}>{busy ? "Checking…" : "Validate export eligibility"}</button></section>
+      <section className="paper-panel practitioner-status-panel"><div className="panel-heading"><div><p className="eyebrow">Requested package</p><h2>Choose the claim boundary</h2></div></div><div className="practitioner-form-grid compact"><label>Package type<select value={mode} onChange={(event) => onMode(event.target.value as typeof mode)}><option value="learning">Learning evidence</option><option value="screening">Alternatives screening</option><option value="verified_alternatives">Verified alternatives</option></select></label><label className="plain-checkbox"><input type="checkbox" checked={includeArtifacts} onChange={(event) => onIncludeArtifacts(event.target.checked)} />Include selected INP, RPT, and OUT files</label></div><dl className="practitioner-facts"><div><dt>Selected exact jobs</dt><dd className="mono">{exactJobCount}</dd></div><div><dt>Model Fitness Passport</dt><dd>{passport === undefined ? "Checking…" : passportMissing ? "Not stored" : String(passport.disposition ?? "Stored")}</dd></div><div><dt>Full-network review</dt><dd>{eligibility?.allowed ? "Repository evidence confirmed" : eligibility ? "See repository blockers" : "Checked only during eligibility validation"}</dd></div></dl><button className="secondary-button" onClick={onValidate} disabled={busy || passportMissing || exactJobCount === 0}>{busy ? "Checking…" : "Validate export eligibility"}</button></section>
       <section className="paper-panel practitioner-status-panel"><div className="panel-heading"><div><p className="eyebrow">Repository decision</p><h2>{eligibility ? eligibility.allowed ? "Eligible" : "Blocked" : passportMissing ? "Fitness evidence missing" : "Not checked"}</h2></div><span className={`score-ring ${eligibility?.allowed ? "ready" : ""}`}>{eligibility?.allowed ? "OK" : "—"}</span></div>{passportMissing && <div className="rail-notice caution"><Icon name="warning" /><p>No Model Fitness Passport is stored for the active revision. Reopen a single-model import or return to Model and record an explicit engineer attestation before validating an export.</p></div>}{eligibility && <><ul className="gate-list">{eligibility.blockers.map((item) => <li className="block" key={item}><Icon name="warning" />{item}</li>)}{eligibility.warnings.map((item) => <li key={item}><Icon name="info" />{item}</li>)}{eligibility.allowed && <li className="pass"><Icon name="check" />Every repository-derived gate passed.</li>}</ul><button className="primary-button" onClick={onCreate} disabled={busy || !eligibility.allowed}>{busy ? "Creating package…" : "Create evidence package"}</button></>}</section>
     </div>
     {created && <section className="paper-panel bundle-preview"><div className="panel-heading"><div><p className="eyebrow">Created locally</p><h2>{created.manifest.export_id}</h2></div><span className="mini-state pass">{created.cloud_sync?.state ?? "local"}</span></div><ul>{Object.keys(created.files).map((name) => <li key={name}><span className="file-type">{name.split(".").at(-1)?.toUpperCase()}</span><div><strong>{name}</strong><small>Worker-created and hashed</small></div><Icon name="check" /></li>)}</ul></section>}
