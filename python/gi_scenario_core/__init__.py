@@ -12,9 +12,10 @@ from .contracts import (
     ConceptModelRecipe,
     CostBasis,
     ExactRunResult,
-    ModelReadiness,
+    FitnessDisposition,
+    ModelFitnessPassport,
     ProjectBundle,
-    ReadinessLevel,
+    ProjectKind,
     SimulationBudget,
     SolverJobState,
     StormCase,
@@ -27,12 +28,13 @@ __all__ = [
     "ConceptModelRecipe",
     "CostBasis",
     "ExactRunResult",
-    "ModelReadiness",
+    "FitnessDisposition",
+    "ModelFitnessPassport",
     "ProjectBundle",
-    "ReadinessLevel",
+    "ProjectKind",
     "SimulationBudget",
     "SolverJobState",
     "StormCase",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

@@ -41,9 +41,9 @@ from gi_scenario_core.search import design_id, enumerate_vectors
 from gi_scenario_core.solver import SolverOutcome, SolverRunner, sha256_file
 from gi_scenario_core.swmm import SwmmDocument, tokenize
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "2.0"
 EXTRACTOR_VERSION = "guided-rpt-us-5.2.4-v1"
-FIXTURE_ID = "guided_cc0_exact_v1"
+FIXTURE_ID = "cedar_trace_exact_v2"
 SEARCH_SEED = 424_242
 DESIGN_COUNT = 220
 STORM_COUNT = 4
@@ -51,7 +51,12 @@ BASELINE_JOB_COUNT = STORM_COUNT
 EXPECTED_JOB_COUNT = BASELINE_JOB_COUNT + DESIGN_COUNT * STORM_COUNT
 RAIN_SERIES_NAME = "DESIGN_STORM"
 SYNTHETIC_DATE = date(2026, 1, 1)
-SHORTLIST_DESIGN_SEQUENCES = frozenset({0, 1, 2, 3, 54, 109, 164, 219})
+# The public guided flow teaches four explicit engineering decisions. These
+# alternatives were selected pedagogically after inspecting the original exact
+# fixture; they are not an unbiased benchmark shortlist. Keep their artifacts
+# so every teaching claim can be inspected in EPA SWMM: ALT-014, ALT-017,
+# ALT-109, and ALT-207 (one-based UI identifiers).
+SHORTLIST_DESIGN_SEQUENCES = frozenset({13, 16, 108, 206})
 
 DEFAULT_MODEL = REPOSITORY_ROOT / "benchmarks" / "cc0_reference" / "reference.inp"
 
@@ -777,10 +782,11 @@ def generate_fixture(
             "Generated from the repository's self-authored CC0 model and synthetic storms; "
             "no observed or third-party hydraulic data is incorporated."
         ),
-        "readiness": "DEMO",
+        "project_kind": "demo",
+        "fitness_disposition": "not_assessed",
         "reference_matched": False,
         "reference_comparison": None,
-        "claim": "Exact SWMM results under the documented synthetic assumptions.",
+        "claim": "Direct SWMM 5.2.4 results under the documented synthetic assumptions.",
         "notice": (
             "Synthetic teaching model and storms — not for design, permitting, flood-risk "
             "determination, or representation of an existing drainage system."
@@ -796,8 +802,8 @@ def generate_fixture(
                 "global-optimum claim."
             ),
             (
-                "Only the baseline and a fixed, result-independent shortlist retain full "
-                "INP/RPT/OUT artifacts."
+                "Only the baseline and four pedagogically selected teaching alternatives "
+                "retain full INP/RPT/OUT artifacts."
             ),
             "Metric extraction supports the US-unit SWMM 5.2.4 report layout used by this fixture.",
         ],
@@ -831,7 +837,10 @@ def generate_fixture(
             "baseline_excluded_from_alternatives": True,
             "design_order": designs,
             "shortlist_design_sequences": sorted(SHORTLIST_DESIGN_SEQUENCES),
-            "shortlist_policy": "fixed sequence positions, independent of hydraulic results",
+            "shortlist_policy": (
+                "pedagogical alternatives selected after the original exact fixture; "
+                "not benchmark or optimization evidence"
+            ),
         },
         "candidate_slots": [slot.model_dump(mode="json") for slot in slots],
         "storm_cases": [storm.to_manifest() for storm in STORMS],

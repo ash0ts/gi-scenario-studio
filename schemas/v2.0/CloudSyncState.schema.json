@@ -1,0 +1,251 @@
+{
+  "$defs": {
+    "ObservabilityBinding": {
+      "additionalProperties": false,
+      "properties": {
+        "access": {
+          "const": "Restricted",
+          "default": "Restricted",
+          "title": "Access",
+          "type": "string"
+        },
+        "api_base_url": {
+          "default": "https://api.wandb.ai",
+          "title": "Api Base Url",
+          "type": "string"
+        },
+        "binding_id": {
+          "title": "Binding Id",
+          "type": "string"
+        },
+        "data_policy_id": {
+          "title": "Data Policy Id",
+          "type": "string"
+        },
+        "deployment": {
+          "enum": [
+            "wandb_cloud",
+            "dedicated_cloud",
+            "self_managed"
+          ],
+          "title": "Deployment",
+          "type": "string"
+        },
+        "entity": {
+          "title": "Entity",
+          "type": "string"
+        },
+        "external_project": {
+          "title": "External Project",
+          "type": "string"
+        },
+        "external_project_id": {
+          "title": "External Project Id",
+          "type": "string"
+        },
+        "first_upload_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "First Upload At"
+        },
+        "immutable_after_first_upload": {
+          "const": true,
+          "default": true,
+          "title": "Immutable After First Upload",
+          "type": "boolean"
+        },
+        "mode": {
+          "$ref": "#/$defs/ObservabilityMode",
+          "default": "online"
+        },
+        "previous_binding_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Previous Binding Id"
+        },
+        "project_id": {
+          "title": "Project Id",
+          "type": "string"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "title": "Updated At",
+          "type": "string"
+        },
+        "verified": {
+          "default": false,
+          "title": "Verified",
+          "type": "boolean"
+        },
+        "verified_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Verified At"
+        },
+        "web_base_url": {
+          "default": "https://wandb.ai",
+          "title": "Web Base Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "data_policy_id",
+        "entity",
+        "external_project",
+        "external_project_id",
+        "deployment"
+      ],
+      "title": "ObservabilityBinding",
+      "type": "object"
+    },
+    "ObservabilityMode": {
+      "enum": [
+        "unbound",
+        "online",
+        "offline_queue"
+      ],
+      "title": "ObservabilityMode",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "binding": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ObservabilityBinding"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "binding_required": {
+      "const": true,
+      "default": true,
+      "title": "Binding Required",
+      "type": "boolean"
+    },
+    "can_enter_home": {
+      "default": false,
+      "title": "Can Enter Home",
+      "type": "boolean"
+    },
+    "can_open_project": {
+      "default": false,
+      "title": "Can Open Project",
+      "type": "boolean"
+    },
+    "can_run_local": {
+      "default": false,
+      "title": "Can Run Local",
+      "type": "boolean"
+    },
+    "can_sync": {
+      "default": false,
+      "title": "Can Sync",
+      "type": "boolean"
+    },
+    "can_use_assistant": {
+      "default": false,
+      "title": "Can Use Assistant",
+      "type": "boolean"
+    },
+    "last_error_code": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Last Error Code"
+    },
+    "last_synced_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Last Synced At"
+    },
+    "local_authority": {
+      "const": true,
+      "default": true,
+      "title": "Local Authority",
+      "type": "boolean"
+    },
+    "online": {
+      "default": false,
+      "title": "Online",
+      "type": "boolean"
+    },
+    "outbox_counts": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "title": "Outbox Counts",
+      "type": "object"
+    },
+    "pending_artifact_bytes": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Pending Artifact Bytes",
+      "type": "integer"
+    },
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    },
+    "state": {
+      "default": "AUTHENTICATION_REQUIRED",
+      "enum": [
+        "CONNECTED",
+        "SYNCING",
+        "SYNC_QUEUED_OFFLINE",
+        "FAILED_RETRYING",
+        "AUTHENTICATION_REQUIRED",
+        "BLOCKED_PROJECT_POLICY"
+      ],
+      "title": "State",
+      "type": "string"
+    }
+  },
+  "required": [
+    "project_id"
+  ],
+  "title": "CloudSyncState",
+  "type": "object"
+}

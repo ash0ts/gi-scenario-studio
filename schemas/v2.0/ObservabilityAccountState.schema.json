@@ -1,0 +1,223 @@
+{
+  "additionalProperties": false,
+  "description": "Validated pre-project W&B/Weave onboarding state used by the desktop RPC.",
+  "properties": {
+    "apiBaseUrl": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Apibaseurl"
+    },
+    "configured": {
+      "title": "Configured",
+      "type": "boolean"
+    },
+    "deployment": {
+      "anyOf": [
+        {
+          "enum": [
+            "wandb_cloud",
+            "dedicated_cloud",
+            "self_managed"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Deployment"
+    },
+    "disclosureAccepted": {
+      "title": "Disclosureaccepted",
+      "type": "boolean"
+    },
+    "entity": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Entity"
+    },
+    "excludedCategories": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Excludedcategories",
+      "type": "array"
+    },
+    "externalProjectId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Externalprojectid"
+    },
+    "includedCategories": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Includedcategories",
+      "type": "array"
+    },
+    "lastChecked": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Lastchecked"
+    },
+    "message": {
+      "title": "Message",
+      "type": "string"
+    },
+    "mode": {
+      "enum": [
+        "local",
+        "connected",
+        "error"
+      ],
+      "title": "Mode",
+      "type": "string"
+    },
+    "probes": {
+      "additionalProperties": true,
+      "title": "Probes",
+      "type": "object"
+    },
+    "project": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Project"
+    },
+    "provider": {
+      "enum": [
+        "none",
+        "wandb-weave"
+      ],
+      "title": "Provider",
+      "type": "string"
+    },
+    "schemaVersion": {
+      "const": "2.0",
+      "default": "2.0",
+      "title": "Schemaversion",
+      "type": "string"
+    },
+    "scope": {
+      "const": "account",
+      "default": "account",
+      "title": "Scope",
+      "type": "string"
+    },
+    "sessionId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sessionid"
+    },
+    "state": {
+      "enum": [
+        "CONNECTED",
+        "AUTHENTICATION_REQUIRED",
+        "BLOCKED_PROJECT_POLICY"
+      ],
+      "title": "State",
+      "type": "string"
+    },
+    "wandbUrl": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Wandburl"
+    },
+    "weaveProject": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Weaveproject"
+    },
+    "weaveUrl": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Weaveurl"
+    },
+    "webBaseUrl": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Webbaseurl"
+    }
+  },
+  "required": [
+    "state",
+    "mode",
+    "configured",
+    "provider",
+    "disclosureAccepted",
+    "message"
+  ],
+  "title": "ObservabilityAccountState",
+  "type": "object"
+}

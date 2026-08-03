@@ -1,0 +1,101 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "answer_id": {
+      "title": "Answer Id",
+      "type": "string"
+    },
+    "blocked_numeric_claims": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Blocked Numeric Claims",
+      "type": "array"
+    },
+    "checked_evidence_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Checked Evidence Ids",
+      "type": "array"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "errors": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Errors",
+      "type": "array"
+    },
+    "evaluation_id": {
+      "title": "Evaluation Id",
+      "type": "string"
+    },
+    "feedback_notes": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Feedback Notes"
+    },
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    },
+    "trace_id": {
+      "title": "Trace Id",
+      "type": "string"
+    },
+    "user_feedback": {
+      "anyOf": [
+        {
+          "enum": [
+            "helpful",
+            "not_helpful",
+            "incorrect",
+            "unsafe"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "User Feedback"
+    },
+    "valid": {
+      "title": "Valid",
+      "type": "boolean"
+    },
+    "validator_version": {
+      "default": "deterministic-evidence-validator-v2",
+      "title": "Validator Version",
+      "type": "string"
+    },
+    "warnings": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+    }
+  },
+  "required": [
+    "project_id",
+    "answer_id",
+    "trace_id",
+    "valid"
+  ],
+  "title": "AssistantEvaluationRecord",
+  "type": "object"
+}

@@ -105,6 +105,17 @@ impl PlatformError {
         )
     }
 
+    pub(crate) fn credential(technical_message: impl Into<String>, retryable: bool) -> Self {
+        Self::new(
+            "PLATFORM_CREDENTIAL_STORE",
+            ErrorCategory::Internal,
+            "The W&B credential could not be accessed securely.",
+            technical_message,
+            "Unlock the operating-system credential store and try the W&B connection again.",
+            retryable,
+        )
+    }
+
     fn new(
         code: &'static str,
         category: ErrorCategory,

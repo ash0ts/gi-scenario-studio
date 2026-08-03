@@ -1,0 +1,42 @@
+name: cedar-trace-search-release-gate-v2
+description: >-
+  Hidden-oracle comparison over one immutable 2,800-job direct-SWMM dataset.
+  W&B coordinates replays only; it never controls practitioner analyses.
+method: grid
+metric:
+  name: hypervolume_ratio
+  goal: maximize
+program: python
+command:
+  - ${env}
+  - python
+  - -m
+  - gi_scenario_core.benchmark
+  - ${args}
+  - --wandb
+parameters:
+  dataset:
+    value: benchmarks/exhaustive_exact/dataset.json
+  method:
+    values:
+      - random
+      - sobol
+      - nsga2
+      - sobol_extratrees
+  budget:
+    values:
+      - 64
+      - 128
+      - 256
+  seed:
+    values:
+      - 11
+      - 23
+      - 37
+      - 41
+      - 53
+      - 67
+      - 71
+      - 83
+      - 97
+      - 101

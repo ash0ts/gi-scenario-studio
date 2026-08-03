@@ -1,0 +1,100 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "analysis_id": {
+      "title": "Analysis Id",
+      "type": "string"
+    },
+    "cache_hit": {
+      "default": false,
+      "title": "Cache Hit",
+      "type": "boolean"
+    },
+    "completed_at": {
+      "format": "date-time",
+      "title": "Completed At",
+      "type": "string"
+    },
+    "design_id": {
+      "title": "Design Id",
+      "type": "string"
+    },
+    "exact": {
+      "const": true,
+      "default": true,
+      "title": "Exact",
+      "type": "boolean"
+    },
+    "extractor_version": {
+      "title": "Extractor Version",
+      "type": "string"
+    },
+    "input_sha256": {
+      "title": "Input Sha256",
+      "type": "string"
+    },
+    "metrics": {
+      "additionalProperties": {
+        "type": "number"
+      },
+      "title": "Metrics",
+      "type": "object"
+    },
+    "model_revision_id": {
+      "title": "Model Revision Id",
+      "type": "string"
+    },
+    "output_sha256": {
+      "title": "Output Sha256",
+      "type": "string"
+    },
+    "qa_findings": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Qa Findings",
+      "type": "array"
+    },
+    "qa_status": {
+      "default": "accepted",
+      "enum": [
+        "accepted",
+        "warning",
+        "rejected"
+      ],
+      "title": "Qa Status",
+      "type": "string"
+    },
+    "report_sha256": {
+      "title": "Report Sha256",
+      "type": "string"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "solver_sha256": {
+      "title": "Solver Sha256",
+      "type": "string"
+    },
+    "storm_id": {
+      "title": "Storm Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "analysis_id",
+    "model_revision_id",
+    "design_id",
+    "storm_id",
+    "metrics",
+    "input_sha256",
+    "report_sha256",
+    "solver_sha256",
+    "output_sha256",
+    "extractor_version",
+    "completed_at"
+  ],
+  "title": "ExactRunResult",
+  "type": "object"
+}

@@ -1,0 +1,39 @@
+{
+  "schema_version": "2.0",
+  "story_id": "cedar-trace-screening-v1",
+  "project_name": "Cedar Trace teaching watershed",
+  "definition_source": "python/gi_scenario_core/demo.py",
+  "exact_result_source": "manifest.json",
+  "exact_fixture_id": "cedar_trace_exact_v2",
+  "projection_source": "scripts/generate_guided_ui_fixture.py",
+  "cost_basis_id": "cedar-trace-synthetic-cost-basis-v1",
+  "teaching_alternatives": [
+    {
+      "alternative_id": "ALT-017",
+      "design_sequence": 16,
+      "role": "low_cost_caution"
+    },
+    {
+      "alternative_id": "ALT-207",
+      "design_sequence": 206,
+      "role": "carry_forward_candidate"
+    },
+    {
+      "alternative_id": "ALT-109",
+      "design_sequence": 108,
+      "role": "stronger_over_budget"
+    },
+    {
+      "alternative_id": "ALT-014",
+      "design_sequence": 13,
+      "role": "observed_performance_extreme"
+    }
+  ],
+  "selection_policy": "Declared pedagogical shortlist applied to existing exact results; it is not part of the search benchmark method.",
+  "evidence_availability": {
+    "exact_metrics_and_hashes": "available in manifest.json",
+    "full_artifacts_for_teaching_alternatives": "retained for all four storms per teaching alternative",
+    "optional_rerun": "conditional on a configured, digest-pinned SWMM 5.2.4 executable"
+  },
+  "hydraulic_values_in_this_file": false
+}

@@ -1,0 +1,104 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "basis": {
+      "title": "Basis",
+      "type": "string"
+    },
+    "conditions": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Conditions",
+      "type": "array"
+    },
+    "evidence_claim_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Evidence Claim Ids",
+      "type": "array"
+    },
+    "feasibility_id": {
+      "title": "Feasibility Id",
+      "type": "string"
+    },
+    "footprint_available": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Footprint Available"
+    },
+    "known_conflicts": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Known Conflicts",
+      "type": "array"
+    },
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    },
+    "reviewed_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reviewed At"
+    },
+    "reviewer": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reviewer"
+    },
+    "slot_id": {
+      "title": "Slot Id",
+      "type": "string"
+    },
+    "source_asset_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Source Asset Ids",
+      "type": "array"
+    },
+    "status": {
+      "default": "unreviewed",
+      "enum": [
+        "unreviewed",
+        "feasible",
+        "conditional",
+        "infeasible"
+      ],
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "project_id",
+    "slot_id",
+    "basis"
+  ],
+  "title": "FeasibilityRecord",
+  "type": "object"
+}

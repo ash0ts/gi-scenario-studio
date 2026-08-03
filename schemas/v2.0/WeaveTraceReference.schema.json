@@ -1,0 +1,53 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "call_id": {
+      "title": "Call Id",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "entity": {
+      "title": "Entity",
+      "type": "string"
+    },
+    "external_project": {
+      "title": "External Project",
+      "type": "string"
+    },
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    },
+    "provider_call_id": {
+      "title": "Provider Call Id",
+      "type": "string"
+    },
+    "reference_id": {
+      "title": "Reference Id",
+      "type": "string"
+    },
+    "trace_id": {
+      "title": "Trace Id",
+      "type": "string"
+    },
+    "url": {
+      "title": "Url",
+      "type": "string"
+    }
+  },
+  "required": [
+    "project_id",
+    "call_id",
+    "entity",
+    "external_project",
+    "trace_id",
+    "provider_call_id",
+    "url"
+  ],
+  "title": "WeaveTraceReference",
+  "type": "object"
+}

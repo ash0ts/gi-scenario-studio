@@ -1,0 +1,80 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "analysis_id": {
+      "title": "Analysis Id",
+      "type": "string"
+    },
+    "boundary": {
+      "title": "Boundary",
+      "type": "string"
+    },
+    "energy_kwh": {
+      "minimum": 0,
+      "title": "Energy Kwh",
+      "type": "number"
+    },
+    "exclusions": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Exclusions",
+      "type": "array"
+    },
+    "hardware": {
+      "title": "Hardware",
+      "type": "string"
+    },
+    "method": {
+      "title": "Method",
+      "type": "string"
+    },
+    "observation_id": {
+      "title": "Observation Id",
+      "type": "string"
+    },
+    "sampling_interval_seconds": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sampling Interval Seconds"
+    },
+    "status": {
+      "enum": [
+        "measured",
+        "estimated"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "uncertainty": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Uncertainty"
+    }
+  },
+  "required": [
+    "analysis_id",
+    "boundary",
+    "method",
+    "status",
+    "energy_kwh",
+    "hardware"
+  ],
+  "title": "EnergyObservation",
+  "type": "object"
+}

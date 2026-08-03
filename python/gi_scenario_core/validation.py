@@ -1,21 +1,14 @@
-"""Structural model validation and explicit readiness promotion gates."""
+"""Structural model validation used as evidence in an independent fitness passport."""
 
 from __future__ import annotations
 
 import math
 from collections import defaultdict, deque
-from collections.abc import Iterable
 from typing import Any
 
 from .contracts import (
-    Confidence,
     ContractModel,
-    ModelObjectProvenance,
-    ModelReadiness,
-    ReadinessAttestation,
-    ReadinessLevel,
     Severity,
-    utc_now,
 )
 from .swmm import SwmmDocument, parse_float
 
@@ -30,7 +23,7 @@ class ModelIssue(ContractModel):
     remediation: str | None = None
 
 
-class ReadinessCheck(ContractModel):
+class ModelCheck(ContractModel):
     key: str
     label: str
     status: str
@@ -39,7 +32,7 @@ class ReadinessCheck(ContractModel):
 
 class ValidationReport(ContractModel):
     issues: list[ModelIssue]
-    checks: list[ReadinessCheck]
+    checks: list[ModelCheck]
     section_names: list[str]
     object_counts: dict[str, int]
 
@@ -420,13 +413,13 @@ def validate_model(document: SwmmDocument | str) -> ValidationReport:
             )
 
     checks = [
-        ReadinessCheck(
+        ModelCheck(
             key="syntax_and_sections",
             label="Required SWMM sections",
             status="pass" if not any(i.code == "missing_section" for i in issues) else "block",
             detail="Required simulation, rainfall, and subcatchment sections are present.",
         ),
-        ReadinessCheck(
+        ModelCheck(
             key="connected_to_outlet",
             label="Network connectivity",
             status=(
@@ -439,7 +432,7 @@ def validate_model(document: SwmmDocument | str) -> ValidationReport:
             ),
             detail="Each routing node has a directed path to an outfall.",
         ),
-        ReadinessCheck(
+        ModelCheck(
             key="conduit_geometry",
             label="Conduit geometry",
             status=(
@@ -451,13 +444,13 @@ def validate_model(document: SwmmDocument | str) -> ValidationReport:
             ),
             detail="Conduits have positive length/roughness and a defined cross-section.",
         ),
-        ReadinessCheck(
+        ModelCheck(
             key="solver_baseline",
             label="Baseline solver QA",
             status="not_run",
             detail="Run the pinned SWMM engine to assess continuity, stability, flooding, and surcharge.",
         ),
-        ReadinessCheck(
+        ModelCheck(
             key="parameter_review",
             label="Assumption review",
             status="review",
@@ -474,86 +467,6 @@ def validate_model(document: SwmmDocument | str) -> ValidationReport:
 
 def _format_number(value: float) -> str:
     return f"{value:.6g}"
-
-
-DEFAULT_ENGINEER_ATTESTATIONS = (
-    ("topology", "I reviewed drainage topology and outlet connectivity."),
-    ("geometry", "I reviewed elevations, slopes, sizes, and roughness assumptions."),
-    ("hydrology", "I reviewed subcatchment, infiltration, and initial-condition assumptions."),
-    ("storms", "I reviewed storm sources, status, and boundary assumptions."),
-    ("limitations", "I accept the documented unresolved limitations for screening use."),
-)
-
-
-def default_attestations() -> list[ReadinessAttestation]:
-    return [
-        ReadinessAttestation(key=key, label=label) for key, label in DEFAULT_ENGINEER_ATTESTATIONS
-    ]
-
-
-def promote_readiness(
-    current: ModelReadiness,
-    target: ReadinessLevel,
-    *,
-    validation: ValidationReport,
-    provenance: Iterable[ModelObjectProvenance] = (),
-    attestations: list[ReadinessAttestation] | None = None,
-    reviewer: str | None = None,
-    reference_comparison: dict[str, Any] | None = None,
-) -> ModelReadiness:
-    """Return a new readiness record; never infer promotion from checks alone."""
-
-    rank = {
-        ReadinessLevel.DEMO: 0,
-        ReadinessLevel.CONCEPTUAL: 1,
-        ReadinessLevel.ENGINEER_REVIEWED: 2,
-        ReadinessLevel.REFERENCE_MATCHED: 3,
-    }
-    if rank[target] < rank[current.level]:
-        raise ValueError("readiness demotion requires creating a new revision")
-    if target == current.level:
-        return current
-    if target == ReadinessLevel.ENGINEER_REVIEWED:
-        if validation.blocking_count:
-            raise ValueError("blocking model issues must be resolved before engineer review")
-        accepted = attestations or []
-        required_keys = {key for key, _ in DEFAULT_ENGINEER_ATTESTATIONS}
-        accepted_keys = {item.key for item in accepted if item.accepted}
-        if accepted_keys != required_keys or len(accepted) != len(required_keys):
-            raise ValueError("the complete engineer-review checklist must be explicitly accepted")
-        unreviewed = [
-            item
-            for item in provenance
-            if item.confidence in {Confidence.ASSUMED, Confidence.INFERRED} and not item.reviewed
-        ]
-        if unreviewed:
-            raise ValueError("assumed or inferred parameters remain unreviewed")
-        if not reviewer:
-            raise ValueError("reviewer is required")
-        return ModelReadiness(
-            level=target,
-            attestations=accepted,
-            reviewer=reviewer,
-            unresolved_limitations=current.unresolved_limitations,
-            updated_at=utc_now(),
-        )
-    if target == ReadinessLevel.REFERENCE_MATCHED:
-        if current.level != ReadinessLevel.ENGINEER_REVIEWED:
-            raise ValueError("REFERENCE_MATCHED requires an ENGINEER_REVIEWED project")
-        if not reference_comparison or reference_comparison.get("matched") is not True:
-            raise ValueError("a successful reference comparison object is required")
-        comparison_id = reference_comparison.get("comparison_id")
-        if not comparison_id or not reference_comparison.get("metrics"):
-            raise ValueError("reference comparison requires an ID and compared metrics")
-        return ModelReadiness(
-            level=target,
-            attestations=current.attestations,
-            reviewer=reviewer or current.reviewer,
-            unresolved_limitations=current.unresolved_limitations,
-            reference_comparison_id=str(comparison_id),
-            updated_at=utc_now(),
-        )
-    raise ValueError(f"unsupported readiness transition {current.level} -> {target}")
 
 
 def compare_reference_metrics(

@@ -1,0 +1,123 @@
+{
+  "$defs": {
+    "Confidence": {
+      "enum": [
+        "confirmed",
+        "inferred",
+        "assumed"
+      ],
+      "title": "Confidence",
+      "type": "string"
+    },
+    "ParameterOrigin": {
+      "enum": [
+        "observed",
+        "imported",
+        "derived",
+        "defaulted",
+        "manually_entered"
+      ],
+      "title": "ParameterOrigin",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "confidence": {
+      "$ref": "#/$defs/Confidence"
+    },
+    "formula": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Formula"
+    },
+    "notes": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Notes"
+    },
+    "object_id": {
+      "title": "Object Id",
+      "type": "string"
+    },
+    "object_type": {
+      "title": "Object Type",
+      "type": "string"
+    },
+    "origin": {
+      "$ref": "#/$defs/ParameterOrigin"
+    },
+    "parameter": {
+      "title": "Parameter",
+      "type": "string"
+    },
+    "reviewed": {
+      "default": false,
+      "title": "Reviewed",
+      "type": "boolean"
+    },
+    "reviewer": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reviewer"
+    },
+    "source_asset_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Source Asset Id"
+    },
+    "units": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Units"
+    },
+    "value": {
+      "title": "Value"
+    }
+  },
+  "required": [
+    "object_type",
+    "object_id",
+    "parameter",
+    "value",
+    "origin",
+    "confidence"
+  ],
+  "title": "ModelObjectProvenance",
+  "type": "object"
+}

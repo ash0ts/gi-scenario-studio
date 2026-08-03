@@ -1,0 +1,93 @@
+{
+  "$defs": {
+    "MetricDirection": {
+      "enum": [
+        "minimize",
+        "maximize",
+        "at_most",
+        "at_least"
+      ],
+      "title": "MetricDirection",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "direction": {
+      "$ref": "#/$defs/MetricDirection"
+    },
+    "metric": {
+      "title": "Metric",
+      "type": "string"
+    },
+    "metric_id": {
+      "title": "Metric Id",
+      "type": "string"
+    },
+    "object_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Object Id"
+    },
+    "object_type": {
+      "enum": [
+        "system",
+        "node",
+        "link",
+        "outfall",
+        "lid"
+      ],
+      "title": "Object Type",
+      "type": "string"
+    },
+    "storm_aggregation": {
+      "default": "each",
+      "enum": [
+        "each",
+        "maximum",
+        "minimum",
+        "mean",
+        "weighted_mean"
+      ],
+      "title": "Storm Aggregation",
+      "type": "string"
+    },
+    "threshold": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Threshold"
+    },
+    "units": {
+      "title": "Units",
+      "type": "string"
+    },
+    "weight": {
+      "default": 1,
+      "minimum": 0,
+      "title": "Weight",
+      "type": "number"
+    }
+  },
+  "required": [
+    "object_type",
+    "metric",
+    "units",
+    "direction"
+  ],
+  "title": "MetricSpec",
+  "type": "object"
+}

@@ -1,0 +1,144 @@
+{
+  "$defs": {
+    "LIDType": {
+      "enum": [
+        "BC",
+        "RG",
+        "GR",
+        "IT",
+        "PP",
+        "RB",
+        "RD",
+        "VS"
+      ],
+      "title": "LIDType",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "base_units": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Base Units",
+      "type": "integer"
+    },
+    "displaced_surface_area": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Displaced Surface Area",
+      "type": "number"
+    },
+    "drain_to": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Drain To"
+    },
+    "engineer_approved": {
+      "default": false,
+      "title": "Engineer Approved",
+      "type": "boolean"
+    },
+    "feasibility_basis": {
+      "title": "Feasibility Basis",
+      "type": "string"
+    },
+    "from_impervious_percent": {
+      "default": 100,
+      "maximum": 100,
+      "minimum": 0,
+      "title": "From Impervious Percent",
+      "type": "number"
+    },
+    "from_pervious": {
+      "default": false,
+      "title": "From Pervious",
+      "type": "boolean"
+    },
+    "initial_saturation_percent": {
+      "default": 0,
+      "maximum": 100,
+      "minimum": 0,
+      "title": "Initial Saturation Percent",
+      "type": "number"
+    },
+    "lid_control": {
+      "title": "Lid Control",
+      "type": "string"
+    },
+    "lid_type": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/LIDType"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "max_additional_units": {
+      "minimum": 0,
+      "title": "Max Additional Units",
+      "type": "integer"
+    },
+    "min_additional_units": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Min Additional Units",
+      "type": "integer"
+    },
+    "report_file": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Report File"
+    },
+    "route_to_pervious": {
+      "default": false,
+      "title": "Route To Pervious",
+      "type": "boolean"
+    },
+    "slot_id": {
+      "title": "Slot Id",
+      "type": "string"
+    },
+    "subcatchment_id": {
+      "title": "Subcatchment Id",
+      "type": "string"
+    },
+    "surface_width": {
+      "exclusiveMinimum": 0,
+      "title": "Surface Width",
+      "type": "number"
+    },
+    "unit_area": {
+      "exclusiveMinimum": 0,
+      "title": "Unit Area",
+      "type": "number"
+    }
+  },
+  "required": [
+    "subcatchment_id",
+    "lid_control",
+    "max_additional_units",
+    "unit_area",
+    "surface_width",
+    "feasibility_basis"
+  ],
+  "title": "CandidateSlot",
+  "type": "object"
+}

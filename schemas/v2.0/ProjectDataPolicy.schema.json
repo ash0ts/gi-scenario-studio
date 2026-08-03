@@ -1,0 +1,88 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "acknowledged_at": {
+      "format": "date-time",
+      "title": "Acknowledged At",
+      "type": "string"
+    },
+    "acknowledged_by": {
+      "title": "Acknowledged By",
+      "type": "string"
+    },
+    "classification": {
+      "enum": [
+        "standard_engineering",
+        "critical_infrastructure"
+      ],
+      "title": "Classification",
+      "type": "string"
+    },
+    "deployment": {
+      "enum": [
+        "wandb_cloud",
+        "dedicated_cloud",
+        "self_managed"
+      ],
+      "title": "Deployment",
+      "type": "string"
+    },
+    "full_evidence_sync": {
+      "const": true,
+      "default": true,
+      "title": "Full Evidence Sync",
+      "type": "boolean"
+    },
+    "local_authority": {
+      "const": true,
+      "default": true,
+      "title": "Local Authority",
+      "type": "boolean"
+    },
+    "permitted_categories": {
+      "items": {
+        "enum": [
+          "model",
+          "gis",
+          "storm",
+          "solver_input",
+          "solver_report",
+          "solver_output",
+          "result",
+          "qa",
+          "search_trace",
+          "decision_brief",
+          "export",
+          "benchmark",
+          "assistant_trace"
+        ],
+        "type": "string"
+      },
+      "title": "Permitted Categories",
+      "type": "array"
+    },
+    "policy_id": {
+      "title": "Policy Id",
+      "type": "string"
+    },
+    "prohibited_categories": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Prohibited Categories",
+      "type": "array"
+    },
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "project_id",
+    "classification",
+    "deployment",
+    "acknowledged_by"
+  ],
+  "title": "ProjectDataPolicy",
+  "type": "object"
+}

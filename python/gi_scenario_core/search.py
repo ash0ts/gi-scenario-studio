@@ -279,6 +279,7 @@ def propose_adaptive(
     count: int,
     seed: int,
     exploration_fraction: float = 0.25,
+    benchmark_approved: bool = False,
 ) -> tuple[list[DesignCandidate], dict[str, Any]]:
     """Propose candidates; use ExtraTrees only when eligible and installed.
 
@@ -294,6 +295,17 @@ def propose_adaptive(
         return [], {"method": "exhausted", "ml_eligible": False}
     exploration_count = max(1, math.ceil(count * exploration_fraction))
     qmc, engine = qmc_vectors(parsed_slots, max(count * 32, 256), seed, exclude=seen)
+    if not benchmark_approved:
+        selected = qmc[:count]
+        return _adaptive_candidates(selected, "qmc_production_gate"), {
+            "method": "qmc_production_gate",
+            "engine": engine,
+            "ml_eligible": False,
+            "reason": (
+                "ExtraTrees remains experimental until its version passes the declared "
+                "multi-network benchmark release gates"
+            ),
+        }
     if len(seen) < 64:
         selected = qmc[:count]
         return _adaptive_candidates(selected, "qmc_exploration"), {

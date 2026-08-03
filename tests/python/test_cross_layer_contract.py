@@ -53,6 +53,18 @@ def test_worker_executable_name_matches_python_tauri_ci_and_docs():
         )
 
 
+def test_renderer_cannot_submit_a_plaintext_wandb_credential():
+    wizard = (ROOT / "apps/desktop/src/components/ObservabilityWizard.tsx").read_text(
+        encoding="utf-8"
+    )
+    host = (ROOT / "apps/desktop/src-tauri/src/lib.rs").read_text(encoding="utf-8")
+    assert 'type="password"' not in wizard
+    assert "credential_store" not in wizard
+    assert "credential_prompt_and_store" in wizard
+    assert "credential_prompt_and_store" in host
+    assert "secret: String" not in host
+
+
 def test_published_schema_index_matches_public_contract_source():
     version_directory = ROOT / "schemas" / f"v{SCHEMA_VERSION}"
     index = json.loads((version_directory / "index.json").read_text(encoding="utf-8"))

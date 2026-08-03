@@ -1,0 +1,101 @@
+name: W&B integration
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wandb-integration-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: "3.12"
+  WANDB_CONSOLE: "off"
+  WANDB_DISABLE_CODE: "true"
+  WANDB_DISABLE_GIT: "true"
+  WANDB_ERROR_REPORTING: "false"
+  WANDB_SHOW_RUN: "false"
+
+jobs:
+  restricted-project-roundtrip:
+    name: Restricted binding and artifact hash roundtrip
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment:
+      name: wandb-integration
+    env:
+      WANDB_API_KEY: ${{ secrets.WANDB_SERVICE_ACCOUNT_API_KEY }}
+      WANDB_ENTITY: ${{ secrets.WANDB_SERVICE_ACCOUNT_ENTITY }}
+      WANDB_PROJECT: ${{ vars.WANDB_INTEGRATION_PROJECT }}
+      WANDB_BASE_URL: ${{ vars.WANDB_BASE_URL || 'https://api.wandb.ai' }}
+      WANDB_DEPLOYMENT: ${{ vars.WANDB_DEPLOYMENT || 'wandb_cloud' }}
+      WANDB_MODE: online
+      WANDB_DIR: ${{ runner.temp }}/wandb/run
+      WANDB_CACHE_DIR: ${{ runner.temp }}/wandb/cache
+      WANDB_ARTIFACT_DIR: ${{ runner.temp }}/wandb/artifacts
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python and uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install locked W&B integration dependencies
+        run: uv sync --locked --extra observability
+
+      - name: Check protected integration configuration
+        shell: bash
+        run: |
+          test -n "${WANDB_API_KEY:-}" || {
+            echo "::error::The protected environment has no W&B service-account key."
+            exit 1
+          }
+          test -n "${WANDB_ENTITY:-}" || {
+            echo "::error::The protected environment has no W&B service-account entity."
+            exit 1
+          }
+          test -n "${WANDB_PROJECT:-}" || {
+            echo "::error::The protected environment has no integration project variable."
+            exit 1
+          }
+
+      - name: Verify Restricted access and probe artifact hash
+        shell: bash
+        run: |
+          uv run --no-sync python - <<'PY'
+          import json
+          import os
+
+          from gi_scenario_core.observability import validate_and_probe_from_environment
+
+          result = validate_and_probe_from_environment(
+              entity=os.environ["WANDB_ENTITY"],
+              project=os.environ["WANDB_PROJECT"],
+              deployment=os.environ["WANDB_DEPLOYMENT"],
+          )
+          if result["verified"] is not True or result["access"] != "Restricted":
+              raise SystemExit("W&B project-policy verification failed")
+          digest = result["probe_sha256"]
+          if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+              raise SystemExit("W&B artifact hash roundtrip did not return a SHA-256 digest")
+          print(
+              json.dumps(
+                  {
+                      "verified": result["verified"],
+                      "access": result["access"],
+                      "entity": result["entity"],
+                      "project": result["project"],
+                      "external_project_id": result["external_project_id"],
+                  },
+                  sort_keys=True,
+              )
+          )
+          PY

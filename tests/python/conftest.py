@@ -75,13 +75,16 @@ def exact_result() -> dict:
     return {
         "run_id": "job_exact_1",
         "analysis_id": "analysis_1",
+        "model_revision_id": "revision_1",
         "design_id": "design_1",
         "storm_id": "storm_1",
         "exact": True,
         "metrics": {"flood_volume_m3": 12.5, "peak_flow_cms": 1.2},
         "qa_status": "accepted",
         "input_sha256": "a" * 64,
+        "report_sha256": "d" * 64,
         "solver_sha256": "b" * 64,
         "output_sha256": "c" * 64,
+        "extractor_version": "test-report-extractor-v2",
         "completed_at": "2026-01-01T00:00:00+00:00",
     }

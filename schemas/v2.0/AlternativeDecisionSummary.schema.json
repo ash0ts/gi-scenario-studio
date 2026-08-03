@@ -1,0 +1,113 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "adverse_effects": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Adverse Effects",
+      "type": "array"
+    },
+    "benefits": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Benefits",
+      "type": "array"
+    },
+    "controlling_storm_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Controlling Storm Ids",
+      "type": "array"
+    },
+    "criterion_values": {
+      "additionalProperties": {
+        "type": "number"
+      },
+      "title": "Criterion Values",
+      "type": "object"
+    },
+    "currency": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Currency"
+    },
+    "design_id": {
+      "title": "Design Id",
+      "type": "string"
+    },
+    "evidence_claim_ids": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Evidence Claim Ids",
+      "type": "array"
+    },
+    "exact": {
+      "const": true,
+      "default": true,
+      "title": "Exact",
+      "type": "boolean"
+    },
+    "exact_run_ids": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Exact Run Ids",
+      "type": "array"
+    },
+    "feasibility_record_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Feasibility Record Ids",
+      "type": "array"
+    },
+    "label": {
+      "title": "Label",
+      "type": "string"
+    },
+    "present_value_cost": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Present Value Cost"
+    },
+    "qa_status": {
+      "enum": [
+        "accepted",
+        "warning",
+        "rejected"
+      ],
+      "title": "Qa Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "design_id",
+    "label",
+    "qa_status",
+    "exact_run_ids",
+    "evidence_claim_ids"
+  ],
+  "title": "AlternativeDecisionSummary",
+  "type": "object"
+}

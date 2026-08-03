@@ -1,0 +1,351 @@
+{
+  "$defs": {
+    "AlternativeDecisionSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "adverse_effects": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Adverse Effects",
+          "type": "array"
+        },
+        "benefits": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Benefits",
+          "type": "array"
+        },
+        "controlling_storm_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Controlling Storm Ids",
+          "type": "array"
+        },
+        "criterion_values": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "title": "Criterion Values",
+          "type": "object"
+        },
+        "currency": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Currency"
+        },
+        "design_id": {
+          "title": "Design Id",
+          "type": "string"
+        },
+        "evidence_claim_ids": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence Claim Ids",
+          "type": "array"
+        },
+        "exact": {
+          "const": true,
+          "default": true,
+          "title": "Exact",
+          "type": "boolean"
+        },
+        "exact_run_ids": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Exact Run Ids",
+          "type": "array"
+        },
+        "feasibility_record_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Feasibility Record Ids",
+          "type": "array"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "present_value_cost": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Present Value Cost"
+        },
+        "qa_status": {
+          "enum": [
+            "accepted",
+            "warning",
+            "rejected"
+          ],
+          "title": "Qa Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "design_id",
+        "label",
+        "qa_status",
+        "exact_run_ids",
+        "evidence_claim_ids"
+      ],
+      "title": "AlternativeDecisionSummary",
+      "type": "object"
+    },
+    "DecisionCriterion": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "enum": [
+            "hydraulic",
+            "cost",
+            "adverse_effect",
+            "feasibility",
+            "implementation"
+          ],
+          "title": "Category",
+          "type": "string"
+        },
+        "criterion_id": {
+          "title": "Criterion Id",
+          "type": "string"
+        },
+        "direction": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MetricDirection"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "rationale": {
+          "title": "Rationale",
+          "type": "string"
+        },
+        "storm_aggregation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Storm Aggregation"
+        },
+        "threshold": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Threshold"
+        },
+        "units": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Units"
+        }
+      },
+      "required": [
+        "label",
+        "category",
+        "rationale"
+      ],
+      "title": "DecisionCriterion",
+      "type": "object"
+    },
+    "MetricDirection": {
+      "enum": [
+        "minimize",
+        "maximize",
+        "at_most",
+        "at_least"
+      ],
+      "title": "MetricDirection",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "accepted_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Accepted At"
+    },
+    "alternatives": {
+      "items": {
+        "$ref": "#/$defs/AlternativeDecisionSummary"
+      },
+      "minItems": 1,
+      "title": "Alternatives",
+      "type": "array"
+    },
+    "analysis_id": {
+      "title": "Analysis Id",
+      "type": "string"
+    },
+    "baseline_design_id": {
+      "title": "Baseline Design Id",
+      "type": "string"
+    },
+    "brief_id": {
+      "title": "Brief Id",
+      "type": "string"
+    },
+    "criteria": {
+      "items": {
+        "$ref": "#/$defs/DecisionCriterion"
+      },
+      "minItems": 1,
+      "title": "Criteria",
+      "type": "array"
+    },
+    "engineer": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Engineer"
+    },
+    "evidence_claim_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Evidence Claim Ids",
+      "type": "array"
+    },
+    "full_network_adverse_effects_reviewed": {
+      "default": false,
+      "title": "Full Network Adverse Effects Reviewed",
+      "type": "boolean"
+    },
+    "intended_decision": {
+      "title": "Intended Decision",
+      "type": "string"
+    },
+    "limitations": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Limitations",
+      "type": "array"
+    },
+    "model_fitness_passport_id": {
+      "title": "Model Fitness Passport Id",
+      "type": "string"
+    },
+    "model_revision_id": {
+      "title": "Model Revision Id",
+      "type": "string"
+    },
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    },
+    "recommended_design_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Recommended Design Id"
+    },
+    "selection_rationale": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Selection Rationale",
+      "type": "array"
+    },
+    "status": {
+      "default": "draft",
+      "enum": [
+        "draft",
+        "review_ready",
+        "accepted"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    },
+    "updated_at": {
+      "format": "date-time",
+      "title": "Updated At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "project_id",
+    "analysis_id",
+    "model_revision_id",
+    "title",
+    "baseline_design_id",
+    "intended_decision",
+    "model_fitness_passport_id",
+    "criteria",
+    "alternatives"
+  ],
+  "title": "DecisionBrief",
+  "type": "object"
+}

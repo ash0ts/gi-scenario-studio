@@ -1,4 +1,4 @@
-"""Deterministic evidence exports with readiness, QA, and cost gates."""
+"""Deterministic evidence exports gated by an intended-use fitness passport."""
 
 from __future__ import annotations
 
@@ -14,28 +14,21 @@ from pathlib import Path
 from typing import Any, Literal
 
 from .contracts import (
-    CONCEPTUAL_NOTICE,
+    SCHEMA_VERSION,
     ContractModel,
     CostBasis,
     ExactRunResult,
+    ExportEligibility,
     ExportManifest,
-    ReadinessLevel,
+    FitnessDisposition,
+    ModelFitnessPassport,
 )
-
-DEMO_NOTICE = "Demo project — synthetic teaching output; not for professional use."
 
 
 class ExportGateError(ValueError):
     def __init__(self, messages: list[str]) -> None:
         self.messages = messages
         super().__init__("; ".join(messages))
-
-
-class ExportValidation(ContractModel):
-    allowed: bool
-    mode: str
-    blockers: list[str]
-    warnings: list[str]
 
 
 class EvidenceExport(ContractModel):
@@ -46,14 +39,20 @@ class EvidenceExport(ContractModel):
 
 def validate_export(
     *,
-    mode: Literal["learning", "draft", "verified"],
-    readiness: ReadinessLevel | str,
+    project_id: str,
+    analysis_id: str,
+    mode: Literal["learning", "screening", "verified_alternatives"],
+    model_fitness_passport: ModelFitnessPassport | dict[str, Any],
     results: list[ExactRunResult | dict[str, Any]],
     include_costs: bool = False,
     cost_basis: CostBasis | dict[str, Any] | None = None,
     results_verified: bool = False,
-) -> ExportValidation:
-    readiness = ReadinessLevel(readiness)
+    full_network_adverse_effects_reviewed: bool = False,
+    checked_at: datetime | None = None,
+) -> ExportEligibility:
+    passport = ModelFitnessPassport.model_validate(model_fitness_passport)
+    if passport.project_id != project_id:
+        raise ValueError("Model Fitness Passport belongs to a different project")
     parsed_results = [ExactRunResult.model_validate(item) for item in results]
     blockers: list[str] = []
     warnings: list[str] = []
@@ -63,33 +62,84 @@ def validate_export(
         blockers.append("Every exported hydraulic value must come from an exact SWMM run.")
     if any(item.qa_status == "rejected" for item in parsed_results):
         blockers.append("QA-rejected runs cannot be exported as accepted alternatives.")
-    if mode == "draft" and readiness not in {
-        ReadinessLevel.ENGINEER_REVIEWED,
-        ReadinessLevel.REFERENCE_MATCHED,
-    }:
-        blockers.append("Draft professional exports require ENGINEER_REVIEWED readiness.")
-    if mode == "verified" and readiness != ReadinessLevel.REFERENCE_MATCHED:
-        blockers.append("Verified exports require a successful reference match.")
-    if mode in {"draft", "verified"} and not results_verified:
+    if not results_verified:
+        blockers.append("Exported results must be reconstructed from the project repository.")
+    if mode in {"screening", "verified_alternatives"}:
+        if passport.disposition not in {
+            FitnessDisposition.FIT_FOR_STATED_USE,
+            FitnessDisposition.FIT_WITH_LIMITATIONS,
+        }:
+            blockers.append(
+                "Professional exports require a Model Fitness Passport that is fit for the stated use."
+            )
+        # ``full_network_adverse_effects_reviewed`` is intentionally not an
+        # export authority.  In schema 2.0 it is still a renderer-authored
+        # DecisionBrief field; no repository record yet proves which scan was
+        # reviewed, by whom, or against which immutable analysis revision.
+        # Fail closed until that evidence service exists rather than allowing a
+        # boolean supplied through an RPC payload to unlock a professional
+        # package.
         blockers.append(
-            "Professional exports require results verified against the project repository."
+            "Professional exports are unavailable in this source MVP until a "
+            "repository-backed full-network adverse-effect review record is implemented."
+        )
+    if mode == "verified_alternatives":
+        if passport.disposition != FitnessDisposition.FIT_FOR_STATED_USE:
+            blockers.append(
+                "Verified-alternatives exports require fit_for_stated_use without unresolved review criteria."
+            )
+        # A claim whose type happens to be ``reference_comparison`` is not an
+        # authoritative comparison result.  The source MVP has no persisted,
+        # revision-bound comparison service, so verified exports must remain
+        # impossible even when such a claim appears in a passport.
+        blockers.append(
+            "Verified-alternatives exports are unavailable until a repository-backed "
+            "successful reference comparison is implemented."
         )
     if include_costs:
         if cost_basis is None:
             blockers.append("Cost results require a documented CostBasis.")
         elif not CostBasis.model_validate(cost_basis).confirmed:
             blockers.append("CostBasis must be explicitly confirmed before export.")
-    if readiness == ReadinessLevel.CONCEPTUAL:
-        warnings.append(CONCEPTUAL_NOTICE)
-    if readiness == ReadinessLevel.DEMO:
-        warnings.append(DEMO_NOTICE)
+    if passport.disposition == FitnessDisposition.NOT_ASSESSED:
+        warnings.append(
+            "Model fitness has not been assessed; this package is limited to learning evidence."
+        )
+    if passport.disposition == FitnessDisposition.NOT_FIT:
+        warnings.append("The model is not fit for the stated use recorded in the passport.")
+    warnings.extend(passport.unresolved_limitations)
     if any(item.qa_status == "warning" for item in parsed_results):
         warnings.append("One or more exact runs contain acknowledged QA warnings.")
-    return ExportValidation(
+    required_evidence_ids = sorted(
+        {
+            *(claim.claim_id for claim in passport.evidence_claims),
+            *(result.run_id for result in parsed_results),
+        }
+    )
+    eligibility_seed = json.dumps(
+        {
+            "project_id": project_id,
+            "analysis_id": analysis_id,
+            "passport_id": passport.passport_id,
+            "mode": mode,
+            "runs": [result.run_id for result in parsed_results],
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return ExportEligibility(
+        eligibility_id=f"eligibility_{hashlib.sha256(eligibility_seed.encode()).hexdigest()[:24]}",
+        project_id=project_id,
+        analysis_id=analysis_id,
+        passport_id=passport.passport_id,
+        model_revision_id=passport.model_revision_id,
+        fitness_disposition=passport.disposition,
+        requested_package=mode,
         allowed=not blockers,
-        mode=mode,
         blockers=blockers,
         warnings=warnings,
+        required_evidence_ids=required_evidence_ids,
+        checked_at=checked_at or datetime.now(UTC),
     )
 
 
@@ -99,8 +149,8 @@ def create_evidence_bundle(
     project_id: str,
     project_title: str,
     analysis_id: str,
-    mode: Literal["learning", "draft", "verified"],
-    readiness: ReadinessLevel | str,
+    mode: Literal["learning", "screening", "verified_alternatives"],
+    model_fitness_passport: ModelFitnessPassport | dict[str, Any],
     results: list[ExactRunResult | dict[str, Any]],
     input_hashes: dict[str, str],
     solver_sha256: str,
@@ -111,45 +161,45 @@ def create_evidence_bundle(
     include_costs: bool = False,
     cost_basis: CostBasis | dict[str, Any] | None = None,
     results_verified: bool = False,
+    full_network_adverse_effects_reviewed: bool = False,
     attachments: dict[str, bytes] | None = None,
     created_at: datetime | None = None,
 ) -> EvidenceExport:
+    created_at = created_at or datetime.now(UTC)
     validation = validate_export(
         mode=mode,
-        readiness=readiness,
+        project_id=project_id,
+        analysis_id=analysis_id,
+        model_fitness_passport=model_fitness_passport,
         results=results,
         include_costs=include_costs,
         cost_basis=cost_basis,
         results_verified=results_verified,
+        full_network_adverse_effects_reviewed=full_network_adverse_effects_reviewed,
+        checked_at=created_at,
     )
     if not validation.allowed:
         raise ExportGateError(validation.blockers)
-    readiness = ReadinessLevel(readiness)
+    passport = ModelFitnessPassport.model_validate(model_fitness_passport)
     parsed_results = sorted(
         [ExactRunResult.model_validate(item) for item in results],
         key=lambda item: (item.design_id, item.storm_id, item.run_id),
     )
     destination = Path(destination).resolve()
     destination.mkdir(parents=True, exist_ok=True)
-    created_at = created_at or datetime.now(UTC)
-    notice = (
-        CONCEPTUAL_NOTICE
-        if readiness == ReadinessLevel.CONCEPTUAL
-        else DEMO_NOTICE
-        if readiness == ReadinessLevel.DEMO
-        else None
-    )
+    notice = _fitness_notice(passport)
     claims = [
         "Exact SWMM result under documented assumptions.",
         "Nondominated labels, when present, apply only among exact alternatives evaluated.",
         "Alternatives were tested against the selected storm cases.",
     ]
     payload = {
-        "schema_version": "1.0",
+        "schema_version": SCHEMA_VERSION,
         "project": {"project_id": project_id, "title": project_title},
         "analysis_id": analysis_id,
         "mode": mode,
-        "readiness": readiness.value,
+        "model_fitness_passport": passport.model_dump(mode="json"),
+        "export_eligibility": validation.model_dump(mode="json"),
         "created_at": created_at.isoformat(),
         "notice": notice,
         "claims": claims,
@@ -181,7 +231,10 @@ def create_evidence_bundle(
     manifest = ExportManifest(
         project_id=project_id,
         analysis_id=analysis_id,
-        readiness=readiness,
+        model_revision_id=passport.model_revision_id,
+        model_fitness_passport_id=passport.passport_id,
+        export_eligibility_id=validation.eligibility_id,
+        package_type=mode,
         created_at=created_at,
         input_hashes=dict(sorted(input_hashes.items())),
         solver_sha256=solver_sha256,
@@ -190,7 +243,7 @@ def create_evidence_bundle(
         files=dict(sorted(file_hashes.items())),
         assumptions=assumptions or [],
         accepted_exceptions=accepted_exceptions or [],
-        conceptual_notice=notice,
+        fitness_notice=notice,
     )
     content["manifest.json"] = (
         json.dumps(manifest.model_dump(mode="json"), indent=2, sort_keys=True, ensure_ascii=False)
@@ -223,9 +276,12 @@ def _results_csv(results: list[ExactRunResult], notice: str | None) -> str:
             "storm_id",
             "exact",
             "qa_status",
+            "model_revision_id",
             "input_sha256",
+            "report_sha256",
             "solver_sha256",
             "output_sha256",
+            "extractor_version",
             *metric_names,
         ]
     )
@@ -238,20 +294,34 @@ def _results_csv(results: list[ExactRunResult], notice: str | None) -> str:
                 item.storm_id,
                 "true",
                 item.qa_status,
+                item.model_revision_id,
                 item.input_sha256,
+                item.report_sha256,
                 item.solver_sha256,
                 item.output_sha256,
+                item.extractor_version,
                 *(item.metrics.get(metric, "") for metric in metric_names),
             ]
         )
     return output.getvalue()
 
 
+def _fitness_notice(passport: ModelFitnessPassport) -> str | None:
+    if passport.disposition == FitnessDisposition.NOT_ASSESSED:
+        return "Model fitness not assessed — learning evidence only."
+    if passport.disposition == FitnessDisposition.NOT_FIT:
+        return "Model not fit for the stated use — do not rely on this package for that decision."
+    if passport.unresolved_limitations:
+        return "Fit for the stated use with the limitations recorded in the Model Fitness Passport."
+    return None
+
+
 def _render_markdown(payload: dict[str, Any]) -> str:
     lines = [
         f"# {payload['project']['title']} — alternatives screening appendix",
         "",
-        f"**Model readiness:** `{payload['readiness']}`  ",
+        (f"**Model fitness:** `{payload['model_fitness_passport']['disposition']}`  "),
+        f"**Intended use:** {payload['model_fitness_passport']['intended_use']}  ",
         f"**Analysis:** `{payload['analysis_id']}`  ",
         f"**Created:** {payload['created_at']}",
         "",
@@ -312,7 +382,7 @@ th{{background:#e4efed}} code{{font-family:ui-monospace,monospace}}
 @media print{{body{{background:white}} main{{max-width:none;padding:0}}}}
 </style></head><body><main>
 <h1>{html.escape(payload["project"]["title"])}</h1>
-<p class="meta">Readiness: {html.escape(payload["readiness"])}<br>Analysis: {html.escape(payload["analysis_id"])}<br>Created: {html.escape(payload["created_at"])}</p>
+<p class="meta">Model fitness: {html.escape(payload["model_fitness_passport"]["disposition"])}<br>Intended use: {html.escape(payload["model_fitness_passport"]["intended_use"])}<br>Analysis: {html.escape(payload["analysis_id"])}<br>Created: {html.escape(payload["created_at"])}</p>
 {notice}<h2>Evidence claims</h2><ul>{claims}</ul>
 <h2>Selected exact runs</h2><table><thead><tr><th>Design</th><th>Storm</th><th>QA</th><th>Exact</th><th>Metrics</th></tr></thead><tbody>{"".join(rows)}</tbody></table>
 <h2>Assumptions</h2><ul>{assumptions or "<li>See manifest and project assumption ledger.</li>"}</ul>

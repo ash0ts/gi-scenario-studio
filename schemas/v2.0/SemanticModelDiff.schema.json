@@ -1,0 +1,76 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "added_objects": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Added Objects",
+      "type": "array"
+    },
+    "affected_artifact_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Affected Artifact Ids",
+      "type": "array"
+    },
+    "changed_parameters": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Changed Parameters",
+      "type": "array"
+    },
+    "commands": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Commands",
+      "type": "array"
+    },
+    "diff_id": {
+      "title": "Diff Id",
+      "type": "string"
+    },
+    "from_revision_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "From Revision Id"
+    },
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    },
+    "removed_objects": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Removed Objects",
+      "type": "array"
+    },
+    "sha256": {
+      "title": "Sha256",
+      "type": "string"
+    },
+    "to_revision_id": {
+      "title": "To Revision Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "project_id",
+    "to_revision_id",
+    "sha256"
+  ],
+  "title": "SemanticModelDiff",
+  "type": "object"
+}

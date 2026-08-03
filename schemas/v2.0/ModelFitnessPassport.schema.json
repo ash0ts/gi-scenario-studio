@@ -1,0 +1,265 @@
+{
+  "$defs": {
+    "EvidenceClaim": {
+      "additionalProperties": false,
+      "properties": {
+        "claim_id": {
+          "title": "Claim Id",
+          "type": "string"
+        },
+        "claim_type": {
+          "enum": [
+            "exact_metric",
+            "qa",
+            "assumption",
+            "cost",
+            "provenance",
+            "fitness",
+            "reference_comparison"
+          ],
+          "title": "Claim Type",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "evidence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "exact": {
+          "default": false,
+          "title": "Exact",
+          "type": "boolean"
+        },
+        "metric_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Metric Id"
+        },
+        "object_id": {
+          "default": "",
+          "title": "Object Id",
+          "type": "string"
+        },
+        "project_id": {
+          "title": "Project Id",
+          "type": "string"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Run Id"
+        },
+        "statement": {
+          "title": "Statement",
+          "type": "string"
+        },
+        "units": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Units"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "project_id",
+        "claim_type",
+        "statement",
+        "evidence_ids"
+      ],
+      "title": "EvidenceClaim",
+      "type": "object"
+    },
+    "FitnessDisposition": {
+      "enum": [
+        "not_assessed",
+        "fit_for_stated_use",
+        "fit_with_limitations",
+        "not_fit"
+      ],
+      "title": "FitnessDisposition",
+      "type": "string"
+    },
+    "ModelFitnessCriterion": {
+      "additionalProperties": false,
+      "properties": {
+        "criterion_id": {
+          "title": "Criterion Id",
+          "type": "string"
+        },
+        "evidence_claim_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Claim Ids",
+          "type": "array"
+        },
+        "finding": {
+          "title": "Finding",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "remediation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Remediation"
+        },
+        "status": {
+          "enum": [
+            "pass",
+            "review",
+            "block",
+            "not_assessed"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "criterion_id",
+        "label",
+        "status",
+        "finding"
+      ],
+      "title": "ModelFitnessCriterion",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Independent, intended-use decision gate signed by an engineer.",
+  "properties": {
+    "criteria": {
+      "items": {
+        "$ref": "#/$defs/ModelFitnessCriterion"
+      },
+      "title": "Criteria",
+      "type": "array"
+    },
+    "disposition": {
+      "$ref": "#/$defs/FitnessDisposition",
+      "default": "not_assessed"
+    },
+    "evidence_claims": {
+      "items": {
+        "$ref": "#/$defs/EvidenceClaim"
+      },
+      "title": "Evidence Claims",
+      "type": "array"
+    },
+    "intended_use": {
+      "title": "Intended Use",
+      "type": "string"
+    },
+    "issued_at": {
+      "format": "date-time",
+      "title": "Issued At",
+      "type": "string"
+    },
+    "model_revision_id": {
+      "title": "Model Revision Id",
+      "type": "string"
+    },
+    "passport_id": {
+      "title": "Passport Id",
+      "type": "string"
+    },
+    "permitted_outputs": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Permitted Outputs",
+      "type": "array"
+    },
+    "prohibited_uses": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Prohibited Uses",
+      "type": "array"
+    },
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    },
+    "reviewer": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reviewer"
+    },
+    "reviewer_attested": {
+      "default": false,
+      "title": "Reviewer Attested",
+      "type": "boolean"
+    },
+    "unresolved_limitations": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Unresolved Limitations",
+      "type": "array"
+    }
+  },
+  "required": [
+    "project_id",
+    "model_revision_id",
+    "intended_use"
+  ],
+  "title": "ModelFitnessPassport",
+  "type": "object"
+}

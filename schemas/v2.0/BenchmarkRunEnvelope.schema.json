@@ -1,0 +1,92 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "analysis_id": {
+      "title": "Analysis Id",
+      "type": "string"
+    },
+    "artifact_manifest_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Artifact Manifest Ids",
+      "type": "array"
+    },
+    "benchmark_id": {
+      "title": "Benchmark Id",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "exact_design_count": {
+      "minimum": 0,
+      "title": "Exact Design Count",
+      "type": "integer"
+    },
+    "exact_job_count": {
+      "minimum": 0,
+      "title": "Exact Job Count",
+      "type": "integer"
+    },
+    "fixture_id": {
+      "title": "Fixture Id",
+      "type": "string"
+    },
+    "fixture_license": {
+      "title": "Fixture License",
+      "type": "string"
+    },
+    "metrics": {
+      "additionalProperties": {
+        "type": "number"
+      },
+      "title": "Metrics",
+      "type": "object"
+    },
+    "nondominated_count": {
+      "minimum": 0,
+      "title": "Nondominated Count",
+      "type": "integer"
+    },
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    },
+    "qa_rejected_count": {
+      "minimum": 0,
+      "title": "Qa Rejected Count",
+      "type": "integer"
+    },
+    "search_method": {
+      "title": "Search Method",
+      "type": "string"
+    },
+    "seed": {
+      "title": "Seed",
+      "type": "integer"
+    },
+    "solver_sha256": {
+      "title": "Solver Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "benchmark_id",
+    "project_id",
+    "analysis_id",
+    "fixture_id",
+    "fixture_license",
+    "solver_sha256",
+    "search_method",
+    "seed",
+    "exact_job_count",
+    "exact_design_count",
+    "nondominated_count",
+    "qa_rejected_count"
+  ],
+  "title": "BenchmarkRunEnvelope",
+  "type": "object"
+}

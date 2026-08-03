@@ -3,9 +3,13 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
+from gi_scenario_core.contracts import (
+    EvidenceClaim,
+    ModelFitnessCriterion,
+    ModelFitnessPassport,
+    ProjectKind,
+)
 from gi_scenario_core.export import (
-    CONCEPTUAL_NOTICE,
-    DEMO_NOTICE,
     create_evidence_bundle,
     validate_export,
 )
@@ -13,8 +17,61 @@ from gi_scenario_core.repository import ProjectRepository
 from gi_scenario_core.solver import SolverRunner, parse_report_qa, physics_cache_key
 
 
-def _project(repo, readiness="CONCEPTUAL"):
-    return repo.create_project(title="Fixture", readiness=readiness, project_id="project_1")
+def _project(repo, project_kind=ProjectKind.CONCEPTUAL):
+    return repo.create_project(title="Fixture", project_kind=project_kind, project_id="project_1")
+
+
+def _fitness_passport(
+    disposition: str = "fit_for_stated_use",
+    *,
+    reference_comparison: bool = False,
+) -> ModelFitnessPassport:
+    claims = [
+        EvidenceClaim(
+            claim_id="claim_fitness",
+            project_id="project_1",
+            claim_type="fitness",
+            statement="Model checks support the stated screening use.",
+            evidence_ids=["validation:model"],
+        )
+    ]
+    if reference_comparison:
+        claims.append(
+            EvidenceClaim(
+                claim_id="claim_reference",
+                project_id="project_1",
+                claim_type="reference_comparison",
+                statement="Approved reference comparison passed stated tolerances.",
+                evidence_ids=["reference:comparison"],
+            )
+        )
+    if disposition == "not_assessed":
+        return ModelFitnessPassport(
+            passport_id="passport_1",
+            project_id="project_1",
+            model_revision_id="revision_1",
+            intended_use="GI alternatives screening",
+        )
+    status = "block" if disposition == "not_fit" else "pass"
+    return ModelFitnessPassport(
+        passport_id="passport_1",
+        project_id="project_1",
+        model_revision_id="revision_1",
+        intended_use="GI alternatives screening",
+        disposition=disposition,
+        criteria=[
+            ModelFitnessCriterion(
+                criterion_id="model_quality",
+                label="Model quality",
+                status=status,
+                finding="Engineer review recorded.",
+                evidence_claim_ids=["claim_fitness"],
+            )
+        ],
+        evidence_claims=claims,
+        reviewer="Engineer A",
+        reviewer_attested=True,
+    )
 
 
 def test_repository_state_transitions_are_guarded_and_idempotent(tmp_path):
@@ -33,42 +90,19 @@ def test_repository_state_transitions_are_guarded_and_idempotent(tmp_path):
         repo.close()
 
 
-def test_repository_readiness_rejects_arbitrary_or_skipped_promotion(tmp_path):
+def test_project_kind_and_model_fitness_are_independent_repository_records(tmp_path):
     repo = ProjectRepository(tmp_path / "project")
     try:
-        _project(repo, "CONCEPTUAL")
-        with pytest.raises(ValueError, match="cannot be skipped"):
-            repo.record_readiness(
-                "project_1",
-                "REFERENCE_MATCHED",
-                gate_evidence={"reference_comparison": {"matched": True}},
-            )
-        with pytest.raises(ValueError, match="complete"):
-            repo.record_readiness(
-                "project_1",
-                "ENGINEER_REVIEWED",
-                gate_evidence={
-                    "validation": {"blocking_count": 0},
-                    "attestations": [{"key": "topology", "accepted": True}],
-                    "reviewer": "Engineer",
-                    "unreviewed_assumption_count": 0,
-                },
-            )
-        evidence = {
-            "validation": {"blocking_count": 0},
-            "attestations": [
-                {"key": key, "accepted": True}
-                for key in ("topology", "geometry", "hydrology", "storms", "limitations")
-            ],
-            "reviewer": "Engineer",
-            "unreviewed_assumption_count": 0,
-        }
-        assert (
-            repo.record_readiness("project_1", "ENGINEER_REVIEWED", gate_evidence=evidence)[
-                "readiness"
-            ]
-            == "ENGINEER_REVIEWED"
-        )
+        project = _project(repo, ProjectKind.CONCEPTUAL)
+        assert project["project_kind"] == "conceptual"
+        assert repo.get_model_fitness_passport("project_1") is None
+
+        # The repository requires a versioned model revision before it will
+        # accept an independently signed fitness passport. The full revision
+        # boundary is exercised by the observability tests; this test verifies
+        # that project kind itself never implies a fitness disposition.
+        assert "fitness" not in project
+        assert "disposition" not in project
     finally:
         repo.close()
 
@@ -108,40 +142,45 @@ def test_content_addressed_blob_is_deduplicated(tmp_path):
         repo.close()
 
 
-def test_export_gates_professional_readiness_and_repository_verification(exact_result):
+def test_export_gates_model_fitness_reference_evidence_and_repository_verification(exact_result):
     check = validate_export(
-        mode="verified",
-        readiness="REFERENCE_MATCHED",
+        project_id="project_1",
+        analysis_id="analysis_1",
+        mode="verified_alternatives",
+        model_fitness_passport=_fitness_passport(reference_comparison=True),
         results=[exact_result],
+        full_network_adverse_effects_reviewed=True,
     )
     assert not check.allowed
     assert any("repository" in item for item in check.blockers)
-    assert validate_export(
-        mode="verified",
-        readiness="REFERENCE_MATCHED",
+    verified = validate_export(
+        project_id="project_1",
+        analysis_id="analysis_1",
+        mode="verified_alternatives",
+        model_fitness_passport=_fitness_passport(reference_comparison=True),
         results=[exact_result],
         results_verified=True,
-    ).allowed
+        full_network_adverse_effects_reviewed=True,
+    )
+    assert not verified.allowed
+    assert any("full-network" in item for item in verified.blockers)
+    assert any("reference comparison" in item for item in verified.blockers)
 
 
-@pytest.mark.parametrize(
-    ("readiness", "notice"),
-    [("CONCEPTUAL", CONCEPTUAL_NOTICE), ("DEMO", DEMO_NOTICE)],
-)
-def test_export_persists_readiness_notice_in_all_human_outputs(
-    tmp_path, exact_result, readiness, notice
-):
+def test_export_persists_fitness_notice_in_all_human_outputs(tmp_path, exact_result):
+    notice = "Model fitness not assessed — learning evidence only."
     result = create_evidence_bundle(
-        tmp_path / readiness,
+        tmp_path / "learning",
         project_id="project_1",
         project_title="Fixture",
         analysis_id="analysis_1",
         mode="learning",
-        readiness=readiness,
+        model_fitness_passport=_fitness_passport("not_assessed"),
         results=[exact_result],
         input_hashes={"base.inp": "a" * 64},
         solver_sha256="b" * 64,
         extractor_version="test",
+        results_verified=True,
         created_at=datetime(2026, 1, 1, tzinfo=UTC),
     )
     for filename in ("results.csv", "screening-appendix.md", "screening-appendix.html"):
@@ -156,11 +195,12 @@ def test_export_is_deterministic_for_fixed_timestamp(tmp_path, exact_result):
         "project_title": "Fixture",
         "analysis_id": "analysis_1",
         "mode": "learning",
-        "readiness": "DEMO",
+        "model_fitness_passport": _fitness_passport("not_assessed"),
         "results": [exact_result],
         "input_hashes": {"base.inp": "a" * 64},
         "solver_sha256": "b" * 64,
         "extractor_version": "test",
+        "results_verified": True,
         "created_at": timestamp,
     }
     first = create_evidence_bundle(tmp_path / "one", **kwargs)
