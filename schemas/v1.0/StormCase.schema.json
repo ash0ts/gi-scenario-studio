@@ -1,0 +1,125 @@
+{
+  "$defs": {
+    "AuthorityStatus": {
+      "enum": [
+        "adopted",
+        "preliminary",
+        "sensitivity",
+        "user_defined"
+      ],
+      "title": "AuthorityStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "aep": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Aep"
+    },
+    "authority_status": {
+      "$ref": "#/$defs/AuthorityStatus"
+    },
+    "boundary_assumptions": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Boundary Assumptions"
+    },
+    "duration_hours": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Duration Hours"
+    },
+    "initial_conditions": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Initial Conditions"
+    },
+    "model_path": {
+      "title": "Model Path",
+      "type": "string"
+    },
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "retrieved_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Retrieved At"
+    },
+    "role": {
+      "title": "Role",
+      "type": "string"
+    },
+    "source": {
+      "title": "Source",
+      "type": "string"
+    },
+    "source_version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Source Version"
+    },
+    "storm_id": {
+      "title": "Storm Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "name",
+    "model_path",
+    "role",
+    "authority_status",
+    "source"
+  ],
+  "title": "StormCase",
+  "type": "object"
+}

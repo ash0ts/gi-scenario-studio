@@ -1,0 +1,23 @@
+{
+  "engine": "EPA Storm Water Management Model",
+  "version": "5.2.4",
+  "source_repository": "https://github.com/USEPA/Stormwater-Management-Model",
+  "source_tag": "v5.2.4",
+  "source_commit": "7952ca837988b1c32f791812eccc9fd64547e093",
+  "license_status": "United States public domain; EPA disclaimer and no-endorsement terms apply",
+  "fixture_build": {
+    "platform": "aarch64-apple-darwin",
+    "configuration": "Release",
+    "cmake_options": [
+      "-DBUILD_TESTS=OFF",
+      "-DCMAKE_PREFIX_PATH=/opt/homebrew/opt/libomp"
+    ],
+    "runswmm_sha256": "c465aca45c1b72009e20e142960b5c17c06f535752ab09330c6567079cc6c6b0",
+    "libswmm5_sha256": "ab44fec45a42fa0bd718e6ec05f519e3ae4704fda67c39ce074fa94d8aac3316",
+    "libswmm_output_sha256": "83336b27b4e5e1383e21e5d0fc2954b030b28b1dd5c4bb1a28400d642c31f641",
+    "runtime": {
+      "OMP_NUM_THREADS": "1"
+    }
+  },
+  "release_policy": "Each target-specific release must rebuild from this commit, test the engine, record fresh platform hashes, include required notices, and sign the resulting application artifact."
+}

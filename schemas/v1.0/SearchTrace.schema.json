@@ -1,0 +1,106 @@
+{
+  "$defs": {
+    "SearchEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "batch": {
+          "minimum": 0,
+          "title": "Batch",
+          "type": "integer"
+        },
+        "design_id": {
+          "title": "Design Id",
+          "type": "string"
+        },
+        "design_vector": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Design Vector",
+          "type": "array"
+        },
+        "method": {
+          "title": "Method",
+          "type": "string"
+        },
+        "sequence": {
+          "minimum": 0,
+          "title": "Sequence",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "sequence",
+        "method",
+        "design_id",
+        "design_vector",
+        "batch"
+      ],
+      "title": "SearchEvent",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "analysis_id": {
+      "title": "Analysis Id",
+      "type": "string"
+    },
+    "events": {
+      "items": {
+        "$ref": "#/$defs/SearchEvent"
+      },
+      "title": "Events",
+      "type": "array"
+    },
+    "method": {
+      "title": "Method",
+      "type": "string"
+    },
+    "model_hash": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Model Hash"
+    },
+    "seed": {
+      "title": "Seed",
+      "type": "integer"
+    },
+    "solver_job_cap": {
+      "title": "Solver Job Cap",
+      "type": "integer"
+    },
+    "stop_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Stop Reason"
+    },
+    "storm_count": {
+      "title": "Storm Count",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "analysis_id",
+    "seed",
+    "method",
+    "solver_job_cap",
+    "storm_count"
+  ],
+  "title": "SearchTrace",
+  "type": "object"
+}

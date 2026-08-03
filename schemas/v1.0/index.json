@@ -1,0 +1,25 @@
+{
+  "contracts": {
+    "CandidateSlot": "CandidateSlot.schema.json",
+    "ConceptModelRecipe": "ConceptModelRecipe.schema.json",
+    "CostBasis": "CostBasis.schema.json",
+    "DataAsset": "DataAsset.schema.json",
+    "DomainError": "DomainError.schema.json",
+    "EnergyObservation": "EnergyObservation.schema.json",
+    "ExactRunResult": "ExactRunResult.schema.json",
+    "ExportManifest": "ExportManifest.schema.json",
+    "MetricSpec": "MetricSpec.schema.json",
+    "ModelObjectProvenance": "ModelObjectProvenance.schema.json",
+    "ModelReadiness": "ModelReadiness.schema.json",
+    "OutletSpec": "OutletSpec.schema.json",
+    "ProjectBundle": "ProjectBundle.schema.json",
+    "QAPolicy": "QAPolicy.schema.json",
+    "ReadinessAttestation": "ReadinessAttestation.schema.json",
+    "SearchEvent": "SearchEvent.schema.json",
+    "SearchTrace": "SearchTrace.schema.json",
+    "SimulationBudget": "SimulationBudget.schema.json",
+    "StormCase": "StormCase.schema.json",
+    "StudyArea": "StudyArea.schema.json"
+  },
+  "schema_version": "1.0"
+}

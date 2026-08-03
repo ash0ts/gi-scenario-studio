@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "gi-scenario-studio"
+version = "0.1.0"
+description = "Open SWMM model starter and exact green-infrastructure alternatives workbench"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "GI Scenario Studio contributors" }]
+dependencies = [
+  "pydantic>=2.8,<3",
+]
+
+[project.optional-dependencies]
+science = [
+  "numpy>=2.0",
+  "scipy>=1.14",
+  "scikit-learn>=1.5",
+  "pymoo>=0.6.1",
+]
+geo = [
+  "swmmanywhere>=0.2.2",
+  "geopandas>=1.0",
+]
+export = [
+  "Jinja2>=3.1",
+  "python-docx>=1.1",
+  "openpyxl>=3.1",
+]
+dev = [
+  "pytest>=8.3",
+  "hypothesis>=6.112",
+  "ruff>=0.6",
+]
+
+[project.scripts]
+gi-scenario-worker = "gi_scenario_core.rpc_worker:main"
+gi-studio-demo = "gi_scenario_core.demo:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["python/gi_scenario_core"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/python"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

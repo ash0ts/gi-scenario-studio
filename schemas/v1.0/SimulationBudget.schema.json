@@ -1,0 +1,52 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "max_energy_kwh": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Max Energy Kwh"
+    },
+    "max_solver_jobs": {
+      "default": 1000,
+      "maximum": 5000,
+      "minimum": 1,
+      "title": "Max Solver Jobs",
+      "type": "integer"
+    },
+    "max_wall_seconds": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Max Wall Seconds"
+    },
+    "seed": {
+      "default": 42,
+      "title": "Seed",
+      "type": "integer"
+    },
+    "worker_count": {
+      "default": 1,
+      "maximum": 64,
+      "minimum": 1,
+      "title": "Worker Count",
+      "type": "integer"
+    }
+  },
+  "title": "SimulationBudget",
+  "type": "object"
+}

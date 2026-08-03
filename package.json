@@ -1,0 +1,15 @@
+{
+  "name": "gi-scenario-studio",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@11.9.0",
+  "scripts": {
+    "dev": "pnpm --dir apps/desktop dev",
+    "build": "pnpm --dir apps/desktop build",
+    "test": "pnpm test:frontend && pnpm test:python",
+    "test:frontend": "pnpm --dir apps/desktop test",
+    "test:python": "python3 -m pytest tests/python",
+    "check": "pnpm --dir apps/desktop check && python3 -m pytest tests/python",
+    "desktop": "pnpm --dir apps/desktop tauri dev"
+  }
+}

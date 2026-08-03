@@ -1,0 +1,164 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+  PNPM_VERSION: "11.9.0"
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  python:
+    name: Python core
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python and uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install locked Python dependencies
+        run: uv sync --locked --extra dev --extra science --extra export
+
+      - name: Lint Python
+        run: uv run --no-sync ruff check python tests scripts
+
+      - name: Check Python formatting
+        run: uv run --no-sync ruff format --check python tests scripts
+
+      - name: Test Python core
+        run: uv run --no-sync pytest tests/python
+
+      - name: Regenerate public contracts
+        run: uv run --no-sync python scripts/generate_schemas.py
+
+      - name: Verify generated contracts are current
+        run: git diff --exit-code -- schemas apps/desktop/src/generated/contracts.ts
+
+      - name: Regenerate guided UI projection
+        run: >-
+          uv run --no-sync python scripts/generate_guided_ui_fixture.py
+          --output "${RUNNER_TEMP}/guidedFixture.json"
+
+      - name: Verify guided UI projection is current
+        run: cmp "${RUNNER_TEMP}/guidedFixture.json" apps/desktop/src/data/guidedFixture.json
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install locked frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Test frontend
+        run: pnpm test:frontend
+
+      - name: Type-check and build frontend
+        run: pnpm build
+
+  rust:
+    name: Rust desktop host
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Install Tauri Linux prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libwebkit2gtk-4.1-dev
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install locked frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build frontend for Tauri
+        run: pnpm build
+
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
+        with:
+          toolchain: 1.88.0
+          components: rustfmt, clippy
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: "apps/desktop/src-tauri -> target"
+
+      - name: Provide inert sidecar fixture for Tauri discovery
+        shell: bash
+        run: |
+          target="$(rustc -vV | sed -n 's/^host: //p')"
+          mkdir -p apps/desktop/src-tauri/binaries
+          touch "apps/desktop/src-tauri/binaries/gi-scenario-worker-${target}"
+
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml --check
+
+      - name: Lint Rust desktop host
+        run: >-
+          cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml
+          --locked --all-targets -- -D warnings
+
+      - name: Test Rust desktop host
+        run: >-
+          cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
+          --locked --all-targets

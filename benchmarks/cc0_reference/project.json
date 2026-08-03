@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "name": "Cedar Trace teaching watershed",
+  "readiness": "DEMO",
+  "base_model": "reference.inp",
+  "storm_cases": [
+    {
+      "id": "design-storm",
+      "model_path": "reference.inp",
+      "role": "required_design",
+      "authority_status": "user_defined",
+      "source": "CC0 synthetic demonstration"
+    }
+  ],
+  "disclaimer": "Synthetic teaching network — not for design, permitting, or representation of an existing system."
+}

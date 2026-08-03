@@ -1,0 +1,143 @@
+[TITLE]
+;;Project Title/Notes
+GI Scenario Studio CC0 teaching network — NOT FOR DESIGN
+
+;;Storm case: Synthetic front-loaded 2.0 in event — SYNTHETIC / NOT AN ADOPTED EVENT
+[OPTIONS]
+FLOW_UNITS           CFS
+INFILTRATION         GREEN_AMPT
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/2026
+START_TIME           00:00:00
+REPORT_START_DATE    01/01/2026
+REPORT_START_TIME    00:00:00
+END_DATE             01/01/2026
+END_TIME             06:00:00
+SWEEP_START          01/01
+SWEEP_END            12/31
+DRY_DAYS             0
+REPORT_STEP          00:05:00
+WET_STEP             00:01:00
+DRY_STEP             01:00:00
+ROUTING_STEP         00:00:15
+
+[RAINGAGES]
+;;Name           Format    Interval SCF      Source
+GAGE              INTENSITY 0:05     1.0      TIMESERIES DESIGN_STORM
+
+[SUBCATCHMENTS]
+;;Name           Rain Gage        Outlet          Area     %Imperv  Width    %Slope   CurbLen  SnowPack
+S1                GAGE              J1              2.00     65       350      1.5      0
+S2                GAGE              J2              2.50     45       420      1.2      0
+
+[SUBAREAS]
+;;Subcatchment   N-Imperv N-Perv   S-Imperv S-Perv   PctZero  RouteTo  PctRouted
+S1                0.014    0.20     0.05     0.10     25       OUTLET
+S2                0.014    0.20     0.05     0.10     25       OUTLET
+
+[INFILTRATION]
+;;Subcatchment   Suction  HydCon   IMDmax
+S1                3.5      0.5      0.25
+S2                3.5      0.5      0.25
+
+[JUNCTIONS]
+;;Name           Elevation  MaxDepth   InitDepth  SurDepth   Aponded
+J1                100.0      5.0        0          0          0
+J2                98.0       5.0        0          0          0
+
+[OUTFALLS]
+;;Name           Elevation  Type       Stage Data       Gated    Route To
+OUT1              95.0       FREE                        NO
+
+[CONDUITS]
+;;Name           From Node  To Node    Length   Roughness  InOffset OutOffset InitFlow MaxFlow
+C1                J1         J2         500      0.013      0        0         0        0
+C2                J2         OUT1       600      0.013      0        0         0        0
+
+[XSECTIONS]
+;;Link           Shape       Geom1      Geom2     Geom3     Geom4     Barrels  Culvert
+C1                CIRCULAR    1.5        0         0         0         1
+C2                CIRCULAR    2.0        0         0         0         1
+
+[LID_CONTROLS]
+;;Name           Type/Layer Parameters
+BIOCELL            BC
+BIOCELL            SURFACE    6        0.1      0.15     1        5
+BIOCELL            SOIL       18       0.45     0.20     0.10     0.5      10       3.5
+BIOCELL            STORAGE    12       0.75     0.5      0
+BIOCELL            DRAIN      0.25     0.5      0        6
+RAINGARDEN         RG
+RAINGARDEN         SURFACE    6        0.1      0.15     1        5
+RAINGARDEN         SOIL       18       0.45     0.20     0.10     0.5      10       3.5
+GREENROOF          GR
+GREENROOF          SURFACE    3        0.1      0.15     1        5
+GREENROOF          SOIL       4        0.45     0.20     0.10     0.5      10       3.5
+GREENROOF          DRAINMAT   3        0.5      0.1
+TRENCH             IT
+TRENCH             SURFACE    6        0.1      0.15     1        5
+TRENCH             STORAGE    24       0.40     0.5      0
+TRENCH             DRAIN      0.25     0.5      0        6
+PAVEMENT           PP
+PAVEMENT           SURFACE    2        0.1      0.15     1        5
+PAVEMENT           PAVEMENT   6        0.15     0.10     100      0
+PAVEMENT           STORAGE    12       0.75     0.5      0
+PAVEMENT           DRAIN      0.25     0.5      0        6
+BARREL             RB
+BARREL             STORAGE    48       0.90     0        0
+BARREL             DRAIN      0.10     0.5      0        0
+ROOFDISC           RD
+ROOFDISC           SURFACE    1        0.1      0.15     1        5
+SWALE              VS
+SWALE              SURFACE    6        0.1      0.15     1        5
+
+[LID_USAGE]
+;;Subcatchment   LID Process     Number  Area     Width    InitSat  FromImp  ToPerv   RptFile  DrainTo  FromPerv
+S1  BIOCELL  2  200  20  0  15  0
+
+S1  PAVEMENT  2  500  35  0  10  0  *  J1  0
+S2  RAINGARDEN  3  225  20  0  20  1  *  J2  0
+S2  BARREL  1  16  4  0  5  0  *  J2  0
+[TIMESERIES]
+;;Name           Date       Time       Value
+DESIGN_STORM             01/01/2026  00:00  4.500000000
+DESIGN_STORM             01/01/2026  00:05  4.000000000
+DESIGN_STORM             01/01/2026  00:10  3.500000000
+DESIGN_STORM             01/01/2026  00:15  3.000000000
+DESIGN_STORM             01/01/2026  00:20  2.500000000
+DESIGN_STORM             01/01/2026  00:25  2.000000000
+DESIGN_STORM             01/01/2026  00:30  1.500000000
+DESIGN_STORM             01/01/2026  00:35  1.000000000
+DESIGN_STORM             01/01/2026  00:40  0.500000000
+DESIGN_STORM             01/01/2026  00:45  0.500000000
+DESIGN_STORM             01/01/2026  00:50  0.500000000
+DESIGN_STORM             01/01/2026  00:55  0.500000000
+DESIGN_STORM             01/01/2026  01:00  0.000000000
+
+[REPORT]
+INPUT             NO
+CONTROLS          NO
+SUBCATCHMENTS     ALL
+NODES             ALL
+LINKS             ALL
+
+[COORDINATES]
+;;Node           X-Coord            Y-Coord
+J1                1000               1200
+J2                1600               900
+OUT1              2200               600
+
+[POLYGONS]
+;;Subcatchment   X-Coord            Y-Coord
+S1                700                1400
+S1                1300               1400
+S1                1300               900
+S1                700                900
+S2                1300               1100
+S2                2100               1100
+S2                2100               500
+S2                1300               500
+
+[TAGS]
+SUBCATCHMENT S1 DEMO
+SUBCATCHMENT S2 DEMO
+

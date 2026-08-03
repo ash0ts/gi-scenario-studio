@@ -1,0 +1,45 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "GI Scenario Studio",
+  "version": "0.1.0",
+  "identifier": "org.giscenariostudio.desktop",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "GI Scenario Studio",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1100,
+        "minHeight": 720,
+        "resizable": true,
+        "fullscreen": false,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; font-src 'self' data:; img-src 'self' asset: http://asset.localhost blob: data:; style-src 'self' 'unsafe-inline'; script-src 'self'",
+      "capabilities": ["main-capability"]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "externalBin": ["binaries/gi-scenario-worker"],
+    "category": "Science",
+    "shortDescription": "Exact SWMM alternatives analysis",
+    "longDescription": "A local-first workspace for conceptual SWMM model preparation and exact, traceable green-infrastructure alternatives analysis.",
+    "windows": {
+      "wix": {
+        "language": "en-US"
+      }
+    }
+  }
+}

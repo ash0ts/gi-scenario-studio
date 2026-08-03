@@ -1,0 +1,5 @@
+slot_id,subcatchment,lid_control,lid_type,min_units,max_units,unit_area_sqft,unit_width_ft,from_impervious_pct,from_pervious_pct,to_pervious,drain_to,unit_capex_usd,annual_om_usd,cost_source,confidence
+S1_BIO,S1,BIOCELL,BC,0,4,200,20,15,0,false,J1,6800,210,CC0 demonstration assumption,assumed
+S1_PP,S1,PAVEMENT,PP,0,3,500,35,10,0,false,J1,9400,180,CC0 demonstration assumption,assumed
+S2_RG,S2,RAINGARDEN,RG,0,4,225,20,20,0,true,J2,7200,230,CC0 demonstration assumption,assumed
+S2_RB,S2,BARREL,RB,0,6,16,4,5,0,false,J2,950,35,CC0 demonstration assumption,assumed

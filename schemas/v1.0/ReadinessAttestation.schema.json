@@ -1,0 +1,61 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "accepted": {
+      "default": false,
+      "title": "Accepted",
+      "type": "boolean"
+    },
+    "accepted_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Accepted At"
+    },
+    "key": {
+      "title": "Key",
+      "type": "string"
+    },
+    "label": {
+      "title": "Label",
+      "type": "string"
+    },
+    "notes": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Notes"
+    },
+    "reviewer": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reviewer"
+    }
+  },
+  "required": [
+    "key",
+    "label"
+  ],
+  "title": "ReadinessAttestation",
+  "type": "object"
+}

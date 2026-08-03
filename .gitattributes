@@ -1,0 +1,9 @@
+* text=auto eol=lf
+
+# SWMM binary outputs are hash-pinned evidence and must never be line-ending normalized.
+*.out -text
+
+# Retained exact-run inputs and reports are immutable byte evidence. Their hashes include
+# solver-authored whitespace, so Git must not normalize or render them as source diffs.
+benchmarks/guided_exact/runs/** -text -diff
+benchmarks/cc0_reference/reference.inp -text -diff

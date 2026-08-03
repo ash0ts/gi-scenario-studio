@@ -1,0 +1,18 @@
+{
+  "id": "gi-studio-cc0-reference",
+  "version": "0.1.0",
+  "license": "CC0-1.0",
+  "redistribution": "permitted",
+  "readiness": "DEMO",
+  "purpose": [
+    "parser regression",
+    "readiness and export gating",
+    "finite search truth",
+    "all native SWMM LID type coverage"
+  ],
+  "limitations": [
+    "synthetic teaching network",
+    "not calibrated",
+    "not representative of a real drainage system"
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "absolute_tolerance": {
+      "default": 1e-06,
+      "minimum": 0,
+      "title": "Absolute Tolerance",
+      "type": "number"
+    },
+    "accepted_exceptions": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Accepted Exceptions",
+      "type": "object"
+    },
+    "flow_continuity_warning_percent": {
+      "default": 2.0,
+      "minimum": 0,
+      "title": "Flow Continuity Warning Percent",
+      "type": "number"
+    },
+    "relative_tolerance": {
+      "default": 0.0001,
+      "minimum": 0,
+      "title": "Relative Tolerance",
+      "type": "number"
+    },
+    "runoff_continuity_warning_percent": {
+      "default": 2.0,
+      "minimum": 0,
+      "title": "Runoff Continuity Warning Percent",
+      "type": "number"
+    }
+  },
+  "title": "QAPolicy",
+  "type": "object"
+}

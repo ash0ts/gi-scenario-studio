@@ -1,0 +1,106 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "asset_id": {
+      "title": "Asset Id",
+      "type": "string"
+    },
+    "attribution": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Attribution"
+    },
+    "crs": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Crs"
+    },
+    "license": {
+      "title": "License",
+      "type": "string"
+    },
+    "path": {
+      "title": "Path",
+      "type": "string"
+    },
+    "resolution": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Resolution"
+    },
+    "retrieved_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Retrieved At"
+    },
+    "role": {
+      "title": "Role",
+      "type": "string"
+    },
+    "sha256": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sha256"
+    },
+    "source": {
+      "title": "Source",
+      "type": "string"
+    },
+    "vintage": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Vintage"
+    }
+  },
+  "required": [
+    "path",
+    "role",
+    "source",
+    "license"
+  ],
+  "title": "DataAsset",
+  "type": "object"
+}
