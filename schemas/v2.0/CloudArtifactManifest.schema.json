@@ -1,0 +1,74 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "artifact_id": {
+      "title": "Artifact Id",
+      "type": "string"
+    },
+    "bytes": {
+      "minimum": 0,
+      "title": "Bytes",
+      "type": "integer"
+    },
+    "category": {
+      "enum": [
+        "model",
+        "gis",
+        "storm",
+        "solver_input",
+        "solver_report",
+        "solver_output",
+        "result",
+        "qa",
+        "search_trace",
+        "decision_brief",
+        "export",
+        "benchmark",
+        "assistant_trace"
+      ],
+      "title": "Category",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "local_blob_sha256": {
+      "title": "Local Blob Sha256",
+      "type": "string"
+    },
+    "logical_name": {
+      "title": "Logical Name",
+      "type": "string"
+    },
+    "media_type": {
+      "title": "Media Type",
+      "type": "string"
+    },
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    },
+    "sha256": {
+      "title": "Sha256",
+      "type": "string"
+    },
+    "source_object_id": {
+      "title": "Source Object Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "project_id",
+    "category",
+    "logical_name",
+    "sha256",
+    "bytes",
+    "media_type",
+    "source_object_id",
+    "local_blob_sha256"
+  ],
+  "title": "CloudArtifactManifest",
+  "type": "object"
+}

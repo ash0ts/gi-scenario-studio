@@ -1,8 +1,10 @@
+mod bundle;
+mod credential;
 mod error;
 mod rpc;
 mod worker;
 
-use serde_json::Value;
+use serde_json::{json, Value};
 use tauri::{Manager, State};
 
 use error::PlatformError;
@@ -26,9 +28,49 @@ fn worker_start(
 async fn worker_request(
     app: tauri::AppHandle,
     manager: State<'_, WorkerManager>,
-    request: WorkerRequest,
+    mut request: WorkerRequest,
 ) -> Result<Value, PlatformError> {
+    credential::inject_for_worker(&mut request)?;
     manager.request(&app, request).await
+}
+
+#[tauri::command]
+fn credential_prompt_and_store(
+    credential_id: String,
+) -> Result<credential::CredentialStatus, PlatformError> {
+    credential::prompt_and_store(credential_id)
+}
+
+#[tauri::command]
+fn credential_status(credential_id: String) -> Result<credential::CredentialStatus, PlatformError> {
+    credential::status(credential_id)
+}
+
+#[tauri::command]
+async fn credential_delete(
+    app: tauri::AppHandle,
+    manager: State<'_, WorkerManager>,
+    credential_id: String,
+) -> Result<credential::CredentialStatus, PlatformError> {
+    let status = credential::delete(credential_id)?;
+    let clear_request = WorkerRequest {
+        method: "observability.disconnect".to_owned(),
+        params: Some(json!({"scope": "account"})),
+        timeout_ms: Some(10_000),
+    };
+    if manager.request(&app, clear_request).await.is_err() {
+        // Keychain deletion is authoritative. If the worker cannot confirm its
+        // in-memory teardown, terminate it so no credential can remain usable.
+        let _ = manager.stop(&app);
+    }
+    Ok(status)
+}
+
+#[tauri::command]
+async fn select_swmm_bundle(
+    app: tauri::AppHandle,
+) -> Result<Option<bundle::StagedBundle>, PlatformError> {
+    bundle::select_and_stage(app).await
 }
 
 #[tauri::command]
@@ -49,7 +91,11 @@ pub fn run() {
             worker_status,
             worker_start,
             worker_request,
-            worker_stop
+            worker_stop,
+            credential_prompt_and_store,
+            credential_status,
+            credential_delete,
+            select_swmm_bundle
         ])
         .setup(|app| {
             // Start early so the first project action has no process-launch delay.

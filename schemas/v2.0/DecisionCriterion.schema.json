@@ -1,0 +1,94 @@
+{
+  "$defs": {
+    "MetricDirection": {
+      "enum": [
+        "minimize",
+        "maximize",
+        "at_most",
+        "at_least"
+      ],
+      "title": "MetricDirection",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "category": {
+      "enum": [
+        "hydraulic",
+        "cost",
+        "adverse_effect",
+        "feasibility",
+        "implementation"
+      ],
+      "title": "Category",
+      "type": "string"
+    },
+    "criterion_id": {
+      "title": "Criterion Id",
+      "type": "string"
+    },
+    "direction": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/MetricDirection"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "label": {
+      "title": "Label",
+      "type": "string"
+    },
+    "rationale": {
+      "title": "Rationale",
+      "type": "string"
+    },
+    "storm_aggregation": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Storm Aggregation"
+    },
+    "threshold": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Threshold"
+    },
+    "units": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Units"
+    }
+  },
+  "required": [
+    "label",
+    "category",
+    "rationale"
+  ],
+  "title": "DecisionCriterion",
+  "type": "object"
+}

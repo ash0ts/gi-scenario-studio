@@ -1,322 +1,489 @@
 # GI Scenario Studio
 
-Evidence-first green-infrastructure alternatives screening with EPA SWMM.
+Decision-first green-infrastructure alternatives screening with EPA SWMM,
+W&B Models, and Weave.
 
-GI Scenario Studio is a local-first React/Tauri workspace for environmental,
-stormwater, and water-resources engineers. It is designed to compare approved
-green-infrastructure (GI) opportunities across multiple storm cases while
-keeping the hydraulic model, assumptions, QA findings, and evidence trail
-inspectable.
+GI Scenario Studio is a local-authority desktop workbench for environmental,
+stormwater, and water-resources engineers. Its professional outcome is narrow
+and useful:
 
-The central engineering invariant is strict:
+> Turn a fit-for-purpose SWMM model into a defensible GI shortlist, with every
+> hydraulic claim traceable to a direct SWMM run and every computational or AI
+> workflow observable in the engineer's Restricted W&B project.
 
-> Every reported hydraulic value comes from a pinned SWMM execution. Machine
-> learning may choose which exact candidate to simulate next; it never supplies
-> a reportable hydraulic result.
+The core engineering invariant is strict:
 
-> **Status: source MVP.** The exact guided example is operational and fully
-> inspectable in the browser. Existing-model and conceptual-model workflows are
-> visibly labelled setup previews until an authoritative desktop worker is
-> connected. This repository does not contain a compiled or signed installer.
+> Every reportable hydraulic value comes from a pinned SWMM execution. Search or
+> ML may choose which exact candidate to simulate next; it never supplies a
+> reportable hydraulic result.
 
-## At a glance
+> **Status: schema 2.0 source MVP.** The Cedar Trace verified replay, scientific
+> contracts, evidence core, search benchmark harness, desktop UX, keychain
+> boundary, and W&B/Weave integration seams are available from source. This
+> repository does not yet claim a signed practitioner release: target-specific
+> worker/SWMM packaging, release credentials, cross-platform integration gates,
+> and installer signing remain release work.
 
-| Area | Current state |
-|---|---|
-| Primary use | Transparent GI alternatives screening with explicit model-readiness gates |
-| Verified teaching path | 884 exact EPA SWMM 5.2.4 runs, all accepted by the fixture QA policy |
-| Interface | React 19, TypeScript, Vite, and a persistent Evidence Rail |
-| Desktop boundary | Tauri 2 host supervising a Python scientific worker over versioned JSON-RPC |
-| Engineering core | Pydantic contracts, SQLite state, SWMM parsing/mutation, exact-run scheduling, search, and evidence export |
-| Distribution | Source checkout only; release packaging and signing remain incomplete |
-| License | Apache-2.0 application code; component and dataset terms remain attached to their manifests |
+## What the application helps decide
 
-## Who it is for
+The primary user already has a SWMM model suitable for alternatives screening.
+The application leads with the decision—not a generic optimizer:
 
-GI Scenario Studio supports three starting points:
-
-1. **Open an existing SWMM project** to inspect dependencies, reproduce a
-   baseline, configure engineer-approved GI opportunities, and compare exact
-   alternatives.
-2. **Build a conceptual model** from user-provided or approved open geospatial
-   data, with every derived or defaulted value retained in an assumption ledger.
-3. **Run the guided example** to learn the evidence workflow without network
-   access or client data.
-
-The intended output is a reviewable alternatives-screening record: model and
-storm provenance, exact solver runs, QA findings, semantic model changes, costs,
-and limitations. It is not an automatic design, permitting, or compliance
-decision.
-
-## What works today
-
-| Area | Included | Not yet claimed |
-|---|---|---|
-| Guided path | Executed 884-job exact fixture, accessible chart/table views, evidence hashes, retained artifacts, and an honest learning-summary download | A calibrated professional model, adopted storms, or full-network adverse-change claims for runs whose detailed artifacts were not retained |
-| Scientific core | Versioned contracts, secure bundle inspection, line-preserving SWMM parsing, typed mutations, readiness gates, SQLite state machines, isolated solver execution, enumeration/QMC planning, optional ExtraTrees proposals, and repository-bound exports | A completed NSGA-II product loop or any prediction-derived hydraulic result or confidence claim |
-| Evidence exports | Repository-verified JSON, CSV, Markdown, HTML, and selected INP/RPT/OUT files | Production DOCX/XLSX report templates |
-| Concept starter | Deterministic local generator, per-object assumption provenance, validation, and an optional SWMManywhere adapter | A packaged live-provider workflow or inference of a real buried drainage network |
-| Desktop host | Tauri 2 source, a narrow command allowlist, JSONL process supervision, CSP, and scoped capabilities | Compiled, signed, or generally installable desktop artifacts |
-
-The browser never substitutes placeholder hydraulic numbers when an
-authoritative worker or solver is unavailable. Professional hydraulic claims
-require the packaged worker and a hash-pinned SWMM 5.2.4 executable.
-
-## Exact guided evidence
-
-[`benchmarks/guided_exact/manifest.json`](benchmarks/guided_exact/manifest.json)
-records 884 exact EPA SWMM 5.2.4 jobs:
-
-- 4 baseline jobs, one for each synthetic storm;
-- 220 unique integer LID vectors evaluated across all 4 storms (880 jobs);
-- 884 exact runs accepted under the documented runoff and flow-continuity
-  policy; and
-- 36 complete retained run sets: all 4 baselines plus 8 alternatives across all
-  4 storms.
-
-Each run records the input, report, output, and solver hashes. The manifest also
-pins the metric-extractor version, source-model hash, deterministic candidate
-order, seed, storm definitions, and retention policy.
-
-This fixture is `DEMO`, not reference matched. Its model, storms, opportunities,
-and costs are self-authored teaching data. It makes no calibration,
-recurrence-interval, global-optimality, regulatory, or real-world performance
-claim.
-
-To regenerate the evidence, use an official SWMM 5.2.4 console build and a new
-or empty output directory:
-
-```bash
-python scripts/generate_guided_fixture.py \
-  --solver /path/to/runswmm \
-  --output /new/empty/output-directory
-python scripts/generate_guided_ui_fixture.py \
-  --manifest /new/empty/output-directory/manifest.json
+```text
+Connect W&B -> Open bundle -> Decision brief -> Model fitness and baseline
+-> Storms -> Opportunities and feasibility -> Goals and costs
+-> Run plan -> Run -> Decision board -> Evidence package
 ```
 
-The pinned source revision and the binary hash used for the checked-in fixture
-are recorded in [`engine/swmm-5.2.4.json`](engine/swmm-5.2.4.json). The binary
-itself is not treated as a portable release artifact.
+The decision board puts pass/fail criteria, baseline deltas, controlling storms,
+adverse changes, cost, limitations, and the next professional action ahead of
+the Pareto plot. The Evidence Rail resolves any claim through its metric, storm,
+direct solver job, semantic mutation, artifacts, hashes, QA, and assumptions.
 
-## Quick start: inspect the guided application
+Project kind (`demo`, `conceptual`, or `existing`) describes origin, not
+maturity. Model fitness is recorded independently for one revision and intended
+use in a Model Fitness Passport with one of four non-ordinal dispositions:
+`not_assessed`, `fit_for_stated_use`, `fit_with_limitations`, or `not_fit`.
+Numerical QA and cloud synchronization do not change that disposition.
+Single-model bundle import atomically records an immutable model revision and a
+truthful `not_assessed` passport. Learning evidence can therefore retain the
+limitation immediately; only an identified engineer can replace that passport
+through an explicit attestation for the active revision.
+
+The target secondary conceptual-model route will assemble a planning model from
+user-provided or approved open data, expose every default in an assumption
+ledger, and join the same workflow after repair and review. The source MVP shows
+that route's safety gates as a disabled, source-empty preview; GIS ingestion,
+generation, repair, persisted provenance, and cloud projection are not complete.
+
+## Required W&B and Weave boundary
+
+The production contract requires a W&B account and a user-owned W&B project
+whose visibility is verified as `Restricted`. The binding wizard selects W&B
+Cloud, Dedicated Cloud, or Self-Managed; verifies Models and Weave access;
+previews synchronized data categories; and stores the W&B API key in the
+operating-system keychain. Critical-infrastructure-restricted projects require
+Dedicated Cloud or Self-Managed W&B.
+
+The intended mirror covers models, GIS/data assets, storms, candidate and cost
+records, exact INP/RPT/OUT artifacts, metrics, QA, search traces, decision
+evidence, and exports. The source MVP automatically projects imported bundles,
+an open-time guided-session snapshot, completed exact analyses, and worker-
+created evidence exports. Conceptual data-asset provenance and generated-model
+projection are not complete and must not be represented as synchronized yet.
+Credentials, environment dumps, local absolute paths, and raw console logs are
+always excluded.
+
+The pinned W&B `0.28.1` [documented Project API](https://docs.wandb.ai/models/ref/python/public-api/project)
+can confirm project identity and caller access, but it does not expose an exact
+project-visibility scope.
+`PRIVATE` is not treated as `Restricted`; connection and upload fail closed
+until a supported resolver returns exactly `RESTRICTED`. A successful access or
+upload probe is not used as a privacy substitute.
+
+The local SQLite database and content-addressed artifact store remain
+authoritative. W&B [Runs](https://docs.wandb.ai/models/runs),
+[Tables](https://docs.wandb.ai/models/tables/log_tables),
+[Artifacts](https://docs.wandb.ai/models/artifacts/explore-and-traverse-an-artifact-graph),
+and [Registry](https://docs.wandb.ai/models/registry) provide the collaboration
+mirror. The outbox is durable and idempotent, and tests confirm cloud failure
+does not alter candidate order, SWMM output, QA, costs, or exports. Coupling
+every producer's engineering write and outbox insert in one SQLite transaction
+is still a release gate; current automatic projections occur immediately after
+the authoritative commit. After an initial verified binding, work may continue
+offline and synchronize later using W&B's
+[offline support](https://docs.wandb.ai/models/track/environment-variables).
+
+The source MVP contains a read-only, deterministic evidence-explanation path
+that is returned only after a [Weave trace](https://docs.wandb.ai/weave/guides/tracking/tracing)
+has been flushed and read back. It does not yet call a user-configured model
+provider or emit the planned nested operation trace. That provider-backed
+Evidence Assistant remains disabled until those pieces and their evaluation
+gate ship. The deterministic Evidence Rail works without it, and an untraced
+answer is never substituted as engineering evidence.
+
+See [data governance](docs/data-governance.md) for the complete policy.
+
+## Cedar Trace guided experience
+
+Cedar Trace is one worker-backed, hash-verified synthetic story:
+
+> A municipal stormwater engineer is deciding which Cedar Trace GI concept, if
+> any, should advance to field and site-feasibility review.
+
+It opens at Overview as **Verified fixture replay**. Replay reads a pinned
+manifest; it does not pretend to run SWMM. The manifest records:
+
+- 4 direct baseline jobs, one under each selected synthetic storm;
+- 220 exact nonbaseline integer LID vectors × 4 storms = 880 jobs;
+- 884 accepted direct EPA SWMM 5.2.4 jobs in total;
+- hashes and extracted metrics for every job; and
+- 20 complete retained INP/RPT/OUT sets: four baselines plus four teaching
+  alternatives under four storms.
+
+The teaching rules are visible before results:
+
+- reduce aggregate `OUT1` event volume across the four storms by at least 6%;
+- keep synthetic 30-year present-value screening cost at or below $200,000;
+- do not increase `OUT1` peak flow in any selected storm; and
+- require accepted fixture QA for every design × storm job.
+
+The four retained alternatives teach why a Pareto point is not automatically an
+acceptable engineering option:
+
+| Role | Alternative | Outcome |
+|---|---|---|
+| Low-cost caution | `ALT-017 [0,0,1,6]` | $54.99k; 4.14% reduction; misses the target and raises the long-event peak from 3.14 to 3.21 cfs |
+| Carry-forward candidate | `ALT-207 [0,3,2,6]` | $190.25k; 6.42% reduction; meets all four teaching rules |
+| Stronger, over budget | `ALT-109 [1,3,2,6]` | $222.01k; 6.95% reduction; exceeds the cost cap |
+| Observed performance extreme | `ALT-014 [4,3,4,5]` | $361.86k; 8.82% reduction; strongest observed volume result but poor cost fit |
+
+`ALT-207` is described only as:
+
+> Candidate to carry forward for site and feasibility review.
+
+It is not best, optimal, validated, approved, or design-ready.
+
+An optional **Rerun all 884 jobs locally** action requires a packaged, hash-
+approved SWMM 5.2.4 executable. It uses real progress and durable
+pause/resume/cancel, then compares the new output with the pinned fixture using
+metric-specific tolerances.
+
+Read [the guided example specification](docs/guided-example.md) or inspect the
+[exact manifest](benchmarks/guided_exact/manifest.json).
+
+## 2,800-job hidden-oracle benchmark
+
+The teaching replay is deliberately separate from adaptive-search evaluation.
+The benchmark generator evaluates the complete 700-vector Cedar Trace universe:
+
+```text
+4 baseline jobs + 699 alternatives × 4 storms = 2,800 direct SWMM jobs
+```
+
+It produces an immutable schema `2.0` exact-result dataset. Random, scrambled
+Sobol, integer NSGA-II, and Sobol + ExtraTrees replays can see a design's stored
+outcome only after requesting that vector; each request costs four exact-job
+equivalents. The harness reports hypervolume ratio, epsilon indicator, feasible
+and adverse-result recall, selection counts, and exact-job-equivalent budget
+without re-running identical hydraulics for every method and seed. Campaign
+timing, peak memory, and measured-or-estimated energy observations remain a
+release gate and are not synthesized from the hidden table.
+
+The NSGA-II comparator is a deterministic, batch-barriered `(mu + lambda)`
+implementation (`mu = 64`, `lambda <= 32`). It uses binary feasibility-first
+nondominated sorting, normalized crowding distance, rank/crowding binary
+tournaments, bounded uniform integer crossover, bounded random-reset mutation,
+and front/crowding environmental survival. Exact vectors are deduplicated before
+oracle requests; deterministic QMC fills only operator-exhaustion gaps and is
+reported separately in the replay trace.
+
+The benchmark does not enable ML by itself. Production remains on Sobol unless
+the declared public-network, multi-seed release gates are met. Predicted
+hydraulic values and unsupported “carbon saved” claims are excluded.
+
+## Source MVP capability map
+
+| Area | Present in source | Release claim not made yet |
+|---|---|---|
+| Guided workflow | Cedar Trace overview, decision rules, acceptance matrix, adverse-result lesson, Evidence Rail, 884-job verified replay, and 20 retained run sets | A calibrated or real municipal model |
+| Scientific core | Pydantic schema 2.0 contracts, secure bundle/parser/mutation services, SQLite state, revision-pinned analyses, exact solver runner, search, metric/QA records bound to retained RPT hashes and extractor versions, repository-recorded learning exports, and guided/benchmark generators | Universal compatibility with every SWMM or PCSWMM extension |
+| W&B/Weave boundary | Restricted-project policy contracts, fail-closed exact-scope gate, content-hash manifests, durable outbox, exact-version artifact verification, typed Tables, SDK adapters, host-owned masked credential prompt and keychain storage, confirmed single-call Weave traces, safe browser preview, and a protected integration workflow | An authoritative Restricted-scope resolver for the pinned Public API, a provider-backed nested Evidence Assistant, or cloud authority over engineering results |
+| Search evaluation | Finite-universe generator and hidden-oracle Random/Sobol/NSGA-II/ExtraTrees replay | A globally optimal design or approved ML proposer |
+| Desktop distribution | React/Tauri/Python source and target packaging contract | Signed/notarized macOS or signed Windows installer in this repository |
+| Professional workflow | Secure portable-bundle import, parsed preflight, versioned unassessed passport and constrained engineer attestation, explicit storm and LID-slot setup, direct run arithmetic, durable exact execution controls, complete-ensemble comparison, adverse-peak scan, run-level Evidence Rail, and repository-gated learning export | Cost/criterion authoring, accepted Decision Brief authoring, reference reproduction UI, or a completed calibration, survey, geotechnical, utility, permitting, and construction workflow |
+
+An unavailable production path must be disabled with an explanation. The source
+UI must not fabricate cloud connectivity, progress, solver output, or
+professional evidence.
+
+### Source-MVP release gates
+
+The following boundaries are intentionally visible rather than papered over:
+
+- Bundle, guided-session, completed-analysis, and export evidence are projected
+  automatically, but their producer writes are not yet atomically coupled to
+  outbox insertion. Crash-safe producer reconciliation remains release work.
+- User/open GIS assets and generated conceptual models do not yet have the full
+  persisted provenance and W&B projection required by the product contract.
+- Imported projects can execute an explicit engineer-selected exact test set,
+  but practitioner cost contracts, threshold evaluation, and accepted Decision
+  Brief authoring are still withheld; the interface does not name a preferred
+  alternative. Cost-bearing, screening, and verified-alternatives exports fail
+  closed until repository-backed CostBasis, full-network review, and reference-
+  comparison services can prove those claims. Learning evidence remains
+  available and revision-pinned.
+- Bundles containing multiple INP models still need a persisted base-model
+  selection RPC, and restart recovery needs a dedicated analysis-status read
+  RPC; the current UI labels the former and derives live job progress from the
+  durable result ledger.
+- W&B `0.28.1` does not expose an authoritative exact project-visibility scope;
+  `PRIVATE` is never inferred to mean `Restricted`, so production binding and
+  upload remain blocked until a supported resolver is available.
+- Provider-backed nested assistant traces and Weave Dataset evaluations are not
+  implemented; only deterministic, Weave-acknowledged explanations exist.
+- Search replays report decision quality and exact-job-equivalent budgets, but
+  campaign timing, peak memory, and measured-or-estimated energy collection are
+  not yet implemented.
+- CI covers contracts, Python, React, Rust, secret boundaries, a complete
+  lockfile vulnerability scan, and dependency-license policy. Automated
+  axe/WCAG browser checks, packaged-installer/SBOM audits, real packaged-sidecar
+  builds, signing, and notarization remain release gates.
+
+## Quick start: UI and guided replay
 
 Requirements:
 
-- Node.js 22 (the CI reference runtime)
-- pnpm 11.9.0 (pinned in `package.json`)
-
-From the repository root:
+- Node.js 22
+- pnpm 11.9.0, pinned in `package.json`
 
 ```bash
+corepack enable
 pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-Open <http://localhost:1420>. The exact guided fixture works without a desktop
-worker. Real-project entry paths remain locked setup previews in a browser-only
-session.
+Open <http://localhost:1420>. Browser mode is an explicitly labelled development
+preview: it can inspect the synthetic guided evidence and cloud UX but cannot
+authenticate, verify a Restricted project, use a keychain, or create a
+practitioner cloud binding.
 
-Build or test the webview with:
+Frontend checks:
 
 ```bash
 pnpm test:frontend
 pnpm build
 ```
 
-## Scientific core
+## Scientific worker setup
 
-Python 3.11 or newer is supported. The base install stays small; scientific,
-geospatial, and document-export dependencies are optional extras.
+Python 3.11 or newer is supported; CI uses Python 3.12. With `uv`:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -e '.[dev]'
+uv sync --locked --extra dev --extra science --extra export --extra observability
+uv run --no-sync pytest tests/python
+uv run --no-sync ruff check python tests scripts
+uv run --no-sync ruff format --check python tests scripts
+```
+
+Or install editable extras in an activated virtual environment:
+
+```bash
+python -m pip install -e '.[dev,science,export,observability]'
 python -m pytest tests/python
-gi-scenario-worker --help
 ```
 
-Install optional features only when needed:
-
-```bash
-python -m pip install -e '.[dev,science]'
-python -m pip install -e '.[dev,geo]'
-python -m pip install -e '.[dev,export]'
-```
-
-The worker accepts newline-delimited JSON-RPC 2.0 on standard input. This
-read-only smoke test exercises the same worker boundary used by the desktop
-host:
+The worker accepts JSON-RPC 2.0 over JSONL standard input. This read-only smoke
+test uses the same API major version as the desktop host:
 
 ```bash
 printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"system.ping","params":{}}' \
-  | gi-scenario-worker --transport jsonl-stdio --api-version 1.0
+  | gi-scenario-worker --transport jsonl-stdio --api-version 2.0
 ```
 
-The public contracts are generated from Pydantic models into versioned JSON
-Schema plus frontend TypeScript/Zod types:
+## W&B development configuration
+
+Never commit or hard-code an API key. Start from the empty variable-name
+template:
 
 ```bash
-python scripts/generate_schemas.py
+cp .env.example .env
 ```
 
-Generated outputs live in [`schemas/v1.0/`](schemas/v1.0/) and
+Set only the values needed for local command-line integration:
+
+```text
+WANDB_API_KEY
+WANDB_ENTITY
+WANDB_PROJECT
+WANDB_BASE_URL
+WANDB_DEPLOYMENT
+WANDB_MODE
+```
+
+The worker applies defensive defaults:
+
+```text
+WANDB_CONSOLE=off
+WANDB_DISABLE_CODE=true
+WANDB_DISABLE_GIT=true
+WANDB_ERROR_REPORTING=false
+WANDB_SHOW_RUN=false
+```
+
+Production desktop users enter their key once through the binding wizard. The
+native host stores it in the operating-system keychain; it is not stored in
+`.env`, SQLite, logs, diagnostics, artifacts, exports, or process arguments.
+Treat API keys as passwords, as required by the
+[W&B API guidance](https://docs.wandb.ai/models/track/public-api-guide).
+
+The browser preview never accepts or tests a real credential. CI on pull
+requests uses mock or disabled adapters and receives no W&B secret. Only the
+manually approved `W&B integration` workflow uses service-account secrets.
+
+## Regenerate exact guided evidence
+
+Build the official EPA SWMM console executable from the pinned tag and commit
+recorded in [the engine manifest](engine/swmm-5.2.4.json). Use a new or empty
+output directory:
+
+```bash
+python scripts/generate_guided_fixture.py \
+  --solver /path/to/runswmm \
+  --output /new/empty/guided-output
+
+python scripts/generate_guided_ui_fixture.py \
+  --manifest /new/empty/guided-output/manifest.json \
+  --output /new/empty/guidedFixture.json
+```
+
+The generator refuses a non-5.2.4 executable. It launches each job without a
+shell, records the executable hash, and writes the manifest only after job
+accounting and QA reconcile.
+
+## Generate and replay the exhaustive benchmark
+
+Generate the immutable 2,800-job table with the same pinned solver:
+
+```bash
+python scripts/generate_exhaustive_benchmark.py \
+  --solver /path/to/runswmm \
+  --output /new/empty/exhaustive-output
+```
+
+Run an offline hidden-oracle replay:
+
+```bash
+gi-studio-benchmark \
+  --dataset /new/empty/exhaustive-output/dataset.json \
+  --method sobol \
+  --budget 128 \
+  --seed 424242 \
+  --output /new/empty/sobol-128.json
+```
+
+Release-gate benchmark campaigns use `--wandb` and refuse to log unless a
+Restricted integration has already been established and the W&B variables point
+to the intended test project. A replay without that flag is only a local
+reproducibility check, not a GI project or accepted release-gate record.
+Practitioner analysis is never coordinated by W&B Sweeps.
+
+## Public contracts
+
+Pydantic is the schema authority. Generate schema `2.0` JSON Schema and matching
+TypeScript/Zod declarations with:
+
+```bash
+uv run --no-sync python scripts/generate_schemas.py
+```
+
+Outputs live in [`schemas/v2.0/`](schemas/v2.0/) and
 [`apps/desktop/src/generated/contracts.ts`](apps/desktop/src/generated/contracts.ts).
-CI fails if these outputs drift from the Python contract definitions.
+CI fails on schema drift. Schema `2.0` is a breaking public release; the worker
+does not include a legacy `1.0` payload adapter.
 
 ## Desktop development
 
-The native host additionally requires Rust 1.88 or newer and a target-specific,
-self-contained worker at:
+The Tauri host additionally requires Rust 1.88 or newer and a target-specific
+worker sidecar at:
 
 ```text
 apps/desktop/src-tauri/binaries/gi-scenario-worker-$TARGET_TRIPLE[.exe]
 ```
 
-With that worker present:
+With the worker and approved SWMM executable packaged:
 
 ```bash
 pnpm desktop
 ```
 
-The missing-worker failure is intentional: an installer without its scientific
-worker is not a valid engineering application. A release must also bundle and
-hash the permitted SWMM executable, create an SBOM, publish checksums, and sign
-the worker and installer. See the
-[`desktop packaging contract`](docs/platform-packaging.md).
+A missing worker or solver is a blocking setup error, not a reason to substitute
+browser data. A production release must build the target worker and SWMM from
+pinned sources, run the integration and differential suites, generate a
+CycloneDX SBOM and checksums, include notices, and sign/notarize the installer.
+See [the desktop packaging contract](docs/platform-packaging.md).
 
-## Architecture and trust boundary
+## Verification and CI
 
-```text
-React webview
-  -> versioned Tauri commands
-    -> Rust host and JSONL framing
-      -> Python scientific worker (sole SQLite writer)
-        -> one isolated SWMM subprocess per design x storm
+The required workflow runs Python tests and formatting, secret-boundary checks,
+schema and guided-projection drift checks, frontend tests/build, Rust formatting,
+Clippy and tests, plus an OSV v2.3.8 scan of `uv.lock`, `pnpm-lock.yaml`, and
+`Cargo.lock`. OSV findings fail closed unless they have an advisory-specific,
+expiring entry in [`osv-scanner.toml`](osv-scanner.toml). A deterministic policy
+check rejects AGPL and SSPL dependency licenses and reports unresolved license
+metadata for packaging review. GitHub Dependency Review can be enabled as an
+additional check with `ENABLE_GHAS_DEPENDENCY_REVIEW=true` when the repository
+has GitHub Advanced Security. CI never receives production credentials.
+
+The separate manually dispatched
+[`wandb-integration.yml`](.github/workflows/wandb-integration.yml) is bound to a
+protected GitHub Environment. It uses a W&B service-account key from Actions
+secrets, verifies the Restricted target, performs the supported mock-free
+connection and tiny artifact hash roundtrip, and never echoes the key.
+
+Run the local source checks before proposing a change:
+
+```bash
+uv run --no-sync pytest tests/python
+uv run --no-sync ruff check python tests scripts
+uv run --no-sync ruff format --check python tests scripts
+pnpm test:frontend
+pnpm build
+cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml --check
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked
+osv-scanner --config=osv-scanner.toml --recursive --licenses --all-packages \
+  --format=json --output-file=/tmp/gi-osv-results.json ./
+python3 scripts/check_osv_policy.py /tmp/gi-osv-results.json
 ```
 
-The renderer selects evidence by identity; it cannot provide hydraulic values,
-hashes, readiness, project identity, or export attachments. The worker resolves
-completed repository jobs, verifies artifact bytes against their SHA-256 values,
-and rejects cross-project or cross-analysis selections.
+## Architecture and governance
 
-Large immutable inputs and outputs are content-addressed. SQLite stores
-authoritative project state, provenance, job transitions, metrics, QA findings,
-and artifact references. Frontend state is disposable view state.
+- [Platform architecture](docs/platform-architecture.md) — processes, durable
+  state, JSON-RPC, evidence, outbox, W&B/Weave, credentials, and security.
+- [Observability operations](docs/observability.md) — binding, cloud mapping,
+  retry semantics, deep links, assistant tracing, and integration gates.
+- [Data governance](docs/data-governance.md) — full-sync categories, exclusions,
+  retention, data classification, licensing, and trace redaction.
+- [Guided example](docs/guided-example.md) — Cedar Trace story, rules, alternatives,
+  claims, replay, and rerun.
+- [Product principles](docs/product-principles.md) — exact-result and AI boundaries.
+- [Research basis](docs/research-basis.md) — technical choices and source basis.
 
-The main design records are:
+## Scope and claim boundaries
 
-- [`docs/platform-architecture.md`](docs/platform-architecture.md) — process,
-  protocol, lifecycle, evidence, and security boundaries;
-- [`docs/product-principles.md`](docs/product-principles.md) — product claims and
-  engineering invariants;
-- [`docs/data-governance.md`](docs/data-governance.md) — provenance, licensing,
-  retention, and client-data handling;
-- [`docs/research-basis.md`](docs/research-basis.md) — technical decisions and
-  source basis; and
-- [`docs/proposed-improvements.md`](docs/proposed-improvements.md) — researched
-  product and staff-engineering plan beyond the source MVP.
+GI Scenario Studio is an alternatives-screening application. It is not a
+replacement for calibration, survey, geotechnical investigation, utility
+locating, maintenance planning, constructability review, official SWMM editing,
+or professional judgment. It does not automatically make regulatory,
+flood-risk, compliance, or construction decisions.
 
-## Model readiness
+Acceptable result language is precise:
 
-Every project has one visible readiness level:
+- “Exact SWMM result under documented assumptions.”
+- “Nondominated among exact alternatives evaluated.”
+- “Tested against the selected storm cases.”
 
-| Level | Intended use |
-|---|---|
-| `DEMO` | Bundled teaching and interface-evaluation material |
-| `CONCEPTUAL` | Exploratory comparison with unverified assumptions |
-| `ENGINEER_REVIEWED` | Draft alternatives screening after explicit attestations |
-| `REFERENCE_MATCHED` | Evidence package after an approved reference comparison passes stated tolerances |
-
-Readiness is never inferred from a score or advanced automatically. Promotion
-requires a recorded human decision; `REFERENCE_MATCHED` additionally requires a
-successful metric-specific comparison. Conceptual outputs retain this notice:
-
-> Conceptual planning model — not for design, permitting, flood-risk
-> determination, or representation of an existing drainage system.
+The application does not claim real-world truth, a verified global optimum,
+regulator approval, a filing-ready package, or guaranteed resilience.
 
 ## Repository map
 
 ```text
 apps/desktop/              React interface and Tauri host
-assets/                    Source artwork for generated desktop icons
-python/gi_scenario_core/   Scientific worker and engineering domain services
-schemas/v1.0/              Generated public JSON Schemas
-tests/python/              Core, cross-layer, solver, evidence, and export tests
-benchmarks/                CC0 reference assets and exact guided evidence
-engine/                    SWMM pin and packaging metadata
-scripts/                   Schema and guided-fixture generators
-docs/                      Architecture, governance, packaging, and research notes
-.github/workflows/ci.yml   Required source verification workflow
+python/gi_scenario_core/   Scientific worker and domain services
+schemas/v2.0/              Generated public JSON Schemas
+tests/python/              Core, evidence, observability, solver, and export tests
+benchmarks/guided_exact/   Cedar Trace 884-job manifest and 20 retained run sets
+engine/                    SWMM source pin and platform build hashes
+scripts/                   Schema, fixture, benchmark, and security checks
+docs/                      Architecture, governance, UX, packaging, and research
+.github/workflows/         Source CI and protected W&B integration gate
 ```
-
-## Verification and CI
-
-Before proposing a change, run the relevant local checks from an activated
-Python environment:
-
-```bash
-python -m pytest tests/python
-python -m ruff check python tests scripts
-python -m ruff format --check python tests scripts
-pnpm test:frontend
-pnpm build
-```
-
-The GitHub Actions workflow in [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
-runs on pushes, pull requests, and merge queues. It verifies Python lint,
-formatting and tests; generated-contract and guided-fixture consistency;
-retained evidence hashes; frontend tests and production build; and Rust
-formatting, strict Clippy, and host tests against lockfile-pinned dependencies.
-The workflow uses read-only repository permissions and does not require client
-models or external data-provider access.
-
-## Security and provenance
-
-This application processes untrusted project bundles and launches a hydraulic
-solver, so security behavior is part of engineering correctness:
-
-- archive paths, symlinks, expanded size, and file counts are validated before
-  extraction;
-- solver processes are invoked without a shell in isolated run directories;
-- the desktop renderer has no arbitrary shell or broad filesystem capability;
-- existing-model analysis requires no network access;
-- optional data-provider access is allowlisted, consented to, and recorded; and
-- diagnostic bundles exclude model content unless the user explicitly opts in.
-
-Do not commit client models, credentials, exact asset coordinates, or permit
-materials. Report sensitive defects privately as described in
-[`SECURITY.md`](SECURITY.md). Dataset visibility is never treated as permission
-to redistribute it; see [`benchmarks/README.md`](benchmarks/README.md) and the
-asset manifests.
-
-## Scope and limitations
-
-GI Scenario Studio is an alternatives-screening application. It is not a
-replacement for calibration, survey, geotechnical investigation, utility
-locating, official SWMM editing, or professional judgment. The conceptual
-generator exposes planning defaults and does not claim to infer a real buried
-network.
-
-Automatic calibration, advanced controls, treatment, water quality, real-time
-control, detailed hydraulic structures, 2D flooding, regulatory determinations,
-and construction design remain outside v0.1. SWMManywhere is isolated behind an
-optional adapter and cannot bypass standard import, validation, provenance, or
-readiness gates.
-
-## Contributing
-
-Read [`CONTRIBUTING.md`](CONTRIBUTING.md) before changing engineering behavior.
-Contributions must preserve exact-result provenance, visible conceptual-model
-limitations, typed and reversible mutations, and the separation between ML
-proposals and reportable results. Add a golden, integration, or property test
-when changing parsers, mutations, cache keys, budget arithmetic, readiness, or
-exports.
 
 ## License and notices
 
-Application code is licensed under [Apache-2.0](LICENSE). EPA SWMM is public
-domain. SWMManywhere is BSD-3-Clause and optional. Dataset and benchmark terms
-remain attached to their individual manifests. See
-[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) and [`NOTICE`](NOTICE).
+Application code is [Apache-2.0](LICENSE). EPA SWMM is United States public
+domain subject to EPA disclaimer and no-endorsement terms. SWMManywhere is
+BSD-3-Clause and optional. Dataset and benchmark terms remain attached to their
+manifests. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [NOTICE](NOTICE).

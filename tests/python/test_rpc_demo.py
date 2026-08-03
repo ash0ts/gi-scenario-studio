@@ -8,7 +8,12 @@ from pathlib import Path
 
 import pytest
 from gi_scenario_core.demo import create_demo_project
-from gi_scenario_core.rpc_worker import RPCDispatcher, _download_https_pinned, serve_jsonl
+from gi_scenario_core.rpc_worker import (
+    RPCDispatcher,
+    _candidate_slots,
+    _download_https_pinned,
+    serve_jsonl,
+)
 from gi_scenario_core.validation import validate_model
 
 
@@ -22,30 +27,32 @@ def _sha256(path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def test_demo_project_is_offline_self_contained_and_demo_readiness(tmp_path):
+def test_demo_project_is_offline_self_contained_and_unassessed_demo(tmp_path):
     result = create_demo_project(tmp_path / "demo")
-    assert result["project"]["readiness"] == "DEMO"
+    assert result["project"]["project_kind"] == "demo"
     assert result["candidate_count"] == 4
     model_text = Path(result["model_path"]).read_text(encoding="utf-8")
     assert validate_model(model_text).blocking_count == 0
     assert (tmp_path / "demo" / "project.sqlite").is_file()
 
 
-def test_ui_friendly_project_create_never_auto_reference_matches(tmp_path):
+def test_ui_friendly_project_create_never_auto_assesses_model_fitness(tmp_path):
     dispatcher = RPCDispatcher(data_root=tmp_path)
     conceptual = dispatcher.dispatch("project.create", {"kind": "conceptual"})
     existing = dispatcher.dispatch("project.create", {"kind": "existing"})
     demo = dispatcher.dispatch("project.create", {"kind": "demo"})
     assert conceptual["kind"] == "conceptual"
     assert existing["kind"] == "existing"
-    assert demo["readiness"] == "DEMO"
-    assert {conceptual["readiness"], existing["readiness"]} == {"CONCEPTUAL"}
-    assert all(item["readiness"] != "REFERENCE_MATCHED" for item in (conceptual, existing, demo))
+    assert demo["kind"] == "demo"
+    assert {conceptual["kind"], existing["kind"]} == {"conceptual", "existing"}
+    assert all(
+        item["fitnessDisposition"] == "not_assessed" for item in (conceptual, existing, demo)
+    )
 
 
-def test_low_level_project_create_requires_explicit_readiness(tmp_path):
+def test_low_level_project_create_requires_explicit_project_kind(tmp_path):
     dispatcher = RPCDispatcher(data_root=tmp_path)
-    with pytest.raises(Exception, match="readiness"):
+    with pytest.raises(Exception, match="project_kind"):
         dispatcher.dispatch(
             "project.create", {"project_directory": str(tmp_path / "p"), "title": "P"}
         )
@@ -85,15 +92,18 @@ def test_jsonl_parse_and_method_errors_are_standard_json_rpc():
     assert lines[1]["error"]["code"] == -32601
 
 
-def test_analysis_start_requires_validation_evidence(tmp_path):
+def test_analysis_plan_requires_validation_evidence(tmp_path):
     dispatcher = RPCDispatcher(data_root=tmp_path)
     project = dispatcher.dispatch("project.create", {"kind": "conceptual"})
     with pytest.raises(Exception, match="validation evidence"):
         dispatcher.dispatch(
-            "analysis.start",
+            "analysis.plan",
             {
-                "project_directory": project["location"],
+                "project_directory": project["projectDirectory"],
                 "project_id": project["id"],
+                "candidate_slots": [],
+                "design_vectors": [],
+                "storm_cases": [],
             },
         )
 
@@ -104,6 +114,44 @@ def test_rpc_rejects_paths_outside_configured_roots(tmp_path):
     outside.write_text("[OPTIONS]\n", encoding="utf-8")
     with pytest.raises(Exception, match="allowed roots"):
         dispatcher.dispatch("model.validate", {"path": str(outside)})
+
+
+def test_model_validation_exposes_only_parsed_setup_identifiers(tmp_path):
+    project = create_demo_project(tmp_path / "demo")
+    dispatcher = RPCDispatcher(data_root=tmp_path)
+
+    result = dispatcher.dispatch("model.validate", {"path": project["model_path"]})
+
+    assert result["setup_options"]["source"] == "parsed_model"
+    assert result["setup_options"]["subcatchment_ids"] == ["S1", "S2"]
+    assert result["setup_options"]["lid_control_ids"] == [
+        "BARREL",
+        "BIOCELL",
+        "GREENROOF",
+        "PAVEMENT",
+        "RAINGARDEN",
+        "ROOFDISC",
+        "SWALE",
+        "TRENCH",
+    ]
+    assert result["setup_options"]["existing_lid_usage"]
+
+
+def test_exact_candidate_setup_rejects_implicit_engineering_defaults():
+    with pytest.raises(ValueError, match="must explicitly supply"):
+        _candidate_slots(
+            [
+                {
+                    "slot_id": "slot_1",
+                    "subcatchment_id": "S1",
+                    "lid_control": "BIOCELL",
+                    "max_additional_units": 1,
+                    "unit_area": 100,
+                    "surface_width": 10,
+                    "feasibility_basis": "Engineer-reviewed fixture",
+                }
+            ]
+        )
 
 
 def test_project_create_rejects_symlinked_repository_layout(tmp_path):
@@ -192,7 +240,7 @@ def test_data_asset_add_rejects_symlinked_directory_escape(tmp_path):
     project = dispatcher.dispatch("project.create", {"kind": "conceptual"})
     source = allowed / "source.tif"
     source.write_bytes(b"fixture")
-    data_assets = Path(project["location"]) / "data_assets"
+    data_assets = Path(project["projectDirectory"]) / "data_assets"
     data_assets.rmdir()
     try:
         data_assets.symlink_to(outside, target_is_directory=True)
@@ -204,7 +252,7 @@ def test_data_asset_add_rejects_symlinked_directory_escape(tmp_path):
             "data_asset.add",
             {
                 "path": str(source),
-                "project_directory": project["location"],
+                "project_directory": project["projectDirectory"],
                 "license": "fixture",
             },
         )
@@ -218,7 +266,7 @@ def test_data_asset_add_atomically_replaces_target_symlink(tmp_path):
     outside.mkdir()
     dispatcher = RPCDispatcher(data_root=allowed)
     project = dispatcher.dispatch("project.create", {"kind": "conceptual"})
-    project_directory = Path(project["location"])
+    project_directory = Path(project["projectDirectory"])
     data_assets = project_directory / "data_assets"
     source = allowed / "source.tif"
     source.write_bytes(b"trusted asset bytes")
@@ -235,7 +283,7 @@ def test_data_asset_add_atomically_replaces_target_symlink(tmp_path):
         "data_asset.add",
         {
             "path": str(source),
-            "project_directory": project["location"],
+            "project_directory": project["projectDirectory"],
             "license": "fixture",
         },
     )
@@ -254,7 +302,7 @@ def test_data_asset_download_atomically_replaces_target_symlink(tmp_path, monkey
     project = dispatcher.dispatch("project.create", {"kind": "conceptual"})
     content = b"downloaded trusted bytes"
     digest = hashlib.sha256(content).hexdigest()
-    target = Path(project["location"]) / "data_assets" / f"{digest[:16]}-data.tif"
+    target = Path(project["projectDirectory"]) / "data_assets" / f"{digest[:16]}-data.tif"
     outside_target = outside / "victim.txt"
     outside_target.write_bytes(b"must remain unchanged")
     try:
@@ -271,7 +319,7 @@ def test_data_asset_download_atomically_replaces_target_symlink(tmp_path, monkey
         {
             "consent": True,
             "url": "https://example.com/data.tif",
-            "project_directory": project["location"],
+            "project_directory": project["projectDirectory"],
             "license": "fixture",
         },
     )

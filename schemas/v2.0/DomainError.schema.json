@@ -1,0 +1,89 @@
+{
+  "$defs": {
+    "ErrorCategory": {
+      "enum": [
+        "USER_FIXABLE",
+        "MODEL_QUALITY",
+        "UNSUPPORTED_FEATURE",
+        "DATA_PROVIDER",
+        "SOLVER_FAILURE",
+        "RESOURCE_LIMIT",
+        "INTERNAL"
+      ],
+      "title": "ErrorCategory",
+      "type": "string"
+    },
+    "Severity": {
+      "enum": [
+        "info",
+        "warning",
+        "blocking"
+      ],
+      "title": "Severity",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "category": {
+      "$ref": "#/$defs/ErrorCategory"
+    },
+    "code": {
+      "title": "Code",
+      "type": "string"
+    },
+    "diagnostic_id": {
+      "title": "Diagnostic Id",
+      "type": "string"
+    },
+    "object_reference": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Object Reference"
+    },
+    "remediation": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Remediation"
+    },
+    "retryable": {
+      "default": false,
+      "title": "Retryable",
+      "type": "boolean"
+    },
+    "severity": {
+      "$ref": "#/$defs/Severity"
+    },
+    "technical_message": {
+      "title": "Technical Message",
+      "type": "string"
+    },
+    "user_message": {
+      "title": "User Message",
+      "type": "string"
+    }
+  },
+  "required": [
+    "code",
+    "category",
+    "severity",
+    "user_message",
+    "technical_message"
+  ],
+  "title": "DomainError",
+  "type": "object"
+}

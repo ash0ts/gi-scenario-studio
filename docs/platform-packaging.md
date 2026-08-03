@@ -11,7 +11,7 @@ apps/desktop/src-tauri/binaries/gi-scenario-worker-$TARGET_TRIPLE[.exe]
 The executable must accept:
 
 ```text
---transport jsonl-stdio --api-version 1.0
+--transport jsonl-stdio --api-version 2.0
 ```
 
 It must require no system Python and must write JSON-RPC messages only to
@@ -43,8 +43,9 @@ worker is not a valid application.
 
 ## Release checks
 
-- Launch and complete the guided example on a clean machine with network access
-  disabled.
+- On a clean machine, complete the required online Restricted-project binding,
+  disable network access, relaunch, and complete the verified guided replay with
+  synchronization visibly queued.
 - Confirm no Python, Node.js, Rust, Docker, or administrator setup is required.
 - Confirm frontend code cannot invoke the shell plugin directly.
 - Kill the worker during an exact run, restart the app, and verify worker-side

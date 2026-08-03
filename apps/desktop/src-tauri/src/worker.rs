@@ -4,10 +4,12 @@ use std::sync::Mutex;
 
 use serde::Serialize;
 use serde_json::Value;
+use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 use tokio::sync::oneshot;
+use zeroize::Zeroize;
 
 use crate::error::PlatformError;
 use crate::rpc::{
@@ -119,6 +121,34 @@ impl WorkerManager {
         }
         self.emit_status(app);
 
+        let mut sidecar_args = SIDECAR_ARGS
+            .iter()
+            .map(|item| (*item).to_owned())
+            .collect::<Vec<_>>();
+        let data_root = crate::bundle::project_data_root(app)?;
+        sidecar_args.extend([
+            "--data-root".to_owned(),
+            data_root.to_string_lossy().into_owned(),
+        ]);
+        let guided_projection = app
+            .path()
+            .resolve("guided/guidedFixture.json", BaseDirectory::Resource)
+            .ok();
+        let guided_evidence = app
+            .path()
+            .resolve("guided/evidence", BaseDirectory::Resource)
+            .ok();
+        if let (Some(projection), Some(evidence)) = (guided_projection, guided_evidence) {
+            if projection.is_file() && evidence.join("manifest.json").is_file() {
+                sidecar_args.extend([
+                    "--guided-fixture".to_owned(),
+                    projection.to_string_lossy().into_owned(),
+                    "--guided-evidence-directory".to_owned(),
+                    evidence.to_string_lossy().into_owned(),
+                ]);
+            }
+        }
+
         let spawn_result = app
             .shell()
             .sidecar(SIDECAR_NAME)
@@ -129,7 +159,7 @@ impl WorkerManager {
                     .envs(sanitized_environment())
                     .env("PYTHONUTF8", "1")
                     .env("PYTHONUNBUFFERED", "1")
-                    .args(SIDECAR_ARGS)
+                    .args(sidecar_args)
                     .spawn()
                     .map_err(|error| error.to_string())
             });
@@ -204,14 +234,18 @@ impl WorkerManager {
         self.ensure_started(app)?;
 
         let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
-        let envelope = request.into_envelope(request_id);
-        let mut line = serde_json::to_vec(&envelope).map_err(|error| {
+        let mut envelope = request.into_envelope(request_id);
+        let encoded = serde_json::to_vec(&envelope);
+        zeroize_embedded_secrets(&mut envelope);
+        let mut line = encoded.map_err(|error| {
             PlatformError::protocol(format!("request encoding failed: {error}"))
         })?;
         if line.len() > MAX_MESSAGE_BYTES {
+            let message_size = line.len();
+            line.zeroize();
             return Err(PlatformError::message_too_large(
                 "desktop-to-worker",
-                line.len(),
+                message_size,
                 MAX_MESSAGE_BYTES,
             ));
         }
@@ -234,6 +268,7 @@ impl WorkerManager {
                 None => Err("worker process has no stdin handle".to_owned()),
             }
         };
+        line.zeroize();
 
         if let Err(technical_message) = write_result {
             self.remove_pending(&key);
@@ -379,9 +414,37 @@ fn sanitized_environment() -> Vec<(String, String)> {
         .collect()
 }
 
+fn zeroize_embedded_secrets(value: &mut Value) {
+    match value {
+        Value::Object(object) => {
+            for (key, item) in object {
+                if matches!(
+                    key.as_str(),
+                    "api_key" | "authorization" | "access_token" | "password" | "secret"
+                ) {
+                    if let Value::String(secret) = item {
+                        secret.zeroize();
+                    }
+                    *item = Value::Null;
+                } else {
+                    zeroize_embedded_secrets(item);
+                }
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                zeroize_embedded_secrets(item);
+            }
+        }
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{sanitized_environment, INHERITED_ENVIRONMENT};
+    use serde_json::json;
+
+    use super::{sanitized_environment, zeroize_embedded_secrets, INHERITED_ENVIRONMENT};
 
     #[test]
     fn worker_inherits_only_allowlisted_environment_names() {
@@ -391,5 +454,22 @@ mod tests {
             assert_ne!(name, "LD_PRELOAD");
             assert_ne!(name, "DYLD_INSERT_LIBRARIES");
         }
+    }
+
+    #[test]
+    fn serialized_secret_fields_are_cleared_from_the_request_value() {
+        let mut request = json!({
+            "params": {
+                "api_key": "secret-key-material",
+                "nested": {"authorization": "Bearer secret", "project": "safe"}
+            }
+        });
+
+        zeroize_embedded_secrets(&mut request);
+
+        assert!(request["params"]["api_key"].is_null());
+        assert!(request["params"]["nested"]["authorization"].is_null());
+        assert_eq!(request["params"]["nested"]["project"], "safe");
+        assert!(!request.to_string().contains("secret-key-material"));
     }
 }

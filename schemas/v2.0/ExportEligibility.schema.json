@@ -1,0 +1,90 @@
+{
+  "$defs": {
+    "FitnessDisposition": {
+      "enum": [
+        "not_assessed",
+        "fit_for_stated_use",
+        "fit_with_limitations",
+        "not_fit"
+      ],
+      "title": "FitnessDisposition",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "allowed": {
+      "title": "Allowed",
+      "type": "boolean"
+    },
+    "analysis_id": {
+      "title": "Analysis Id",
+      "type": "string"
+    },
+    "blockers": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Blockers",
+      "type": "array"
+    },
+    "checked_at": {
+      "format": "date-time",
+      "title": "Checked At",
+      "type": "string"
+    },
+    "eligibility_id": {
+      "title": "Eligibility Id",
+      "type": "string"
+    },
+    "fitness_disposition": {
+      "$ref": "#/$defs/FitnessDisposition"
+    },
+    "model_revision_id": {
+      "title": "Model Revision Id",
+      "type": "string"
+    },
+    "passport_id": {
+      "title": "Passport Id",
+      "type": "string"
+    },
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    },
+    "requested_package": {
+      "enum": [
+        "learning",
+        "screening",
+        "verified_alternatives"
+      ],
+      "title": "Requested Package",
+      "type": "string"
+    },
+    "required_evidence_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Required Evidence Ids",
+      "type": "array"
+    },
+    "warnings": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+    }
+  },
+  "required": [
+    "project_id",
+    "analysis_id",
+    "passport_id",
+    "model_revision_id",
+    "fitness_disposition",
+    "requested_package",
+    "allowed"
+  ],
+  "title": "ExportEligibility",
+  "type": "object"
+}

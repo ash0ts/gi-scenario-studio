@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { attestationsComplete, calculateDesignCapacity, nondominatedIds } from "./analysis";
+import { acceptanceStatus, calculateDesignCapacity, controllingStormIndex, nondominatedIds, reviewChecksComplete, selectDecisionReference } from "./analysis";
 
 describe("exact analysis budget", () => {
   it("reserves one baseline job per storm", () => {
@@ -12,11 +12,11 @@ describe("exact analysis budget", () => {
   });
 });
 
-describe("readiness attestation", () => {
-  it("requires every explicit attestation", () => {
-    expect(attestationsComplete([true, true, true, true, true])).toBe(true);
-    expect(attestationsComplete([true, true, false, true, true])).toBe(false);
-    expect(attestationsComplete([])).toBe(false);
+describe("model-fitness review checks", () => {
+  it("requires every explicit review check", () => {
+    expect(reviewChecksComplete([true, true, true, true, true])).toBe(true);
+    expect(reviewChecksComplete([true, true, false, true, true])).toBe(false);
+    expect(reviewChecksComplete([])).toBe(false);
   });
 });
 
@@ -34,5 +34,24 @@ describe("metric-specific exact frontier", () => {
 
     expect([...volume]).toEqual(["low-cost", "balanced", "low-volume"]);
     expect([...peak]).toEqual(["low-cost", "balanced", "low-peak"]);
+  });
+});
+
+describe("teaching decision lens", () => {
+  it("makes the disclosed volume bands deterministic", () => {
+    expect(acceptanceStatus(0.699)).toBe("meets");
+    expect(acceptanceStatus(0.71)).toBe("near");
+    expect(acceptanceStatus(0.721)).toBe("does-not-meet");
+  });
+
+  it("identifies the controlling storm and lowest-cost passing selection", () => {
+    expect(controllingStormIndex([0.1, 0.25, 0.2, 0.18])).toBe(1);
+    expect(controllingStormIndex([])).toBe(-1);
+    const reference = selectDecisionReference([
+      { id: "stronger", cost: 12, volume: 0.65 },
+      { id: "least-cost-pass", cost: 9, volume: 0.69 },
+      { id: "fail", cost: 4, volume: 0.73 },
+    ]);
+    expect(reference?.id).toBe("least-cost-pass");
   });
 });

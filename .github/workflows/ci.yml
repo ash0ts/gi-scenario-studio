@@ -31,7 +31,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Python and uv
-        uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
@@ -40,8 +40,27 @@ jobs:
       - name: Install locked Python dependencies
         run: uv sync --locked --extra dev --extra science --extra export
 
+      - name: Smoke-test the installed JSON-RPC worker entrypoint
+        shell: bash
+        run: |
+          response="$(printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"system.ping","params":{}}' | uv run --no-sync gi-scenario-worker --transport jsonl-stdio --api-version 2.0)"
+          RESPONSE="$response" uv run --no-sync python - <<'PY'
+          import json
+          import os
+
+          lines = [line for line in os.environ["RESPONSE"].splitlines() if line.strip()]
+          if len(lines) != 1:
+              raise SystemExit("worker smoke test expected exactly one protocol response")
+          response = json.loads(lines[0])
+          if response.get("id") != 1 or response.get("result", {}).get("api_version") != "2.0":
+              raise SystemExit("worker smoke test returned an incompatible protocol response")
+          PY
+
       - name: Lint Python
         run: uv run --no-sync ruff check python tests scripts
+
+      - name: Enforce repository secret boundary
+        run: uv run --no-sync python scripts/check_repository_secrets.py
 
       - name: Check Python formatting
         run: uv run --no-sync ruff format --check python tests scripts
@@ -74,7 +93,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@b0f76dfb45f55f8421693e4803ac7bb65143bd34 # v6
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
         with:
           version: ${{ env.PNPM_VERSION }}
           run_install: false
@@ -115,7 +134,7 @@ jobs:
             libwebkit2gtk-4.1-dev
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@b0f76dfb45f55f8421693e4803ac7bb65143bd34 # v6
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
         with:
           version: ${{ env.PNPM_VERSION }}
           run_install: false
@@ -139,7 +158,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Cache Rust build artifacts
-        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
           workspaces: "apps/desktop/src-tauri -> target"
 
@@ -162,3 +181,74 @@ jobs:
         run: >-
           cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
           --locked --all-targets
+
+  dependency-review:
+    name: Dependency and license policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Scan locked dependencies and inventory licenses
+        id: osv_scan
+        continue-on-error: true
+        uses: google/osv-scanner-action/osv-scanner-action@8dc09193bb540e09b23da07ad7e30bd33bf87018 # v2.3.8
+        with:
+          scan-args: |-
+            --config=osv-scanner.toml
+            --recursive
+            --licenses
+            --all-packages
+            --format=json
+            --output-file=osv-results.json
+            ./
+
+      - name: Enforce lockfile coverage and license policy
+        id: osv_policy
+        if: always()
+        continue-on-error: true
+        run: python3 scripts/check_osv_policy.py osv-results.json
+
+      - name: Preserve supply-chain scan evidence
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: supply-chain-scan-results
+          path: osv-results.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Enforce scanner outcomes
+        if: always()
+        shell: bash
+        env:
+          OSV_SCAN_OUTCOME: ${{ steps.osv_scan.outcome }}
+          OSV_POLICY_OUTCOME: ${{ steps.osv_policy.outcome }}
+        run: |
+          failed=0
+
+          if [[ "${OSV_SCAN_OUTCOME}" != "success" ]]; then
+            echo "::error::OSV found an unexcepted dependency advisory or failed operationally."
+            failed=1
+          fi
+
+          if [[ "${OSV_POLICY_OUTCOME}" != "success" ]]; then
+            echo "::error::Lockfile coverage or dependency-license policy failed."
+            failed=1
+          fi
+
+          exit "${failed}"
+
+      - name: Review changed dependencies with GitHub Advanced Security
+        if: >-
+          github.event_name == 'pull_request' &&
+          vars.ENABLE_GHAS_DEPENDENCY_REVIEW == 'true'
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: moderate
+          deny-licenses: AGPL-1.0-only, AGPL-1.0-or-later, AGPL-3.0-only, AGPL-3.0-or-later, SSPL-1.0

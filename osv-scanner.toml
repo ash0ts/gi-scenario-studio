@@ -1,0 +1,96 @@
+# OSV-Scanner v2.3.8 exceptions. Every exception is advisory-specific and
+# expires; a new advisory for the same package still fails CI.
+
+# The gtk-rs 0.18 crates below are maintenance advisories, not disclosed
+# vulnerabilities. They remain transitive requirements of Tauri's Linux
+# WebKitGTK/GTK3 backend and currently have no patched 0.18 release.
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0411"
+ignoreUntil = 2026-11-01
+reason = "Unmaintained transitive gtk-rs 0.18 crate in Tauri's Linux backend; track the upstream GTK stack migration."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0412"
+ignoreUntil = 2026-11-01
+reason = "Unmaintained transitive gtk-rs 0.18 crate in Tauri's Linux backend; track the upstream GTK stack migration."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0413"
+ignoreUntil = 2026-11-01
+reason = "Unmaintained transitive gtk-rs 0.18 crate in Tauri's Linux backend; track the upstream GTK stack migration."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0414"
+ignoreUntil = 2026-11-01
+reason = "Unmaintained transitive gtk-rs 0.18 crate in Tauri's Linux backend; track the upstream GTK stack migration."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0415"
+ignoreUntil = 2026-11-01
+reason = "Unmaintained transitive gtk-rs 0.18 crate in Tauri's Linux backend; track the upstream GTK stack migration."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0416"
+ignoreUntil = 2026-11-01
+reason = "Unmaintained transitive gtk-rs 0.18 crate in Tauri's Linux backend; track the upstream GTK stack migration."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0417"
+ignoreUntil = 2026-11-01
+reason = "Unmaintained transitive gtk-rs 0.18 crate in Tauri's Linux backend; track the upstream GTK stack migration."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0418"
+ignoreUntil = 2026-11-01
+reason = "Unmaintained transitive gtk-rs 0.18 crate in Tauri's Linux backend; track the upstream GTK stack migration."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0419"
+ignoreUntil = 2026-11-01
+reason = "Unmaintained transitive gtk-rs 0.18 crate in Tauri's Linux backend; track the upstream GTK stack migration."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0420"
+ignoreUntil = 2026-11-01
+reason = "Unmaintained transitive gtk-rs 0.18 crate in Tauri's Linux backend; track the upstream GTK stack migration."
+
+# glib 0.18.5 is also transitive through the Linux GTK3 stack. The advisory
+# affects VariantStrIter methods that the application does not call directly;
+# this is a temporary risk acceptance, not a claim that the dependency is safe.
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0429"
+ignoreUntil = 2026-11-01
+reason = "Temporary acceptance for transitive glib 0.18.5; direct 0.20 upgrade is incompatible with the current Tauri GTK3 stack."
+
+# These are unmaintained-crate advisories without a disclosed vulnerability.
+# They are transitive dependencies and have no patched version in the current
+# upstream dependency graph.
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0370"
+ignoreUntil = 2026-11-01
+reason = "Unmaintained transitive proc-macro-error crate; replace through upstream dependency updates."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0075"
+ignoreUntil = 2026-11-01
+reason = "Unmaintained transitive unic crate; replace through upstream dependency updates."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0080"
+ignoreUntil = 2026-11-01
+reason = "Unmaintained transitive unic crate; replace through upstream dependency updates."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0081"
+ignoreUntil = 2026-11-01
+reason = "Unmaintained transitive unic crate; replace through upstream dependency updates."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0098"
+ignoreUntil = 2026-11-01
+reason = "Unmaintained transitive unic crate; replace through upstream dependency updates."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0100"
+ignoreUntil = 2026-11-01
+reason = "Unmaintained transitive unic crate; replace through upstream dependency updates."

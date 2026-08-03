@@ -5,8 +5,13 @@ from gi_scenario_core.concept import ConceptGenerationError, generate_concept_mo
 from gi_scenario_core.contracts import (
     CONCEPTUAL_NOTICE,
     Confidence,
-    ModelReadiness,
-    ReadinessLevel,
+    EvidenceClaim,
+    FitnessDisposition,
+    ModelFitnessCriterion,
+    ModelFitnessPassport,
+    ModelRevision,
+    ProjectBundle,
+    ProjectKind,
     SimulationBudget,
     StudyArea,
     public_schemas,
@@ -24,9 +29,57 @@ def test_study_area_requires_closed_ring():
         StudyArea(boundary=[(0, 0), (1, 0), (1, 1), (0, 1)], crs="EPSG:3857")
 
 
-def test_reference_matched_requires_reference_comparison():
-    with pytest.raises(ValueError, match="reference_comparison"):
-        ModelReadiness(level=ReadinessLevel.REFERENCE_MATCHED)
+def test_project_kind_does_not_imply_model_fitness():
+    bundle = ProjectBundle(
+        project_id="project_1",
+        title="Imported network",
+        base_model_path="network.inp",
+        project_kind=ProjectKind.EXISTING,
+        model_revision_id="revision_1",
+    )
+    assert bundle.project_kind == ProjectKind.EXISTING
+    assert bundle.model_fitness_passport_id is None
+
+
+def test_reference_comparison_is_evidence_not_an_ordinal_fitness_level():
+    claim = EvidenceClaim(
+        claim_id="claim_reference",
+        project_id="project_1",
+        claim_type="reference_comparison",
+        statement="Approved reference results matched stated tolerances.",
+        evidence_ids=["comparison:1"],
+    )
+    passport = ModelFitnessPassport(
+        project_id="project_1",
+        model_revision_id="revision_1",
+        intended_use="GI alternatives screening",
+        disposition=FitnessDisposition.FIT_FOR_STATED_USE,
+        criteria=[
+            ModelFitnessCriterion(
+                criterion_id="reference",
+                label="Reference comparison",
+                status="pass",
+                finding="Matched stated tolerances.",
+                evidence_claim_ids=[claim.claim_id],
+            )
+        ],
+        evidence_claims=[claim],
+        reviewer="A. Engineer",
+        reviewer_attested=True,
+    )
+    assert passport.disposition == FitnessDisposition.FIT_FOR_STATED_USE
+    assert passport.evidence_claims[0].claim_type == "reference_comparison"
+
+
+def test_model_revision_rejects_unverifiable_hashes():
+    with pytest.raises(ValueError, match="lowercase SHA-256"):
+        ModelRevision(
+            project_id="project_1",
+            reason="import",
+            model_sha256="not-a-digest",
+            observability_binding_id="binding_1",
+            created_by="bundle.import",
+        )
 
 
 def test_public_json_schemas_are_available():

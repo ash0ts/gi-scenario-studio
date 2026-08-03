@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import pytest
 from gi_scenario_core.contracts import (
-    ModelReadiness,
-    ReadinessLevel,
+    EvidenceClaim,
+    ExportEligibility,
+    FitnessDisposition,
+    ModelFitnessCriterion,
+    ModelFitnessPassport,
 )
 from gi_scenario_core.demo import create_demo_project
 from gi_scenario_core.swmm import SwmmDocument, SwmmMutationError, tokenize
 from gi_scenario_core.validation import (
-    default_attestations,
-    promote_readiness,
     validate_model,
 )
 
@@ -80,69 +81,81 @@ def test_disconnected_branch_is_detected_without_branch_cache_false_positive(con
     assert {"J1", "J2"}.issubset(stranded)
 
 
-def test_engineer_promotion_requires_complete_exact_checklist(concept_result):
-    validation = validate_model(concept_result.model_text)
-    attestations = default_attestations()
-    for item in attestations[:-1]:
-        item.accepted = True
-    current = ModelReadiness(level=ReadinessLevel.CONCEPTUAL)
-    with pytest.raises(ValueError, match="complete"):
-        promote_readiness(
-            current,
-            ReadinessLevel.ENGINEER_REVIEWED,
-            validation=validation,
-            attestations=attestations[:-1],
-            reviewer="A. Engineer",
-        )
-
-
-def test_engineer_promotion_rejects_unreviewed_assumptions(concept_result):
-    validation = validate_model(concept_result.model_text)
-    attestations = default_attestations()
-    for item in attestations:
-        item.accepted = True
-    with pytest.raises(ValueError, match="unreviewed"):
-        promote_readiness(
-            ModelReadiness(level=ReadinessLevel.CONCEPTUAL),
-            ReadinessLevel.ENGINEER_REVIEWED,
-            validation=validation,
-            provenance=concept_result.provenance,
-            attestations=attestations,
-            reviewer="A. Engineer",
-        )
-
-
-def test_reference_promotion_requires_successful_comparison(concept_result):
-    validation = validate_model(concept_result.model_text)
-    attestations = default_attestations()
-    for item in attestations:
-        item.accepted = True
-    reviewed_provenance = [
-        item.model_copy(update={"reviewed": True}) for item in concept_result.provenance
-    ]
-    reviewed = promote_readiness(
-        ModelReadiness(level=ReadinessLevel.CONCEPTUAL),
-        ReadinessLevel.ENGINEER_REVIEWED,
-        validation=validation,
-        provenance=reviewed_provenance,
-        attestations=attestations,
-        reviewer="A. Engineer",
+def _fitness_evidence() -> EvidenceClaim:
+    return EvidenceClaim(
+        claim_id="claim_model_checks",
+        project_id="project_1",
+        claim_type="fitness",
+        statement="Structural model checks completed without a blocking finding.",
+        evidence_ids=["validation:structural"],
     )
-    with pytest.raises(ValueError, match="successful"):
-        promote_readiness(
-            reviewed,
-            ReadinessLevel.REFERENCE_MATCHED,
-            validation=validation,
-            reference_comparison={"comparison_id": "cmp", "matched": False, "metrics": [{}]},
+
+
+def test_fit_for_stated_use_requires_every_criterion_to_pass(concept_result):
+    assert validate_model(concept_result.model_text).structurally_runnable
+    claim = _fitness_evidence()
+    with pytest.raises(ValueError, match="every criterion to pass"):
+        ModelFitnessPassport(
+            project_id="project_1",
+            model_revision_id="revision_1",
+            intended_use="GI alternatives screening",
+            disposition=FitnessDisposition.FIT_FOR_STATED_USE,
+            criteria=[
+                ModelFitnessCriterion(
+                    criterion_id="topology",
+                    label="Topology",
+                    status="review",
+                    finding="Outlet routing still requires engineer review.",
+                    evidence_claim_ids=[claim.claim_id],
+                )
+            ],
+            evidence_claims=[claim],
+            reviewer="A. Engineer",
+            reviewer_attested=True,
         )
-    matched = promote_readiness(
-        reviewed,
-        ReadinessLevel.REFERENCE_MATCHED,
-        validation=validation,
-        reference_comparison={
-            "comparison_id": "cmp",
-            "matched": True,
-            "metrics": [{"passed": True}],
-        },
-    )
-    assert matched.reference_comparison_id == "cmp"
+
+
+def test_fit_for_stated_use_requires_attested_evidence():
+    with pytest.raises(ValueError, match="attested reviewer evidence"):
+        ModelFitnessPassport(
+            project_id="project_1",
+            model_revision_id="revision_1",
+            intended_use="GI alternatives screening",
+            disposition=FitnessDisposition.FIT_FOR_STATED_USE,
+            criteria=[
+                ModelFitnessCriterion(
+                    criterion_id="topology",
+                    label="Topology",
+                    status="pass",
+                    finding="Reviewed.",
+                )
+            ],
+            reviewer="A. Engineer",
+            reviewer_attested=True,
+        )
+
+
+def test_fit_with_limitations_requires_explicit_limitations():
+    with pytest.raises(ValueError, match="requires limitations"):
+        ModelFitnessPassport(
+            project_id="project_1",
+            model_revision_id="revision_1",
+            intended_use="GI alternatives screening",
+            disposition=FitnessDisposition.FIT_WITH_LIMITATIONS,
+            reviewer="A. Engineer",
+            reviewer_attested=True,
+        )
+
+
+def test_export_eligibility_cannot_be_allowed_with_blockers():
+    with pytest.raises(ValueError, match="allowed export"):
+        ExportEligibility(
+            project_id="project_1",
+            analysis_id="analysis_1",
+            passport_id="passport_1",
+            model_revision_id="revision_1",
+            fitness_disposition=FitnessDisposition.NOT_ASSESSED,
+            requested_package="learning",
+            allowed=True,
+            blockers=["Repository evidence is incomplete."],
+        )

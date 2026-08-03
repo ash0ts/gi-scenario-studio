@@ -1,0 +1,322 @@
+{
+  "$defs": {
+    "AuthorityStatus": {
+      "enum": [
+        "adopted",
+        "preliminary",
+        "sensitivity",
+        "user_defined"
+      ],
+      "title": "AuthorityStatus",
+      "type": "string"
+    },
+    "DataAsset": {
+      "additionalProperties": false,
+      "properties": {
+        "asset_id": {
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "attribution": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Attribution"
+        },
+        "crs": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Crs"
+        },
+        "license": {
+          "title": "License",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "resolution": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resolution"
+        },
+        "retrieved_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retrieved At"
+        },
+        "role": {
+          "title": "Role",
+          "type": "string"
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sha256"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "vintage": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Vintage"
+        }
+      },
+      "required": [
+        "path",
+        "role",
+        "source",
+        "license"
+      ],
+      "title": "DataAsset",
+      "type": "object"
+    },
+    "ProjectKind": {
+      "enum": [
+        "demo",
+        "conceptual",
+        "existing"
+      ],
+      "title": "ProjectKind",
+      "type": "string"
+    },
+    "StormCase": {
+      "additionalProperties": false,
+      "properties": {
+        "aep": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "maximum": 1,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Aep"
+        },
+        "authority_status": {
+          "$ref": "#/$defs/AuthorityStatus"
+        },
+        "boundary_assumptions": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Boundary Assumptions"
+        },
+        "duration_hours": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration Hours"
+        },
+        "initial_conditions": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Initial Conditions"
+        },
+        "model_path": {
+          "title": "Model Path",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "retrieved_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retrieved At"
+        },
+        "role": {
+          "title": "Role",
+          "type": "string"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "source_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Version"
+        },
+        "storm_id": {
+          "title": "Storm Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "model_path",
+        "role",
+        "authority_status",
+        "source"
+      ],
+      "title": "StormCase",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "base_model_path": {
+      "title": "Base Model Path",
+      "type": "string"
+    },
+    "dependencies": {
+      "items": {
+        "$ref": "#/$defs/DataAsset"
+      },
+      "title": "Dependencies",
+      "type": "array"
+    },
+    "limitations": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Limitations",
+      "type": "array"
+    },
+    "model_fitness_passport_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Model Fitness Passport Id"
+    },
+    "model_revision_id": {
+      "title": "Model Revision Id",
+      "type": "string"
+    },
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    },
+    "project_kind": {
+      "$ref": "#/$defs/ProjectKind"
+    },
+    "reference_report_path": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reference Report Path"
+    },
+    "schema_version": {
+      "default": "2.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "storm_cases": {
+      "items": {
+        "$ref": "#/$defs/StormCase"
+      },
+      "title": "Storm Cases",
+      "type": "array"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    }
+  },
+  "required": [
+    "title",
+    "base_model_path",
+    "project_kind",
+    "model_revision_id"
+  ],
+  "title": "ProjectBundle",
+  "type": "object"
+}

@@ -1,0 +1,270 @@
+{
+  "$defs": {
+    "AssistantEvidenceReference": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_id": {
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "project",
+            "exact_run",
+            "exact_metric",
+            "qa",
+            "artifact",
+            "documentation"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "source_id": {
+          "title": "Source Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "evidence_id",
+        "kind",
+        "label",
+        "source_id"
+      ],
+      "title": "AssistantEvidenceReference",
+      "type": "object"
+    },
+    "AssistantNumericClaim": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_id": {
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "exact": {
+          "const": true,
+          "default": true,
+          "title": "Exact",
+          "type": "boolean"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "metric_id": {
+          "title": "Metric Id",
+          "type": "string"
+        },
+        "object_id": {
+          "default": "",
+          "title": "Object Id",
+          "type": "string"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "units": {
+          "title": "Units",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "number"
+        }
+      },
+      "required": [
+        "label",
+        "value",
+        "units",
+        "evidence_id",
+        "run_id",
+        "metric_id"
+      ],
+      "title": "AssistantNumericClaim",
+      "type": "object"
+    },
+    "AssistantProposedAction": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "enum": [
+            "navigate",
+            "open_evidence",
+            "review",
+            "prepare_draft"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "evidence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "object_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Object Ids",
+          "type": "array"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "reason"
+      ],
+      "title": "AssistantProposedAction",
+      "type": "object"
+    },
+    "WeaveTraceReference": {
+      "additionalProperties": false,
+      "properties": {
+        "call_id": {
+          "title": "Call Id",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "entity": {
+          "title": "Entity",
+          "type": "string"
+        },
+        "external_project": {
+          "title": "External Project",
+          "type": "string"
+        },
+        "project_id": {
+          "title": "Project Id",
+          "type": "string"
+        },
+        "provider_call_id": {
+          "title": "Provider Call Id",
+          "type": "string"
+        },
+        "reference_id": {
+          "title": "Reference Id",
+          "type": "string"
+        },
+        "trace_id": {
+          "title": "Trace Id",
+          "type": "string"
+        },
+        "url": {
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "call_id",
+        "entity",
+        "external_project",
+        "trace_id",
+        "provider_call_id",
+        "url"
+      ],
+      "title": "WeaveTraceReference",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "answer": {
+      "title": "Answer",
+      "type": "string"
+    },
+    "answer_id": {
+      "title": "Answer Id",
+      "type": "string"
+    },
+    "assumptions_used": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Assumptions Used",
+      "type": "array"
+    },
+    "call_id": {
+      "title": "Call Id",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "evidence_references": {
+      "items": {
+        "$ref": "#/$defs/AssistantEvidenceReference"
+      },
+      "title": "Evidence References",
+      "type": "array"
+    },
+    "intent": {
+      "title": "Intent",
+      "type": "string"
+    },
+    "limitations": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Limitations",
+      "type": "array"
+    },
+    "numeric_claims": {
+      "items": {
+        "$ref": "#/$defs/AssistantNumericClaim"
+      },
+      "title": "Numeric Claims",
+      "type": "array"
+    },
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    },
+    "proposed_actions": {
+      "items": {
+        "$ref": "#/$defs/AssistantProposedAction"
+      },
+      "title": "Proposed Actions",
+      "type": "array"
+    },
+    "read_only": {
+      "const": true,
+      "default": true,
+      "title": "Read Only",
+      "type": "boolean"
+    },
+    "requires_engineer_confirmation": {
+      "const": true,
+      "default": true,
+      "title": "Requires Engineer Confirmation",
+      "type": "boolean"
+    },
+    "weave_trace": {
+      "$ref": "#/$defs/WeaveTraceReference"
+    }
+  },
+  "required": [
+    "call_id",
+    "project_id",
+    "intent",
+    "answer",
+    "weave_trace"
+  ],
+  "title": "AssistantAnswer",
+  "type": "object"
+}

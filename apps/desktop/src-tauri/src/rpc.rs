@@ -3,7 +3,7 @@ use serde_json::{json, Map, Value};
 
 use crate::error::PlatformError;
 
-pub(crate) const API_VERSION: &str = "1.0";
+pub(crate) const API_VERSION: &str = "2.0";
 pub(crate) const MAX_MESSAGE_BYTES: usize = 8 * 1024 * 1024;
 pub(crate) const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 pub(crate) const MAX_TIMEOUT_MS: u64 = 300_000;
@@ -23,7 +23,6 @@ const ALLOWED_METHODS: &[&str] = &[
     "concept.generate",
     "concept.update_object",
     "model.validate",
-    "model.attest",
     "baseline.plan",
     "baseline.start",
     "analysis.plan",
@@ -31,13 +30,37 @@ const ALLOWED_METHODS: &[&str] = &[
     "analysis.pause",
     "analysis.resume",
     "analysis.cancel",
+    "assistant.explain",
+    "assistant.feedback",
+    "assistant.follow_up",
+    "assistant.get_trace",
+    "decision_brief.get",
+    "decision_brief.update",
+    "guided.cancel",
+    "guided.get_state",
+    "guided.open",
+    "guided.pause",
+    "guided.rerun",
+    "guided.resume",
+    "model.attest",
+    "model.get_fitness",
+    "observability.connect",
+    "observability.disconnect",
+    "observability.get_status",
+    "observability.open_artifact",
+    "observability.open_run",
+    "observability.open_trace",
+    "observability.preview_upload",
+    "observability.retry",
+    "observability.sync",
+    "observability.validate_binding",
     "results.query",
     "results.compare",
+    "results.decision_board",
     "evidence.resolve",
     "export.validate",
     "export.create",
     "diagnostics.create_bundle",
-    "demo.create",
 ];
 
 #[derive(Debug, Clone, Deserialize)]

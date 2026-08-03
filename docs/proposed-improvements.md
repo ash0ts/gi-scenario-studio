@@ -1,5 +1,19 @@
 # GI Scenario Studio — Proposed Product, Simulation, Benchmarking, and Responsible-AI Improvements
 
+> **Historical design input — superseded by the schema 2.0 public MVP.** This
+> document is preserved as the research review that informed the current
+> implementation. Its readiness ladder, optional W&B/Weave architecture,
+> pre-v2 repository inventory, and related recommendations are not current
+> product requirements. The current sources of truth are the
+> [README](../README.md), [product principles](product-principles.md),
+> [platform architecture](platform-architecture.md),
+> [data governance](data-governance.md),
+> [observability contract](observability.md), and
+> [guided example](guided-example.md). Schema 2.0 uses an independent Model
+> Fitness Passport, requires every production project to bind to a user-owned
+> W&B project verified as `Restricted`, mirrors full engineering evidence, and
+> prohibits untraced Evidence Assistant responses.
+
 ## Executive answer
 
 GI Scenario Studio has the right foundation for a trustworthy engineering product, but it is still under development and is not yet an end-to-end alternatives-analysis application.
@@ -987,7 +1001,7 @@ A trace can contain prompts, outputs, retrieved documents, tool inputs, code, an
 
 Weave provides [input/output postprocessing and PII redaction](https://docs.wandb.ai/weave/guides/tracking/redact-pii), but redaction is a defense in depth, not permission to upload a project.
 
-Weave documents multi-tenant, dedicated, and [self-managed deployment](https://docs.wandb.ai/weave/guides/platform/weave-self-managed). Its write-ahead log improves delivery resilience, but the documentation does not present it as a complete local/offline trace application. When offline, disable cloud Weave; a local assistant may continue without it.
+Weave documents multi-tenant, dedicated, and [self-managed deployment](https://docs.wandb.ai/weave/guides/platform/weave-self-managed). Its write-ahead log improves delivery resilience, but the documentation does not present it as a complete local/offline trace application. When Weave is unavailable, disable assistant calls and keep deterministic Evidence Rail navigation available; do not generate an untraced local answer.
 
 ## 13. Security, privacy, and data governance improvements
 

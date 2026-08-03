@@ -1,0 +1,158 @@
+{
+  "$defs": {
+    "SemanticModelDiff": {
+      "additionalProperties": false,
+      "properties": {
+        "added_objects": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Added Objects",
+          "type": "array"
+        },
+        "affected_artifact_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Affected Artifact Ids",
+          "type": "array"
+        },
+        "changed_parameters": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Changed Parameters",
+          "type": "array"
+        },
+        "commands": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Commands",
+          "type": "array"
+        },
+        "diff_id": {
+          "title": "Diff Id",
+          "type": "string"
+        },
+        "from_revision_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "From Revision Id"
+        },
+        "project_id": {
+          "title": "Project Id",
+          "type": "string"
+        },
+        "removed_objects": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Removed Objects",
+          "type": "array"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        },
+        "to_revision_id": {
+          "title": "To Revision Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "to_revision_id",
+        "sha256"
+      ],
+      "title": "SemanticModelDiff",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "created_by": {
+      "title": "Created By",
+      "type": "string"
+    },
+    "dependency_hashes": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Dependency Hashes",
+      "type": "object"
+    },
+    "model_sha256": {
+      "title": "Model Sha256",
+      "type": "string"
+    },
+    "observability_binding_id": {
+      "title": "Observability Binding Id",
+      "type": "string"
+    },
+    "parent_revision_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Parent Revision Id"
+    },
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    },
+    "reason": {
+      "enum": [
+        "import",
+        "generated",
+        "manual_edit",
+        "alternative",
+        "rebind"
+      ],
+      "title": "Reason",
+      "type": "string"
+    },
+    "revision_id": {
+      "title": "Revision Id",
+      "type": "string"
+    },
+    "semantic_diff": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SemanticModelDiff"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "project_id",
+    "reason",
+    "model_sha256",
+    "observability_binding_id",
+    "created_by"
+  ],
+  "title": "ModelRevision",
+  "type": "object"
+}

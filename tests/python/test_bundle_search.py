@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import stat
 import zipfile
 
@@ -32,6 +33,23 @@ FLOW_UNITS CFS
     assert inspection.models[0].references == [r"rain\event.dat"]
     assert inspection.models[0].resolved == ["model/rain/event.dat"]
     assert all(len(item.sha256) == 64 for item in inspection.files)
+    assert inspection.archive_sha256 == hashlib.sha256(archive.read_bytes()).hexdigest()
+    assert inspection.archive_bytes == archive.stat().st_size
+
+
+def test_bundle_identity_fails_closed_when_staged_bytes_change(tmp_path):
+    archive = tmp_path / "project.zip"
+    _zip(archive, {"base.inp": "[OPTIONS]\nFLOW_UNITS CFS\n"})
+    expected_sha256 = hashlib.sha256(archive.read_bytes()).hexdigest()
+    expected_bytes = archive.stat().st_size
+    _zip(archive, {"base.inp": "[OPTIONS]\nFLOW_UNITS CMS\n"})
+
+    with pytest.raises(BundleSecurityError, match="hash changed"):
+        inspect_bundle(
+            archive,
+            expected_sha256=expected_sha256,
+            expected_bytes=expected_bytes,
+        )
 
 
 def test_bundle_reports_missing_dependency(tmp_path):
@@ -119,7 +137,8 @@ def test_adaptive_count_one_returns_exactly_one_without_sklearn_dependency(appro
         seed=5,
     )
     assert len(candidates) == 1
-    assert diagnostics["method"] == "qmc_exploration"
+    assert diagnostics["method"] == "qmc_production_gate"
+    assert diagnostics["ml_eligible"] is False
 
 
 def test_present_value_cost_requires_confirmed_complete_cost_basis(approved_slots):

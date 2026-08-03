@@ -1,0 +1,106 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "analysis_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Analysis Id"
+    },
+    "checkpoint_id": {
+      "title": "Checkpoint Id",
+      "type": "string"
+    },
+    "completion_signal": {
+      "title": "Completion Signal",
+      "type": "string"
+    },
+    "evidence_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Evidence Ids",
+      "type": "array"
+    },
+    "how_to_use": {
+      "title": "How To Use",
+      "type": "string"
+    },
+    "primary_action_label": {
+      "title": "Primary Action Label",
+      "type": "string"
+    },
+    "primary_rpc_method": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Primary Rpc Method"
+    },
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    },
+    "purpose": {
+      "title": "Purpose",
+      "type": "string"
+    },
+    "status": {
+      "default": "pending",
+      "enum": [
+        "complete",
+        "current",
+        "pending",
+        "blocked"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "step_id": {
+      "enum": [
+        "overview",
+        "model",
+        "storms",
+        "opportunities",
+        "goals",
+        "run",
+        "compare",
+        "export"
+      ],
+      "title": "Step Id",
+      "type": "string"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    },
+    "updated_at": {
+      "format": "date-time",
+      "title": "Updated At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "checkpoint_id",
+    "project_id",
+    "step_id",
+    "title",
+    "purpose",
+    "how_to_use",
+    "completion_signal",
+    "primary_action_label"
+  ],
+  "title": "GuidedCheckpoint",
+  "type": "object"
+}

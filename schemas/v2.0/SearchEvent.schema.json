@@ -1,0 +1,39 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "batch": {
+      "minimum": 0,
+      "title": "Batch",
+      "type": "integer"
+    },
+    "design_id": {
+      "title": "Design Id",
+      "type": "string"
+    },
+    "design_vector": {
+      "items": {
+        "type": "integer"
+      },
+      "title": "Design Vector",
+      "type": "array"
+    },
+    "method": {
+      "title": "Method",
+      "type": "string"
+    },
+    "sequence": {
+      "minimum": 0,
+      "title": "Sequence",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "sequence",
+    "method",
+    "design_id",
+    "design_vector",
+    "batch"
+  ],
+  "title": "SearchEvent",
+  "type": "object"
+}

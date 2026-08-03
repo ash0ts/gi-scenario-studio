@@ -1,0 +1,73 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "analysis_horizon_years": {
+      "default": 30,
+      "exclusiveMinimum": 0,
+      "title": "Analysis Horizon Years",
+      "type": "integer"
+    },
+    "annual_om": {
+      "additionalProperties": {
+        "type": "number"
+      },
+      "title": "Annual Om",
+      "type": "object"
+    },
+    "confirmed": {
+      "default": false,
+      "title": "Confirmed",
+      "type": "boolean"
+    },
+    "currency": {
+      "default": "USD",
+      "title": "Currency",
+      "type": "string"
+    },
+    "discount_rate": {
+      "default": 0.03,
+      "maximum": 1,
+      "minimum": 0,
+      "title": "Discount Rate",
+      "type": "number"
+    },
+    "price_vintage": {
+      "title": "Price Vintage",
+      "type": "string"
+    },
+    "replacement_cost": {
+      "additionalProperties": {
+        "type": "number"
+      },
+      "title": "Replacement Cost",
+      "type": "object"
+    },
+    "replacement_years": {
+      "additionalProperties": {
+        "items": {
+          "type": "integer"
+        },
+        "type": "array"
+      },
+      "title": "Replacement Years",
+      "type": "object"
+    },
+    "source": {
+      "title": "Source",
+      "type": "string"
+    },
+    "unit_capex": {
+      "additionalProperties": {
+        "type": "number"
+      },
+      "title": "Unit Capex",
+      "type": "object"
+    }
+  },
+  "required": [
+    "price_vintage",
+    "source"
+  ],
+  "title": "CostBasis",
+  "type": "object"
+}

@@ -1,0 +1,104 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "analysis_id": {
+      "title": "Analysis Id",
+      "type": "string"
+    },
+    "baseline_jobs": {
+      "minimum": 0,
+      "title": "Baseline Jobs",
+      "type": "integer"
+    },
+    "cache_hits": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Cache Hits",
+      "type": "integer"
+    },
+    "candidate_designs": {
+      "minimum": 0,
+      "title": "Candidate Designs",
+      "type": "integer"
+    },
+    "estimated_storage_bytes": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Estimated Storage Bytes"
+    },
+    "model_revision_id": {
+      "title": "Model Revision Id",
+      "type": "string"
+    },
+    "model_sha256": {
+      "title": "Model Sha256",
+      "type": "string"
+    },
+    "plan_id": {
+      "title": "Plan Id",
+      "type": "string"
+    },
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    },
+    "reportable_outputs": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Reportable Outputs",
+      "type": "array"
+    },
+    "search_method": {
+      "title": "Search Method",
+      "type": "string"
+    },
+    "search_reason": {
+      "title": "Search Reason",
+      "type": "string"
+    },
+    "seed": {
+      "title": "Seed",
+      "type": "integer"
+    },
+    "storm_count": {
+      "minimum": 1,
+      "title": "Storm Count",
+      "type": "integer"
+    },
+    "total_exact_jobs": {
+      "minimum": 0,
+      "title": "Total Exact Jobs",
+      "type": "integer"
+    },
+    "worker_count": {
+      "default": 1,
+      "minimum": 1,
+      "title": "Worker Count",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "project_id",
+    "analysis_id",
+    "model_revision_id",
+    "model_sha256",
+    "baseline_jobs",
+    "candidate_designs",
+    "storm_count",
+    "total_exact_jobs",
+    "search_method",
+    "search_reason",
+    "seed"
+  ],
+  "title": "AnalysisRunPlan",
+  "type": "object"
+}
