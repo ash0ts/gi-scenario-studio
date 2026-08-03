@@ -184,13 +184,70 @@ jobs:
 
   dependency-review:
     name: Dependency and license policy
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
-      - name: Review changed dependencies
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Scan locked dependencies and inventory licenses
+        id: osv_scan
+        continue-on-error: true
+        uses: google/osv-scanner-action/osv-scanner-action@8dc09193bb540e09b23da07ad7e30bd33bf87018 # v2.3.8
+        with:
+          scan-args: |-
+            --config=osv-scanner.toml
+            --recursive
+            --licenses
+            --all-packages
+            --format=json
+            --output-file=osv-results.json
+            ./
+
+      - name: Enforce lockfile coverage and license policy
+        id: osv_policy
+        if: always()
+        continue-on-error: true
+        run: python3 scripts/check_osv_policy.py osv-results.json
+
+      - name: Preserve supply-chain scan evidence
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: supply-chain-scan-results
+          path: osv-results.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Enforce scanner outcomes
+        if: always()
+        shell: bash
+        env:
+          OSV_SCAN_OUTCOME: ${{ steps.osv_scan.outcome }}
+          OSV_POLICY_OUTCOME: ${{ steps.osv_policy.outcome }}
+        run: |
+          failed=0
+
+          if [[ "${OSV_SCAN_OUTCOME}" != "success" ]]; then
+            echo "::error::OSV found an unexcepted dependency advisory or failed operationally."
+            failed=1
+          fi
+
+          if [[ "${OSV_POLICY_OUTCOME}" != "success" ]]; then
+            echo "::error::Lockfile coverage or dependency-license policy failed."
+            failed=1
+          fi
+
+          exit "${failed}"
+
+      - name: Review changed dependencies with GitHub Advanced Security
+        if: >-
+          github.event_name == 'pull_request' &&
+          vars.ENABLE_GHAS_DEPENDENCY_REVIEW == 'true'
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: moderate

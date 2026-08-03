@@ -225,9 +225,10 @@ The following boundaries are intentionally visible rather than papered over:
 - Search replays report decision quality and exact-job-equivalent budgets, but
   campaign timing, peak memory, and measured-or-estimated energy collection are
   not yet implemented.
-- CI covers contracts, Python, React, Rust, secret boundaries, dependencies, and
-  license policy. Automated axe/WCAG browser checks, vulnerability audits, real
-  packaged-sidecar builds, signing, and notarization remain release gates.
+- CI covers contracts, Python, React, Rust, secret boundaries, a complete
+  lockfile vulnerability scan, and dependency-license policy. Automated
+  axe/WCAG browser checks, packaged-installer/SBOM audits, real packaged-sidecar
+  builds, signing, and notarization remain release gates.
 
 ## Quick start: UI and guided replay
 
@@ -407,8 +408,13 @@ See [the desktop packaging contract](docs/platform-packaging.md).
 
 The required workflow runs Python tests and formatting, secret-boundary checks,
 schema and guided-projection drift checks, frontend tests/build, Rust formatting,
-Clippy and tests, plus dependency/license review. It never receives production
-credentials.
+Clippy and tests, plus an OSV v2.3.8 scan of `uv.lock`, `pnpm-lock.yaml`, and
+`Cargo.lock`. OSV findings fail closed unless they have an advisory-specific,
+expiring entry in [`osv-scanner.toml`](osv-scanner.toml). A deterministic policy
+check rejects AGPL and SSPL dependency licenses and reports unresolved license
+metadata for packaging review. GitHub Dependency Review can be enabled as an
+additional check with `ENABLE_GHAS_DEPENDENCY_REVIEW=true` when the repository
+has GitHub Advanced Security. CI never receives production credentials.
 
 The separate manually dispatched
 [`wandb-integration.yml`](.github/workflows/wandb-integration.yml) is bound to a
@@ -426,6 +432,9 @@ pnpm test:frontend
 pnpm build
 cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml --check
 cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked
+osv-scanner --config=osv-scanner.toml --recursive --licenses --all-packages \
+  --format=json --output-file=/tmp/gi-osv-results.json ./
+python3 scripts/check_osv_policy.py /tmp/gi-osv-results.json
 ```
 
 ## Architecture and governance
