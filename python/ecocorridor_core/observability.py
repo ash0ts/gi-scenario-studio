@@ -14,7 +14,7 @@ import re
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 from urllib.parse import urlsplit
 
 from scenario_platform.cloud_sync import (
@@ -166,8 +166,10 @@ class _TraceSession:
     root_call: Any
     association: AssistantRunAssociation
     steps: list[str] = field(default_factory=list)
-    finished: bool = False
+    root_disposition: Literal["OPEN", "OUTCOME_UNKNOWN", "COMPLETED", "ABORTED"] = "OPEN"
+    verification: Literal["NONE", "ACKNOWLEDGED", "VERIFIED", "FAILED"] = "NONE"
     trace_id: str | None = None
+    completed_readback: TraceReadback | None = None
     aborted_trace: dict[str, Any] | None = None
 
 
@@ -308,25 +310,39 @@ class WeaveNestedTraceSink(NestedTraceSink):
                 "wandb_association": session.association.model_dump(mode="json"),
             },
         }
-        with (
-            self.credentials.environment() if self.credentials is not None else nullcontext(),
-            self.directories.wandb_environment(base_url=self.target.api_base_url, online=True),
-        ):
-            session.client.finish_call(session.root_call, output=trace_output)
-        session.finished = True
+        session.root_disposition = "OUTCOME_UNKNOWN"
+        try:
+            with (
+                self.credentials.environment() if self.credentials is not None else nullcontext(),
+                self.directories.wandb_environment(base_url=self.target.api_base_url, online=True),
+            ):
+                session.client.finish_call(session.root_call, output=trace_output)
+        except Exception:
+            session.verification = "FAILED"
+            raise
+        session.root_disposition = "COMPLETED"
 
     def flush(self, *, call_id: str) -> str:
         session = self._session(call_id)
-        if not session.finished:
+        if session.root_disposition != "COMPLETED":
             raise RuntimeError("WEAVE_TRACE_NOT_FINISHED")
-        with (
-            self.credentials.environment() if self.credentials is not None else nullcontext(),
-            self.directories.wandb_environment(base_url=self.target.api_base_url, online=True),
-        ):
-            session.client.flush()
-            acknowledged = session.client.get_call(str(session.root_call.id))
-        trace_id = self._validate_acknowledgement(session, acknowledged)
+        if session.verification == "FAILED":
+            raise RuntimeError("WEAVE_TRACE_VERIFICATION_FAILED")
+        if session.trace_id is not None and session.verification in {"ACKNOWLEDGED", "VERIFIED"}:
+            return session.trace_id
+        try:
+            with (
+                self.credentials.environment() if self.credentials is not None else nullcontext(),
+                self.directories.wandb_environment(base_url=self.target.api_base_url, online=True),
+            ):
+                session.client.flush()
+                acknowledged = session.client.get_call(str(session.root_call.id))
+            trace_id = self._validate_acknowledgement(session, acknowledged)
+        except Exception:
+            session.verification = "FAILED"
+            raise
         session.trace_id = trace_id
+        session.verification = "ACKNOWLEDGED"
         self._trace_to_call[trace_id] = call_id
         return trace_id
 
@@ -336,59 +352,78 @@ class WeaveNestedTraceSink(NestedTraceSink):
         except KeyError as exc:
             raise RuntimeError("WEAVE_TRACE_NOT_FLUSHED") from exc
         session = self._session(call_id)
-        with (
-            self.credentials.environment() if self.credentials is not None else nullcontext(),
-            self.directories.wandb_environment(base_url=self.target.api_base_url, online=True),
-        ):
-            acknowledged = session.client.get_call(str(session.root_call.id))
-        acknowledged_trace_id = self._validate_acknowledgement(session, acknowledged)
-        if acknowledged_trace_id != trace_id:
-            raise RuntimeError("WEAVE_TRACE_READBACK_ID_MISMATCH")
-        gate = _trace_gate(acknowledged)
-        trace_url = str(getattr(acknowledged, "ui_url", "") or "") or None
-        if trace_url is not None and not _allowed_target_url(trace_url, self.target):
-            raise RuntimeError("WEAVE_TRACE_URL_OUTSIDE_VERIFIED_TARGET")
-        return TraceReadback(
-            trace_id=trace_id,
-            trace_url=trace_url,
-            call_id=call_id,
-            completed=gate["completed"] is True,
-            steps=list(gate["steps"]),
-            association=AssistantRunAssociation.model_validate(gate["wandb_association"]),
-        )
+        if session.root_disposition != "COMPLETED" or session.verification == "FAILED":
+            raise RuntimeError("WEAVE_TRACE_VERIFICATION_FAILED")
+        if session.completed_readback is not None and session.verification == "VERIFIED":
+            return session.completed_readback
+        if session.verification != "ACKNOWLEDGED" or session.trace_id != trace_id:
+            raise RuntimeError("WEAVE_TRACE_NOT_FLUSHED")
+        try:
+            with (
+                self.credentials.environment() if self.credentials is not None else nullcontext(),
+                self.directories.wandb_environment(base_url=self.target.api_base_url, online=True),
+            ):
+                acknowledged = session.client.get_call(str(session.root_call.id))
+            acknowledged_trace_id = self._validate_acknowledgement(session, acknowledged)
+            if acknowledged_trace_id != trace_id:
+                raise RuntimeError("WEAVE_TRACE_READBACK_ID_MISMATCH")
+            gate = _trace_gate(acknowledged)
+            trace_url = str(getattr(acknowledged, "ui_url", "") or "") or None
+            if trace_url is not None and not _allowed_target_url(trace_url, self.target):
+                raise RuntimeError("WEAVE_TRACE_URL_OUTSIDE_VERIFIED_TARGET")
+            readback = TraceReadback(
+                trace_id=trace_id,
+                trace_url=trace_url,
+                call_id=call_id,
+                completed=gate["completed"] is True,
+                steps=list(gate["steps"]),
+                association=AssistantRunAssociation.model_validate(gate["wandb_association"]),
+            )
+        except Exception:
+            session.verification = "FAILED"
+            raise
+        session.completed_readback = readback
+        session.verification = "VERIFIED"
+        return readback
 
     def abort(self, *, call_id: str, error_code: str) -> None:
         session = self._sessions.get(call_id)
-        if session is None or session.finished:
+        if session is None or session.root_disposition != "OPEN":
             return
         safe_code = error_code if re.fullmatch(r"[A-Z][A-Z0-9_]{2,127}", error_code) else "ERROR"
-        with (
-            self.credentials.environment() if self.credentials is not None else nullcontext(),
-            self.directories.wandb_environment(base_url=self.target.api_base_url, online=True),
-        ):
-            session.client.finish_call(
-                session.root_call,
-                output={
-                    "ecocorridor_trace_gate": {
-                        "call_id": call_id,
-                        "completed": False,
-                        "steps": list(session.steps),
-                        "wandb_association": session.association.model_dump(mode="json"),
-                        "error_code": safe_code,
-                    }
-                },
-                exception=RuntimeError(safe_code),
+        session.root_disposition = "OUTCOME_UNKNOWN"
+        try:
+            with (
+                self.credentials.environment() if self.credentials is not None else nullcontext(),
+                self.directories.wandb_environment(base_url=self.target.api_base_url, online=True),
+            ):
+                session.client.finish_call(
+                    session.root_call,
+                    output={
+                        "ecocorridor_trace_gate": {
+                            "call_id": call_id,
+                            "completed": False,
+                            "steps": list(session.steps),
+                            "wandb_association": session.association.model_dump(mode="json"),
+                            "error_code": safe_code,
+                        }
+                    },
+                    exception=RuntimeError(safe_code),
+                )
+                session.root_disposition = "ABORTED"
+                session.client.flush()
+                acknowledged = session.client.get_call(str(session.root_call.id))
+            trace_id = self._validate_aborted_acknowledgement(
+                session,
+                acknowledged,
+                error_code=safe_code,
             )
-            session.client.flush()
-            acknowledged = session.client.get_call(str(session.root_call.id))
-        trace_id = self._validate_aborted_acknowledgement(
-            session,
-            acknowledged,
-            error_code=safe_code,
-        )
-        trace_url = str(getattr(acknowledged, "ui_url", "") or "")
-        if not trace_url or not _allowed_target_url(trace_url, self.target):
-            raise RuntimeError("WEAVE_ABORT_TRACE_URL_UNAVAILABLE")
+            trace_url = str(getattr(acknowledged, "ui_url", "") or "")
+            if not trace_url or not _allowed_target_url(trace_url, self.target):
+                raise RuntimeError("WEAVE_ABORT_TRACE_URL_UNAVAILABLE")
+        except Exception:
+            session.verification = "FAILED"
+            raise
         session.aborted_trace = {
             "trace_id": trace_id,
             "trace_url": trace_url,
@@ -401,13 +436,17 @@ class WeaveNestedTraceSink(NestedTraceSink):
             "trace_readback_verified": True,
         }
         session.trace_id = trace_id
-        session.finished = True
+        session.verification = "VERIFIED"
 
     def aborted_readback(self, *, call_id: str) -> dict[str, Any]:
         """Return only provider-persisted, exact readback evidence for an aborted call."""
 
         session = self._session(call_id)
-        if not session.finished or session.aborted_trace is None:
+        if (
+            session.root_disposition != "ABORTED"
+            or session.verification != "VERIFIED"
+            or session.aborted_trace is None
+        ):
             raise RuntimeError("WEAVE_ABORT_TRACE_READBACK_UNAVAILABLE")
         return dict(session.aborted_trace)
 
@@ -427,7 +466,11 @@ class WeaveNestedTraceSink(NestedTraceSink):
         if self._trace_to_call.get(trace_id) != call_id:
             raise RuntimeError("WEAVE_TRACE_FEEDBACK_IDENTITY_MISMATCH")
         session = self._session(call_id)
-        if not session.finished or session.trace_id != trace_id:
+        if (
+            session.root_disposition != "COMPLETED"
+            or session.verification != "VERIFIED"
+            or session.trace_id != trace_id
+        ):
             raise RuntimeError("WEAVE_TRACE_FEEDBACK_NOT_READY")
         payload = {"rating": rating, "comment": comment}
         if len(json.dumps(payload, separators=(",", ":")).encode("utf-8")) >= 1024:
@@ -474,7 +517,7 @@ class WeaveNestedTraceSink(NestedTraceSink):
 
     def _active(self, call_id: str) -> _TraceSession:
         session = self._session(call_id)
-        if session.finished:
+        if session.root_disposition != "OPEN":
             raise RuntimeError("WEAVE_TRACE_ALREADY_FINISHED")
         return session
 

@@ -890,12 +890,23 @@ def test_rpc_adapter_cannot_accept_fake_uploader_as_scope_substitute(tmp_path: P
 
 
 class _FakeWeaveClient:
-    def __init__(self, *, acknowledge: bool = True, corrupt_gate: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        acknowledge: bool = True,
+        corrupt_gate: bool = False,
+        fail_flush_calls: set[int] | None = None,
+        missing_get_call_numbers: set[int] | None = None,
+    ) -> None:
         self.acknowledge = acknowledge
         self.corrupt_gate = corrupt_gate
+        self.fail_flush_calls = set(fail_flush_calls or ())
+        self.missing_get_call_numbers = set(missing_get_call_numbers or ())
         self.calls: dict[str, Any] = {}
         self.children: list[tuple[Any, Any]] = []
         self.flush_count = 0
+        self.get_call_count = 0
+        self.finish_counts: dict[str, int] = {}
         self.feedback_records: dict[str, Any] = {}
         self.wandb_run_id: str | None = None
 
@@ -948,13 +959,22 @@ class _FakeWeaveClient:
     def finish_call(
         self, call: Any, *, output: Any, exception: BaseException | None = None
     ) -> None:
+        call_id = str(call.id)
+        self.finish_counts[call_id] = self.finish_counts.get(call_id, 0) + 1
+        if self.finish_counts[call_id] != 1:
+            raise RuntimeError("provider call cannot be finished twice")
         call.output = output
         call.exception = exception
 
     def flush(self) -> None:
         self.flush_count += 1
+        if self.flush_count in self.fail_flush_calls:
+            raise RuntimeError("simulated weave flush failure")
 
     def get_call(self, call_id: str) -> Any:
+        self.get_call_count += 1
+        if self.get_call_count in self.missing_get_call_numbers:
+            return None
         if not self.acknowledge:
             return None
         call = self.calls[call_id]
@@ -1036,6 +1056,7 @@ def test_weave_feedback_is_bounded_flushed_and_read_back(tmp_path: Path) -> None
     sink.start(call_id="assistant_1", operation="assistant.request", inputs=_trace_inputs())
     sink.finish(call_id="assistant_1", output={"answer_id": "answer_1"})
     trace_id = sink.flush(call_id="assistant_1")
+    sink.readback(trace_id=trace_id)
     receipt = sink.record_feedback(
         call_id="assistant_1",
         trace_id=trace_id,
@@ -1054,6 +1075,69 @@ def test_weave_feedback_is_bounded_flushed_and_read_back(tmp_path: Path) -> None
             comment="api_key=must-not-replicate",
         )
     assert len(client.feedback_records) == 1
+
+
+def test_weave_post_finish_flush_failure_never_refinishes_completed_root(
+    tmp_path: Path,
+) -> None:
+    client = _FakeWeaveClient(fail_flush_calls={1})
+    sink = WeaveNestedTraceSink(
+        target=_target(),
+        scope_resolver=_resolver(),
+        project_root=tmp_path,
+        client_factory=_FakeWeaveFactory(client),
+    )
+    sink.start(call_id="assistant_1", operation="assistant.request", inputs=_trace_inputs())
+    sink.finish(call_id="assistant_1", output={"answer_id": "answer_1"})
+
+    with pytest.raises(RuntimeError, match="simulated weave flush failure"):
+        sink.flush(call_id="assistant_1")
+    sink.abort(call_id="assistant_1", error_code="ASSISTANT_TRACE_FLUSH_FAILED")
+
+    root = client.calls["provider-call-1"]
+    assert client.finish_counts[root.id] == 1
+    assert root.output["ecocorridor_trace_gate"]["completed"] is True
+    assert len(client.calls) == 1
+    assert client.flush_count == 1
+    with pytest.raises(RuntimeError, match="ABORT_TRACE_READBACK_UNAVAILABLE"):
+        sink.aborted_readback(call_id="assistant_1")
+    with pytest.raises(RuntimeError, match="TRACE_VERIFICATION_FAILED"):
+        sink.flush(call_id="assistant_1")
+
+
+def test_weave_second_readback_failure_never_refinishes_or_enables_feedback(
+    tmp_path: Path,
+) -> None:
+    client = _FakeWeaveClient(missing_get_call_numbers={2})
+    sink = WeaveNestedTraceSink(
+        target=_target(),
+        scope_resolver=_resolver(),
+        project_root=tmp_path,
+        client_factory=_FakeWeaveFactory(client),
+    )
+    sink.start(call_id="assistant_1", operation="assistant.request", inputs=_trace_inputs())
+    sink.finish(call_id="assistant_1", output={"answer_id": "answer_1"})
+    trace_id = sink.flush(call_id="assistant_1")
+
+    with pytest.raises(RuntimeError, match="TRACE_NOT_ACKNOWLEDGED"):
+        sink.readback(trace_id=trace_id)
+    sink.abort(call_id="assistant_1", error_code="ASSISTANT_TRACE_READBACK_FAILED")
+
+    root = client.calls["provider-call-1"]
+    assert client.finish_counts[root.id] == 1
+    assert root.output["ecocorridor_trace_gate"]["completed"] is True
+    assert len(client.calls) == 1
+    assert client.flush_count == 1
+    assert client.get_call_count == 2
+    with pytest.raises(RuntimeError, match="ABORT_TRACE_READBACK_UNAVAILABLE"):
+        sink.aborted_readback(call_id="assistant_1")
+    with pytest.raises(RuntimeError, match="TRACE_FEEDBACK_NOT_READY"):
+        sink.record_feedback(
+            call_id="assistant_1",
+            trace_id=trace_id,
+            rating="HELPFUL",
+            comment="This answer was not released.",
+        )
 
 
 def test_weave_aborted_trace_is_persisted_flushed_and_read_back(tmp_path: Path) -> None:
