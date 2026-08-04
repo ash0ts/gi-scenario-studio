@@ -1,0 +1,42 @@
+{
+  "$id": "https://schemas.ecocorridor.local/1.0/ReferenceMetricTolerance.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Declared comparison policy for one supported reference metric.\n\nRelative tolerance is a dimensionless fraction, not a percentage.  The\napproved reference value is deliberately the scale term so comparison\nbehavior cannot vary with argument order or an implementation default.",
+  "properties": {
+    "absolute_tolerance": {
+      "minimum": 0,
+      "title": "Absolute Tolerance",
+      "type": "number"
+    },
+    "comparison_formula": {
+      "const": "ABS_OBSERVED_MINUS_REFERENCE_LE_ABSOLUTE_PLUS_RELATIVE_TIMES_ABS_REFERENCE",
+      "default": "ABS_OBSERVED_MINUS_REFERENCE_LE_ABSOLUTE_PLUS_RELATIVE_TIMES_ABS_REFERENCE",
+      "title": "Comparison Formula",
+      "type": "string"
+    },
+    "metric": {
+      "const": "EFFECTIVE_RESISTANCE",
+      "default": "EFFECTIVE_RESISTANCE",
+      "title": "Metric",
+      "type": "string"
+    },
+    "relative_tolerance": {
+      "minimum": 0,
+      "title": "Relative Tolerance",
+      "type": "number"
+    },
+    "units": {
+      "const": "effective_resistance",
+      "default": "effective_resistance",
+      "title": "Units",
+      "type": "string"
+    }
+  },
+  "required": [
+    "absolute_tolerance",
+    "relative_tolerance"
+  ],
+  "title": "ReferenceMetricTolerance",
+  "type": "object"
+}

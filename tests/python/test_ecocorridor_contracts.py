@@ -8,13 +8,30 @@ from pathlib import Path
 
 import pytest
 from ecocorridor_core.contracts import (
+    CURRENT_RASTER_LIMITATION,
+    FITNESS_LIMITATION,
     PUBLIC_CONTRACTS,
+    AssetKind,
     CloudDisposition,
     ComputationalResourceObservation,
+    ConnectivityAsset,
+    ConnectivityEvidenceClaim,
     ConnectivityModelFitness,
+    ConnectivityProjectBundle,
+    ConnectivityRunPlan,
     ConnectivityScenario,
     EngineMode,
+    EvidenceEdge,
+    EvidenceNode,
+    QAStatus,
     RasterSemantics,
+    ReferenceComparisonPlan,
+    ReferenceComparisonResult,
+    ReferenceEvidenceClaimLink,
+    ReferenceMetricTolerance,
+    ReferencePairComparison,
+    ReferenceScenarioBinding,
+    ReferenceScenarioComparison,
     ResourceObservationBoundary,
     ResourceObservationStatus,
     SensitiveDataAuthorization,
@@ -30,6 +47,8 @@ EXPECTED_PUBLIC_CONTRACTS = (
     "ResistanceHypothesis",
     "FocalAreaSet",
     "ConnectivityScenario",
+    "ReferenceMetricTolerance",
+    "ReferenceScenarioBinding",
     "InterventionSite",
     "InterventionOption",
     "ConnectivityCostBasis",
@@ -39,6 +58,11 @@ EXPECTED_PUBLIC_CONTRACTS = (
     "RiskReviewMask",
     "ConnectivityDecisionRule",
     "ConnectivityRunPlan",
+    "ReferencePairComparison",
+    "ReferenceScenarioComparison",
+    "ReferenceComparisonPlan",
+    "ReferenceEvidenceClaimLink",
+    "ReferenceComparisonResult",
     "DirectConnectivityRun",
     "PortfolioDecisionSummary",
     "ConnectivityEvidenceClaim",
@@ -133,6 +157,385 @@ def test_unsupported_modes_and_conductance_fail_closed() -> None:
     with pytest.raises(ValidationError, match="RESISTANCE"):
         ConnectivityScenario.model_validate(
             {**base, "raster_semantics": RasterSemantics.CONDUCTANCE}
+        )
+
+
+def _reference_tolerance() -> ReferenceMetricTolerance:
+    return ReferenceMetricTolerance(
+        absolute_tolerance=1.0,
+        relative_tolerance=0.005,
+    )
+
+
+def _passing_reference_pair() -> ReferencePairComparison:
+    return ReferencePairComparison(
+        pair_id="pair-a-b",
+        reference_effective_resistance=100.0,
+        observed_effective_resistance=101.2,
+        tolerance=_reference_tolerance(),
+        absolute_difference=1.2,
+        relative_difference=0.012,
+        allowed_difference=1.5,
+        within_tolerance=True,
+    )
+
+
+def test_reference_pair_comparison_math_and_current_boundary_are_fail_closed() -> None:
+    pair = _passing_reference_pair()
+    assert pair.within_tolerance is True
+    assert pair.tolerance.comparison_formula == (
+        "ABS_OBSERVED_MINUS_REFERENCE_LE_ABSOLUTE_PLUS_RELATIVE_TIMES_ABS_REFERENCE"
+    )
+
+    with pytest.raises(ValidationError, match="relative difference"):
+        ReferencePairComparison.model_validate(
+            {**pair.model_dump(mode="json"), "relative_difference": 0.02}
+        )
+    with pytest.raises(ValidationError, match="declared comparison formula"):
+        ReferencePairComparison.model_validate(
+            {**pair.model_dump(mode="json"), "within_tolerance": False}
+        )
+
+    common = {
+        "binding_id": "reference-binding-a",
+        "scenario_id": "scenario-a",
+        "reference_matrix_asset_id": "reference-matrix-a",
+        "tolerance": _reference_tolerance().model_dump(mode="json"),
+        "reference_basis": "Approved direct-model reference output for this scenario.",
+        "reviewed_by": "Review ecologist",
+        "reviewed_at": datetime(2026, 8, 4, tzinfo=UTC),
+        "limitations": ["Reference reproduction is not ecological field validation."],
+    }
+    without_current = ReferenceScenarioBinding.model_validate(common)
+    assert without_current.current_raster_disposition == "NOT_PROVIDED"
+    assert without_current.current_raster_numeric_comparison_allowed is False
+
+    with pytest.raises(ValidationError, match="diagnostic-only"):
+        ReferenceScenarioBinding.model_validate(
+            {**common, "reference_current_asset_id": "reference-current-a"}
+        )
+    with_current = ReferenceScenarioBinding.model_validate(
+        {
+            **common,
+            "reference_current_asset_id": "reference-current-a",
+            "current_raster_disposition": ("DIAGNOSTIC_ONLY_NOT_NUMERICALLY_COMPARED_V0_1"),
+        }
+    )
+    assert with_current.current_raster_numeric_comparison_allowed is False
+
+
+def test_reference_plan_and_result_require_direct_baseline_matrix_evidence() -> None:
+    fixture = build_ridgeway_fixture()
+    scenario = fixture.bundle.scenarios[0]
+    baseline = next(
+        item for item in fixture.portfolios if item.portfolio_id == fixture.baseline_portfolio_id
+    )
+    run_plan = ConnectivityRunPlan(
+        analysis_id="analysis-reference",
+        revision_id=fixture.bundle.revision.revision_id,
+        scenario_ids=[scenario.scenario_id],
+        portfolios=[baseline],
+        baseline_portfolio_id=baseline.portfolio_id,
+        direct_job_count=1,
+        solver_job_cap=1,
+        search_method="ENUMERATION",
+        seed=0,
+        engine_manifest_sha256="a" * 64,
+    )
+    plan = ReferenceComparisonPlan(
+        plan_id="reference-plan-a",
+        analysis_id=run_plan.analysis_id,
+        revision_id=run_plan.revision_id,
+        model_sha256=fixture.bundle.revision.model_sha256,
+        engine_manifest_sha256=run_plan.engine_manifest_sha256,
+        binding_ids=["reference-binding-a"],
+        bound_scenario_ids=[scenario.scenario_id],
+        run_plan=run_plan,
+        created_at=datetime(2026, 8, 4, tzinfo=UTC),
+    )
+    comparison = ReferenceScenarioComparison(
+        comparison_id="reference-comparison-a",
+        analysis_id=run_plan.analysis_id,
+        revision_id=run_plan.revision_id,
+        model_sha256=fixture.bundle.revision.model_sha256,
+        binding_id="reference-binding-a",
+        scenario_id=scenario.scenario_id,
+        direct_run_id="direct-reference-a",
+        reference_matrix_asset_id="reference-matrix-a",
+        reference_matrix_sha256="b" * 64,
+        observed_matrix_sha256="c" * 64,
+        engine_manifest_sha256=run_plan.engine_manifest_sha256,
+        tolerance=_reference_tolerance(),
+        pair_comparisons=[
+            _passing_reference_pair(),
+            _passing_reference_pair().model_copy(update={"pair_id": "pair-b-c"}),
+        ],
+        qa_status=QAStatus.ACCEPTED,
+        status="PASSED",
+        completed_at=datetime(2026, 8, 4, tzinfo=UTC),
+        limitations=[
+            "Matrix reproduction is not ecological field validation.",
+            CURRENT_RASTER_LIMITATION,
+            FITNESS_LIMITATION,
+        ],
+    )
+    result = ReferenceComparisonResult(
+        result_id="reference-result-a",
+        plan_id=plan.plan_id,
+        analysis_id=plan.analysis_id,
+        revision_id=plan.revision_id,
+        model_sha256=plan.model_sha256,
+        engine_manifest_sha256=plan.engine_manifest_sha256,
+        scenario_comparisons=[comparison],
+        status="PASSED",
+        evidence_claim_links=[
+            ReferenceEvidenceClaimLink(
+                claim_id=f"claim-reference-{pair.pair_id}",
+                comparison_id=comparison.comparison_id,
+                scenario_id=comparison.scenario_id,
+                pair_id=pair.pair_id,
+                direct_run_id=comparison.direct_run_id,
+            )
+            for pair in comparison.pair_comparisons
+        ],
+        completed_at=datetime(2026, 8, 4, tzinfo=UTC),
+        limitations=[
+            "Direct reference matching does not establish ecological validity.",
+            CURRENT_RASTER_LIMITATION,
+            FITNESS_LIMITATION,
+        ],
+    )
+    assert result.exact_direct_evidence_only is True
+    assert result.current_raster_numeric_comparison_performed is False
+
+    with pytest.raises(ValidationError, match="does not request current-map equivalence"):
+        ReferenceComparisonPlan.model_validate(
+            {
+                **plan.model_dump(mode="json"),
+                "run_plan": {
+                    **run_plan.model_dump(mode="json"),
+                    "current_maps_for_portfolio_ids": [baseline.portfolio_id],
+                },
+            }
+        )
+    with pytest.raises(ValidationError, match="status must derive"):
+        ReferenceComparisonResult.model_validate(
+            {**result.model_dump(mode="json"), "status": "FAILED"}
+        )
+    valid_links = result.model_dump(mode="json")["evidence_claim_links"]
+    for invalid_links, message in (
+        (valid_links[:-1], "one evidence claim link for every scenario pair"),
+        (
+            [
+                {**valid_links[0], "direct_run_id": "swapped-direct-run"},
+                valid_links[1],
+            ],
+            "one evidence claim link for every scenario pair",
+        ),
+        (
+            [
+                {**valid_links[0], "pair_id": "unrelated-pair"},
+                valid_links[1],
+            ],
+            "one evidence claim link for every scenario pair",
+        ),
+        (
+            [
+                valid_links[0],
+                {**valid_links[0], "claim_id": "claim-reference-duplicate-link"},
+            ],
+            "scenario-pair claim links must be unique",
+        ),
+    ):
+        with pytest.raises(ValidationError, match=message):
+            ReferenceComparisonResult.model_validate(
+                {
+                    **result.model_dump(mode="json"),
+                    "evidence_claim_links": invalid_links,
+                }
+            )
+
+    for model, payload in (
+        (comparison, comparison.model_dump(mode="json")),
+        (result, result.model_dump(mode="json")),
+    ):
+        with pytest.raises(ValidationError, match="current-raster and model-fitness limitations"):
+            type(model).model_validate(
+                {
+                    **payload,
+                    "limitations": ["Direct reference matching is not ecological validation."],
+                }
+            )
+
+    reference_claim = ConnectivityEvidenceClaim(
+        claim_id="claim-reference-pair-a-b",
+        claim_kind="DIRECT_REFERENCE_COMPARISON",
+        text="Direct Circuitscape result under documented assumptions.",
+        value=True,
+        units="within_tolerance",
+        portfolio_id=baseline.portfolio_id,
+        scenario_id=scenario.scenario_id,
+        pair_id=comparison.pair_comparisons[0].pair_id,
+        direct_run_ids=[comparison.direct_run_id],
+        root_node_id="claim-reference-pair-a-b",
+        nodes=[
+            EvidenceNode(
+                node_id="claim-reference-pair-a-b",
+                node_type="CLAIM",
+                label="Reference comparison claim",
+            ),
+            EvidenceNode(
+                node_id=comparison.direct_run_id,
+                node_type="DIRECT_RUN",
+                label="Direct reference run",
+            ),
+        ],
+        edges=[
+            EvidenceEdge(
+                from_node_id="claim-reference-pair-a-b",
+                to_node_id=comparison.direct_run_id,
+                relation="supported_by",
+            )
+        ],
+        limitations=[CURRENT_RASTER_LIMITATION, FITNESS_LIMITATION],
+    )
+    assert reference_claim.claim_kind == "DIRECT_REFERENCE_COMPARISON"
+    with pytest.raises(ValidationError, match="one scenario, pair, and direct run"):
+        ConnectivityEvidenceClaim.model_validate(
+            {**reference_claim.model_dump(mode="json"), "pair_id": None}
+        )
+    with pytest.raises(ValidationError, match="Boolean within_tolerance"):
+        ConnectivityEvidenceClaim.model_validate(
+            {**reference_claim.model_dump(mode="json"), "value": "PASSED"}
+        )
+
+
+def test_project_bundle_reference_bindings_are_portable_and_semantically_typed() -> None:
+    fixture = build_ridgeway_fixture()
+    assert "reference_bindings" not in fixture.bundle.model_dump(mode="json")
+    scenario = fixture.bundle.scenarios[0]
+    hypothesis = next(
+        item
+        for item in fixture.bundle.resistance_hypotheses
+        if item.hypothesis_id == scenario.resistance_hypothesis_id
+    )
+    resistance = next(
+        item for item in fixture.bundle.assets if item.asset_id == hypothesis.resistance_asset_id
+    )
+    matrix_id = "reference-matrix-a"
+    current_id = "reference-current-a"
+    matrix = ConnectivityAsset.model_validate(
+        {
+            **resistance.model_dump(mode="json"),
+            "asset_id": matrix_id,
+            "kind": AssetKind.REFERENCE_MATRIX,
+            "title": "Approved reference matrix",
+            "relative_path": "references/scenario-a-matrix.txt",
+            "sha256": "d" * 64,
+            "media_type": "text/plain",
+            "grid": None,
+            "authorization": resistance.authorization.model_copy(
+                update={"asset_id": matrix_id}
+            ).model_dump(mode="json"),
+        }
+    )
+    current = ConnectivityAsset.model_validate(
+        {
+            **resistance.model_dump(mode="json"),
+            "asset_id": current_id,
+            "kind": AssetKind.REFERENCE_CURRENT,
+            "title": "Approved diagnostic current raster",
+            "relative_path": "references/scenario-a-current.asc",
+            "sha256": "e" * 64,
+            "authorization": resistance.authorization.model_copy(
+                update={"asset_id": current_id}
+            ).model_dump(mode="json"),
+        }
+    )
+    binding = ReferenceScenarioBinding(
+        binding_id="reference-binding-a",
+        scenario_id=scenario.scenario_id,
+        reference_matrix_asset_id=matrix.asset_id,
+        tolerance=_reference_tolerance(),
+        reference_current_asset_id=current.asset_id,
+        current_raster_disposition="DIAGNOSTIC_ONLY_NOT_NUMERICALLY_COMPARED_V0_1",
+        reference_basis="Approved direct-model reference output for the exact scenario.",
+        reviewed_by="Review ecologist",
+        reviewed_at=datetime(2026, 8, 4, tzinfo=UTC),
+        limitations=["Current raster is retained only as a diagnostic attachment."],
+    )
+    payload = fixture.bundle.model_dump(mode="json")
+    payload["assets"] = [
+        *payload["assets"],
+        matrix.model_dump(mode="json"),
+        current.model_dump(mode="json"),
+    ]
+    payload["reference_bindings"] = [binding.model_dump(mode="json")]
+    bundle = ConnectivityProjectBundle.model_validate(payload)
+    assert bundle.reference_bindings == [binding]
+    assert bundle.model_dump(mode="json")["reference_bindings"] == [binding.model_dump(mode="json")]
+
+    assert current.grid is not None
+    alternate_nodata = current.model_copy(
+        update={"grid": current.grid.model_copy(update={"nodata": -32768.0})}
+    )
+    ConnectivityProjectBundle.model_validate(
+        {
+            **payload,
+            "assets": [
+                alternate_nodata.model_dump(mode="json")
+                if item["asset_id"] == current.asset_id
+                else item
+                for item in payload["assets"]
+            ],
+        }
+    )
+    transform = current.grid.transform
+    shifted_current = current.model_copy(
+        update={
+            "grid": current.grid.model_copy(
+                update={
+                    "transform": (
+                        transform[0],
+                        transform[1],
+                        transform[2] + 1.0,
+                        transform[3],
+                        transform[4],
+                        transform[5],
+                    )
+                }
+            )
+        }
+    )
+    with pytest.raises(ValidationError, match="exact reviewed continuous grid alignment"):
+        ConnectivityProjectBundle.model_validate(
+            {
+                **payload,
+                "assets": [
+                    shifted_current.model_dump(mode="json")
+                    if item["asset_id"] == current.asset_id
+                    else item
+                    for item in payload["assets"]
+                ],
+            }
+        )
+
+    # Unbound bytes remain representable so professional validation can return
+    # an actionable blocker instead of making the portable bundle unparsable.
+    unbound_payload = fixture.bundle.model_dump(mode="json")
+    unbound_payload["assets"] = [*unbound_payload["assets"], matrix.model_dump(mode="json")]
+    assert not ConnectivityProjectBundle.model_validate(unbound_payload).reference_bindings
+
+    duplicate = binding.model_copy(update={"binding_id": "reference-binding-b"})
+    with pytest.raises(ValidationError, match="reference-bound scenario"):
+        ConnectivityProjectBundle.model_validate(
+            {
+                **payload,
+                "reference_bindings": [
+                    binding.model_dump(mode="json"),
+                    duplicate.model_dump(mode="json"),
+                ],
+            }
         )
 
 

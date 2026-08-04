@@ -10,6 +10,8 @@ from collections.abc import Iterable, Iterator, Mapping
 from pathlib import Path
 
 from .contracts import (
+    CURRENT_RASTER_LIMITATION,
+    FITNESS_LIMITATION,
     ConnectivityDecisionRule,
     ConnectivityEvidenceClaim,
     ConnectivityProjectBundle,
@@ -196,6 +198,12 @@ def iter_bundle_ecological_claim_texts(
 
     for scenario in bundle.scenarios:
         yield f"scenario[{scenario.scenario_id}].title", scenario.title
+
+    for binding in bundle.reference_bindings:
+        yield (
+            f"reference_binding[{binding.binding_id}].reference_basis",
+            binding.reference_basis,
+        )
 
     for site in bundle.intervention_sites:
         prefix = f"intervention_site[{site.site_id}]"
@@ -858,6 +866,19 @@ def validate_evidence_claim(claim: ConnectivityEvidenceClaim) -> None:
             "AUTHORIZATION",
             "ARTIFACT",
         },
+        "DIRECT_REFERENCE_COMPARISON": {
+            "CLAIM",
+            "REFERENCE_COMPARISON",
+            "METRIC",
+            "DIRECT_RUN",
+            "SCENARIO",
+            "ASSET",
+            "ENGINE_MANIFEST",
+            "QA",
+            "ASSUMPTION",
+            "AUTHORIZATION",
+            "ARTIFACT",
+        },
         "DIRECT_MAP_DIAGNOSTIC": {
             "CLAIM",
             "RULE",
@@ -904,6 +925,41 @@ def validate_evidence_claim(claim: ConnectivityEvidenceClaim) -> None:
             or raster_diffs[0].node_id != f"diff:{raster_diffs[0].sha256}"
         ):
             raise ValueError("direct evidence graph requires one SHA-bound prepared raster diff")
+    if claim.claim_kind == "DIRECT_REFERENCE_COMPARISON":
+        if (
+            claim.scenario_id is None
+            or claim.pair_id is None
+            or len(claim.direct_run_ids) != 1
+            or type(claim.value) is not bool
+            or claim.units != "within_tolerance"
+        ):
+            raise ValueError(
+                "reference claims require one scenario, pair, direct run, and Boolean "
+                "within_tolerance value"
+            )
+        if not {CURRENT_RASTER_LIMITATION, FITNESS_LIMITATION}.issubset(claim.limitations):
+            raise ValueError(
+                "reference claims require the current-raster and model-fitness limitations"
+            )
+        comparison_nodes = [
+            item for item in claim.nodes if item.node_type == "REFERENCE_COMPARISON"
+        ]
+        if len(comparison_nodes) != 1:
+            raise ValueError("reference evidence requires one comparison node")
+        comparison = comparison_nodes[0]
+        comparison_id = comparison.attributes.get("comparison_id")
+        if (
+            not isinstance(comparison_id, str)
+            or not comparison_id
+            or comparison.node_id != f"reference-comparison:{comparison_id}"
+            or comparison.attributes.get("scenario_id") != claim.scenario_id
+            or comparison.attributes.get("pair_id") != claim.pair_id
+            or comparison.attributes.get("direct_run_id") != claim.direct_run_ids[0]
+        ):
+            raise ValueError("reference comparison node does not match the claim subject")
+        direct_run_nodes = {item.node_id for item in claim.nodes if item.node_type == "DIRECT_RUN"}
+        if direct_run_nodes != {f"run:{claim.direct_run_ids[0]}"}:
+            raise ValueError("reference claim graph differs from its exact direct run")
     if claim.claim_kind == "AGGREGATE_RULE":
         if claim.rule_id is None or not claim.rule_id.startswith("aggregate:"):
             raise ValueError("aggregate evidence requires an explicit aggregate rule identity")

@@ -120,6 +120,26 @@ export const ConnectivityProjectBundleSchema = z.object({
   "julia_threads": z.literal(1).optional(),
   "blas_threads": z.literal(1).optional(),
 }).strict()),
+  "reference_bindings": z.array(z.object({
+  "binding_id": z.string().min(1),
+  "scenario_id": z.string().min(1),
+  "reference_matrix_asset_id": z.string().min(1),
+  "matrix_format": z.literal("CIRCUITSCAPE_THREE_COLUMN_MATRIX").optional(),
+  "tolerance": z.object({
+  "metric": z.literal("EFFECTIVE_RESISTANCE").optional(),
+  "units": z.literal("effective_resistance").optional(),
+  "absolute_tolerance": z.number().min(0),
+  "relative_tolerance": z.number().min(0),
+  "comparison_formula": z.literal("ABS_OBSERVED_MINUS_REFERENCE_LE_ABSOLUTE_PLUS_RELATIVE_TIMES_ABS_REFERENCE").optional(),
+}).strict(),
+  "reference_current_asset_id": z.union([z.string(), z.null()]).optional(),
+  "current_raster_disposition": z.enum(["NOT_PROVIDED", "DIAGNOSTIC_ONLY_NOT_NUMERICALLY_COMPARED_V0_1"]).optional(),
+  "current_raster_numeric_comparison_allowed": z.literal(false).optional(),
+  "reference_basis": z.string().min(1),
+  "reviewed_by": z.string().min(1),
+  "reviewed_at": z.string().refine((value) => !Number.isNaN(Date.parse(value)) && /(?:Z|[+-]\d{2}:\d{2})$/.test(value), "Expected timezone-aware ISO date-time"),
+  "limitations": z.array(z.string()).min(1),
+}).strict()).optional(),
   "intervention_sites": z.array(z.object({
   "site_id": z.string(),
   "title": z.string(),
@@ -329,6 +349,37 @@ export const ConnectivityScenarioSchema = z.object({
 }).strict();
 export type ConnectivityScenario = z.infer<typeof ConnectivityScenarioSchema>;
 
+export const ReferenceMetricToleranceSchema = z.object({
+  "metric": z.literal("EFFECTIVE_RESISTANCE").optional(),
+  "units": z.literal("effective_resistance").optional(),
+  "absolute_tolerance": z.number().min(0),
+  "relative_tolerance": z.number().min(0),
+  "comparison_formula": z.literal("ABS_OBSERVED_MINUS_REFERENCE_LE_ABSOLUTE_PLUS_RELATIVE_TIMES_ABS_REFERENCE").optional(),
+}).strict();
+export type ReferenceMetricTolerance = z.infer<typeof ReferenceMetricToleranceSchema>;
+
+export const ReferenceScenarioBindingSchema = z.object({
+  "binding_id": z.string().min(1),
+  "scenario_id": z.string().min(1),
+  "reference_matrix_asset_id": z.string().min(1),
+  "matrix_format": z.literal("CIRCUITSCAPE_THREE_COLUMN_MATRIX").optional(),
+  "tolerance": z.object({
+  "metric": z.literal("EFFECTIVE_RESISTANCE").optional(),
+  "units": z.literal("effective_resistance").optional(),
+  "absolute_tolerance": z.number().min(0),
+  "relative_tolerance": z.number().min(0),
+  "comparison_formula": z.literal("ABS_OBSERVED_MINUS_REFERENCE_LE_ABSOLUTE_PLUS_RELATIVE_TIMES_ABS_REFERENCE").optional(),
+}).strict(),
+  "reference_current_asset_id": z.union([z.string(), z.null()]).optional(),
+  "current_raster_disposition": z.enum(["NOT_PROVIDED", "DIAGNOSTIC_ONLY_NOT_NUMERICALLY_COMPARED_V0_1"]).optional(),
+  "current_raster_numeric_comparison_allowed": z.literal(false).optional(),
+  "reference_basis": z.string().min(1),
+  "reviewed_by": z.string().min(1),
+  "reviewed_at": z.string().refine((value) => !Number.isNaN(Date.parse(value)) && /(?:Z|[+-]\d{2}:\d{2})$/.test(value), "Expected timezone-aware ISO date-time"),
+  "limitations": z.array(z.string()).min(1),
+}).strict();
+export type ReferenceScenarioBinding = z.infer<typeof ReferenceScenarioBindingSchema>;
+
 export const InterventionSiteSchema = z.object({
   "site_id": z.string(),
   "title": z.string(),
@@ -512,6 +563,203 @@ export const ConnectivityRunPlanSchema = z.object({
 }).strict();
 export type ConnectivityRunPlan = z.infer<typeof ConnectivityRunPlanSchema>;
 
+export const ReferencePairComparisonSchema = z.object({
+  "pair_id": z.string().min(1),
+  "reference_effective_resistance": z.number().gt(0),
+  "observed_effective_resistance": z.number().gt(0),
+  "tolerance": z.object({
+  "metric": z.literal("EFFECTIVE_RESISTANCE").optional(),
+  "units": z.literal("effective_resistance").optional(),
+  "absolute_tolerance": z.number().min(0),
+  "relative_tolerance": z.number().min(0),
+  "comparison_formula": z.literal("ABS_OBSERVED_MINUS_REFERENCE_LE_ABSOLUTE_PLUS_RELATIVE_TIMES_ABS_REFERENCE").optional(),
+}).strict(),
+  "absolute_difference": z.number().min(0),
+  "relative_difference": z.number().min(0),
+  "allowed_difference": z.number().min(0),
+  "within_tolerance": z.boolean(),
+}).strict();
+export type ReferencePairComparison = z.infer<typeof ReferencePairComparisonSchema>;
+
+export const ReferenceScenarioComparisonSchema = z.object({
+  "comparison_id": z.string().min(1),
+  "analysis_id": z.string().min(1),
+  "revision_id": z.string().min(1),
+  "model_sha256": z.string().min(64).max(64).regex(new RegExp("^[0-9a-f]{64}$")),
+  "binding_id": z.string().min(1),
+  "scenario_id": z.string().min(1),
+  "direct_run_id": z.string().min(1),
+  "reference_matrix_asset_id": z.string().min(1),
+  "reference_matrix_sha256": z.string().min(64).max(64).regex(new RegExp("^[0-9a-f]{64}$")),
+  "observed_matrix_sha256": z.string().min(64).max(64).regex(new RegExp("^[0-9a-f]{64}$")),
+  "engine_manifest_sha256": z.string().min(64).max(64).regex(new RegExp("^[0-9a-f]{64}$")),
+  "tolerance": z.object({
+  "metric": z.literal("EFFECTIVE_RESISTANCE").optional(),
+  "units": z.literal("effective_resistance").optional(),
+  "absolute_tolerance": z.number().min(0),
+  "relative_tolerance": z.number().min(0),
+  "comparison_formula": z.literal("ABS_OBSERVED_MINUS_REFERENCE_LE_ABSOLUTE_PLUS_RELATIVE_TIMES_ABS_REFERENCE").optional(),
+}).strict(),
+  "pair_comparisons": z.array(z.object({
+  "pair_id": z.string().min(1),
+  "reference_effective_resistance": z.number().gt(0),
+  "observed_effective_resistance": z.number().gt(0),
+  "tolerance": z.object({
+  "metric": z.literal("EFFECTIVE_RESISTANCE").optional(),
+  "units": z.literal("effective_resistance").optional(),
+  "absolute_tolerance": z.number().min(0),
+  "relative_tolerance": z.number().min(0),
+  "comparison_formula": z.literal("ABS_OBSERVED_MINUS_REFERENCE_LE_ABSOLUTE_PLUS_RELATIVE_TIMES_ABS_REFERENCE").optional(),
+}).strict(),
+  "absolute_difference": z.number().min(0),
+  "relative_difference": z.number().min(0),
+  "allowed_difference": z.number().min(0),
+  "within_tolerance": z.boolean(),
+}).strict()).min(1),
+  "qa_status": z.enum(["ACCEPTED", "WARNING_ACCEPTED"]),
+  "status": z.enum(["PASSED", "FAILED"]),
+  "reference_current_asset_id": z.union([z.string(), z.null()]).optional(),
+  "reference_current_sha256": z.union([z.string().min(64).max(64).regex(new RegExp("^[0-9a-f]{64}$")), z.null()]).optional(),
+  "current_raster_disposition": z.enum(["NOT_PROVIDED", "DIAGNOSTIC_ONLY_NOT_NUMERICALLY_COMPARED_V0_1"]).optional(),
+  "current_raster_numeric_comparison_performed": z.literal(false).optional(),
+  "exact_direct_evidence_only": z.literal(true).optional(),
+  "completed_at": z.string().refine((value) => !Number.isNaN(Date.parse(value)) && /(?:Z|[+-]\d{2}:\d{2})$/.test(value), "Expected timezone-aware ISO date-time"),
+  "limitations": z.array(z.string()).min(1),
+}).strict();
+export type ReferenceScenarioComparison = z.infer<typeof ReferenceScenarioComparisonSchema>;
+
+export const ReferenceComparisonPlanSchema = z.object({
+  "plan_id": z.string().min(1),
+  "analysis_id": z.string().min(1),
+  "revision_id": z.string().min(1),
+  "model_sha256": z.string().min(64).max(64).regex(new RegExp("^[0-9a-f]{64}$")),
+  "engine_manifest_sha256": z.string().min(64).max(64).regex(new RegExp("^[0-9a-f]{64}$")),
+  "binding_ids": z.array(z.string()).min(1),
+  "bound_scenario_ids": z.array(z.string()).min(1),
+  "run_plan": z.object({
+  "analysis_id": z.string(),
+  "revision_id": z.string(),
+  "scenario_ids": z.array(z.string()).min(1),
+  "portfolios": z.array(z.object({
+  "portfolio_id": z.string(),
+  "selections": z.record(z.string(), z.string()),
+  "canonical_option_ids": z.array(z.string()),
+  "contains_survey_first": z.boolean().optional(),
+}).strict()).min(1),
+  "baseline_portfolio_id": z.string(),
+  "direct_job_count": z.number().int().gt(0),
+  "solver_job_cap": z.number().int().gt(0),
+  "search_method": z.enum(["ENUMERATION", "SOBOL", "SOBOL_EXTRATREES"]),
+  "seed": z.number().int().min(0),
+  "current_maps_for_portfolio_ids": z.array(z.string()).optional(),
+  "engine_manifest_sha256": z.string().min(64).max(64).regex(new RegExp("^[0-9a-f]{64}$")),
+  "search_resource_observation": z.union([z.object({
+  "observation_id": z.string(),
+  "boundary": z.enum(["DIRECT_SOLVER", "CACHE_REUSE", "SEARCH_PROPOSER"]),
+  "solver_wall_seconds": z.union([z.number().min(0), z.null()]).optional(),
+  "proposer_wall_seconds": z.union([z.number().min(0), z.null()]).optional(),
+  "cache_lookup_wall_seconds": z.union([z.number().min(0), z.null()]).optional(),
+  "peak_memory_status": z.enum(["MEASURED", "ESTIMATED", "NOT_MEASURED"]),
+  "peak_memory_bytes": z.union([z.number().int().min(0), z.null()]).optional(),
+  "peak_memory_method": z.string(),
+  "energy_status": z.enum(["MEASURED", "ESTIMATED", "NOT_MEASURED"]),
+  "energy_kwh": z.union([z.number().min(0), z.null()]).optional(),
+  "energy_method": z.string(),
+  "peak_memory_sample_count": z.number().int().min(0).optional(),
+  "peak_memory_sampling_interval_seconds": z.union([z.number().gt(0), z.null()]).optional(),
+  "peak_memory_is_lower_bound": z.boolean().optional(),
+  "energy_estimate_watts": z.union([z.number().gt(0), z.null()]).optional(),
+  "energy_estimate_lower_watts": z.union([z.number().gt(0), z.null()]).optional(),
+  "energy_estimate_upper_watts": z.union([z.number().gt(0), z.null()]).optional(),
+  "energy_estimate_lower_kwh": z.union([z.number().min(0), z.null()]).optional(),
+  "energy_estimate_upper_kwh": z.union([z.number().min(0), z.null()]).optional(),
+  "hardware": z.string(),
+  "boundary_description": z.string(),
+  "assumptions": z.array(z.string()).optional(),
+  "exclusions": z.array(z.string()).optional(),
+}).strict(), z.null()]).optional(),
+}).strict(),
+  "exact_direct_evidence_only": z.literal(true).optional(),
+  "created_at": z.string().refine((value) => !Number.isNaN(Date.parse(value)) && /(?:Z|[+-]\d{2}:\d{2})$/.test(value), "Expected timezone-aware ISO date-time"),
+}).strict();
+export type ReferenceComparisonPlan = z.infer<typeof ReferenceComparisonPlanSchema>;
+
+export const ReferenceEvidenceClaimLinkSchema = z.object({
+  "claim_id": z.string().min(1),
+  "comparison_id": z.string().min(1),
+  "scenario_id": z.string().min(1),
+  "pair_id": z.string().min(1),
+  "direct_run_id": z.string().min(1),
+}).strict();
+export type ReferenceEvidenceClaimLink = z.infer<typeof ReferenceEvidenceClaimLinkSchema>;
+
+export const ReferenceComparisonResultSchema = z.object({
+  "result_id": z.string().min(1),
+  "plan_id": z.string().min(1),
+  "analysis_id": z.string().min(1),
+  "revision_id": z.string().min(1),
+  "model_sha256": z.string().min(64).max(64).regex(new RegExp("^[0-9a-f]{64}$")),
+  "engine_manifest_sha256": z.string().min(64).max(64).regex(new RegExp("^[0-9a-f]{64}$")),
+  "scenario_comparisons": z.array(z.object({
+  "comparison_id": z.string().min(1),
+  "analysis_id": z.string().min(1),
+  "revision_id": z.string().min(1),
+  "model_sha256": z.string().min(64).max(64).regex(new RegExp("^[0-9a-f]{64}$")),
+  "binding_id": z.string().min(1),
+  "scenario_id": z.string().min(1),
+  "direct_run_id": z.string().min(1),
+  "reference_matrix_asset_id": z.string().min(1),
+  "reference_matrix_sha256": z.string().min(64).max(64).regex(new RegExp("^[0-9a-f]{64}$")),
+  "observed_matrix_sha256": z.string().min(64).max(64).regex(new RegExp("^[0-9a-f]{64}$")),
+  "engine_manifest_sha256": z.string().min(64).max(64).regex(new RegExp("^[0-9a-f]{64}$")),
+  "tolerance": z.object({
+  "metric": z.literal("EFFECTIVE_RESISTANCE").optional(),
+  "units": z.literal("effective_resistance").optional(),
+  "absolute_tolerance": z.number().min(0),
+  "relative_tolerance": z.number().min(0),
+  "comparison_formula": z.literal("ABS_OBSERVED_MINUS_REFERENCE_LE_ABSOLUTE_PLUS_RELATIVE_TIMES_ABS_REFERENCE").optional(),
+}).strict(),
+  "pair_comparisons": z.array(z.object({
+  "pair_id": z.string().min(1),
+  "reference_effective_resistance": z.number().gt(0),
+  "observed_effective_resistance": z.number().gt(0),
+  "tolerance": z.object({
+  "metric": z.literal("EFFECTIVE_RESISTANCE").optional(),
+  "units": z.literal("effective_resistance").optional(),
+  "absolute_tolerance": z.number().min(0),
+  "relative_tolerance": z.number().min(0),
+  "comparison_formula": z.literal("ABS_OBSERVED_MINUS_REFERENCE_LE_ABSOLUTE_PLUS_RELATIVE_TIMES_ABS_REFERENCE").optional(),
+}).strict(),
+  "absolute_difference": z.number().min(0),
+  "relative_difference": z.number().min(0),
+  "allowed_difference": z.number().min(0),
+  "within_tolerance": z.boolean(),
+}).strict()).min(1),
+  "qa_status": z.enum(["ACCEPTED", "WARNING_ACCEPTED"]),
+  "status": z.enum(["PASSED", "FAILED"]),
+  "reference_current_asset_id": z.union([z.string(), z.null()]).optional(),
+  "reference_current_sha256": z.union([z.string().min(64).max(64).regex(new RegExp("^[0-9a-f]{64}$")), z.null()]).optional(),
+  "current_raster_disposition": z.enum(["NOT_PROVIDED", "DIAGNOSTIC_ONLY_NOT_NUMERICALLY_COMPARED_V0_1"]).optional(),
+  "current_raster_numeric_comparison_performed": z.literal(false).optional(),
+  "exact_direct_evidence_only": z.literal(true).optional(),
+  "completed_at": z.string().refine((value) => !Number.isNaN(Date.parse(value)) && /(?:Z|[+-]\d{2}:\d{2})$/.test(value), "Expected timezone-aware ISO date-time"),
+  "limitations": z.array(z.string()).min(1),
+}).strict()).min(1),
+  "status": z.enum(["PASSED", "FAILED"]),
+  "exact_direct_evidence_only": z.literal(true).optional(),
+  "current_raster_numeric_comparison_performed": z.literal(false).optional(),
+  "evidence_claim_links": z.array(z.object({
+  "claim_id": z.string().min(1),
+  "comparison_id": z.string().min(1),
+  "scenario_id": z.string().min(1),
+  "pair_id": z.string().min(1),
+  "direct_run_id": z.string().min(1),
+}).strict()).min(1),
+  "completed_at": z.string().refine((value) => !Number.isNaN(Date.parse(value)) && /(?:Z|[+-]\d{2}:\d{2})$/.test(value), "Expected timezone-aware ISO date-time"),
+  "limitations": z.array(z.string()).min(1),
+}).strict();
+export type ReferenceComparisonResult = z.infer<typeof ReferenceComparisonResultSchema>;
+
 export const DirectConnectivityRunSchema = z.object({
   "direct_run_id": z.string(),
   "analysis_id": z.string(),
@@ -607,7 +855,7 @@ export type PortfolioDecisionSummary = z.infer<typeof PortfolioDecisionSummarySc
 
 export const ConnectivityEvidenceClaimSchema = z.object({
   "claim_id": z.string(),
-  "claim_kind": z.enum(["DIRECT_PAIR_METRIC", "DIRECT_MAP_DIAGNOSTIC", "DIRECT_QA", "COST", "FEASIBILITY", "AGGREGATE_RULE", "PORTFOLIO_DISPOSITION"]).optional(),
+  "claim_kind": z.enum(["DIRECT_PAIR_METRIC", "DIRECT_REFERENCE_COMPARISON", "DIRECT_MAP_DIAGNOSTIC", "DIRECT_QA", "COST", "FEASIBILITY", "AGGREGATE_RULE", "PORTFOLIO_DISPOSITION"]).optional(),
   "text": z.string(),
   "value": z.union([z.number(), z.boolean(), z.string()]),
   "units": z.string(),
@@ -619,7 +867,7 @@ export const ConnectivityEvidenceClaimSchema = z.object({
   "root_node_id": z.string(),
   "nodes": z.array(z.object({
   "node_id": z.string(),
-  "node_type": z.enum(["CLAIM", "RULE", "METRIC", "DIRECT_RUN", "SCENARIO", "RASTER_DIFF", "ASSET", "ENGINE_MANIFEST", "QA", "ASSUMPTION", "AUTHORIZATION", "ARTIFACT", "CACHE_LINEAGE", "COST_BASIS", "PORTFOLIO", "OPTION", "REDUCER", "FEASIBILITY", "DISPOSITION", "CURRENT_MAP", "FOOTPRINT_PROOF", "MODEL_REVISION", "RUN_PLAN", "SUPPORTING_CLAIM"]),
+  "node_type": z.enum(["CLAIM", "REFERENCE_COMPARISON", "RULE", "METRIC", "DIRECT_RUN", "SCENARIO", "RASTER_DIFF", "ASSET", "ENGINE_MANIFEST", "QA", "ASSUMPTION", "AUTHORIZATION", "ARTIFACT", "CACHE_LINEAGE", "COST_BASIS", "PORTFOLIO", "OPTION", "REDUCER", "FEASIBILITY", "DISPOSITION", "CURRENT_MAP", "FOOTPRINT_PROOF", "MODEL_REVISION", "RUN_PLAN", "SUPPORTING_CLAIM"]),
   "label": z.string(),
   "sha256": z.union([z.string().min(64).max(64).regex(new RegExp("^[0-9a-f]{64}$")), z.null()]).optional(),
   "attributes": z.record(z.string(), z.union([z.string(), z.number().int(), z.number(), z.boolean(), z.null()])).optional(),
@@ -778,6 +1026,8 @@ export const EcoCorridorContractSchemas = {
   ResistanceHypothesis: ResistanceHypothesisSchema,
   FocalAreaSet: FocalAreaSetSchema,
   ConnectivityScenario: ConnectivityScenarioSchema,
+  ReferenceMetricTolerance: ReferenceMetricToleranceSchema,
+  ReferenceScenarioBinding: ReferenceScenarioBindingSchema,
   InterventionSite: InterventionSiteSchema,
   InterventionOption: InterventionOptionSchema,
   ConnectivityCostBasis: ConnectivityCostBasisSchema,
@@ -787,6 +1037,11 @@ export const EcoCorridorContractSchemas = {
   RiskReviewMask: RiskReviewMaskSchema,
   ConnectivityDecisionRule: ConnectivityDecisionRuleSchema,
   ConnectivityRunPlan: ConnectivityRunPlanSchema,
+  ReferencePairComparison: ReferencePairComparisonSchema,
+  ReferenceScenarioComparison: ReferenceScenarioComparisonSchema,
+  ReferenceComparisonPlan: ReferenceComparisonPlanSchema,
+  ReferenceEvidenceClaimLink: ReferenceEvidenceClaimLinkSchema,
+  ReferenceComparisonResult: ReferenceComparisonResultSchema,
   DirectConnectivityRun: DirectConnectivityRunSchema,
   PortfolioDecisionSummary: PortfolioDecisionSummarySchema,
   ConnectivityEvidenceClaim: ConnectivityEvidenceClaimSchema,

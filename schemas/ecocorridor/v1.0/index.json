@@ -25,6 +25,14 @@
       "name": "ConnectivityScenario"
     },
     {
+      "file": "ReferenceMetricTolerance.schema.json",
+      "name": "ReferenceMetricTolerance"
+    },
+    {
+      "file": "ReferenceScenarioBinding.schema.json",
+      "name": "ReferenceScenarioBinding"
+    },
+    {
       "file": "InterventionSite.schema.json",
       "name": "InterventionSite"
     },
@@ -59,6 +67,26 @@
     {
       "file": "ConnectivityRunPlan.schema.json",
       "name": "ConnectivityRunPlan"
+    },
+    {
+      "file": "ReferencePairComparison.schema.json",
+      "name": "ReferencePairComparison"
+    },
+    {
+      "file": "ReferenceScenarioComparison.schema.json",
+      "name": "ReferenceScenarioComparison"
+    },
+    {
+      "file": "ReferenceComparisonPlan.schema.json",
+      "name": "ReferenceComparisonPlan"
+    },
+    {
+      "file": "ReferenceEvidenceClaimLink.schema.json",
+      "name": "ReferenceEvidenceClaimLink"
+    },
+    {
+      "file": "ReferenceComparisonResult.schema.json",
+      "name": "ReferenceComparisonResult"
     },
     {
       "file": "DirectConnectivityRun.schema.json",

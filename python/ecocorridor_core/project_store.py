@@ -2970,6 +2970,11 @@ class EcoProjectStore:
             raise ValueError("completed analysis contains duplicate direct-run evidence")
         for claim in claims:
             validate_evidence_claim(claim)
+            if claim.claim_kind == "DIRECT_REFERENCE_COMPARISON":
+                raise ValueError(
+                    "reference claims require an authoritative, atomically stored "
+                    "ReferenceComparisonResult before repository acceptance"
+                )
             if claim.portfolio_id not in portfolio_ids:
                 raise ValueError("evidence claim references an unplanned portfolio")
             referenced = set(claim.direct_run_ids)

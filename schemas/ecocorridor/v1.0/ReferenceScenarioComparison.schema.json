@@ -1,0 +1,277 @@
+{
+  "$defs": {
+    "ReferenceMetricTolerance": {
+      "additionalProperties": false,
+      "description": "Declared comparison policy for one supported reference metric.\n\nRelative tolerance is a dimensionless fraction, not a percentage.  The\napproved reference value is deliberately the scale term so comparison\nbehavior cannot vary with argument order or an implementation default.",
+      "properties": {
+        "absolute_tolerance": {
+          "minimum": 0,
+          "title": "Absolute Tolerance",
+          "type": "number"
+        },
+        "comparison_formula": {
+          "const": "ABS_OBSERVED_MINUS_REFERENCE_LE_ABSOLUTE_PLUS_RELATIVE_TIMES_ABS_REFERENCE",
+          "default": "ABS_OBSERVED_MINUS_REFERENCE_LE_ABSOLUTE_PLUS_RELATIVE_TIMES_ABS_REFERENCE",
+          "title": "Comparison Formula",
+          "type": "string"
+        },
+        "metric": {
+          "const": "EFFECTIVE_RESISTANCE",
+          "default": "EFFECTIVE_RESISTANCE",
+          "title": "Metric",
+          "type": "string"
+        },
+        "relative_tolerance": {
+          "minimum": 0,
+          "title": "Relative Tolerance",
+          "type": "number"
+        },
+        "units": {
+          "const": "effective_resistance",
+          "default": "effective_resistance",
+          "title": "Units",
+          "type": "string"
+        }
+      },
+      "required": [
+        "absolute_tolerance",
+        "relative_tolerance"
+      ],
+      "title": "ReferenceMetricTolerance",
+      "type": "object"
+    },
+    "ReferencePairComparison": {
+      "additionalProperties": false,
+      "description": "One auditable effective-resistance comparison against approved bytes.",
+      "properties": {
+        "absolute_difference": {
+          "minimum": 0,
+          "title": "Absolute Difference",
+          "type": "number"
+        },
+        "allowed_difference": {
+          "minimum": 0,
+          "title": "Allowed Difference",
+          "type": "number"
+        },
+        "observed_effective_resistance": {
+          "exclusiveMinimum": 0,
+          "title": "Observed Effective Resistance",
+          "type": "number"
+        },
+        "pair_id": {
+          "minLength": 1,
+          "title": "Pair Id",
+          "type": "string"
+        },
+        "reference_effective_resistance": {
+          "exclusiveMinimum": 0,
+          "title": "Reference Effective Resistance",
+          "type": "number"
+        },
+        "relative_difference": {
+          "minimum": 0,
+          "title": "Relative Difference",
+          "type": "number"
+        },
+        "tolerance": {
+          "$ref": "#/$defs/ReferenceMetricTolerance"
+        },
+        "within_tolerance": {
+          "title": "Within Tolerance",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "pair_id",
+        "reference_effective_resistance",
+        "observed_effective_resistance",
+        "tolerance",
+        "absolute_difference",
+        "relative_difference",
+        "allowed_difference",
+        "within_tolerance"
+      ],
+      "title": "ReferencePairComparison",
+      "type": "object"
+    }
+  },
+  "$id": "https://schemas.ecocorridor.local/1.0/ReferenceScenarioComparison.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Complete direct comparison for one scenario and every bound focal pair.",
+  "properties": {
+    "analysis_id": {
+      "minLength": 1,
+      "title": "Analysis Id",
+      "type": "string"
+    },
+    "binding_id": {
+      "minLength": 1,
+      "title": "Binding Id",
+      "type": "string"
+    },
+    "comparison_id": {
+      "minLength": 1,
+      "title": "Comparison Id",
+      "type": "string"
+    },
+    "completed_at": {
+      "format": "date-time",
+      "title": "Completed At",
+      "type": "string"
+    },
+    "current_raster_disposition": {
+      "default": "NOT_PROVIDED",
+      "enum": [
+        "NOT_PROVIDED",
+        "DIAGNOSTIC_ONLY_NOT_NUMERICALLY_COMPARED_V0_1"
+      ],
+      "title": "Current Raster Disposition",
+      "type": "string"
+    },
+    "current_raster_numeric_comparison_performed": {
+      "const": false,
+      "default": false,
+      "title": "Current Raster Numeric Comparison Performed",
+      "type": "boolean"
+    },
+    "direct_run_id": {
+      "minLength": 1,
+      "title": "Direct Run Id",
+      "type": "string"
+    },
+    "engine_manifest_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Engine Manifest Sha256",
+      "type": "string"
+    },
+    "exact_direct_evidence_only": {
+      "const": true,
+      "default": true,
+      "title": "Exact Direct Evidence Only",
+      "type": "boolean"
+    },
+    "limitations": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Limitations",
+      "type": "array"
+    },
+    "model_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Model Sha256",
+      "type": "string"
+    },
+    "observed_matrix_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Observed Matrix Sha256",
+      "type": "string"
+    },
+    "pair_comparisons": {
+      "items": {
+        "$ref": "#/$defs/ReferencePairComparison"
+      },
+      "minItems": 1,
+      "title": "Pair Comparisons",
+      "type": "array"
+    },
+    "qa_status": {
+      "enum": [
+        "ACCEPTED",
+        "WARNING_ACCEPTED"
+      ],
+      "title": "Qa Status",
+      "type": "string"
+    },
+    "reference_current_asset_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reference Current Asset Id"
+    },
+    "reference_current_sha256": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reference Current Sha256"
+    },
+    "reference_matrix_asset_id": {
+      "minLength": 1,
+      "title": "Reference Matrix Asset Id",
+      "type": "string"
+    },
+    "reference_matrix_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Reference Matrix Sha256",
+      "type": "string"
+    },
+    "revision_id": {
+      "minLength": 1,
+      "title": "Revision Id",
+      "type": "string"
+    },
+    "scenario_id": {
+      "minLength": 1,
+      "title": "Scenario Id",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "PASSED",
+        "FAILED"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "tolerance": {
+      "$ref": "#/$defs/ReferenceMetricTolerance"
+    }
+  },
+  "required": [
+    "comparison_id",
+    "analysis_id",
+    "revision_id",
+    "model_sha256",
+    "binding_id",
+    "scenario_id",
+    "direct_run_id",
+    "reference_matrix_asset_id",
+    "reference_matrix_sha256",
+    "observed_matrix_sha256",
+    "engine_manifest_sha256",
+    "tolerance",
+    "pair_comparisons",
+    "qa_status",
+    "status",
+    "completed_at",
+    "limitations"
+  ],
+  "title": "ReferenceScenarioComparison",
+  "type": "object"
+}

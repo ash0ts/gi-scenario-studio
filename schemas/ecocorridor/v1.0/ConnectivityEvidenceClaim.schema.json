@@ -61,6 +61,7 @@
         "node_type": {
           "enum": [
             "CLAIM",
+            "REFERENCE_COMPARISON",
             "RULE",
             "METRIC",
             "DIRECT_RUN",
@@ -125,6 +126,7 @@
       "default": "DIRECT_PAIR_METRIC",
       "enum": [
         "DIRECT_PAIR_METRIC",
+        "DIRECT_REFERENCE_COMPARISON",
         "DIRECT_MAP_DIAGNOSTIC",
         "DIRECT_QA",
         "COST",

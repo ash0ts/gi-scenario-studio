@@ -23,6 +23,14 @@ Python scientific worker + Eco SQLite
    alternative evidence source.
 6. React state is disposable presentation state.
 
+The generated JSON Schema, TypeScript, and Zod artifacts provide versioned
+transport shape validation. Cross-record scientific invariants—such as exact
+reference-claim coverage, derived pass/fail, mandatory limitations, and model
+fitness—remain authoritative Pydantic validation in the Python worker. Every
+RPC payload is revalidated there before it can change state or become evidence;
+the renderer must never use a structurally valid Zod value to infer scientific
+eligibility on its own.
+
 ## Direct-run transaction
 
 One direct job is one portfolio × one complete ecological scenario. In one

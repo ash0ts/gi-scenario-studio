@@ -1,0 +1,42 @@
+{
+  "$id": "https://schemas.ecocorridor.local/1.0/ReferenceEvidenceClaimLink.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Bind one reference claim to its exact scenario, pair, comparison, and run.",
+  "properties": {
+    "claim_id": {
+      "minLength": 1,
+      "title": "Claim Id",
+      "type": "string"
+    },
+    "comparison_id": {
+      "minLength": 1,
+      "title": "Comparison Id",
+      "type": "string"
+    },
+    "direct_run_id": {
+      "minLength": 1,
+      "title": "Direct Run Id",
+      "type": "string"
+    },
+    "pair_id": {
+      "minLength": 1,
+      "title": "Pair Id",
+      "type": "string"
+    },
+    "scenario_id": {
+      "minLength": 1,
+      "title": "Scenario Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "claim_id",
+    "comparison_id",
+    "scenario_id",
+    "pair_id",
+    "direct_run_id"
+  ],
+  "title": "ReferenceEvidenceClaimLink",
+  "type": "object"
+}

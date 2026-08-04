@@ -101,6 +101,17 @@ def _require_safe_purpose(
         )
 
 
+def _duplicate_identities(values: list[str]) -> set[str]:
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for value in values:
+        if value in seen:
+            duplicates.add(value)
+        else:
+            seen.add(value)
+    return duplicates
+
+
 def validate_professional_bundle(bundle: ConnectivityProjectBundle) -> list[ModelFinding]:
     """Return deterministic findings for a complete professional bundle.
 
@@ -236,20 +247,199 @@ def validate_professional_bundle(bundle: ConnectivityProjectBundle) -> list[Mode
                 asset.asset_id,
                 label,
             )
-        if asset.kind in _UNBOUND_REFERENCE_ASSET_KINDS:
+    reference_bindings = list(bundle.reference_bindings)
+    bound_reference_asset_ids = {
+        binding.reference_matrix_asset_id for binding in reference_bindings
+    } | {
+        binding.reference_current_asset_id
+        for binding in reference_bindings
+        if binding.reference_current_asset_id is not None
+    }
+    for asset in bundle.assets:
+        if (
+            asset.kind in _UNBOUND_REFERENCE_ASSET_KINDS
+            and asset.asset_id not in bound_reference_asset_ids
+        ):
             findings.append(
                 _finding(
-                    "REFERENCE_EVIDENCE_BINDING_UNSUPPORTED",
+                    "REFERENCE_ASSET_UNBOUND",
                     asset.asset_id,
                     (
-                        "Do not treat this imported reference asset as model-validation "
-                        "evidence. EcoCorridor v0.1 has no explicit contract binding it to "
-                        "a scenario and comparison tolerance, and does not compare it. "
-                        "Professional analysis remains blocked until a supported binding "
-                        "and comparison workflow exists."
+                        "Bind these exact reference bytes to one reviewed scenario, metric "
+                        "tolerance, basis, reviewer, and limitations. Asset presence alone is "
+                        "not model-validation evidence."
                     ),
                 )
             )
+
+    duplicate_binding_ids = _duplicate_identities(
+        [binding.binding_id for binding in reference_bindings]
+    )
+    duplicate_scenario_ids = _duplicate_identities(
+        [binding.scenario_id for binding in reference_bindings]
+    )
+    duplicate_matrix_asset_ids = _duplicate_identities(
+        [binding.reference_matrix_asset_id for binding in reference_bindings]
+    )
+    duplicate_current_asset_ids = _duplicate_identities(
+        [
+            binding.reference_current_asset_id
+            for binding in reference_bindings
+            if binding.reference_current_asset_id is not None
+        ]
+    )
+    for label, identities in (
+        ("binding ID", duplicate_binding_ids),
+        ("scenario", duplicate_scenario_ids),
+        ("reference matrix asset", duplicate_matrix_asset_ids),
+        ("reference current asset", duplicate_current_asset_ids),
+    ):
+        for identity in sorted(identities):
+            findings.append(
+                _finding(
+                    "REFERENCE_BINDING_DUPLICATE",
+                    identity,
+                    f"Assign each {label} to exactly one reference-scenario binding.",
+                )
+            )
+
+    valid_bound_scenario_ids: set[str] = set()
+    for binding in reference_bindings:
+        binding_valid = True
+        if (
+            binding.binding_id in duplicate_binding_ids
+            or binding.scenario_id in duplicate_scenario_ids
+            or binding.reference_matrix_asset_id in duplicate_matrix_asset_ids
+            or (
+                binding.reference_current_asset_id is not None
+                and binding.reference_current_asset_id in duplicate_current_asset_ids
+            )
+        ):
+            binding_valid = False
+
+        scenario = scenarios.get(binding.scenario_id)
+        if scenario is None:
+            binding_valid = False
+            findings.append(
+                _finding(
+                    "REFERENCE_BINDING_SCENARIO_MISSING",
+                    binding.binding_id,
+                    "Bind the reference evidence to an existing scenario in this revision.",
+                )
+            )
+
+        matrix_asset = assets.get(binding.reference_matrix_asset_id)
+        if matrix_asset is None:
+            binding_valid = False
+            findings.append(
+                _finding(
+                    "REFERENCE_BINDING_ASSET_MISSING",
+                    binding.binding_id,
+                    "Attach the exact reviewed reference matrix asset named by this binding.",
+                )
+            )
+        elif matrix_asset.kind != AssetKind.REFERENCE_MATRIX:
+            binding_valid = False
+            findings.append(
+                _finding(
+                    "REFERENCE_BINDING_ASSET_KIND_INVALID",
+                    binding.binding_id,
+                    "Use a REFERENCE_MATRIX asset for the bound effective-resistance matrix.",
+                )
+            )
+
+        if binding.reference_current_asset_id is not None:
+            current_asset = assets.get(binding.reference_current_asset_id)
+            expected_grid = None
+            if scenario is not None:
+                hypothesis = hypotheses.get(scenario.resistance_hypothesis_id)
+                resistance_asset = (
+                    assets.get(hypothesis.resistance_asset_id) if hypothesis is not None else None
+                )
+                expected_grid = resistance_asset.grid if resistance_asset is not None else None
+            if current_asset is None:
+                binding_valid = False
+                findings.append(
+                    _finding(
+                        "REFERENCE_BINDING_ASSET_MISSING",
+                        binding.binding_id,
+                        "Attach the exact reference current raster named by this binding.",
+                    )
+                )
+            elif current_asset.kind != AssetKind.REFERENCE_CURRENT:
+                binding_valid = False
+                findings.append(
+                    _finding(
+                        "REFERENCE_BINDING_ASSET_KIND_INVALID",
+                        binding.binding_id,
+                        "Use a REFERENCE_CURRENT asset for the optional current-raster attachment.",
+                    )
+                )
+            elif scenario is not None and (
+                current_asset.grid is None
+                or current_asset.grid.value_kind != RasterValueKind.CONTINUOUS
+                or expected_grid is None
+                or grid_identity(current_asset.grid) != grid_identity(expected_grid)
+            ):
+                binding_valid = False
+                findings.append(
+                    _finding(
+                        "REFERENCE_CURRENT_GRID_INVALID",
+                        binding.binding_id,
+                        (
+                            "Use a continuous reference current raster with the bound scenario's "
+                            "exact CRS, dimensions, affine cell alignment, and cell area. Preview "
+                            "and approve any change through a GridAlignmentPlan."
+                        ),
+                    )
+                )
+            else:
+                findings.append(
+                    _finding(
+                        "REFERENCE_CURRENT_DIAGNOSTIC_ONLY",
+                        binding.reference_current_asset_id,
+                        (
+                            "Retain this current raster only for diagnostic inspection. "
+                            "EcoCorridor v0.1 does not numerically compare current rasters or "
+                            "use them to determine reference-validation status."
+                        ),
+                        severity="INFORMATION",
+                    )
+                )
+
+        if not binding_valid:
+            continue
+        valid_bound_scenario_ids.add(binding.scenario_id)
+        # Future seam: once the authoritative repository can supply a revision-bound
+        # ReferenceComparisonResult, this validator can consume that stored result.
+        # Its current signature has no such input, so a supplied matrix must remain
+        # pending instead of inferring success from a binding or asset alone.
+        findings.append(
+            _finding(
+                "REFERENCE_COMPARISON_REQUIRED",
+                binding.binding_id,
+                (
+                    "Run and retain the repository-backed baseline matrix comparison for this "
+                    "scenario and semantic revision. Until that authoritative result is "
+                    "available to validation, do not treat the reference binding as passed."
+                ),
+            )
+        )
+
+    if valid_bound_scenario_ids and valid_bound_scenario_ids != set(scenarios):
+        missing_reference_scenarios = sorted(set(scenarios) - valid_bound_scenario_ids)
+        findings.append(
+            _finding(
+                "REFERENCE_BINDING_COVERAGE_INCOMPLETE",
+                "reference_bindings",
+                (
+                    "Review whether reference coverage is intentionally partial; no approved "
+                    "reference matrix is bound for: "
+                    f"{', '.join(missing_reference_scenarios)}."
+                ),
+                severity="REVIEW_REQUIRED",
+            )
+        )
 
     if not bundle.scenarios:
         findings.append(

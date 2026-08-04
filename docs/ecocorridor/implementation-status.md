@@ -123,11 +123,20 @@ current direct evidence.
   evidence now requires exact option coverage, lifecycle assumptions, named
   review, and explicit confirmation in one semantic revision; export
   eligibility and package creation remain evidence-derived and fail closed.
-- Imported reference matrices and current rasters are retained asset kinds but
-  are not silently credited as validation evidence. Because v0.1 has no public
-  contract binding either asset to an ecological scenario and comparison
-  tolerance, their presence produces a blocking finding until a supported
-  comparison workflow is implemented.
+- Imported reference matrices can now be bound to exactly one ecological
+  scenario, declared effective-resistance tolerances, reviewed basis, reviewer,
+  and limitations. The pure comparison boundary reparses both retained matrices
+  with the strict Circuitscape parser, binds each direct-evidence claim to its
+  exact comparison, scenario, focal pair, and direct-run identity, and derives
+  pass/fail from the documented absolute-plus-relative tolerance formula.
+  Optional reference current rasters must match the full reviewed CRS, extent,
+  dimensions, affine cell alignment, and cell area; they remain diagnostic-only
+  and are never compared numerically. Authored reference-basis text passes
+  through the same prohibited ecological-claim gate as other project prose.
+  Professional validation still blocks on `REFERENCE_COMPARISON_REQUIRED`
+  until an authoritative, revision-bound repository result is persisted and
+  consumed; neither asset presence nor a binding can imply a pass or attest
+  model fitness.
 - Worker-backed Ridgeway replay and durable local rerun controls, plus a
   synthetic-only no-login web replay.
 - Distinct accessible desktop UI, responsive screenshot baselines, and local

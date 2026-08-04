@@ -22,6 +22,7 @@ from .contracts import (
     RasterValueKind,
     ResamplingMethod,
     canonical_sha256,
+    grid_alignment_identity,
 )
 
 
@@ -104,16 +105,7 @@ def grid_identity(grid: RasterGrid) -> str:
     # Value kind and NODATA semantics belong to the raster, not to its pixel
     # geometry.  A resistance grid and its focal-ID grid must be able to prove
     # exact cell alignment while retaining different semantic validation.
-    return canonical_sha256(
-        {
-            "grid_id": grid.grid_id,
-            "crs": grid.crs,
-            "width": grid.width,
-            "height": grid.height,
-            "transform": grid.transform,
-            "cell_area_m2": grid.cell_area_m2,
-        }
-    )
+    return grid_alignment_identity(grid)
 
 
 def assert_same_grid(*rasters: InMemoryRaster) -> str:

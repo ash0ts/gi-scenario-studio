@@ -27,6 +27,17 @@ CONCEPTUAL_CONNECTIVITY_NOTICE = (
     "Conceptual connectivity screening — not observed animal movement, crossing use, "
     "collision reduction, population viability, or an approved corridor."
 )
+REFERENCE_CURRENT_DIAGNOSTIC_DISPOSITION = "DIAGNOSTIC_ONLY_NOT_NUMERICALLY_COMPARED_V0_1"
+REFERENCE_COMPARISON_FORMULA = (
+    "ABS_OBSERVED_MINUS_REFERENCE_LE_ABSOLUTE_PLUS_RELATIVE_TIMES_ABS_REFERENCE"
+)
+CURRENT_RASTER_LIMITATION = (
+    "Reference current rasters are retained for diagnostic inspection only and are not "
+    "numerically compared in v0.1."
+)
+FITNESS_LIMITATION = (
+    "A passing reference-matrix comparison does not automatically attest model fitness."
+)
 
 
 def utc_now() -> datetime:
@@ -213,6 +224,27 @@ class RasterGrid(ContractModel):
         if self.transform[0] == 0 or self.transform[4] == 0:
             raise ValueError("grid pixel size cannot be zero")
         return self
+
+
+def grid_alignment_identity(grid: RasterGrid) -> str:
+    """Return the exact cell-geometry identity used by ``grid.grid_identity``.
+
+    Value kind and NODATA remain raster semantics; they are intentionally not
+    part of alignment identity. Keeping this primitive here avoids an import
+    cycle while allowing cross-record contract validation to reject a shifted
+    raster that merely reuses the same user-authored ``grid_id``.
+    """
+
+    return canonical_sha256(
+        {
+            "grid_id": grid.grid_id,
+            "crs": grid.crs,
+            "width": grid.width,
+            "height": grid.height,
+            "transform": grid.transform,
+            "cell_area_m2": grid.cell_area_m2,
+        }
+    )
 
 
 class SensitiveDataAuthorization(ContractModel):
@@ -459,6 +491,62 @@ class ConnectivityScenario(ContractModel):
             raise ValueError("v0.1 supports resistance semantics only")
         if len(self.included_pair_ids) != len(set(self.included_pair_ids)):
             raise ValueError("included focal pair IDs must be unique")
+        return self
+
+
+class ReferenceMetricTolerance(ContractModel):
+    """Declared comparison policy for one supported reference metric.
+
+    Relative tolerance is a dimensionless fraction, not a percentage.  The
+    approved reference value is deliberately the scale term so comparison
+    behavior cannot vary with argument order or an implementation default.
+    """
+
+    metric: Literal["EFFECTIVE_RESISTANCE"] = "EFFECTIVE_RESISTANCE"
+    units: Literal["effective_resistance"] = "effective_resistance"
+    absolute_tolerance: float = Field(ge=0)
+    relative_tolerance: float = Field(ge=0)
+    comparison_formula: Literal[REFERENCE_COMPARISON_FORMULA] = REFERENCE_COMPARISON_FORMULA
+
+
+class ReferenceScenarioBinding(ContractModel):
+    """Bind approved reference bytes to one exact ecological scenario.
+
+    A current raster may be retained for inspection, but v0.1 has no contract
+    for proving equivalence between independently produced current rasters.
+    The fixed disposition therefore prevents it from becoming validation
+    evidence or influencing a matrix-comparison result.
+    """
+
+    binding_id: str = Field(min_length=1)
+    scenario_id: str = Field(min_length=1)
+    reference_matrix_asset_id: str = Field(min_length=1)
+    matrix_format: Literal["CIRCUITSCAPE_THREE_COLUMN_MATRIX"] = "CIRCUITSCAPE_THREE_COLUMN_MATRIX"
+    tolerance: ReferenceMetricTolerance
+    reference_current_asset_id: str | None = None
+    current_raster_disposition: Literal[
+        "NOT_PROVIDED",
+        REFERENCE_CURRENT_DIAGNOSTIC_DISPOSITION,
+    ] = "NOT_PROVIDED"
+    current_raster_numeric_comparison_allowed: Literal[False] = False
+    reference_basis: str = Field(min_length=1)
+    reviewed_by: str = Field(min_length=1)
+    reviewed_at: AwareDatetime
+    limitations: list[str] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def current_attachment_is_diagnostic_only(self) -> ReferenceScenarioBinding:
+        if self.reference_current_asset_id is None:
+            if self.current_raster_disposition != "NOT_PROVIDED":
+                raise ValueError(
+                    "a missing reference current raster must use the NOT_PROVIDED disposition"
+                )
+        elif self.current_raster_disposition != REFERENCE_CURRENT_DIAGNOSTIC_DISPOSITION:
+            raise ValueError(
+                "a reference current raster is diagnostic-only and is not numerically compared"
+            )
+        if len(self.limitations) != len(set(self.limitations)):
+            raise ValueError("reference-binding limitations must be unique")
         return self
 
 
@@ -866,6 +954,234 @@ class ConnectivityRunPlan(ContractModel):
         return self
 
 
+class ReferencePairComparison(ContractModel):
+    """One auditable effective-resistance comparison against approved bytes."""
+
+    pair_id: str = Field(min_length=1)
+    reference_effective_resistance: float = Field(gt=0)
+    observed_effective_resistance: float = Field(gt=0)
+    tolerance: ReferenceMetricTolerance
+    absolute_difference: float = Field(ge=0)
+    relative_difference: float = Field(ge=0)
+    allowed_difference: float = Field(ge=0)
+    within_tolerance: bool
+
+    @model_validator(mode="after")
+    def differences_are_derived_from_values(self) -> ReferencePairComparison:
+        absolute = abs(self.observed_effective_resistance - self.reference_effective_resistance)
+        relative = absolute / abs(self.reference_effective_resistance)
+        allowed = self.tolerance.absolute_tolerance + (
+            self.tolerance.relative_tolerance * abs(self.reference_effective_resistance)
+        )
+        for label, supplied, expected in (
+            ("absolute difference", self.absolute_difference, absolute),
+            ("relative difference", self.relative_difference, relative),
+            ("allowed difference", self.allowed_difference, allowed),
+        ):
+            if not math.isclose(supplied, expected, rel_tol=1e-12, abs_tol=1e-15):
+                raise ValueError(f"reference {label} is not derived from the compared values")
+        if self.within_tolerance != (absolute <= allowed):
+            raise ValueError("within_tolerance must follow the declared comparison formula")
+        return self
+
+
+class ReferenceScenarioComparison(ContractModel):
+    """Complete direct comparison for one scenario and every bound focal pair."""
+
+    comparison_id: str = Field(min_length=1)
+    analysis_id: str = Field(min_length=1)
+    revision_id: str = Field(min_length=1)
+    model_sha256: Sha256Digest
+    binding_id: str = Field(min_length=1)
+    scenario_id: str = Field(min_length=1)
+    direct_run_id: str = Field(min_length=1)
+    reference_matrix_asset_id: str = Field(min_length=1)
+    reference_matrix_sha256: Sha256Digest
+    observed_matrix_sha256: Sha256Digest
+    engine_manifest_sha256: Sha256Digest
+    tolerance: ReferenceMetricTolerance
+    pair_comparisons: list[ReferencePairComparison] = Field(min_length=1)
+    qa_status: Literal[QAStatus.ACCEPTED, QAStatus.WARNING_ACCEPTED]
+    status: Literal["PASSED", "FAILED"]
+    reference_current_asset_id: str | None = None
+    reference_current_sha256: Sha256Digest | None = None
+    current_raster_disposition: Literal[
+        "NOT_PROVIDED",
+        REFERENCE_CURRENT_DIAGNOSTIC_DISPOSITION,
+    ] = "NOT_PROVIDED"
+    current_raster_numeric_comparison_performed: Literal[False] = False
+    exact_direct_evidence_only: Literal[True] = True
+    completed_at: AwareDatetime
+    limitations: list[str] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def comparison_is_complete_and_derived(self) -> ReferenceScenarioComparison:
+        pair_ids = [item.pair_id for item in self.pair_comparisons]
+        if len(pair_ids) != len(set(pair_ids)):
+            raise ValueError("reference comparison focal-pair IDs must be unique")
+        if any(item.tolerance != self.tolerance for item in self.pair_comparisons):
+            raise ValueError("every pair comparison must use the scenario tolerance")
+        expected_status = (
+            "PASSED" if all(item.within_tolerance for item in self.pair_comparisons) else "FAILED"
+        )
+        if self.status != expected_status:
+            raise ValueError("reference scenario status must derive from every pair comparison")
+        if self.reference_current_asset_id is None:
+            if self.reference_current_sha256 is not None:
+                raise ValueError("an absent reference current raster cannot carry a digest")
+            if self.current_raster_disposition != "NOT_PROVIDED":
+                raise ValueError(
+                    "a missing reference current raster must use the NOT_PROVIDED disposition"
+                )
+        elif (
+            self.reference_current_sha256 is None
+            or self.current_raster_disposition != REFERENCE_CURRENT_DIAGNOSTIC_DISPOSITION
+        ):
+            raise ValueError(
+                "a retained reference current raster requires a digest and diagnostic-only disposition"
+            )
+        if len(self.limitations) != len(set(self.limitations)):
+            raise ValueError("reference-comparison limitations must be unique")
+        required_limitations = {CURRENT_RASTER_LIMITATION, FITNESS_LIMITATION}
+        if not required_limitations.issubset(self.limitations):
+            raise ValueError(
+                "reference comparisons require the current-raster and model-fitness limitations"
+            )
+        return self
+
+
+class ReferenceComparisonPlan(ContractModel):
+    """Immutable baseline-only direct-run plan for supplied reference matrices."""
+
+    plan_id: str = Field(min_length=1)
+    analysis_id: str = Field(min_length=1)
+    revision_id: str = Field(min_length=1)
+    model_sha256: Sha256Digest
+    engine_manifest_sha256: Sha256Digest
+    binding_ids: list[str] = Field(min_length=1)
+    bound_scenario_ids: list[str] = Field(min_length=1)
+    run_plan: ConnectivityRunPlan
+    exact_direct_evidence_only: Literal[True] = True
+    created_at: AwareDatetime
+
+    @model_validator(mode="after")
+    def plan_is_one_complete_baseline_ensemble(self) -> ReferenceComparisonPlan:
+        if len(self.binding_ids) != len(set(self.binding_ids)):
+            raise ValueError("reference-comparison binding IDs must be unique")
+        if len(self.bound_scenario_ids) != len(set(self.bound_scenario_ids)):
+            raise ValueError("reference-comparison scenario IDs must be unique")
+        if len(self.binding_ids) != len(self.bound_scenario_ids):
+            raise ValueError("reference comparison requires one binding per bound scenario")
+        if not set(self.bound_scenario_ids).issubset(self.run_plan.scenario_ids):
+            raise ValueError("bound reference scenarios must be included in the direct-run plan")
+        if (
+            self.analysis_id != self.run_plan.analysis_id
+            or self.revision_id != self.run_plan.revision_id
+            or self.engine_manifest_sha256 != self.run_plan.engine_manifest_sha256
+        ):
+            raise ValueError("reference plan identity must match its direct-run plan")
+        if (
+            len(self.run_plan.portfolios) != 1
+            or self.run_plan.portfolios[0].portfolio_id != self.run_plan.baseline_portfolio_id
+        ):
+            raise ValueError("reference comparison requires exactly one baseline portfolio")
+        if self.run_plan.current_maps_for_portfolio_ids:
+            raise ValueError("reference comparison v0.1 does not request current-map equivalence")
+        if self.run_plan.search_method != "ENUMERATION":
+            raise ValueError("reference comparison is a direct baseline run, not a search")
+        return self
+
+
+class ReferenceEvidenceClaimLink(ContractModel):
+    """Bind one reference claim to its exact scenario, pair, comparison, and run."""
+
+    claim_id: str = Field(min_length=1)
+    comparison_id: str = Field(min_length=1)
+    scenario_id: str = Field(min_length=1)
+    pair_id: str = Field(min_length=1)
+    direct_run_id: str = Field(min_length=1)
+
+
+class ReferenceComparisonResult(ContractModel):
+    """Revision-bound outcome derived only from direct matrix comparisons."""
+
+    result_id: str = Field(min_length=1)
+    plan_id: str = Field(min_length=1)
+    analysis_id: str = Field(min_length=1)
+    revision_id: str = Field(min_length=1)
+    model_sha256: Sha256Digest
+    engine_manifest_sha256: Sha256Digest
+    scenario_comparisons: list[ReferenceScenarioComparison] = Field(min_length=1)
+    status: Literal["PASSED", "FAILED"]
+    exact_direct_evidence_only: Literal[True] = True
+    current_raster_numeric_comparison_performed: Literal[False] = False
+    evidence_claim_links: list[ReferenceEvidenceClaimLink] = Field(min_length=1)
+    completed_at: AwareDatetime
+    limitations: list[str] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def result_is_complete_and_derived(self) -> ReferenceComparisonResult:
+        for label, values in (
+            ("scenario", [item.scenario_id for item in self.scenario_comparisons]),
+            ("binding", [item.binding_id for item in self.scenario_comparisons]),
+            ("comparison", [item.comparison_id for item in self.scenario_comparisons]),
+            ("direct run", [item.direct_run_id for item in self.scenario_comparisons]),
+        ):
+            if len(values) != len(set(values)):
+                raise ValueError(f"reference-result {label} identities must be unique")
+        claim_ids = [item.claim_id for item in self.evidence_claim_links]
+        if len(claim_ids) != len(set(claim_ids)):
+            raise ValueError("reference-result evidence claim IDs must be unique")
+        expected_links = {
+            (
+                comparison.comparison_id,
+                comparison.scenario_id,
+                pair.pair_id,
+                comparison.direct_run_id,
+            )
+            for comparison in self.scenario_comparisons
+            for pair in comparison.pair_comparisons
+        }
+        actual_links = {
+            (
+                item.comparison_id,
+                item.scenario_id,
+                item.pair_id,
+                item.direct_run_id,
+            )
+            for item in self.evidence_claim_links
+        }
+        if len(actual_links) != len(self.evidence_claim_links):
+            raise ValueError("reference-result scenario-pair claim links must be unique")
+        if actual_links != expected_links:
+            raise ValueError(
+                "reference results require exactly one evidence claim link for every scenario pair"
+            )
+        if any(
+            item.analysis_id != self.analysis_id
+            or item.revision_id != self.revision_id
+            or item.model_sha256 != self.model_sha256
+            or item.engine_manifest_sha256 != self.engine_manifest_sha256
+            for item in self.scenario_comparisons
+        ):
+            raise ValueError("reference scenario results must share the result identity")
+        expected_status = (
+            "PASSED"
+            if all(item.status == "PASSED" for item in self.scenario_comparisons)
+            else "FAILED"
+        )
+        if self.status != expected_status:
+            raise ValueError("reference result status must derive from every scenario result")
+        if len(self.limitations) != len(set(self.limitations)):
+            raise ValueError("reference-result limitations must be unique")
+        required_limitations = {CURRENT_RASTER_LIMITATION, FITNESS_LIMITATION}
+        if not required_limitations.issubset(self.limitations):
+            raise ValueError(
+                "reference results require the current-raster and model-fitness limitations"
+            )
+        return self
+
+
 class PairResistanceMetric(ContractModel):
     pair_id: str
     effective_resistance: float = Field(gt=0)
@@ -983,6 +1299,7 @@ class EvidenceNode(ContractModel):
     node_id: str
     node_type: Literal[
         "CLAIM",
+        "REFERENCE_COMPARISON",
         "RULE",
         "METRIC",
         "DIRECT_RUN",
@@ -1027,6 +1344,7 @@ class ConnectivityEvidenceClaim(ContractModel):
     claim_id: str
     claim_kind: Literal[
         "DIRECT_PAIR_METRIC",
+        "DIRECT_REFERENCE_COMPARISON",
         "DIRECT_MAP_DIAGNOSTIC",
         "DIRECT_QA",
         "COST",
@@ -1063,6 +1381,18 @@ class ConnectivityEvidenceClaim(ContractModel):
             raise ValueError("every evidence edge must reference existing nodes")
         if self.claim_kind.startswith("DIRECT_") and not self.direct_run_ids:
             raise ValueError("direct evidence claims require at least one direct-run ID")
+        if self.claim_kind == "DIRECT_REFERENCE_COMPARISON" and (
+            self.scenario_id is None or self.pair_id is None or len(self.direct_run_ids) != 1
+        ):
+            raise ValueError(
+                "direct reference-comparison claims require one scenario, pair, and direct run"
+            )
+        if self.claim_kind == "DIRECT_REFERENCE_COMPARISON" and (
+            type(self.value) is not bool or self.units != "within_tolerance"
+        ):
+            raise ValueError(
+                "direct reference-comparison claims require a Boolean within_tolerance value"
+            )
         if self.claim_kind == "COST" and self.direct_run_ids:
             raise ValueError("cost evidence is decision evidence, not direct solver evidence")
         if self.claim_kind == "FEASIBILITY" and self.direct_run_ids:
@@ -1252,6 +1582,13 @@ class ConnectivityProjectBundle(ContractModel):
     resistance_hypotheses: list[ResistanceHypothesis]
     focal_area_sets: list[FocalAreaSet]
     scenarios: list[ConnectivityScenario]
+    # Empty optional bindings serialize as absent so adding this v1.0 extension
+    # does not invalidate previously pinned synthetic evidence. Any real
+    # binding remains explicit in the portable bundle and its hashes.
+    reference_bindings: list[ReferenceScenarioBinding] = Field(
+        default_factory=list,
+        exclude_if=lambda value: not value,
+    )
     intervention_sites: list[InterventionSite]
     intervention_options: list[InterventionOption]
     cost_basis: ConnectivityCostBasis | None = None
@@ -1265,13 +1602,16 @@ class ConnectivityProjectBundle(ContractModel):
     def validate_references(self) -> ConnectivityProjectBundle:
         if self.revision.project_id != self.project_id:
             raise ValueError("revision must belong to the project")
-        asset_ids = {item.asset_id for item in self.assets}
-        if len(asset_ids) != len(self.assets):
+        assets_by_id = {item.asset_id: item for item in self.assets}
+        asset_ids = set(assets_by_id)
+        if len(assets_by_id) != len(self.assets):
             raise ValueError("asset IDs must be unique")
-        scenario_ids = {item.scenario_id for item in self.scenarios}
-        if len(scenario_ids) != len(self.scenarios):
+        scenarios_by_id = {item.scenario_id: item for item in self.scenarios}
+        scenario_ids = set(scenarios_by_id)
+        if len(scenarios_by_id) != len(self.scenarios):
             raise ValueError("scenario IDs must be unique")
-        hypothesis_ids = {item.hypothesis_id for item in self.resistance_hypotheses}
+        hypotheses_by_id = {item.hypothesis_id: item for item in self.resistance_hypotheses}
+        hypothesis_ids = set(hypotheses_by_id)
         focal_ids = {item.focal_set_id for item in self.focal_area_sets}
         option_by_id = {item.option_id: item for item in self.intervention_options}
         if len(option_by_id) != len(self.intervention_options):
@@ -1287,6 +1627,53 @@ class ConnectivityProjectBundle(ContractModel):
                 raise ValueError(f"scenario {scenario.scenario_id} references a missing hypothesis")
             if scenario.focal_set_id not in focal_ids:
                 raise ValueError(f"scenario {scenario.scenario_id} references a missing focal set")
+        binding_ids = [item.binding_id for item in self.reference_bindings]
+        bound_scenario_ids = [item.scenario_id for item in self.reference_bindings]
+        matrix_asset_ids = [item.reference_matrix_asset_id for item in self.reference_bindings]
+        current_asset_ids = [
+            item.reference_current_asset_id
+            for item in self.reference_bindings
+            if item.reference_current_asset_id is not None
+        ]
+        for label, values in (
+            ("reference binding", binding_ids),
+            ("reference-bound scenario", bound_scenario_ids),
+            ("reference matrix asset", matrix_asset_ids),
+            ("reference current asset", current_asset_ids),
+        ):
+            if len(values) != len(set(values)):
+                raise ValueError(f"{label} identities must be unique")
+        for binding in self.reference_bindings:
+            scenario = scenarios_by_id.get(binding.scenario_id)
+            if scenario is None:
+                raise ValueError(
+                    f"reference binding {binding.binding_id} references a missing scenario"
+                )
+            matrix_asset = assets_by_id.get(binding.reference_matrix_asset_id)
+            if matrix_asset is None or matrix_asset.kind != AssetKind.REFERENCE_MATRIX:
+                raise ValueError(
+                    f"reference binding {binding.binding_id} requires a reference matrix asset"
+                )
+            if binding.reference_current_asset_id is None:
+                continue
+            current_asset = assets_by_id.get(binding.reference_current_asset_id)
+            if current_asset is None or current_asset.kind != AssetKind.REFERENCE_CURRENT:
+                raise ValueError(
+                    f"reference binding {binding.binding_id} requires a reference current asset"
+                )
+            hypothesis = hypotheses_by_id[scenario.resistance_hypothesis_id]
+            scenario_resistance_asset = assets_by_id[hypothesis.resistance_asset_id]
+            if (
+                current_asset.grid is None
+                or current_asset.grid.value_kind != RasterValueKind.CONTINUOUS
+                or scenario_resistance_asset.grid is None
+                or grid_alignment_identity(current_asset.grid)
+                != grid_alignment_identity(scenario_resistance_asset.grid)
+            ):
+                raise ValueError(
+                    f"reference current asset {current_asset.asset_id} must use the scenario's "
+                    "exact reviewed continuous grid alignment"
+                )
         for site in self.intervention_sites:
             for option_id in site.option_ids:
                 option = option_by_id.get(option_id)
@@ -1323,6 +1710,8 @@ PUBLIC_CONTRACTS: tuple[type[ContractModel], ...] = (
     ResistanceHypothesis,
     FocalAreaSet,
     ConnectivityScenario,
+    ReferenceMetricTolerance,
+    ReferenceScenarioBinding,
     InterventionSite,
     InterventionOption,
     ConnectivityCostBasis,
@@ -1332,6 +1721,11 @@ PUBLIC_CONTRACTS: tuple[type[ContractModel], ...] = (
     RiskReviewMask,
     ConnectivityDecisionRule,
     ConnectivityRunPlan,
+    ReferencePairComparison,
+    ReferenceScenarioComparison,
+    ReferenceComparisonPlan,
+    ReferenceEvidenceClaimLink,
+    ReferenceComparisonResult,
     DirectConnectivityRun,
     PortfolioDecisionSummary,
     ConnectivityEvidenceClaim,
