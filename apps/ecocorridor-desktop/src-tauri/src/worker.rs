@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 
 use keyring::Entry;
 use scenario_host::{
-    verify_release_manifest, AppProfile, SecretMaterial, VerifiedResource, WorkerCommand,
-    WorkerResources,
+    verify_release_manifest, AppProfile, ReleaseManifestVerification, SecretMaterial,
+    VerifiedResource, WorkerCommand, WorkerResources,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -432,16 +432,16 @@ impl WorkerManager {
         if !manifest.is_file() || !signature.is_file() {
             return self.fail_start(app, HostError::resource());
         }
-        let verified = verify_release_manifest(
-            &manifest,
-            &signature,
-            &resource_root,
-            &self.profile.application_id,
-            &self.profile.application_version,
-            &self.profile.release_source_commit_sha,
-            &self.profile.release_target,
-            &self.profile.release_public_key_hex,
-        )
+        let verified = verify_release_manifest(ReleaseManifestVerification {
+            manifest_path: &manifest,
+            signature_path: &signature,
+            resource_root: &resource_root,
+            expected_application_id: &self.profile.application_id,
+            expected_application_version: &self.profile.application_version,
+            expected_source_commit_sha: &self.profile.release_source_commit_sha,
+            expected_target: &self.profile.release_target,
+            public_key_hex: &self.profile.release_public_key_hex,
+        })
         .map_err(|_| HostError::resource())?;
         let expected_worker =
             std::fs::canonicalize(resource_root.join(&self.profile.worker_resource))
@@ -1057,16 +1057,16 @@ pub(crate) fn run_installed_health_check(
     let manifest = resource_root.join("release-manifest.json");
     let signature = resource_root.join("release-manifest.sig");
     let manifest_sha256 = sha256_file(&manifest)?;
-    let verified = verify_release_manifest(
-        &manifest,
-        &signature,
-        &resource_root,
-        &profile.application_id,
-        &profile.application_version,
-        &profile.release_source_commit_sha,
-        &profile.release_target,
-        &profile.release_public_key_hex,
-    )
+    let verified = verify_release_manifest(ReleaseManifestVerification {
+        manifest_path: &manifest,
+        signature_path: &signature,
+        resource_root: &resource_root,
+        expected_application_id: &profile.application_id,
+        expected_application_version: &profile.application_version,
+        expected_source_commit_sha: &profile.release_source_commit_sha,
+        expected_target: &profile.release_target,
+        public_key_hex: &profile.release_public_key_hex,
+    })
     .map_err(|_| HostError::resource())?;
 
     let worker = verified_resource(&resource_root, &verified, &profile.worker_resource, true)?;

@@ -87,8 +87,9 @@ direct-engine boundaries.
 
 ```bash
 uv sync --locked \
-  --extra dev --extra science --extra geo --extra ecocorridor \
+  --extra dev --extra science --extra ecocorridor \
   --extra export --extra observability --extra release
+uv run --no-sync python scripts/install_ecocorridor_geospatial_runtime.py
 pnpm install --frozen-lockfile
 
 uv run --no-sync pytest tests/python

@@ -175,9 +175,11 @@ startup state before release.
    in the committed `julia/EcoCorridorEngine/Manifest.toml`: 2 critical,
    18 high, 22 medium, and 7 low. An end-to-end run of the exact CI scanner
    against a newly downloaded database updated 2026-08-03 found 57 records:
-   2 critical, 24 high, 24 medium, and 7 low. The critical records in both
-   observations affect `LibSSH2_jll 1.11.3+1`
-   (`CVE-2026-55200`) and `OpenSSL_jll 3.5.4+0` (`CVE-2026-31789`). A genuine
+   2 critical, 24 high, 24 medium, and 7 low. PR #13 then refreshed the database
+   at 2026-08-04T01:17:42Z and found 73 records: 3 critical, 32 high, 29 medium,
+   and 9 low. The current critical records affect `LibSSH2_jll 1.11.3+1`
+   (`CVE-2026-55200`) and `OpenSSL_jll 3.5.4+0` (`CVE-2026-31789` and
+   `CVE-2026-34182`). A genuine
    Julia 1.12.6 `Pkg.update()` against the available General registry, performed
    only on a temporary copy, changed no packages; several affected JLL updates
    are constrained by the current Julia/GDAL dependency graph. The committed
@@ -187,12 +189,22 @@ startup state before release.
    metadata, rejects database data older than 48 hours, and fails on every
    severity or invalid report. The protected release prerequisites repeat the
    same fresh-database scan so post-merge disclosures cannot bypass the gate.
-   Because live vulnerability intelligence can add or revise records, 49 and
-   57 are dated observations rather than hard-coded expected CI counts. Release
-   requires an upstream-compatible dependency/runtime resolution followed by
-   complete
-   engine, fixture, package, and evidence regeneration; no waiver is present.
-2. **Protected Ridgeway producer execution.** The source now includes a manual,
+   Because live vulnerability intelligence can add or revise records, 49, 57,
+   and 73 are dated observations rather than hard-coded expected CI counts.
+   Release requires an upstream-compatible dependency/runtime resolution
+   followed by complete engine, fixture, package, and evidence regeneration;
+   no waiver is present.
+2. **Python release-signing dependency vulnerability.** The 2026-08-04 PR scan
+   found three newly published advisories in the pinned `cryptography 48.0.1`.
+   Two are fixed by 49.0.0, but
+   [GHSA-g6cj-pr64-35w5](https://github.com/advisories/GHSA-g6cj-pr64-35w5)
+   affects every release from 44.0.0 through 49.x and names 50.0.0 as the first
+   patched version. The latest release published on
+   [PyPI](https://pypi.org/project/cryptography/) is 49.0.0. The application
+   therefore retains the failing dependency gate until a patched upstream
+   release exists and passes the full release-signing and manifest suite; it
+   does not suppress the advisory or perform a still-vulnerable upgrade.
+3. **Protected Ridgeway producer execution.** The source now includes a manual,
    environment-protected full-study workflow that requires green same-commit
    Eco CI, starts from an empty evidence directory, executes all 1,596 direct
    Circuitscape jobs, and compares every pair metric and retained current-raster
@@ -203,12 +215,12 @@ startup state before release.
    a locally installed package, a source-branch artifact, or a semantically
    equivalent archive in place of the independently resolved protected
    producer provenance.
-3. **Authoritative W&B scope and protected integration.** W&B's supported
+4. **Authoritative W&B scope and protected integration.** W&B's supported
    multi-tenant Public API still does not expose an authoritative exact
    `Restricted` scope. Professional synchronization remains blocked until a
    documented resolver is available and an explicitly invited service account
    passes the protected hash-roundtrip workflow against that destination.
-4. **Provider-backed Weave evaluation.** A separately supplied model-provider
+5. **Provider-backed Weave evaluation.** A separately supplied model-provider
    credential, real flushed/read-back Weave traces, the pinned evaluation
    dataset, deterministic scorer results, and practitioner usefulness ratings
    are still required. Evaluation is deliberately two-stage:
@@ -219,17 +231,19 @@ startup state before release.
    duplicate, or different-model provider identities fail closed. Rejected
    adversarial cases require typed, persisted abort readback with an exact
    ordered trace-step prefix.
-5. **Release signing.** Apple signing/notarization and Windows code-signing
+6. **Release signing.** Apple signing/notarization and Windows code-signing
    credentials must produce real signed installers and signed update metadata.
-6. **Public deployment.** GitHub Pages must be enabled and the synthetic-only
+7. **Public deployment.** GitHub Pages must be enabled and the synthetic-only
    build deployed from the manifest-approved artifact.
-7. **Immutable release policy.** GitHub immutable releases, an active no-bypass
+8. **Immutable release policy.** GitHub immutable releases, an active no-bypass
    all-tag update/deletion ruleset, its protected ruleset ID, and an admin-read
    policy token must be configured before the verified draft can publish.
-8. **Practitioner acceptance.** Six representative DOT/wildlife practitioners
+9. **Practitioner acceptance.** Six representative DOT/wildlife practitioners
    must complete the declared uncoached protocol, with at least five passing
    every comprehension task.
 
-The branch also needs a pushed draft PR with green executable checks. None of
+The pushed draft PR still needs every actionable executable failure repaired;
+full CI remains legitimately blocked by the unwaived upstream dependency
+findings above. None of
 the blockers above may be replaced with fixtures, self-attestation, a
 manual checkbox, or undocumented provider behavior.

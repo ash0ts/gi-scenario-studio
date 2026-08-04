@@ -47,7 +47,6 @@ jobs:
           uv sync --locked
           --extra dev
           --extra science
-          --extra geo
           --extra ecocorridor
           --extra release
 

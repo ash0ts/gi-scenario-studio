@@ -19,11 +19,20 @@ WRITE_PERMISSION = re.compile(r"^\s+[a-z-]+:\s*write\s*$", re.MULTILINE)
 UNTRUSTED_EVENTS = ("pull_request", "pull_request_target", "push", "merge_group", "schedule")
 ASSISTANT_EVALUATION_WORKFLOW = "ecocorridor-assistant-evaluation.yml"
 ASSISTANT_FINALIZATION_WORKFLOW = "ecocorridor-observability-integration.yml"
+ECOCORRIDOR_CI_WORKFLOW = "ecocorridor-ci.yml"
 ECOCORRIDOR_RELEASE_WORKFLOW = "ecocorridor-release.yml"
 ECOCORRIDOR_PAGES_WORKFLOW = "ecocorridor-pages.yml"
 RIDGEWAY_EVIDENCE_WORKFLOW = "ecocorridor-ridgeway-evidence.yml"
 ASSISTANT_EVALUATION_NAME = "Eco protected assistant evaluation candidate"
 RIDGEWAY_EVIDENCE_NAME = "EcoCorridor protected Ridgeway direct evidence"
+ECOCORRIDOR_GEOSPATIAL_HELPER = "scripts/install_ecocorridor_geospatial_runtime.py"
+ECOCORRIDOR_GEO_EXTRA = re.compile(r"(?<![A-Za-z0-9_-])--extra\s+geo(?=(?:\s|\\|['\";]|$))")
+ECOCORRIDOR_GEOSPATIAL_INVOCATION = re.compile(
+    r"(?<!\S)uv\s+run\s+--no-sync\s+python\s+"
+    + re.escape(ECOCORRIDOR_GEOSPATIAL_HELPER)
+    + r"(?=(?:\s|\\|['\";]|$))"
+)
+LOCKED_UV_SYNC = re.compile(r"(?<!\S)uv\s+sync\s+--locked(?=(?:\s|\\|['\";]|$))")
 
 
 def _declares_event(text: str, event: str) -> bool:
@@ -553,6 +562,105 @@ def evaluate_ridgeway_release_topology(
     return findings
 
 
+def _shell_without_comment_lines(source: str) -> str:
+    """Normalize a YAML run body while excluding comment-only shell lines."""
+
+    return " ".join(line for line in source.splitlines() if not line.lstrip().startswith("#"))
+
+
+def evaluate_ecocorridor_geospatial_dependency_topology(
+    workflows: dict[str, str],
+) -> list[str]:
+    """Keep the GeoPandas runtime additive, locked, and Eco-only.
+
+    GeoPandas is intentionally projected from the committed lock by a helper
+    instead of installing the GI-owned ``geo`` extra.  The helper is needed
+    only by the two CI jobs that execute geospatial tests or package the
+    scientific boundary and by the signed-installer build job.  Any new use is
+    therefore an explicit policy change rather than dependency drift hidden in
+    workflow YAML.
+    """
+
+    findings: list[str] = []
+    expected: dict[str, dict[str, int]] = {
+        ECOCORRIDOR_CI_WORKFLOW: {
+            "isolation-and-python": 1,
+            "packaged-scientific-boundary": 1,
+        },
+        ECOCORRIDOR_RELEASE_WORKFLOW: {"build-signed-installers": 1},
+    }
+    missing = sorted(set(expected) - set(workflows))
+    if missing:
+        findings.append(
+            "EcoCorridor geospatial dependency topology is incomplete: " + ", ".join(missing)
+        )
+
+    for workflow_name, text in sorted(workflows.items()):
+        if ECOCORRIDOR_GEO_EXTRA.search(text):
+            findings.append(f"{workflow_name}: --extra geo crosses the GI-only dependency boundary")
+
+        recognized_invocations = 0
+        seen_jobs: set[str] = set()
+        allowed_jobs = expected.get(workflow_name, {})
+        for _, job_name, block_lines in _job_blocks(text.splitlines()):
+            seen_jobs.add(job_name)
+            count = 0
+            sync_seen = False
+            helper_before_sync = False
+            for start, end in _step_ranges(block_lines):
+                source = _shell_without_comment_lines(_run_source(block_lines, start, end))
+                events = [
+                    *((match.start(), "sync") for match in LOCKED_UV_SYNC.finditer(source)),
+                    *(
+                        (match.start(), "helper")
+                        for match in ECOCORRIDOR_GEOSPATIAL_INVOCATION.finditer(source)
+                    ),
+                ]
+                for _, event in sorted(events):
+                    if event == "sync":
+                        sync_seen = True
+                    else:
+                        count += 1
+                        recognized_invocations += 1
+                        if not sync_seen:
+                            helper_before_sync = True
+
+            required_count = allowed_jobs.get(job_name, 0)
+            if required_count and count != required_count:
+                findings.append(
+                    f"{workflow_name}: job {job_name} must invoke "
+                    f"{ECOCORRIDOR_GEOSPATIAL_HELPER} exactly {required_count} time(s); "
+                    f"observed {count}"
+                )
+            elif not required_count and count:
+                findings.append(
+                    f"{workflow_name}: job {job_name} may not invoke "
+                    f"{ECOCORRIDOR_GEOSPATIAL_HELPER}"
+                )
+            if count and helper_before_sync:
+                findings.append(
+                    f"{workflow_name}: job {job_name} invokes "
+                    f"{ECOCORRIDOR_GEOSPATIAL_HELPER} before uv sync --locked"
+                )
+
+        for required_job, required_count in allowed_jobs.items():
+            if required_job not in seen_jobs:
+                findings.append(
+                    f"{workflow_name}: job {required_job} must invoke "
+                    f"{ECOCORRIDOR_GEOSPATIAL_HELPER} exactly {required_count} time(s); "
+                    "job is absent"
+                )
+
+        raw_mentions = text.count(ECOCORRIDOR_GEOSPATIAL_HELPER)
+        if raw_mentions != recognized_invocations:
+            findings.append(
+                f"{workflow_name}: {ECOCORRIDOR_GEOSPATIAL_HELPER} may appear only as "
+                "an executable 'uv run --no-sync python' command"
+            )
+
+    return findings
+
+
 def main() -> int:
     findings: list[str] = []
     paths = sorted({*WORKFLOWS.glob("*.yml"), *WORKFLOWS.glob("*.yaml")})
@@ -586,6 +694,10 @@ def main() -> int:
                 by_name[ECOCORRIDOR_RELEASE_WORKFLOW],
             )
         )
+    eco_workflows = {
+        name: text for name, text in by_name.items() if name.startswith("ecocorridor-")
+    }
+    findings.extend(evaluate_ecocorridor_geospatial_dependency_topology(eco_workflows))
     if findings:
         for finding in findings:
             print(finding)

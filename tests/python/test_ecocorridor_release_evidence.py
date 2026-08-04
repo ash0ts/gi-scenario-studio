@@ -9,6 +9,11 @@ from types import ModuleType
 
 import pytest
 
+pytest.importorskip(
+    "cryptography",
+    reason="release-evidence signatures require the optional release dependency group",
+)
+
 COMMIT = "a" * 40
 COORDINATOR_KEY_SHA256 = "c" * 64
 TASKS = [

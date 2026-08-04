@@ -124,6 +124,23 @@ pub struct VerifiedResource {
     pub executable: bool,
 }
 
+/// Typed inputs for one signed release-manifest verification.
+///
+/// Keeping the expected release identity beside the paths prevents callers
+/// from accidentally swapping adjacent string arguments at this security
+/// boundary.
+#[derive(Debug, Clone, Copy)]
+pub struct ReleaseManifestVerification<'a> {
+    pub manifest_path: &'a Path,
+    pub signature_path: &'a Path,
+    pub resource_root: &'a Path,
+    pub expected_application_id: &'a str,
+    pub expected_application_version: &'a str,
+    pub expected_source_commit_sha: &'a str,
+    pub expected_target: &'a str,
+    pub public_key_hex: &'a str,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkerCommand {
     pub executable: PathBuf,
@@ -288,15 +305,18 @@ impl Display for HostError {
 impl std::error::Error for HostError {}
 
 pub fn verify_release_manifest(
-    manifest_path: &Path,
-    signature_path: &Path,
-    resource_root: &Path,
-    expected_application_id: &str,
-    expected_application_version: &str,
-    expected_source_commit_sha: &str,
-    expected_target: &str,
-    public_key_hex: &str,
+    verification: ReleaseManifestVerification<'_>,
 ) -> Result<Vec<VerifiedResource>, HostError> {
+    let ReleaseManifestVerification {
+        manifest_path,
+        signature_path,
+        resource_root,
+        expected_application_id,
+        expected_application_version,
+        expected_source_commit_sha,
+        expected_target,
+        public_key_hex,
+    } = verification;
     if !resource_root.is_absolute() {
         return Err(HostError::PathOutsideRoot);
     }
@@ -601,62 +621,40 @@ mod tests {
         )
         .unwrap();
         let public_key = hex::encode(signing_key.verifying_key().to_bytes());
-        let verified = verify_release_manifest(
-            &manifest_path,
-            &signature_path,
-            &resources,
-            "org.ecocorridor.scenariostudio",
-            "0.1.0",
-            &"a".repeat(40),
-            "linux-x64",
-            &public_key,
-        )
-        .unwrap();
+        let expected_source_commit_sha = "a".repeat(40);
+        let verification = ReleaseManifestVerification {
+            manifest_path: &manifest_path,
+            signature_path: &signature_path,
+            resource_root: &resources,
+            expected_application_id: "org.ecocorridor.scenariostudio",
+            expected_application_version: "0.1.0",
+            expected_source_commit_sha: &expected_source_commit_sha,
+            expected_target: "linux-x64",
+            public_key_hex: &public_key,
+        };
+        let verified = verify_release_manifest(verification).unwrap();
         assert_eq!(verified[0].sha256, digest);
 
+        let unexpected_source_commit_sha = "b".repeat(40);
         assert_eq!(
-            verify_release_manifest(
-                &manifest_path,
-                &signature_path,
-                &resources,
-                "org.ecocorridor.scenariostudio",
-                "0.1.0",
-                &"b".repeat(40),
-                "linux-x64",
-                &public_key,
-            ),
+            verify_release_manifest(ReleaseManifestVerification {
+                expected_source_commit_sha: &unexpected_source_commit_sha,
+                ..verification
+            }),
             Err(HostError::InvalidManifest)
         );
 
         let unlisted = resources.join("unlisted-resource");
         fs::write(&unlisted, b"not signed").unwrap();
         assert_eq!(
-            verify_release_manifest(
-                &manifest_path,
-                &signature_path,
-                &resources,
-                "org.ecocorridor.scenariostudio",
-                "0.1.0",
-                &"a".repeat(40),
-                "linux-x64",
-                &public_key,
-            ),
+            verify_release_manifest(verification),
             Err(HostError::InvalidManifest)
         );
         fs::remove_file(unlisted).unwrap();
 
         fs::write(&manifest_path, b"tampered").unwrap();
         assert_eq!(
-            verify_release_manifest(
-                &manifest_path,
-                &signature_path,
-                &resources,
-                "org.ecocorridor.scenariostudio",
-                "0.1.0",
-                &"a".repeat(40),
-                "linux-x64",
-                &public_key,
-            ),
+            verify_release_manifest(verification),
             Err(HostError::SignatureInvalid)
         );
     }

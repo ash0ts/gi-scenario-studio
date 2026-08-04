@@ -7,3 +7,7 @@
 # solver-authored whitespace, so Git must not normalize or render them as source diffs.
 benchmarks/guided_exact/runs/** -text -diff
 benchmarks/cc0_reference/reference.inp -text -diff
+
+# This reviewed Julia launcher is byte-pinned in Ridgeway producer evidence;
+# its retained trailing blank line is intentional and hash-significant.
+julia/EcoCorridorEngine/bin/ecocorridor-engine.jl whitespace=-blank-at-eof

@@ -241,30 +241,30 @@ function verifiedGuidedProjection(): RidgewayFixture {
 
 async function createPlanningRecord(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getAllByRole("button", { name: "Study context" })[0]);
-  await user.type(screen.getByLabelText("Project name *"), "Route 14 screen");
-  await user.type(screen.getByLabelText("Generalized study area *"), "County-scale generalized extent");
-  await user.type(screen.getByLabelText("Decision question *"), "Which concept should advance to feasibility review?");
-  await user.type(screen.getByLabelText("Intended use and scope boundary *"), "Planning comparison only; not animal movement, collision, design, or approval evidence.");
-  await user.type(screen.getByLabelText("Target guild or life stage *"), "Anonymous forest-associated focal guild");
-  await user.type(screen.getByLabelText("Responsible ecological reviewer *"), "Agency ecologist");
+  fireEvent.change(screen.getByLabelText("Project name *"), { target: { value: "Route 14 screen" } });
+  fireEvent.change(screen.getByLabelText("Generalized study area *"), { target: { value: "County-scale generalized extent" } });
+  fireEvent.change(screen.getByLabelText("Decision question *"), { target: { value: "Which concept should advance to feasibility review?" } });
+  fireEvent.change(screen.getByLabelText("Intended use and scope boundary *"), { target: { value: "Planning comparison only; not animal movement, collision, design, or approval evidence." } });
+  fireEvent.change(screen.getByLabelText("Target guild or life stage *"), { target: { value: "Anonymous forest-associated focal guild" } });
+  fireEvent.change(screen.getByLabelText("Responsible ecological reviewer *"), { target: { value: "Agency ecologist" } });
   await user.click(screen.getByRole("button", { name: "Create planning record" }));
   await screen.findByText(/Authoritative local draft created/i);
 }
 
 async function completeAssetAuthorization(user: ReturnType<typeof userEvent.setup>, title: string) {
-  await user.type(screen.getByLabelText("Asset title *"), title);
+  fireEvent.change(screen.getByLabelText("Asset title *"), { target: { value: title } });
   await user.selectOptions(screen.getByLabelText("Reviewer-assigned role *"), "DOCUMENT");
   await user.selectOptions(screen.getByLabelText("Media type *"), "application/pdf");
-  await user.type(screen.getByLabelText("Source and attribution *"), "Agency reviewed technical memorandum");
-  await user.type(screen.getByLabelText("Vintage or observation date *"), "2026-06");
-  await user.type(screen.getByLabelText("License or use terms *"), "Agency internal use terms");
-  await user.type(screen.getByLabelText("Owner or custodian *"), "State wildlife agency");
-  await user.type(screen.getByLabelText("Intended use in this project *"), "Support reviewer interpretation of the planning context only.");
+  fireEvent.change(screen.getByLabelText("Source and attribution *"), { target: { value: "Agency reviewed technical memorandum" } });
+  fireEvent.change(screen.getByLabelText("Vintage or observation date *"), { target: { value: "2026-06" } });
+  fireEvent.change(screen.getByLabelText("License or use terms *"), { target: { value: "Agency internal use terms" } });
+  fireEvent.change(screen.getByLabelText("Owner or custodian *"), { target: { value: "State wildlife agency" } });
+  fireEvent.change(screen.getByLabelText("Intended use in this project *"), { target: { value: "Support reviewer interpretation of the planning context only." } });
   await user.selectOptions(screen.getByLabelText("Sensitivity *"), "INTERNAL");
   await user.selectOptions(screen.getByLabelText("Raw/generalized cloud permission *"), "PROHIBITED");
   await user.selectOptions(screen.getByLabelText("Export permission *"), "BLOCK");
-  await user.type(screen.getByLabelText("Retention policy *"), "Retain through project close; custodian approves disposal.");
-  await user.type(screen.getByLabelText("Spatial redaction or explicit none *"), "No coordinates in this document; no spatial derivative required.");
+  fireEvent.change(screen.getByLabelText("Retention policy *"), { target: { value: "Retain through project close; custodian approves disposal." } });
+  fireEvent.change(screen.getByLabelText("Spatial redaction or explicit none *"), { target: { value: "No coordinates in this document; no spatial derivative required." } });
   await user.click(screen.getByLabelText("Local project only"));
   fireEvent.change(screen.getByLabelText("Reviewed at *"), { target: { value: "2026-08-03T09:30" } });
   await user.click(screen.getByLabelText(/I confirm that a responsible reviewer assigned this asset role/i));

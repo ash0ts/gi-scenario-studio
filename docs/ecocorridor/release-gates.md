@@ -11,8 +11,9 @@ package is present and semantically verified, while the earlier v1.0 archive
 remains explicitly historical. The local package cannot substitute for the
 required clean, same-commit protected producer attestation. The ecological
 release-asset manifest is present, and the adaptive benchmark has correctly
-selected Sobol because its historical ML gates failed. The branch still needs a
-pushed draft PR and green executable CI. The protected cloud, provider-backed
+selected Sobol because its historical ML gates failed. Draft PR #13 is pushed;
+its actionable executable failures are being repaired while the live dependency
+security gates correctly remain red. The protected cloud, provider-backed
 assistant, signing, deployment, and practitioner gates below have not been
 satisfied.
 
@@ -22,7 +23,8 @@ satisfied.
 | Ridgeway execution provenance | Gate implemented, evidence blocked: the manual protected producer workflow must execute a clean same-commit 1,596-job study after green Eco CI, publish its immutable Actions artifact, and pass the complete metric/current-raster differential; no successful producer run exists yet |
 | Ecological asset classification | Synthetic CC0 assets, including the manifest-bound local-reference trust record, are checksum- and relationship-checked; protected producer trust remains a separate unsatisfied gate |
 | Adaptive search | Historical campaign failed its scientific gate and is independently `HISTORICAL_BENCHMARK_ONLY` / production `PROHIBITED`; production remains scrambled Sobol |
-| Julia dependency vulnerability policy | Blocked: the fresh 2026-08-03 target-only scan found 57 unwaived records (2 critical, 24 high, 24 medium, 7 low), up from 49 with the 2026-07-28 database; the current Julia 1.12.6 dependency graph did not resolve them |
+| Julia dependency vulnerability policy | Blocked: the PR #13 scan with database timestamp 2026-08-04T01:17:42Z found 73 unwaived records (3 critical, 32 high, 29 medium, 9 low), including critical findings in `LibSSH2_jll` and `OpenSSL_jll`; the current Julia 1.12.6 dependency graph has not resolved them |
+| Python release dependency policy | Blocked: `cryptography 48.0.1` has three current advisories; the high-severity GHSA-g6cj-pr64-35w5 requires 50.0.0, which is not yet published, so no advisory waiver or still-vulnerable 49.0.0 update is accepted |
 | Branch CI and target packaging | Source workflows exist; green draft-PR and installed-target evidence still required |
 | W&B Restricted integration | Blocked pending a supported authoritative scope resolver and invited service account |
 | Provider-backed Weave assistant evaluation | Blocked pending approved provider credential and real evaluation evidence |
@@ -69,7 +71,7 @@ satisfied.
   data without cache, retains its database metadata and JSON report, rejects a
   database older than 48 hours or an unsupported/broadened scan, and fails on
   every reported severity. This job is intentionally red while the current
-  57-record finding set remains;
+  73-record finding set remains;
   it is not waived to make the remaining executable checks appear green. The
   protected release prerequisites repeat the scan with a newly downloaded
   database rather than trusting an older PR result.
@@ -80,6 +82,11 @@ satisfied.
 
 ## External gates
 
+- Publication of a `cryptography` release at or above the first patched 50.0.0
+  boundary for GHSA-g6cj-pr64-35w5, followed by a locked dependency update and
+  complete signature, manifest, packaging, OSV, and installed-application
+  verification. A waiver or upgrade to the still-affected 49.0.0 is not a
+  release path.
 - An upstream-compatible Julia/JLL dependency resolution, followed by a genuine
   package resolution and regeneration of the engine manifest, packaged engine,
   Ridgeway fixtures, direct evidence, hashes, and differential acceptance

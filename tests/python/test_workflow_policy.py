@@ -503,6 +503,96 @@ def test_eco_pr_ci_validates_the_built_public_replay() -> None:
     assert "--require-verified-evidence" not in workflow
 
 
+def _ecocorridor_workflows() -> dict[str, str]:
+    root = Path(__file__).resolve().parents[2]
+    return {
+        path.name: path.read_text(encoding="utf-8")
+        for path in sorted((root / ".github" / "workflows").glob("ecocorridor-*.yml"))
+    }
+
+
+def test_eco_geospatial_runtime_is_confined_to_the_three_post_sync_jobs(
+    policy: ModuleType,
+) -> None:
+    workflows = _ecocorridor_workflows()
+
+    assert policy.evaluate_ecocorridor_geospatial_dependency_topology(workflows) == []
+    assert (
+        workflows[policy.ECOCORRIDOR_CI_WORKFLOW].count(policy.ECOCORRIDOR_GEOSPATIAL_HELPER) == 2
+    )
+    assert (
+        workflows[policy.ECOCORRIDOR_RELEASE_WORKFLOW].count(policy.ECOCORRIDOR_GEOSPATIAL_HELPER)
+        == 1
+    )
+    assert all("--extra geo" not in workflow for workflow in workflows.values())
+
+
+def test_eco_workflow_policy_rejects_the_gi_geo_extra(policy: ModuleType) -> None:
+    workflows = _ecocorridor_workflows()
+    workflows[policy.ECOCORRIDOR_CI_WORKFLOW] = workflows[policy.ECOCORRIDOR_CI_WORKFLOW].replace(
+        "uv sync --locked", "uv sync --locked --extra geo", 1
+    )
+
+    findings = policy.evaluate_ecocorridor_geospatial_dependency_topology(workflows)
+
+    assert any("--extra geo crosses the GI-only dependency boundary" in item for item in findings)
+
+
+def test_eco_workflow_policy_requires_each_approved_helper_once(
+    policy: ModuleType,
+) -> None:
+    workflows = _ecocorridor_workflows()
+    workflows[policy.ECOCORRIDOR_CI_WORKFLOW] = workflows[policy.ECOCORRIDOR_CI_WORKFLOW].replace(
+        policy.ECOCORRIDOR_GEOSPATIAL_HELPER, "scripts/not-the-helper.py", 1
+    )
+
+    findings = policy.evaluate_ecocorridor_geospatial_dependency_topology(workflows)
+
+    assert any(
+        "job isolation-and-python must invoke" in item and "observed 0" in item for item in findings
+    )
+
+
+def test_eco_workflow_policy_rejects_duplicate_or_unapproved_helper_use(
+    policy: ModuleType,
+) -> None:
+    workflows = _ecocorridor_workflows()
+    invocation = f"uv run --no-sync python {policy.ECOCORRIDOR_GEOSPATIAL_HELPER}"
+    workflows[policy.ECOCORRIDOR_RELEASE_WORKFLOW] = workflows[
+        policy.ECOCORRIDOR_RELEASE_WORKFLOW
+    ].replace(invocation, f"{invocation}\n          {invocation}", 1)
+    pages = workflows[policy.ECOCORRIDOR_PAGES_WORKFLOW]
+    workflows[policy.ECOCORRIDOR_PAGES_WORKFLOW] = pages.replace(
+        "run: |", f"run: |\n          {invocation}", 1
+    )
+
+    findings = policy.evaluate_ecocorridor_geospatial_dependency_topology(workflows)
+
+    assert any(
+        "job build-signed-installers must invoke" in item and "observed 2" in item
+        for item in findings
+    )
+    assert any("ecocorridor-pages.yml" in item and "may not invoke" in item for item in findings)
+
+
+def test_eco_workflow_policy_requires_locked_sync_before_helper(policy: ModuleType) -> None:
+    workflows = _ecocorridor_workflows()
+    invocation = f"uv run --no-sync python {policy.ECOCORRIDOR_GEOSPATIAL_HELPER}"
+    release = workflows[policy.ECOCORRIDOR_RELEASE_WORKFLOW]
+    sync = (
+        "uv sync --locked --extra science --extra ecocorridor --extra export "
+        "--extra observability --extra release"
+    )
+    assert f"{sync}\n          {invocation}" in release
+    workflows[policy.ECOCORRIDOR_RELEASE_WORKFLOW] = release.replace(
+        f"{sync}\n          {invocation}", f"{invocation}\n          {sync}", 1
+    )
+
+    findings = policy.evaluate_ecocorridor_geospatial_dependency_topology(workflows)
+
+    assert any("before uv sync --locked" in item for item in findings)
+
+
 def test_pages_deployment_requires_current_verified_ridgeway_evidence() -> None:
     root = Path(__file__).resolve().parents[2]
     workflow = (root / ".github" / "workflows" / "ecocorridor-pages.yml").read_text(

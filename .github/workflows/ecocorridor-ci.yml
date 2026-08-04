@@ -41,11 +41,15 @@ jobs:
           uv sync --locked
           --extra dev
           --extra science
-          --extra geo
           --extra ecocorridor
           --extra export
           --extra observability
           --extra release
+
+      - name: Install lock-derived Eco geospatial runtime
+        run: >-
+          uv run --no-sync python
+          scripts/install_ecocorridor_geospatial_runtime.py
 
       - name: Prove GI domain isolation
         run: uv run --no-sync python scripts/check_gi_regression_lock.py
@@ -240,11 +244,15 @@ jobs:
         run: >-
           uv sync --locked
           --extra science
-          --extra geo
           --extra ecocorridor
           --extra export
           --extra observability
           --extra release
+
+      - name: Install lock-derived Eco geospatial runtime
+        run: >-
+          uv run --no-sync python
+          scripts/install_ecocorridor_geospatial_runtime.py
 
       - name: Install checksum-verified Julia 1.12.6
         run: bash scripts/install_ci_julia.sh
@@ -418,6 +426,9 @@ jobs:
         with:
           toolchain: 1.88.0
           components: rustfmt, clippy
+          cache-workspaces: |
+            crates/scenario-host -> target
+            apps/ecocorridor-desktop/src-tauri -> target
 
       - name: Check scenario host
         run: |

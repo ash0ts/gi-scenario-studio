@@ -9,6 +9,7 @@ import json
 import tarfile
 import tempfile
 from pathlib import Path, PurePosixPath
+from types import SimpleNamespace
 
 import package_ridgeway_evidence as packager
 
@@ -62,6 +63,14 @@ def extract_regular_archive(archive_path: Path, destination: Path) -> None:
                 raise ValueError(f"Ridgeway archive member is truncated: {member.name}")
 
 
+def portable_packager_temporary_directory(*args: object, **kwargs: object):
+    """Preserve the retained packager while making its scratch root portable."""
+
+    if kwargs.get("dir") == "/private/tmp" and not Path("/private/tmp").is_dir():
+        kwargs["dir"] = None
+    return tempfile.TemporaryDirectory(*args, **kwargs)
+
+
 def verify(
     publish_directory: Path,
     desktop_fixture: Path,
@@ -109,7 +118,18 @@ def verify(
         recomputed_publish.mkdir()
         recomputed_desktop.parent.mkdir()
         extract_regular_archive(archive_path, evidence_root)
-        packager.package(evidence_root, recomputed_publish, recomputed_desktop)
+        # The immutable report packager was captured on macOS and its exact
+        # bytes are part of the evidence contract. Adapt only its scratch-root
+        # lookup on other platforms; all recomputed output is still compared
+        # byte-for-byte with the committed evidence.
+        retained_tempfile = packager.tempfile
+        packager.tempfile = SimpleNamespace(
+            TemporaryDirectory=portable_packager_temporary_directory
+        )
+        try:
+            packager.package(evidence_root, recomputed_publish, recomputed_desktop)
+        finally:
+            packager.tempfile = retained_tempfile
         # The immutable local archive predates publication of these two
         # top-level ledger identities, but its bundle index already pins both.
         # Accept only that exact metadata enrichment and the resulting manifest

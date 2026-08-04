@@ -62,6 +62,11 @@ def test_gi_and_ecocorridor_release_identities_are_isolated(checker: ModuleType)
 
 
 def test_existing_gi_dependency_records_survive_eco_additions(checker: ModuleType) -> None:
+    if checker.git("cat-file", "-e", f"{checker.BASE_SHA}^{{commit}}").returncode:
+        pytest.skip(
+            "immutable base is unavailable in this shallow checkout; "
+            "the fail-closed Eco isolation job checks it with full history"
+        )
     assert checker.dependency_isolation_issues() == []
 
 
