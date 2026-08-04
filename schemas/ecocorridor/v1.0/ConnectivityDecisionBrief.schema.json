@@ -1,0 +1,106 @@
+{
+  "$id": "https://schemas.ecocorridor.local/1.0/ConnectivityDecisionBrief.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "brief_id": {
+      "title": "Brief Id",
+      "type": "string"
+    },
+    "budget_amount": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Budget Amount"
+    },
+    "conceptual": {
+      "default": false,
+      "title": "Conceptual",
+      "type": "boolean"
+    },
+    "cost_vintage": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cost Vintage"
+    },
+    "currency": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Currency"
+    },
+    "decision_owner": {
+      "title": "Decision Owner",
+      "type": "string"
+    },
+    "decision_question": {
+      "title": "Decision Question",
+      "type": "string"
+    },
+    "intended_use": {
+      "title": "Intended Use",
+      "type": "string"
+    },
+    "non_goals": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Non Goals",
+      "type": "array"
+    },
+    "required_next_action": {
+      "title": "Required Next Action",
+      "type": "string"
+    },
+    "safeguard_guilds": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Safeguard Guilds",
+      "type": "array"
+    },
+    "target_guilds": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Target Guilds",
+      "type": "array"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    }
+  },
+  "required": [
+    "brief_id",
+    "title",
+    "decision_question",
+    "decision_owner",
+    "intended_use",
+    "target_guilds",
+    "required_next_action"
+  ],
+  "title": "ConnectivityDecisionBrief",
+  "type": "object"
+}

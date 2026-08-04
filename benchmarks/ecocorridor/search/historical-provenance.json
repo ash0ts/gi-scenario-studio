@@ -1,0 +1,48 @@
+{
+  "schema_version": "ecocorridor-search-historical-provenance/v1.0",
+  "dataset_disposition": "HISTORICAL_BENCHMARK_ONLY",
+  "production_authorization": "PROHIBITED",
+  "claim_boundary": "These immutable synthetic tables and their execution observation are retained only for algorithm regression. They cannot authorize production adaptive search or authenticate the active Ridgeway replay.",
+  "source_evidence": {
+    "contract_status": "SUPERSEDED_NON_RELEASE",
+    "archive_path": "benchmarks/ecocorridor/ridgeway/ridgeway-direct-evidence-4858c0a48841.tar.gz",
+    "archive_sha256": "4858c0a48841e13aa395c007c72474bc1345a9de48495e77e70dc38dff512842",
+    "archive_byte_size": 2339712,
+    "archive_file_count": 14451,
+    "bundle_index_path": "bundle-index.json",
+    "bundle_index_sha256": "64772778eeba0f8463da66a4daf8fcdafa520961edac2f4121e4a1ab0888195e",
+    "evidence_index_path": "evidence-index.json",
+    "evidence_index_sha256": "2652b47d17f92a0458fde8272237b571453435d35503eeddd282af2b3a6cd17d"
+  },
+  "search_manifest": {
+    "path": "benchmarks/ecocorridor/search/manifest.json",
+    "sha256": "1b16e698afeec8a53e489761dad21a280ea838435180cc0c9957969897a96429",
+    "semantic_sha256": "76797d9115ed772ccbf2c2ba9ae14635699710f825b3aed0e38b826ce34e88f8"
+  },
+  "campaign": {
+    "path": "benchmarks/ecocorridor/search/release-gate.json",
+    "sha256": "36e32fa1d154a9151aa9317b46fbf667800533561a5140052454da9494581b8f",
+    "campaign_sha256": "d43c377f886d753105f5fd8bf47e6763ddaa40763537740d1136b702cd39b509"
+  },
+  "resource_report": {
+    "path": "benchmarks/ecocorridor/search/release-gate.resources.json",
+    "sha256": "b627ac329d4c0dc71c80236bbfe05f551417a800269b24b9e7e977726753488a",
+    "report_sha256": "5ad0da070803706302ad332f751cb73e9478473029c93d43bd9a994b61d3b71e"
+  },
+  "generator_source_snapshots": {
+    "benchmark_sha256": {
+      "path": "benchmarks/ecocorridor/search/provenance/benchmark-1215bca4fbcc.py.txt",
+      "sha256": "1215bca4fbcc8d37a598dec5835fa7be4c2f7dad3b9ae008667149a37d392642"
+    },
+    "resource_observability_sha256": {
+      "path": "benchmarks/ecocorridor/search/provenance/resource-observability-dfa5f7187975.py.txt",
+      "sha256": "dfa5f7187975109e5fb0f0d7b73c8d116cf9e3c7f8b2715f2411f537ca86dc11"
+    }
+  },
+  "limitations": [
+    "The snapshot digests reproduce the source identities declared by the historical resource sidecar; they are not an authenticated execution attestation.",
+    "The resource values remain bounded estimates and sampled lower bounds under the sidecar claim boundary.",
+    "A current benchmark must be derived and executed separately from current direct evidence before any production authorization can be considered."
+  ],
+  "provenance_sha256": "61764eb6ec2311ec34f85f4e0481fddc30b318599cbc7a651b7f39cd417e1380"
+}

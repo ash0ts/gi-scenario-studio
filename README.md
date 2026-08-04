@@ -1,5 +1,16 @@
 # GI Scenario Studio
 
+> **EcoCorridor branch:** `codex/ecocorridor-scenario-studio` adds the isolated
+> EcoCorridor Scenario Studio application without changing the GI domain app,
+> schemas, fixtures, or solver results. Start with the
+> [EcoCorridor documentation](docs/ecocorridor/README.md). Its full professional
+> release remains fail-closed on authoritative W&B Restricted-scope
+> verification, protected W&B/Weave integration evidence, cross-platform
+> signing/notarization, GitHub immutable-release policy, and practitioner
+> acceptance. The pinned Julia/Circuitscape
+> application and Python worker have been built and exercised locally; those
+> local unsigned bundles are not presented as released installers.
+
 Decision-first green-infrastructure alternatives screening with EPA SWMM,
 W&B Models, and Weave.
 
@@ -220,8 +231,13 @@ The following boundaries are intentionally visible rather than papered over:
 - W&B `0.28.1` does not expose an authoritative exact project-visibility scope;
   `PRIVATE` is never inferred to mean `Restricted`, so production binding and
   upload remain blocked until a supported resolver is available.
-- Provider-backed nested assistant traces and Weave Dataset evaluations are not
-  implemented; only deterministic, Weave-acknowledged explanations exist.
+- The provider-backed, case-level Weave evaluation and signed-feedback
+  finalization are implemented as two protected runs. Stage one produces
+  immutable unrated evidence; stage two binds later practitioner ratings without
+  rerunning the provider. No passing external evaluation is claimed. The gate
+  remains blocked on an authoritative exact-scope resolver, protected
+  W&B/model-provider credentials, and signed redacted practitioner feedback for
+  the immutable CC0 case set.
 - Search replays report decision quality and exact-job-equivalent budgets, but
   campaign timing, peak memory, and measured-or-estimated energy collection are
   not yet implemented.
@@ -298,6 +314,7 @@ WANDB_API_KEY
 WANDB_ENTITY
 WANDB_PROJECT
 WANDB_BASE_URL
+WANDB_WEB_BASE_URL
 WANDB_DEPLOYMENT
 WANDB_MODE
 ```

@@ -1,0 +1,7 @@
+{
+  "evidenceManifestSha256": "433acb8e9b5c98e6b73f570891cd79a8b02c99221d4395d00fb1d2e1ab8d3afb",
+  "fixtureId": "ridgeway_crossing",
+  "releaseBlocker": "",
+  "schemaVersion": "ecocorridor-release-trust/v1.0",
+  "trusted": true
+}

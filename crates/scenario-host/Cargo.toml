@@ -1,0 +1,18 @@
+[package]
+name = "scenario-host"
+version = "0.1.0"
+description = "Domain-neutral native security boundary for scenario desktop applications"
+edition = "2021"
+license = "Apache-2.0"
+rust-version = "1.88"
+
+[dependencies]
+ed25519-dalek = "2.2.0"
+hex = "0.4.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10.9"
+zeroize = "1.8"
+
+[dev-dependencies]
+tempfile = "3"

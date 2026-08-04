@@ -1,0 +1,56 @@
+# Ridgeway Crossing guided example
+
+Ridgeway Crossing is a deterministic CC0 teaching landscape. It contains four
+synthetic habitat cores separated by one highway, two anonymous target guilds,
+one safeguard guild, four resistance hypotheses, eight reviewed intervention
+sites, one road-review mask, and an unresolved field assumption.
+
+It does not represent a real species, site, transportation project, agency
+finding, crossing design, collision study, or conservation recommendation.
+
+The pinned study evaluates 128 fixed portfolios, including baseline, across 12
+required scenarios: 1,536 direct matrix jobs. Only after those direct results
+exist are four teaching roles selected:
+
+1. a low-cost caution with a road-mask review flag;
+2. a portfolio that passes every configured modeled connectivity rule across
+   the 12 reviewed scenarios and remains within the screening cost cap;
+3. a portfolio that passes those modeled rules but exceeds the cost cap; and
+4. a strong single-hypothesis option that collapses elsewhere.
+
+Baseline plus the four selected portfolios are then rerun across all scenarios
+with current-map output enabled: 60 retained map jobs. Teaching IDs and numbers
+are selected only after current direct evidence passes the v1.1 package
+contract; they are never pre-authored to fit the story.
+
+The earlier 2,339,712-byte archive remains pinned at SHA-256
+`4858c0a48841e13aa395c007c72474bc1345a9de48495e77e70dc38dff512842`
+for historical benchmark reproducibility. It belongs to fixture/workflow v1.0,
+does not match the current model identity, and does not contain the complete
+semantic and per-job resource evidence now required. Its earlier teaching IDs
+and numbers are deliberately absent from the active desktop and public
+projection.
+
+The desktop and no-login replay now open the current v1.2 verified fixture
+projection. Its locally packaged reference contains 1,536 accepted matrix jobs,
+60 accepted current-map jobs, a complete focal-pair matrix for every teaching
+scenario, and one resource/process-tree observation per job. The committed
+archive SHA-256 is
+`f93ad36f3cdc36b702a3cb612cbd52c306f5b231f353982de0adaee6174e5e24`;
+the direct-evidence manifest SHA-256 is
+`433acb8e9b5c98e6b73f570891cd79a8b02c99221d4395d00fb1d2e1ab8d3afb`.
+This reference is semantically verified local evidence, not protected
+execution attestation. A local rerun uses the packaged engine with real progress,
+pause/resume/cancel, cache status, QA, and a tolerance-based differential
+report. The public web replay has no login, performs no cloud call, and cannot
+open professional data. A full rerun means 1,596 direct jobs: it is not the
+1,536-job study pretending to execute, and it cannot publish outcomes unless
+the package, model identity, resource observations, and differential gates pass.
+Publication still requires a second clean full study in the protected
+Ridgeway GitHub Actions workflow. Pages accepts only the exact immutable
+producer artifact for the same commit and exposes its attestation, run identity,
+and differential with the synthetic replay. The producer is POSIX-only until a
+Windows launcher owns a native Job Object and proves active-process zero; a
+direct-child exit or `taskkill` result cannot satisfy the whole-tree evidence
+contract. Signed release independently resolves the same protected producer
+identity rather than trusting a local package or copied artifact.

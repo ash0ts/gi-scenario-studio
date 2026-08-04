@@ -1,0 +1,71 @@
+{
+  "$defs": {
+    "EvidenceConfidence": {
+      "enum": [
+        "CONFIRMED",
+        "INFERRED",
+        "ASSUMED"
+      ],
+      "title": "EvidenceConfidence",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.ecocorridor.local/1.0/ActionEffectBasis.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "assumptions": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Assumptions",
+      "type": "array"
+    },
+    "basis_id": {
+      "title": "Basis Id",
+      "type": "string"
+    },
+    "citation": {
+      "title": "Citation",
+      "type": "string"
+    },
+    "confidence": {
+      "$ref": "#/$defs/EvidenceConfidence"
+    },
+    "evidence_source": {
+      "title": "Evidence Source",
+      "type": "string"
+    },
+    "limitations": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Limitations",
+      "type": "array"
+    },
+    "purpose": {
+      "title": "Purpose",
+      "type": "string"
+    },
+    "reviewed_at": {
+      "format": "date-time",
+      "title": "Reviewed At",
+      "type": "string"
+    },
+    "reviewer": {
+      "title": "Reviewer",
+      "type": "string"
+    }
+  },
+  "required": [
+    "basis_id",
+    "purpose",
+    "evidence_source",
+    "citation",
+    "reviewer",
+    "reviewed_at",
+    "confidence"
+  ],
+  "title": "ActionEffectBasis",
+  "type": "object"
+}

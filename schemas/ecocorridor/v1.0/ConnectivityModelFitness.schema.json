@@ -1,0 +1,137 @@
+{
+  "$defs": {
+    "FitnessDimension": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "key": {
+          "enum": [
+            "intended_use",
+            "movement_process",
+            "focal_rationale",
+            "resistance_derivation",
+            "validation_evidence",
+            "spatial_scale",
+            "boundary_effects",
+            "action_effect_evidence",
+            "scenario_coverage",
+            "sensitivity",
+            "numerical_qa",
+            "unresolved_assumptions"
+          ],
+          "title": "Key",
+          "type": "string"
+        },
+        "notes": {
+          "title": "Notes",
+          "type": "string"
+        },
+        "reviewer": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reviewer"
+        },
+        "status": {
+          "enum": [
+            "ACCEPTED",
+            "REVIEW_REQUIRED",
+            "BLOCKING"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "status",
+        "notes"
+      ],
+      "title": "FitnessDimension",
+      "type": "object"
+    }
+  },
+  "$id": "https://schemas.ecocorridor.local/1.0/ConnectivityModelFitness.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "attestations": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Attestations",
+      "type": "array"
+    },
+    "dimensions": {
+      "items": {
+        "$ref": "#/$defs/FitnessDimension"
+      },
+      "title": "Dimensions",
+      "type": "array"
+    },
+    "intended_use": {
+      "title": "Intended Use",
+      "type": "string"
+    },
+    "passport_id": {
+      "title": "Passport Id",
+      "type": "string"
+    },
+    "reviewed_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reviewed At"
+    },
+    "reviewed_by": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reviewed By"
+    },
+    "revision_id": {
+      "title": "Revision Id",
+      "type": "string"
+    },
+    "unresolved_assumptions": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Unresolved Assumptions",
+      "type": "array"
+    }
+  },
+  "required": [
+    "passport_id",
+    "revision_id",
+    "intended_use",
+    "dimensions"
+  ],
+  "title": "ConnectivityModelFitness",
+  "type": "object"
+}

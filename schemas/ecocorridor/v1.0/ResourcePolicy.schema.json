@@ -1,0 +1,46 @@
+{
+  "$id": "https://schemas.ecocorridor.local/1.0/ResourcePolicy.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "max_current_raster_bytes": {
+      "exclusiveMinimum": 0,
+      "title": "Max Current Raster Bytes",
+      "type": "integer"
+    },
+    "max_direct_jobs": {
+      "exclusiveMinimum": 0,
+      "title": "Max Direct Jobs",
+      "type": "integer"
+    },
+    "max_input_bytes": {
+      "exclusiveMinimum": 0,
+      "title": "Max Input Bytes",
+      "type": "integer"
+    },
+    "max_materialized_bytes": {
+      "exclusiveMinimum": 0,
+      "title": "Max Materialized Bytes",
+      "type": "integer"
+    },
+    "max_wall_seconds_per_job": {
+      "exclusiveMinimum": 0,
+      "title": "Max Wall Seconds Per Job",
+      "type": "integer"
+    },
+    "require_explicit_oversize_approval": {
+      "default": true,
+      "title": "Require Explicit Oversize Approval",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "max_input_bytes",
+    "max_materialized_bytes",
+    "max_current_raster_bytes",
+    "max_direct_jobs",
+    "max_wall_seconds_per_job"
+  ],
+  "title": "ResourcePolicy",
+  "type": "object"
+}

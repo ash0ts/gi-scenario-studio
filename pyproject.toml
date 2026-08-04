@@ -25,6 +25,11 @@ geo = [
   "swmmanywhere>=0.2.2",
   "geopandas>=1.0",
 ]
+ecocorridor = [
+  "filelock>=3.20,<4",
+  "rasterio==1.4.4; python_version < '3.12'",
+  "rasterio==1.5.0; python_version >= '3.12'",
+]
 export = [
   "Jinja2>=3.1",
   "python-docx>=1.1",
@@ -36,6 +41,10 @@ observability = [
   "presidio-analyzer>=2.2.359,<3",
   "presidio-anonymizer>=2.2.359,<3",
 ]
+release = [
+  "cryptography==48.0.1",
+  "pyinstaller==6.21.0",
+]
 dev = [
   "pytest>=8.3",
   "hypothesis>=6.112",
@@ -46,9 +55,16 @@ dev = [
 gi-scenario-worker = "gi_scenario_core.rpc_worker:main"
 gi-studio-demo = "gi_scenario_core.demo:main"
 gi-studio-benchmark = "gi_scenario_core.benchmark:main"
+ecocorridor-worker = "ecocorridor_core.rpc_worker:main"
+ecocorridor-fixture = "ecocorridor_core.guided:main"
+ecocorridor-benchmark = "ecocorridor_core.benchmark:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["python/gi_scenario_core"]
+packages = [
+  "python/gi_scenario_core",
+  "python/scenario_platform",
+  "python/ecocorridor_core",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests/python"]

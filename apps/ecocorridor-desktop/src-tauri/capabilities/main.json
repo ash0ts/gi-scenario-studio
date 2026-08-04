@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-capability",
+  "description": "Only application-owned native commands are exposed to the EcoCorridor renderer.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

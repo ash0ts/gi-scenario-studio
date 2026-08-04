@@ -1,0 +1,151 @@
+{
+  "$defs": {
+    "NeighborRule": {
+      "enum": [
+        "FOUR",
+        "EIGHT"
+      ],
+      "title": "NeighborRule",
+      "type": "string"
+    },
+    "ResistanceAverage": {
+      "enum": [
+        "ARITHMETIC",
+        "HARMONIC"
+      ],
+      "title": "ResistanceAverage",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.ecocorridor.local/1.0/EngineManifest.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "blas_threads": {
+      "const": 1,
+      "default": 1,
+      "title": "Blas Threads",
+      "type": "integer"
+    },
+    "circuitscape_version": {
+      "const": "5.17.1",
+      "default": "5.17.1",
+      "title": "Circuitscape Version",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "engine_name": {
+      "const": "Circuitscape",
+      "default": "Circuitscape",
+      "title": "Engine Name",
+      "type": "string"
+    },
+    "executable_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Executable Sha256",
+      "type": "string"
+    },
+    "julia_manifest_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Julia Manifest Sha256",
+      "type": "string"
+    },
+    "julia_runtime_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Julia Runtime Sha256",
+      "type": "string"
+    },
+    "julia_threads": {
+      "const": 1,
+      "default": 1,
+      "title": "Julia Threads",
+      "type": "integer"
+    },
+    "julia_version": {
+      "const": "1.12.6",
+      "default": "1.12.6",
+      "title": "Julia Version",
+      "type": "string"
+    },
+    "manifest_id": {
+      "title": "Manifest Id",
+      "type": "string"
+    },
+    "metric_definitions_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Metric Definitions Sha256",
+      "type": "string"
+    },
+    "native_artifacts_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Native Artifacts Sha256",
+      "type": "string"
+    },
+    "neighbor_rule": {
+      "$ref": "#/$defs/NeighborRule"
+    },
+    "omp_threads": {
+      "const": 1,
+      "default": 1,
+      "title": "Omp Threads",
+      "type": "integer"
+    },
+    "parser_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Parser Sha256",
+      "type": "string"
+    },
+    "platform": {
+      "title": "Platform",
+      "type": "string"
+    },
+    "precision": {
+      "const": "double",
+      "default": "double",
+      "title": "Precision",
+      "type": "string"
+    },
+    "resistance_average": {
+      "$ref": "#/$defs/ResistanceAverage"
+    },
+    "wrapper_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Wrapper Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "manifest_id",
+    "executable_sha256",
+    "julia_runtime_sha256",
+    "julia_manifest_sha256",
+    "native_artifacts_sha256",
+    "wrapper_sha256",
+    "parser_sha256",
+    "metric_definitions_sha256",
+    "neighbor_rule",
+    "resistance_average",
+    "platform",
+    "created_at"
+  ],
+  "title": "EngineManifest",
+  "type": "object"
+}

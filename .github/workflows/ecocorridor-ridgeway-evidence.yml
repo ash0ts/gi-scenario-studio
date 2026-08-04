@@ -1,0 +1,183 @@
+name: EcoCorridor protected Ridgeway direct evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ci_run_id:
+        description: Successful same-commit EcoCorridor CI workflow run ID
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ecocorridor-protected-ridgeway-${{ github.sha }}
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  direct-ridgeway-evidence:
+    name: Execute and attest all 1,596 direct jobs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    environment:
+      name: ecocorridor-release-evidence
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Check out the exact protected source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python and uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install the locked scientific and release environment
+        run: >-
+          uv sync --locked
+          --extra dev
+          --extra science
+          --extra geo
+          --extra ecocorridor
+          --extra release
+
+      - name: Require main and a green same-commit EcoCorridor CI run
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_CI_RUN_ID: ${{ inputs.source_ci_run_id }}
+        run: |
+          test "${GITHUB_REF}" = "refs/heads/main" || {
+            echo "::error::Protected Ridgeway evidence may be produced only from main."
+            exit 1
+          }
+          test "${GITHUB_WORKFLOW_SHA}" = "${GITHUB_SHA}" || {
+            echo "::error::Ridgeway workflow source differs from the checked-out commit."
+            exit 1
+          }
+          [[ "${SOURCE_CI_RUN_ID}" =~ ^[1-9][0-9]*$ ]] || {
+            echo "::error::EcoCorridor CI run ID must be a positive integer."
+            exit 1
+          }
+          api_root="${RUNNER_TEMP}/ridgeway-source-ci"
+          mkdir -p "${api_root}"
+          gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_CI_RUN_ID}" \
+            > "${api_root}/run.json"
+          uv run --no-sync python scripts/resolve_github_actions_provenance.py \
+            --run-json "${api_root}/run.json" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --expected-run-id "${SOURCE_CI_RUN_ID}" \
+            --expected-sha "${GITHUB_SHA}" \
+            --expected-workflow-path .github/workflows/ecocorridor-ci.yml \
+            --expected-event workflow_dispatch \
+            --run-only \
+            --output "${api_root}/provenance.json"
+
+      - name: Install checksum-verified Julia 1.12.6
+        run: bash scripts/install_ci_julia.sh
+
+      - name: Instantiate the committed Circuitscape 5.17.1 environment
+        env:
+          JULIA_DEPOT_PATH: ${{ runner.temp }}/julia-depot
+          JULIA_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          OMP_NUM_THREADS: "1"
+        run: >-
+          julia --project=julia/EcoCorridorEngine
+          --startup-file=no --history-file=no
+          -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
+
+      - name: Execute the complete clean Ridgeway direct study
+        env:
+          JULIA_DEPOT_PATH: ${{ runner.temp }}/julia-depot
+          JULIA_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          OMP_NUM_THREADS: "1"
+          PYTHONPATH: python
+        run: >-
+          uv run --no-sync python
+          benchmarks/ecocorridor/ridgeway/run_direct_study.py
+          --output "${RUNNER_TEMP}/ridgeway-evidence"
+          --julia "${RUNNER_TEMP}/julia/bin/julia"
+          --project "${GITHUB_WORKSPACE}/julia/EcoCorridorEngine"
+          --depot "${RUNNER_TEMP}/julia-depot"
+          --workers 4
+
+      - name: Package the independently executed evidence
+        env:
+          PYTHONPATH: python
+        run: >-
+          uv run --no-sync python scripts/package_ridgeway_evidence.py
+          --evidence-root "${RUNNER_TEMP}/ridgeway-evidence"
+          --publish-directory "${RUNNER_TEMP}/producer/ridgeway"
+          --desktop-fixture "${RUNNER_TEMP}/producer/desktop/ridgewayFixture.json"
+
+      - name: Recompute both semantic evidence packages
+        env:
+          PYTHONPATH: python
+        run: |
+          uv run --no-sync python scripts/verify_ridgeway_release_evidence.py \
+            --publish-directory benchmarks/ecocorridor/ridgeway \
+            --desktop-fixture apps/ecocorridor-desktop/src/data/ridgewayFixture.json
+          uv run --no-sync python scripts/verify_ridgeway_release_evidence.py \
+            --publish-directory "${RUNNER_TEMP}/producer/ridgeway" \
+            --desktop-fixture "${RUNNER_TEMP}/producer/desktop/ridgewayFixture.json"
+
+      - name: Compare every direct metric and retained current-raster cell
+        run: >-
+          uv run --no-sync python scripts/compare_ridgeway_protected_rerun.py
+          --source-commit "${GITHUB_SHA}"
+          --reference-directory benchmarks/ecocorridor/ridgeway
+          --producer-directory "${RUNNER_TEMP}/producer/ridgeway"
+          --output "${RUNNER_TEMP}/producer/ridgeway-protected-rerun-differential.json"
+
+      - name: Bind the exact source and rerun packages into a producer attestation
+        run: >-
+          uv run --no-sync python scripts/validate_ridgeway_producer_attestation.py create
+          --source-commit "${GITHUB_SHA}"
+          --publish-directory benchmarks/ecocorridor/ridgeway
+          --desktop-fixture apps/ecocorridor-desktop/src/data/ridgewayFixture.json
+          --producer-publish-directory "${RUNNER_TEMP}/producer/ridgeway"
+          --differential-report
+          "${RUNNER_TEMP}/producer/ridgeway-protected-rerun-differential.json"
+          --output "${RUNNER_TEMP}/producer/ridgeway-protected-producer-attestation.json"
+
+      - name: Bind evidence bytes to this exact protected producer attempt
+        run: >-
+          python3 scripts/github_actions_producer_identity.py create
+          --output "${RUNNER_TEMP}/producer/ridgeway-producer-identity.json"
+          --repository "${GITHUB_REPOSITORY}"
+          --run-id "${GITHUB_RUN_ID}"
+          --run-attempt "${GITHUB_RUN_ATTEMPT}"
+          --workflow-path .github/workflows/ecocorridor-ridgeway-evidence.yml
+          --git-ref "${GITHUB_REF}"
+          --workflow-ref "${GITHUB_WORKFLOW_REF}"
+          --workflow-sha "${GITHUB_WORKFLOW_SHA}"
+          --head-sha "${GITHUB_SHA}"
+
+      - name: Preserve source-CI provenance with the producer package
+        shell: bash
+        run: >-
+          cp "${RUNNER_TEMP}/ridgeway-source-ci/provenance.json"
+          "${RUNNER_TEMP}/producer/ridgeway-source-ci-provenance.json"
+
+      - name: Upload the immutable protected producer artifact
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: ecocorridor-ridgeway-protected-evidence
+          path: ${{ runner.temp }}/producer
+          if-no-files-found: error
+          retention-days: 90

@@ -1,0 +1,53 @@
+{
+  "$id": "https://schemas.ecocorridor.local/1.0/GridAlignmentApproval.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "acknowledged_warnings": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Acknowledged Warnings",
+      "type": "array"
+    },
+    "approval_id": {
+      "title": "Approval Id",
+      "type": "string"
+    },
+    "approved_at": {
+      "format": "date-time",
+      "title": "Approved At",
+      "type": "string"
+    },
+    "plan_id": {
+      "title": "Plan Id",
+      "type": "string"
+    },
+    "plan_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Plan Sha256",
+      "type": "string"
+    },
+    "purpose": {
+      "title": "Purpose",
+      "type": "string"
+    },
+    "reviewer": {
+      "title": "Reviewer",
+      "type": "string"
+    }
+  },
+  "required": [
+    "approval_id",
+    "plan_id",
+    "plan_sha256",
+    "reviewer",
+    "approved_at",
+    "acknowledged_warnings",
+    "purpose"
+  ],
+  "title": "GridAlignmentApproval",
+  "type": "object"
+}

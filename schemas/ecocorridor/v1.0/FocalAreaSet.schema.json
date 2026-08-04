@@ -1,0 +1,103 @@
+{
+  "$defs": {
+    "FocalPair": {
+      "additionalProperties": false,
+      "properties": {
+        "from_focal_id": {
+          "exclusiveMinimum": 0,
+          "title": "From Focal Id",
+          "type": "integer"
+        },
+        "pair_id": {
+          "title": "Pair Id",
+          "type": "string"
+        },
+        "required": {
+          "default": true,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "to_focal_id": {
+          "exclusiveMinimum": 0,
+          "title": "To Focal Id",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "pair_id",
+        "from_focal_id",
+        "to_focal_id"
+      ],
+      "title": "FocalPair",
+      "type": "object"
+    }
+  },
+  "$id": "https://schemas.ecocorridor.local/1.0/FocalAreaSet.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "asset_id": {
+      "title": "Asset Id",
+      "type": "string"
+    },
+    "focal_ids": {
+      "items": {
+        "type": "integer"
+      },
+      "minItems": 2,
+      "title": "Focal Ids",
+      "type": "array"
+    },
+    "focal_set_id": {
+      "title": "Focal Set Id",
+      "type": "string"
+    },
+    "grid_id": {
+      "title": "Grid Id",
+      "type": "string"
+    },
+    "guild_id": {
+      "title": "Guild Id",
+      "type": "string"
+    },
+    "pairs": {
+      "items": {
+        "$ref": "#/$defs/FocalPair"
+      },
+      "minItems": 1,
+      "title": "Pairs",
+      "type": "array"
+    },
+    "rationale": {
+      "title": "Rationale",
+      "type": "string"
+    },
+    "reviewed_at": {
+      "format": "date-time",
+      "title": "Reviewed At",
+      "type": "string"
+    },
+    "reviewed_by": {
+      "title": "Reviewed By",
+      "type": "string"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    }
+  },
+  "required": [
+    "focal_set_id",
+    "title",
+    "asset_id",
+    "grid_id",
+    "guild_id",
+    "focal_ids",
+    "pairs",
+    "rationale",
+    "reviewed_by",
+    "reviewed_at"
+  ],
+  "title": "FocalAreaSet",
+  "type": "object"
+}

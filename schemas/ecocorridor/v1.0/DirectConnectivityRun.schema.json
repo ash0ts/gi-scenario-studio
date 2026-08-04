@@ -1,0 +1,610 @@
+{
+  "$defs": {
+    "ComputationalResourceObservation": {
+      "additionalProperties": false,
+      "description": "Auditable compute observation without implied carbon accounting.\n\nWall-clock durations are measured with a monotonic process clock.  Memory\nand energy values are present only when an identified sampler or meter\nactually measured them, or when an explicit estimation method was used.\nA missing measurement is never represented as zero.",
+      "properties": {
+        "assumptions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Assumptions",
+          "type": "array"
+        },
+        "boundary": {
+          "$ref": "#/$defs/ResourceObservationBoundary"
+        },
+        "boundary_description": {
+          "title": "Boundary Description",
+          "type": "string"
+        },
+        "cache_lookup_wall_seconds": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cache Lookup Wall Seconds"
+        },
+        "energy_estimate_lower_kwh": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Energy Estimate Lower Kwh"
+        },
+        "energy_estimate_lower_watts": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Energy Estimate Lower Watts"
+        },
+        "energy_estimate_upper_kwh": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Energy Estimate Upper Kwh"
+        },
+        "energy_estimate_upper_watts": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Energy Estimate Upper Watts"
+        },
+        "energy_estimate_watts": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Energy Estimate Watts"
+        },
+        "energy_kwh": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Energy Kwh"
+        },
+        "energy_method": {
+          "title": "Energy Method",
+          "type": "string"
+        },
+        "energy_status": {
+          "$ref": "#/$defs/ResourceObservationStatus"
+        },
+        "exclusions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Exclusions",
+          "type": "array"
+        },
+        "hardware": {
+          "title": "Hardware",
+          "type": "string"
+        },
+        "observation_id": {
+          "title": "Observation Id",
+          "type": "string"
+        },
+        "peak_memory_bytes": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Peak Memory Bytes"
+        },
+        "peak_memory_is_lower_bound": {
+          "default": true,
+          "title": "Peak Memory Is Lower Bound",
+          "type": "boolean"
+        },
+        "peak_memory_method": {
+          "title": "Peak Memory Method",
+          "type": "string"
+        },
+        "peak_memory_sample_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Peak Memory Sample Count",
+          "type": "integer"
+        },
+        "peak_memory_sampling_interval_seconds": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Peak Memory Sampling Interval Seconds"
+        },
+        "peak_memory_status": {
+          "$ref": "#/$defs/ResourceObservationStatus"
+        },
+        "proposer_wall_seconds": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Proposer Wall Seconds"
+        },
+        "solver_wall_seconds": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Solver Wall Seconds"
+        }
+      },
+      "required": [
+        "observation_id",
+        "boundary",
+        "peak_memory_status",
+        "peak_memory_method",
+        "energy_status",
+        "energy_method",
+        "hardware",
+        "boundary_description"
+      ],
+      "title": "ComputationalResourceObservation",
+      "type": "object"
+    },
+    "DiagnosticMapSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "baseline_total_current": {
+          "minimum": 0,
+          "title": "Baseline Total Current",
+          "type": "number"
+        },
+        "excluded_nodata_cell_count": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Excluded Nodata Cell Count"
+        },
+        "included_cell_count": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Included Cell Count"
+        },
+        "interpretation": {
+          "default": "Diagnostic current redistribution; not predicted animal use.",
+          "title": "Interpretation",
+          "type": "string"
+        },
+        "mask_id": {
+          "title": "Mask Id",
+          "type": "string"
+        },
+        "nodata_topology_sha256": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "minLength": 64,
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Nodata Topology Sha256"
+        },
+        "portfolio_total_current": {
+          "minimum": 0,
+          "title": "Portfolio Total Current",
+          "type": "number"
+        },
+        "raster_nodata_cell_count": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Raster Nodata Cell Count"
+        },
+        "relative_change_percent": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Relative Change Percent"
+        },
+        "review_triggered": {
+          "title": "Review Triggered",
+          "type": "boolean"
+        },
+        "reviewed_cell_count": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reviewed Cell Count"
+        }
+      },
+      "required": [
+        "mask_id",
+        "baseline_total_current",
+        "portfolio_total_current",
+        "relative_change_percent",
+        "review_triggered"
+      ],
+      "title": "DiagnosticMapSummary",
+      "type": "object"
+    },
+    "DirectRunState": {
+      "enum": [
+        "PLANNED",
+        "PREPARED",
+        "RUNNING",
+        "SUCCEEDED",
+        "QA_REJECTED",
+        "FAILED",
+        "CANCELLED"
+      ],
+      "title": "DirectRunState",
+      "type": "string"
+    },
+    "PairResistanceMetric": {
+      "additionalProperties": false,
+      "properties": {
+        "baseline_effective_resistance": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Baseline Effective Resistance"
+        },
+        "baseline_relative_change_percent": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Baseline Relative Change Percent"
+        },
+        "effective_resistance": {
+          "exclusiveMinimum": 0,
+          "title": "Effective Resistance",
+          "type": "number"
+        },
+        "pair_id": {
+          "title": "Pair Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "pair_id",
+        "effective_resistance"
+      ],
+      "title": "PairResistanceMetric",
+      "type": "object"
+    },
+    "QAStatus": {
+      "enum": [
+        "ACCEPTED",
+        "WARNING_ACCEPTED",
+        "REJECTED"
+      ],
+      "title": "QAStatus",
+      "type": "string"
+    },
+    "ResourceObservationBoundary": {
+      "enum": [
+        "DIRECT_SOLVER",
+        "CACHE_REUSE",
+        "SEARCH_PROPOSER"
+      ],
+      "title": "ResourceObservationBoundary",
+      "type": "string"
+    },
+    "ResourceObservationStatus": {
+      "description": "How a computational resource value was obtained.\n\n``NOT_MEASURED`` is a first-class state.  It prevents the application from\nturning a missing energy meter or process-memory sampler into a zero.",
+      "enum": [
+        "MEASURED",
+        "ESTIMATED",
+        "NOT_MEASURED"
+      ],
+      "title": "ResourceObservationStatus",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.ecocorridor.local/1.0/DirectConnectivityRun.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "analysis_id": {
+      "title": "Analysis Id",
+      "type": "string"
+    },
+    "cache_source_direct_run_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cache Source Direct Run Id"
+    },
+    "completed_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Completed At"
+    },
+    "current_map_sha256": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Current Map Sha256"
+    },
+    "diagnostic_maps": {
+      "items": {
+        "$ref": "#/$defs/DiagnosticMapSummary"
+      },
+      "title": "Diagnostic Maps",
+      "type": "array"
+    },
+    "direct_run_id": {
+      "title": "Direct Run Id",
+      "type": "string"
+    },
+    "engine_manifest_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Engine Manifest Sha256",
+      "type": "string"
+    },
+    "engine_name": {
+      "title": "Engine Name",
+      "type": "string"
+    },
+    "exact": {
+      "title": "Exact",
+      "type": "boolean"
+    },
+    "input_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Input Sha256",
+      "type": "string"
+    },
+    "matrix_sha256": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Matrix Sha256"
+    },
+    "model_run_cache_key": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Model Run Cache Key",
+      "type": "string"
+    },
+    "pair_metrics": {
+      "items": {
+        "$ref": "#/$defs/PairResistanceMetric"
+      },
+      "title": "Pair Metrics",
+      "type": "array"
+    },
+    "portfolio_id": {
+      "title": "Portfolio Id",
+      "type": "string"
+    },
+    "qa_findings": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Qa Findings",
+      "type": "array"
+    },
+    "qa_status": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/QAStatus"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "resource_observation": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ComputationalResourceObservation"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "result_sha256": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Result Sha256"
+    },
+    "revision_id": {
+      "title": "Revision Id",
+      "type": "string"
+    },
+    "scenario_id": {
+      "title": "Scenario Id",
+      "type": "string"
+    },
+    "state": {
+      "$ref": "#/$defs/DirectRunState"
+    },
+    "test_only": {
+      "default": false,
+      "title": "Test Only",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "direct_run_id",
+    "analysis_id",
+    "revision_id",
+    "portfolio_id",
+    "scenario_id",
+    "state",
+    "exact",
+    "engine_name",
+    "engine_manifest_sha256",
+    "model_run_cache_key",
+    "input_sha256"
+  ],
+  "title": "DirectConnectivityRun",
+  "type": "object"
+}

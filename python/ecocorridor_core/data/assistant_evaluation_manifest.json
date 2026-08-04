@@ -1,0 +1,11 @@
+{
+  "schema_version": "ecocorridor-assistant-evaluation-manifest/v1",
+  "dataset_id": "ecocorridor-evidence-assistant-cc0-v1",
+  "dataset_path": "assistant_evaluation_cases.json",
+  "dataset_sha256": "ca818fd0e36eb7046d48ffcb31bd4567e7526c5a409d1579ba32abdcf2182e45",
+  "case_count": 12,
+  "license": "CC0-1.0",
+  "provenance": "SELF_AUTHORED_SYNTHETIC",
+  "contains_real_locations": false,
+  "contains_species_occurrences": false
+}

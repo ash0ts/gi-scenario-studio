@@ -1,0 +1,88 @@
+{
+  "$defs": {
+    "RuleMetric": {
+      "enum": [
+        "MIN_RESISTANCE_REDUCTION_PERCENT",
+        "MAX_RESISTANCE_INCREASE_PERCENT",
+        "MAX_REVIEW_MASK_CURRENT_INCREASE_PERCENT",
+        "MAX_COST",
+        "REQUIRE_ACCEPTED_QA",
+        "REQUIRE_SAFEGUARD_NONREGRESSION"
+      ],
+      "title": "RuleMetric",
+      "type": "string"
+    },
+    "RuleOperator": {
+      "enum": [
+        "AT_LEAST",
+        "AT_MOST",
+        "EQUALS"
+      ],
+      "title": "RuleOperator",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.ecocorridor.local/1.0/ConnectivityDecisionRule.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "metric": {
+      "$ref": "#/$defs/RuleMetric"
+    },
+    "operator": {
+      "$ref": "#/$defs/RuleOperator"
+    },
+    "pair_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Pair Ids",
+      "type": "array"
+    },
+    "rationale": {
+      "title": "Rationale",
+      "type": "string"
+    },
+    "required": {
+      "default": true,
+      "title": "Required",
+      "type": "boolean"
+    },
+    "rule_id": {
+      "title": "Rule Id",
+      "type": "string"
+    },
+    "scenario_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Scenario Ids",
+      "type": "array"
+    },
+    "threshold": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        }
+      ],
+      "title": "Threshold"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    }
+  },
+  "required": [
+    "rule_id",
+    "title",
+    "metric",
+    "operator",
+    "threshold",
+    "rationale"
+  ],
+  "title": "ConnectivityDecisionRule",
+  "type": "object"
+}

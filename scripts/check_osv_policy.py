@@ -14,6 +14,8 @@ EXPECTED_LOCKFILES = (
     "uv.lock",
     "pnpm-lock.yaml",
     "apps/desktop/src-tauri/Cargo.lock",
+    "crates/scenario-host/Cargo.lock",
+    "apps/ecocorridor-desktop/src-tauri/Cargo.lock",
 )
 LICENSE_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9.+-]*")
 DENIED_LICENSE_MARKERS = ("AGPL-", "SSPL-")

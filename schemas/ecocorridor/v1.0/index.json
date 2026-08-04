@@ -1,0 +1,109 @@
+{
+  "contracts": [
+    {
+      "file": "ConnectivityProjectBundle.schema.json",
+      "name": "ConnectivityProjectBundle"
+    },
+    {
+      "file": "ConnectivityDecisionBrief.schema.json",
+      "name": "ConnectivityDecisionBrief"
+    },
+    {
+      "file": "ConnectivityModelFitness.schema.json",
+      "name": "ConnectivityModelFitness"
+    },
+    {
+      "file": "ResistanceHypothesis.schema.json",
+      "name": "ResistanceHypothesis"
+    },
+    {
+      "file": "FocalAreaSet.schema.json",
+      "name": "FocalAreaSet"
+    },
+    {
+      "file": "ConnectivityScenario.schema.json",
+      "name": "ConnectivityScenario"
+    },
+    {
+      "file": "InterventionSite.schema.json",
+      "name": "InterventionSite"
+    },
+    {
+      "file": "InterventionOption.schema.json",
+      "name": "InterventionOption"
+    },
+    {
+      "file": "ConnectivityCostBasis.schema.json",
+      "name": "ConnectivityCostBasis"
+    },
+    {
+      "file": "ActionEffectRaster.schema.json",
+      "name": "ActionEffectRaster"
+    },
+    {
+      "file": "ActionEffectBasis.schema.json",
+      "name": "ActionEffectBasis"
+    },
+    {
+      "file": "SafeguardRecord.schema.json",
+      "name": "SafeguardRecord"
+    },
+    {
+      "file": "RiskReviewMask.schema.json",
+      "name": "RiskReviewMask"
+    },
+    {
+      "file": "ConnectivityDecisionRule.schema.json",
+      "name": "ConnectivityDecisionRule"
+    },
+    {
+      "file": "ConnectivityRunPlan.schema.json",
+      "name": "ConnectivityRunPlan"
+    },
+    {
+      "file": "DirectConnectivityRun.schema.json",
+      "name": "DirectConnectivityRun"
+    },
+    {
+      "file": "PortfolioDecisionSummary.schema.json",
+      "name": "PortfolioDecisionSummary"
+    },
+    {
+      "file": "ConnectivityEvidenceClaim.schema.json",
+      "name": "ConnectivityEvidenceClaim"
+    },
+    {
+      "file": "GridAlignmentPlan.schema.json",
+      "name": "GridAlignmentPlan"
+    },
+    {
+      "file": "GridAlignmentApproval.schema.json",
+      "name": "GridAlignmentApproval"
+    },
+    {
+      "file": "SensitiveDataAuthorization.schema.json",
+      "name": "SensitiveDataAuthorization"
+    },
+    {
+      "file": "EngineManifest.schema.json",
+      "name": "EngineManifest"
+    },
+    {
+      "file": "ResourcePolicy.schema.json",
+      "name": "ResourcePolicy"
+    },
+    {
+      "file": "ConnectivityExportEligibility.schema.json",
+      "name": "ConnectivityExportEligibility"
+    },
+    {
+      "file": "ModelRevision.schema.json",
+      "name": "ModelRevision"
+    },
+    {
+      "file": "SemanticModelDiff.schema.json",
+      "name": "SemanticModelDiff"
+    }
+  ],
+  "schema_version": "1.0"
+}

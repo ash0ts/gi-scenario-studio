@@ -1,0 +1,40 @@
+# Threat model
+
+## Protected assets
+
+- W&B and model-provider credentials;
+- raw ecological locations and licensed layers;
+- model revisions, resistance and focal rasters, intervention effects;
+- direct-run artifacts and evidence identities;
+- signed packaged worker and Circuitscape resources.
+
+## Trust boundaries and controls
+
+- **Renderer → native host:** strict RPC method allowlist and byte limits; the
+  renderer never receives credentials.
+- **Native host → worker:** JSONL over standard streams, redacted initialization,
+  verified executable hash, environment allowlist, no shell.
+- **Worker → Circuitscape:** isolated directory, normalized paths, fixed resource
+  limits, pinned engine manifest, no network. Restart recovery is fail-closed:
+  only a one-use, attempt-bound receipt written after confirmed whole-tree exit
+  may requeue a `RUNNING` job. On POSIX, confirmation means the isolated process
+  group is absent after natural exit or bounded termination; child exit, PID
+  disappearance alone, or a sent signal is not proof that descendants stopped.
+  Hard-crash or mismatched state requires a local orphan-process audit and
+  performs no automatic mutation. Windows release evidence remains blocked
+  until the launcher owns a native Job Object from process creation and confirms
+  active-process zero; `taskkill` and direct-child wait are not substitutes.
+- **Archives and spatial assets:** path containment, symlink/device rejection,
+  decompressed limits, explicit grid transforms, provenance and authorization.
+- **Worker → W&B/Weave:** producer-atomic outbox, deterministic idempotency,
+  sensitive-key and local-path redaction, fail-closed destination policy.
+- **Assistant:** read-only evidence authorization, minimized context, mandatory
+  nested Weave trace, deterministic numeric/unit/evidence/limitation validator.
+- **Protected producer → Pages/release:** consumers resolve the exact successful
+  run attempt, workflow and head SHA, immutable artifact ID, embedded identity,
+  and server-reported digest before accepting evidence. A local or copied
+  package cannot self-attest into either publication path.
+
+Prompt injection, an unavailable trace, fabricated evidence ID, sensitive
+location disclosure, or a request to alter/approve a model returns no assistant
+answer. Deterministic Evidence Rail navigation remains available.

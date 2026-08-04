@@ -1,0 +1,19 @@
+{
+  "name": "@scenario-platform/ui-foundations",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./tokens.css": "./src/tokens.css"
+  },
+  "types": "./src/index.ts",
+  "sideEffects": ["**/*.css"],
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.8",
+    "react": "^19.0.0"
+  }
+}

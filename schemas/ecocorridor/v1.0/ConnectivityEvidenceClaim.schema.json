@@ -1,0 +1,249 @@
+{
+  "$defs": {
+    "EvidenceEdge": {
+      "additionalProperties": false,
+      "properties": {
+        "from_node_id": {
+          "title": "From Node Id",
+          "type": "string"
+        },
+        "relation": {
+          "title": "Relation",
+          "type": "string"
+        },
+        "to_node_id": {
+          "title": "To Node Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "from_node_id",
+        "to_node_id",
+        "relation"
+      ],
+      "title": "EvidenceEdge",
+      "type": "object"
+    },
+    "EvidenceNode": {
+      "additionalProperties": false,
+      "properties": {
+        "attributes": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": "Attributes",
+          "type": "object"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "node_id": {
+          "title": "Node Id",
+          "type": "string"
+        },
+        "node_type": {
+          "enum": [
+            "CLAIM",
+            "RULE",
+            "METRIC",
+            "DIRECT_RUN",
+            "SCENARIO",
+            "RASTER_DIFF",
+            "ASSET",
+            "ENGINE_MANIFEST",
+            "QA",
+            "ASSUMPTION",
+            "AUTHORIZATION",
+            "ARTIFACT",
+            "CACHE_LINEAGE",
+            "COST_BASIS",
+            "PORTFOLIO",
+            "OPTION",
+            "REDUCER",
+            "FEASIBILITY",
+            "DISPOSITION",
+            "CURRENT_MAP",
+            "FOOTPRINT_PROOF",
+            "MODEL_REVISION",
+            "RUN_PLAN",
+            "SUPPORTING_CLAIM"
+          ],
+          "title": "Node Type",
+          "type": "string"
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "minLength": 64,
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sha256"
+        }
+      },
+      "required": [
+        "node_id",
+        "node_type",
+        "label"
+      ],
+      "title": "EvidenceNode",
+      "type": "object"
+    }
+  },
+  "$id": "https://schemas.ecocorridor.local/1.0/ConnectivityEvidenceClaim.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "claim_id": {
+      "title": "Claim Id",
+      "type": "string"
+    },
+    "claim_kind": {
+      "default": "DIRECT_PAIR_METRIC",
+      "enum": [
+        "DIRECT_PAIR_METRIC",
+        "DIRECT_MAP_DIAGNOSTIC",
+        "DIRECT_QA",
+        "COST",
+        "FEASIBILITY",
+        "AGGREGATE_RULE",
+        "PORTFOLIO_DISPOSITION"
+      ],
+      "title": "Claim Kind",
+      "type": "string"
+    },
+    "direct_run_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Direct Run Ids",
+      "type": "array"
+    },
+    "edges": {
+      "items": {
+        "$ref": "#/$defs/EvidenceEdge"
+      },
+      "minItems": 1,
+      "title": "Edges",
+      "type": "array"
+    },
+    "limitations": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Limitations",
+      "type": "array"
+    },
+    "nodes": {
+      "items": {
+        "$ref": "#/$defs/EvidenceNode"
+      },
+      "minItems": 1,
+      "title": "Nodes",
+      "type": "array"
+    },
+    "pair_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Pair Id"
+    },
+    "portfolio_id": {
+      "title": "Portfolio Id",
+      "type": "string"
+    },
+    "root_node_id": {
+      "title": "Root Node Id",
+      "type": "string"
+    },
+    "rule_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Rule Id"
+    },
+    "scenario_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Scenario Id"
+    },
+    "text": {
+      "title": "Text",
+      "type": "string"
+    },
+    "units": {
+      "title": "Units",
+      "type": "string"
+    },
+    "value": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "string"
+        }
+      ],
+      "title": "Value"
+    }
+  },
+  "required": [
+    "claim_id",
+    "text",
+    "value",
+    "units",
+    "portfolio_id",
+    "root_node_id",
+    "nodes",
+    "edges",
+    "limitations"
+  ],
+  "title": "ConnectivityEvidenceClaim",
+  "type": "object"
+}

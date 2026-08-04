@@ -1,0 +1,88 @@
+{
+  "assumption_ledger_sha256": "f589e24c238e298bfe1f3aec3aa2fdfc346d65dbd298a67dc37b0d823243e435",
+  "claim_safety_sha256": "7f0d951b1fc090246f85bcf61f253cdad5f84084401c831ba50acdb47eb8e34f",
+  "cost_basis_sha256": "7eaae1d47e6905fd126e73497534542b2de9a863d5f612e5f718c8b0910dd439",
+  "decision_snapshot_sha256": "95ec18ac16524f8d82d8b40128867ee0efdfde0e9776237c6a091d53b96045e7",
+  "engine_environment_sha256": "cd7d041f0067ac4cc252196c571e4f020b66bf7f0cb0778059a7125be225223f",
+  "engine_manifest_sha256": "5997a813487ea3ebbf9fac4b850d59f348fc0d9625ceebb3b92118f8c21afcdc",
+  "evidence_bundle": {
+    "byte_size": 11744721,
+    "claim_safety_sha256": "7f0d951b1fc090246f85bcf61f253cdad5f84084401c831ba50acdb47eb8e34f",
+    "file_count": 19288,
+    "filename": "ridgeway-direct-evidence-f93ad36f3cdc.tar.gz",
+    "format": "tar+gzip",
+    "internal_index_path": "bundle-index.json",
+    "internal_index_sha256": "125e341cd537d3511cf2db57379c2f40d91cbf4dce041e5dd6d852f9ee5af427",
+    "packager_sha256": "d716a2deecd512a1722d7da8409b2e70efbd5fab5caa7622ed617f2b1d5d4599",
+    "sha256": "f93ad36f3cdc36b702a3cb612cbd52c306f5b231f353982de0adaee6174e5e24"
+  },
+  "evidence_index_sha256": "b4e1c893cf7ed37adfa6de7be427cdd2793504358caaefbc83333b280144b28c",
+  "fixture_version": "1.2.0",
+  "license": "CC0-1.0",
+  "map_job_count": 60,
+  "map_matrix_coherence": {
+    "absolute_tolerance": 1e-08,
+    "map_jobs_compared": 60,
+    "maximum_absolute_difference": 0.0,
+    "maximum_relative_difference": 0.0,
+    "pair_values_compared": 120,
+    "relative_tolerance": 1e-07,
+    "status": "WITHIN_TOLERANCE"
+  },
+  "matrix_job_count": 1536,
+  "model_sha256": "ba5483e16c4a8c051ccdb7b2d28102631f518dec65d8c715d350115bc1be9351",
+  "physics_model_sha256": "8981c2af8051c2cc19e130f181ff32569f4a55ebba2081340312eed96ba91cd3",
+  "process_tree_exit_evidence": {
+    "confirmation_methods": {
+      "POSIX_PROCESS_GROUP_ABSENT_AFTER_NATURAL_EXIT": 1596
+    },
+    "jobs_with_confirmed_tree_exit": 1596,
+    "jobs_without_confirmed_tree_exit": 0,
+    "unique_process_identities": 1596
+  },
+  "projection_contract": "RidgewayFixture/ecocorridor-replay/v1.2",
+  "release_replay_eligible": true,
+  "resource_observability": {
+    "directSolverWallSeconds": 22015.057006754534,
+    "energyStatus": "ESTIMATED",
+    "estimatedEnergyKwh": 0.09172940419481056,
+    "estimatedEnergyLowerKwh": 0.030576468064936854,
+    "estimatedEnergyUpperKwh": 0.24461174451949483,
+    "jobsWithObservations": 1596,
+    "jobsWithoutObservations": 0,
+    "limitation": "Energy values are active-duration proxy estimates with recorded coefficient bounds, not meter readings or carbon values. Memory is the maximum sampled single-process footprint and may miss between-sample peaks.",
+    "maximumObservedSingleProcessMemoryBytes": 819838976,
+    "peakMemoryIsSampledLowerBound": true,
+    "peakMemoryStatus": "MEASURED",
+    "proposerWallTimeStatus": "NOT_APPLICABLE_FIXED_ENUMERATION"
+  },
+  "schema_version": "ridgeway-direct-evidence/v1.1",
+  "teaching_selection": {
+    "carry_forward_portfolio_id": "portfolio_d3aa8b1e170ffd76b322",
+    "evidence_mode": "DIRECT_CIRCUITSCAPE",
+    "hypothesis_collapse_portfolio_id": "portfolio_3ae12008aed85b1fc1a6",
+    "low_cost_caution_portfolio_id": "portfolio_cef73d6212fedba4dcc6",
+    "map_rerun_portfolio_ids": [
+      "portfolio_7c18e581b57ca9363bb7",
+      "portfolio_cef73d6212fedba4dcc6",
+      "portfolio_d3aa8b1e170ffd76b322",
+      "portfolio_9b7cb6c531a53fcaffa6",
+      "portfolio_3ae12008aed85b1fc1a6"
+    ],
+    "observed_map_review_flags": {
+      "carry": true,
+      "caution": true,
+      "collapse": true,
+      "over": true
+    },
+    "over_budget_portfolio_id": "portfolio_9b7cb6c531a53fcaffa6",
+    "release_eligible": true,
+    "selection_notes": {
+      "carry_forward": "Passes all configured modeled connectivity rules across the 12 reviewed scenarios and is within the synthetic screening cost cap; a configured road-mask diagnostic review flag must be resolved before ecological, field, and engineering feasibility review.",
+      "hypothesis_collapse": "Has a strong observed target-resistance-reduction rank under one reviewed resistance hypothesis and a materially lower rank under another; no animal-use inference.",
+      "low_cost_caution": "Direct modeled result with a configured road-mask diagnostic review flag; no animal-use or road-safety inference.",
+      "over_budget": "Passes all configured modeled connectivity rules across the 12 reviewed scenarios but exceeds the synthetic screening cost cap."
+    }
+  },
+  "workflow_manifest_sha256": "c875c9ac3bdfb1a7921843c1e0f926cacfc6979e964b2fd546fa6a62313eac6f"
+}

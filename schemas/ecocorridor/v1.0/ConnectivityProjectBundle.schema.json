@@ -1,0 +1,1619 @@
+{
+  "$defs": {
+    "ActionCellReplacement": {
+      "additionalProperties": false,
+      "properties": {
+        "column": {
+          "minimum": 0,
+          "title": "Column",
+          "type": "integer"
+        },
+        "resistance": {
+          "exclusiveMinimum": 0,
+          "title": "Resistance",
+          "type": "number"
+        },
+        "row": {
+          "minimum": 0,
+          "title": "Row",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "row",
+        "column",
+        "resistance"
+      ],
+      "title": "ActionCellReplacement",
+      "type": "object"
+    },
+    "ActionEffectBasis": {
+      "additionalProperties": false,
+      "properties": {
+        "assumptions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Assumptions",
+          "type": "array"
+        },
+        "basis_id": {
+          "title": "Basis Id",
+          "type": "string"
+        },
+        "citation": {
+          "title": "Citation",
+          "type": "string"
+        },
+        "confidence": {
+          "$ref": "#/$defs/EvidenceConfidence"
+        },
+        "evidence_source": {
+          "title": "Evidence Source",
+          "type": "string"
+        },
+        "limitations": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Limitations",
+          "type": "array"
+        },
+        "purpose": {
+          "title": "Purpose",
+          "type": "string"
+        },
+        "reviewed_at": {
+          "format": "date-time",
+          "title": "Reviewed At",
+          "type": "string"
+        },
+        "reviewer": {
+          "title": "Reviewer",
+          "type": "string"
+        }
+      },
+      "required": [
+        "basis_id",
+        "purpose",
+        "evidence_source",
+        "citation",
+        "reviewer",
+        "reviewed_at",
+        "confidence"
+      ],
+      "title": "ActionEffectBasis",
+      "type": "object"
+    },
+    "ActionEffectRaster": {
+      "additionalProperties": false,
+      "properties": {
+        "basis": {
+          "$ref": "#/$defs/ActionEffectBasis"
+        },
+        "cells": {
+          "items": {
+            "$ref": "#/$defs/ActionCellReplacement"
+          },
+          "minItems": 1,
+          "title": "Cells",
+          "type": "array"
+        },
+        "effect_id": {
+          "title": "Effect Id",
+          "type": "string"
+        },
+        "footprint_asset_id": {
+          "title": "Footprint Asset Id",
+          "type": "string"
+        },
+        "grid_id": {
+          "title": "Grid Id",
+          "type": "string"
+        },
+        "scenario_id": {
+          "title": "Scenario Id",
+          "type": "string"
+        },
+        "sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "effect_id",
+        "scenario_id",
+        "grid_id",
+        "footprint_asset_id",
+        "cells",
+        "basis",
+        "sha256"
+      ],
+      "title": "ActionEffectRaster",
+      "type": "object"
+    },
+    "AssetKind": {
+      "enum": [
+        "RESISTANCE_RASTER",
+        "FOCAL_RASTER",
+        "ACTION_EFFECT",
+        "REVIEW_MASK",
+        "VECTOR_CONTEXT",
+        "DOCUMENT",
+        "REFERENCE_MATRIX",
+        "REFERENCE_CURRENT"
+      ],
+      "title": "AssetKind",
+      "type": "string"
+    },
+    "CloudDisposition": {
+      "enum": [
+        "RAW_ALLOWED",
+        "GENERALIZED_DERIVATIVE_ONLY",
+        "DEDICATED_OR_SELF_MANAGED_ONLY",
+        "PROHIBITED"
+      ],
+      "title": "CloudDisposition",
+      "type": "string"
+    },
+    "ConnectivityAsset": {
+      "additionalProperties": false,
+      "properties": {
+        "asset_id": {
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "authorization": {
+          "$ref": "#/$defs/SensitiveDataAuthorization"
+        },
+        "byte_size": {
+          "minimum": 0,
+          "title": "Byte Size",
+          "type": "integer"
+        },
+        "grid": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RasterGrid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "kind": {
+          "$ref": "#/$defs/AssetKind"
+        },
+        "license": {
+          "title": "License",
+          "type": "string"
+        },
+        "media_type": {
+          "title": "Media Type",
+          "type": "string"
+        },
+        "relative_path": {
+          "title": "Relative Path",
+          "type": "string"
+        },
+        "sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "vintage": {
+          "title": "Vintage",
+          "type": "string"
+        }
+      },
+      "required": [
+        "asset_id",
+        "kind",
+        "title",
+        "relative_path",
+        "sha256",
+        "byte_size",
+        "media_type",
+        "source",
+        "vintage",
+        "license",
+        "authorization"
+      ],
+      "title": "ConnectivityAsset",
+      "type": "object"
+    },
+    "ConnectivityCostBasis": {
+      "additionalProperties": false,
+      "properties": {
+        "assumptions": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Assumptions",
+          "type": "array"
+        },
+        "cost_basis_id": {
+          "title": "Cost Basis Id",
+          "type": "string"
+        },
+        "currency": {
+          "title": "Currency",
+          "type": "string"
+        },
+        "option_costs": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "minProperties": 1,
+          "title": "Option Costs",
+          "type": "object"
+        },
+        "reviewed_at": {
+          "format": "date-time",
+          "title": "Reviewed At",
+          "type": "string"
+        },
+        "reviewer": {
+          "title": "Reviewer",
+          "type": "string"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "vintage": {
+          "title": "Vintage",
+          "type": "string"
+        }
+      },
+      "required": [
+        "cost_basis_id",
+        "source",
+        "currency",
+        "vintage",
+        "reviewer",
+        "reviewed_at",
+        "option_costs",
+        "assumptions"
+      ],
+      "title": "ConnectivityCostBasis",
+      "type": "object"
+    },
+    "ConnectivityDecisionBrief": {
+      "additionalProperties": false,
+      "properties": {
+        "brief_id": {
+          "title": "Brief Id",
+          "type": "string"
+        },
+        "budget_amount": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Budget Amount"
+        },
+        "conceptual": {
+          "default": false,
+          "title": "Conceptual",
+          "type": "boolean"
+        },
+        "cost_vintage": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cost Vintage"
+        },
+        "currency": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Currency"
+        },
+        "decision_owner": {
+          "title": "Decision Owner",
+          "type": "string"
+        },
+        "decision_question": {
+          "title": "Decision Question",
+          "type": "string"
+        },
+        "intended_use": {
+          "title": "Intended Use",
+          "type": "string"
+        },
+        "non_goals": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Non Goals",
+          "type": "array"
+        },
+        "required_next_action": {
+          "title": "Required Next Action",
+          "type": "string"
+        },
+        "safeguard_guilds": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Safeguard Guilds",
+          "type": "array"
+        },
+        "target_guilds": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Target Guilds",
+          "type": "array"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "brief_id",
+        "title",
+        "decision_question",
+        "decision_owner",
+        "intended_use",
+        "target_guilds",
+        "required_next_action"
+      ],
+      "title": "ConnectivityDecisionBrief",
+      "type": "object"
+    },
+    "ConnectivityDecisionRule": {
+      "additionalProperties": false,
+      "properties": {
+        "metric": {
+          "$ref": "#/$defs/RuleMetric"
+        },
+        "operator": {
+          "$ref": "#/$defs/RuleOperator"
+        },
+        "pair_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Pair Ids",
+          "type": "array"
+        },
+        "rationale": {
+          "title": "Rationale",
+          "type": "string"
+        },
+        "required": {
+          "default": true,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "rule_id": {
+          "title": "Rule Id",
+          "type": "string"
+        },
+        "scenario_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Scenario Ids",
+          "type": "array"
+        },
+        "threshold": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            }
+          ],
+          "title": "Threshold"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "rule_id",
+        "title",
+        "metric",
+        "operator",
+        "threshold",
+        "rationale"
+      ],
+      "title": "ConnectivityDecisionRule",
+      "type": "object"
+    },
+    "ConnectivityModelFitness": {
+      "additionalProperties": false,
+      "properties": {
+        "attestations": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Attestations",
+          "type": "array"
+        },
+        "dimensions": {
+          "items": {
+            "$ref": "#/$defs/FitnessDimension"
+          },
+          "title": "Dimensions",
+          "type": "array"
+        },
+        "intended_use": {
+          "title": "Intended Use",
+          "type": "string"
+        },
+        "passport_id": {
+          "title": "Passport Id",
+          "type": "string"
+        },
+        "reviewed_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reviewed At"
+        },
+        "reviewed_by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reviewed By"
+        },
+        "revision_id": {
+          "title": "Revision Id",
+          "type": "string"
+        },
+        "unresolved_assumptions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Unresolved Assumptions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "passport_id",
+        "revision_id",
+        "intended_use",
+        "dimensions"
+      ],
+      "title": "ConnectivityModelFitness",
+      "type": "object"
+    },
+    "ConnectivityScenario": {
+      "additionalProperties": false,
+      "properties": {
+        "blas_threads": {
+          "const": 1,
+          "default": 1,
+          "title": "Blas Threads",
+          "type": "integer"
+        },
+        "engine_mode": {
+          "const": "RASTER_PAIRWISE",
+          "default": "RASTER_PAIRWISE",
+          "title": "Engine Mode",
+          "type": "string"
+        },
+        "focal_set_id": {
+          "title": "Focal Set Id",
+          "type": "string"
+        },
+        "future_condition": {
+          "title": "Future Condition",
+          "type": "string"
+        },
+        "grid_id": {
+          "title": "Grid Id",
+          "type": "string"
+        },
+        "guild_id": {
+          "title": "Guild Id",
+          "type": "string"
+        },
+        "included_pair_ids": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Included Pair Ids",
+          "type": "array"
+        },
+        "julia_threads": {
+          "const": 1,
+          "default": 1,
+          "title": "Julia Threads",
+          "type": "integer"
+        },
+        "life_stage": {
+          "title": "Life Stage",
+          "type": "string"
+        },
+        "maturity_horizon": {
+          "title": "Maturity Horizon",
+          "type": "string"
+        },
+        "neighbor_rule": {
+          "$ref": "#/$defs/NeighborRule",
+          "default": "EIGHT"
+        },
+        "precision": {
+          "const": "double",
+          "default": "double",
+          "title": "Precision",
+          "type": "string"
+        },
+        "raster_semantics": {
+          "const": "RESISTANCE",
+          "default": "RESISTANCE",
+          "title": "Raster Semantics",
+          "type": "string"
+        },
+        "resistance_average": {
+          "$ref": "#/$defs/ResistanceAverage",
+          "default": "ARITHMETIC"
+        },
+        "resistance_hypothesis_id": {
+          "title": "Resistance Hypothesis Id",
+          "type": "string"
+        },
+        "safeguard": {
+          "default": false,
+          "title": "Safeguard",
+          "type": "boolean"
+        },
+        "scenario_id": {
+          "title": "Scenario Id",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "scenario_id",
+        "title",
+        "guild_id",
+        "life_stage",
+        "resistance_hypothesis_id",
+        "focal_set_id",
+        "future_condition",
+        "maturity_horizon",
+        "included_pair_ids",
+        "grid_id"
+      ],
+      "title": "ConnectivityScenario",
+      "type": "object"
+    },
+    "EvidenceConfidence": {
+      "enum": [
+        "CONFIRMED",
+        "INFERRED",
+        "ASSUMED"
+      ],
+      "title": "EvidenceConfidence",
+      "type": "string"
+    },
+    "FitnessDimension": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "key": {
+          "enum": [
+            "intended_use",
+            "movement_process",
+            "focal_rationale",
+            "resistance_derivation",
+            "validation_evidence",
+            "spatial_scale",
+            "boundary_effects",
+            "action_effect_evidence",
+            "scenario_coverage",
+            "sensitivity",
+            "numerical_qa",
+            "unresolved_assumptions"
+          ],
+          "title": "Key",
+          "type": "string"
+        },
+        "notes": {
+          "title": "Notes",
+          "type": "string"
+        },
+        "reviewer": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reviewer"
+        },
+        "status": {
+          "enum": [
+            "ACCEPTED",
+            "REVIEW_REQUIRED",
+            "BLOCKING"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "status",
+        "notes"
+      ],
+      "title": "FitnessDimension",
+      "type": "object"
+    },
+    "FocalAreaSet": {
+      "additionalProperties": false,
+      "properties": {
+        "asset_id": {
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "focal_ids": {
+          "items": {
+            "type": "integer"
+          },
+          "minItems": 2,
+          "title": "Focal Ids",
+          "type": "array"
+        },
+        "focal_set_id": {
+          "title": "Focal Set Id",
+          "type": "string"
+        },
+        "grid_id": {
+          "title": "Grid Id",
+          "type": "string"
+        },
+        "guild_id": {
+          "title": "Guild Id",
+          "type": "string"
+        },
+        "pairs": {
+          "items": {
+            "$ref": "#/$defs/FocalPair"
+          },
+          "minItems": 1,
+          "title": "Pairs",
+          "type": "array"
+        },
+        "rationale": {
+          "title": "Rationale",
+          "type": "string"
+        },
+        "reviewed_at": {
+          "format": "date-time",
+          "title": "Reviewed At",
+          "type": "string"
+        },
+        "reviewed_by": {
+          "title": "Reviewed By",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "focal_set_id",
+        "title",
+        "asset_id",
+        "grid_id",
+        "guild_id",
+        "focal_ids",
+        "pairs",
+        "rationale",
+        "reviewed_by",
+        "reviewed_at"
+      ],
+      "title": "FocalAreaSet",
+      "type": "object"
+    },
+    "FocalPair": {
+      "additionalProperties": false,
+      "properties": {
+        "from_focal_id": {
+          "exclusiveMinimum": 0,
+          "title": "From Focal Id",
+          "type": "integer"
+        },
+        "pair_id": {
+          "title": "Pair Id",
+          "type": "string"
+        },
+        "required": {
+          "default": true,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "to_focal_id": {
+          "exclusiveMinimum": 0,
+          "title": "To Focal Id",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "pair_id",
+        "from_focal_id",
+        "to_focal_id"
+      ],
+      "title": "FocalPair",
+      "type": "object"
+    },
+    "InterventionKind": {
+      "enum": [
+        "NO_ACTION",
+        "CROSSING_APPROACH",
+        "CROSSING_COMPLETE_GUIDANCE",
+        "APPROACH_RESTORATION",
+        "COMPOSITE",
+        "SURVEY_FIRST"
+      ],
+      "title": "InterventionKind",
+      "type": "string"
+    },
+    "InterventionOption": {
+      "additionalProperties": false,
+      "properties": {
+        "cost": {
+          "minimum": 0,
+          "title": "Cost",
+          "type": "number"
+        },
+        "cost_vintage": {
+          "title": "Cost Vintage",
+          "type": "string"
+        },
+        "currency": {
+          "title": "Currency",
+          "type": "string"
+        },
+        "dependencies": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Dependencies",
+          "type": "array"
+        },
+        "effects": {
+          "items": {
+            "$ref": "#/$defs/ActionEffectRaster"
+          },
+          "title": "Effects",
+          "type": "array"
+        },
+        "exclusions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Exclusions",
+          "type": "array"
+        },
+        "external_feasibility_evidence": {
+          "items": {
+            "type": "string"
+          },
+          "title": "External Feasibility Evidence",
+          "type": "array"
+        },
+        "kind": {
+          "$ref": "#/$defs/InterventionKind"
+        },
+        "land_access": {
+          "title": "Land Access",
+          "type": "string"
+        },
+        "maintenance": {
+          "title": "Maintenance",
+          "type": "string"
+        },
+        "option_id": {
+          "title": "Option Id",
+          "type": "string"
+        },
+        "reviewed_at": {
+          "format": "date-time",
+          "title": "Reviewed At",
+          "type": "string"
+        },
+        "reviewed_by": {
+          "title": "Reviewed By",
+          "type": "string"
+        },
+        "site_id": {
+          "title": "Site Id",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "unresolved_concerns": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Unresolved Concerns",
+          "type": "array"
+        }
+      },
+      "required": [
+        "option_id",
+        "site_id",
+        "title",
+        "kind",
+        "cost",
+        "currency",
+        "cost_vintage",
+        "land_access",
+        "maintenance",
+        "reviewed_by",
+        "reviewed_at"
+      ],
+      "title": "InterventionOption",
+      "type": "object"
+    },
+    "InterventionSite": {
+      "additionalProperties": false,
+      "properties": {
+        "footprint_asset_id": {
+          "title": "Footprint Asset Id",
+          "type": "string"
+        },
+        "known_constraints": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Known Constraints",
+          "type": "array"
+        },
+        "option_ids": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Option Ids",
+          "type": "array"
+        },
+        "reviewed_at": {
+          "format": "date-time",
+          "title": "Reviewed At",
+          "type": "string"
+        },
+        "reviewed_by": {
+          "title": "Reviewed By",
+          "type": "string"
+        },
+        "site_id": {
+          "title": "Site Id",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "site_id",
+        "title",
+        "footprint_asset_id",
+        "option_ids",
+        "reviewed_by",
+        "reviewed_at"
+      ],
+      "title": "InterventionSite",
+      "type": "object"
+    },
+    "ModelRevision": {
+      "additionalProperties": false,
+      "properties": {
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "created_by": {
+          "title": "Created By",
+          "type": "string"
+        },
+        "diff_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Diff Id"
+        },
+        "model_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Model Sha256",
+          "type": "string"
+        },
+        "parent_revision_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Revision Id"
+        },
+        "project_id": {
+          "title": "Project Id",
+          "type": "string"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "revision_id": {
+          "title": "Revision Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "revision_id",
+        "project_id",
+        "created_at",
+        "created_by",
+        "reason",
+        "model_sha256"
+      ],
+      "title": "ModelRevision",
+      "type": "object"
+    },
+    "NeighborRule": {
+      "enum": [
+        "FOUR",
+        "EIGHT"
+      ],
+      "title": "NeighborRule",
+      "type": "string"
+    },
+    "RasterGrid": {
+      "additionalProperties": false,
+      "properties": {
+        "cell_area_m2": {
+          "exclusiveMinimum": 0,
+          "title": "Cell Area M2",
+          "type": "number"
+        },
+        "crs": {
+          "title": "Crs",
+          "type": "string"
+        },
+        "grid_id": {
+          "title": "Grid Id",
+          "type": "string"
+        },
+        "height": {
+          "exclusiveMinimum": 0,
+          "title": "Height",
+          "type": "integer"
+        },
+        "nodata": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Nodata"
+        },
+        "transform": {
+          "maxItems": 6,
+          "minItems": 6,
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Transform",
+          "type": "array"
+        },
+        "value_kind": {
+          "$ref": "#/$defs/RasterValueKind"
+        },
+        "width": {
+          "exclusiveMinimum": 0,
+          "title": "Width",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "grid_id",
+        "crs",
+        "width",
+        "height",
+        "transform",
+        "nodata",
+        "value_kind",
+        "cell_area_m2"
+      ],
+      "title": "RasterGrid",
+      "type": "object"
+    },
+    "RasterValueKind": {
+      "enum": [
+        "CONTINUOUS",
+        "CATEGORICAL",
+        "IDENTIFIER",
+        "MASK"
+      ],
+      "title": "RasterValueKind",
+      "type": "string"
+    },
+    "ResistanceAverage": {
+      "enum": [
+        "ARITHMETIC",
+        "HARMONIC"
+      ],
+      "title": "ResistanceAverage",
+      "type": "string"
+    },
+    "ResistanceHypothesis": {
+      "additionalProperties": false,
+      "properties": {
+        "confidence": {
+          "$ref": "#/$defs/EvidenceConfidence"
+        },
+        "derivation": {
+          "title": "Derivation",
+          "type": "string"
+        },
+        "evidence_citations": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence Citations",
+          "type": "array"
+        },
+        "future_condition": {
+          "title": "Future Condition",
+          "type": "string"
+        },
+        "grid_id": {
+          "title": "Grid Id",
+          "type": "string"
+        },
+        "guild_id": {
+          "title": "Guild Id",
+          "type": "string"
+        },
+        "hypothesis_id": {
+          "title": "Hypothesis Id",
+          "type": "string"
+        },
+        "life_stage": {
+          "title": "Life Stage",
+          "type": "string"
+        },
+        "maturity_horizon": {
+          "title": "Maturity Horizon",
+          "type": "string"
+        },
+        "rationale": {
+          "title": "Rationale",
+          "type": "string"
+        },
+        "resistance_asset_id": {
+          "title": "Resistance Asset Id",
+          "type": "string"
+        },
+        "reviewed_at": {
+          "format": "date-time",
+          "title": "Reviewed At",
+          "type": "string"
+        },
+        "reviewed_by": {
+          "title": "Reviewed By",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "hypothesis_id",
+        "title",
+        "guild_id",
+        "life_stage",
+        "future_condition",
+        "maturity_horizon",
+        "resistance_asset_id",
+        "grid_id",
+        "rationale",
+        "derivation",
+        "evidence_citations",
+        "confidence",
+        "reviewed_by",
+        "reviewed_at"
+      ],
+      "title": "ResistanceHypothesis",
+      "type": "object"
+    },
+    "ResourcePolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "max_current_raster_bytes": {
+          "exclusiveMinimum": 0,
+          "title": "Max Current Raster Bytes",
+          "type": "integer"
+        },
+        "max_direct_jobs": {
+          "exclusiveMinimum": 0,
+          "title": "Max Direct Jobs",
+          "type": "integer"
+        },
+        "max_input_bytes": {
+          "exclusiveMinimum": 0,
+          "title": "Max Input Bytes",
+          "type": "integer"
+        },
+        "max_materialized_bytes": {
+          "exclusiveMinimum": 0,
+          "title": "Max Materialized Bytes",
+          "type": "integer"
+        },
+        "max_wall_seconds_per_job": {
+          "exclusiveMinimum": 0,
+          "title": "Max Wall Seconds Per Job",
+          "type": "integer"
+        },
+        "require_explicit_oversize_approval": {
+          "default": true,
+          "title": "Require Explicit Oversize Approval",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "max_input_bytes",
+        "max_materialized_bytes",
+        "max_current_raster_bytes",
+        "max_direct_jobs",
+        "max_wall_seconds_per_job"
+      ],
+      "title": "ResourcePolicy",
+      "type": "object"
+    },
+    "RiskReviewMask": {
+      "additionalProperties": false,
+      "properties": {
+        "asset_id": {
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "grid_id": {
+          "title": "Grid Id",
+          "type": "string"
+        },
+        "interpretation": {
+          "title": "Interpretation",
+          "type": "string"
+        },
+        "mask_id": {
+          "title": "Mask Id",
+          "type": "string"
+        },
+        "not_an_objective_notice": {
+          "const": "Current redistribution is a diagnostic review signal, not predicted animal use.",
+          "default": "Current redistribution is a diagnostic review signal, not predicted animal use.",
+          "title": "Not An Objective Notice",
+          "type": "string"
+        },
+        "review_trigger_percent": {
+          "minimum": 0,
+          "title": "Review Trigger Percent",
+          "type": "number"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mask_id",
+        "title",
+        "asset_id",
+        "grid_id",
+        "review_trigger_percent",
+        "interpretation"
+      ],
+      "title": "RiskReviewMask",
+      "type": "object"
+    },
+    "RuleMetric": {
+      "enum": [
+        "MIN_RESISTANCE_REDUCTION_PERCENT",
+        "MAX_RESISTANCE_INCREASE_PERCENT",
+        "MAX_REVIEW_MASK_CURRENT_INCREASE_PERCENT",
+        "MAX_COST",
+        "REQUIRE_ACCEPTED_QA",
+        "REQUIRE_SAFEGUARD_NONREGRESSION"
+      ],
+      "title": "RuleMetric",
+      "type": "string"
+    },
+    "RuleOperator": {
+      "enum": [
+        "AT_LEAST",
+        "AT_MOST",
+        "EQUALS"
+      ],
+      "title": "RuleOperator",
+      "type": "string"
+    },
+    "SafeguardRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "concerns": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Concerns",
+          "type": "array"
+        },
+        "guild_id": {
+          "title": "Guild Id",
+          "type": "string"
+        },
+        "nonregression_threshold_percent": {
+          "minimum": 0,
+          "title": "Nonregression Threshold Percent",
+          "type": "number"
+        },
+        "reviewed_at": {
+          "format": "date-time",
+          "title": "Reviewed At",
+          "type": "string"
+        },
+        "reviewed_by": {
+          "title": "Reviewed By",
+          "type": "string"
+        },
+        "safeguard_id": {
+          "title": "Safeguard Id",
+          "type": "string"
+        },
+        "scenario_ids": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Scenario Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "safeguard_id",
+        "guild_id",
+        "scenario_ids",
+        "nonregression_threshold_percent",
+        "reviewed_by",
+        "reviewed_at"
+      ],
+      "title": "SafeguardRecord",
+      "type": "object"
+    },
+    "SensitiveDataAuthorization": {
+      "additionalProperties": false,
+      "properties": {
+        "approved_deployments": {
+          "items": {
+            "enum": [
+              "WANDB_CLOUD",
+              "DEDICATED",
+              "SELF_MANAGED",
+              "LOCAL_ONLY"
+            ],
+            "type": "string"
+          },
+          "title": "Approved Deployments",
+          "type": "array"
+        },
+        "asset_id": {
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "cloud_disposition": {
+          "$ref": "#/$defs/CloudDisposition"
+        },
+        "export_allowed": {
+          "title": "Export Allowed",
+          "type": "boolean"
+        },
+        "generalized_asset_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Generalized Asset Id"
+        },
+        "license_spdx_or_name": {
+          "title": "License Spdx Or Name",
+          "type": "string"
+        },
+        "notes": {
+          "default": "",
+          "title": "Notes",
+          "type": "string"
+        },
+        "ownership": {
+          "title": "Ownership",
+          "type": "string"
+        },
+        "retention_policy": {
+          "title": "Retention Policy",
+          "type": "string"
+        },
+        "reviewed_at": {
+          "format": "date-time",
+          "title": "Reviewed At",
+          "type": "string"
+        },
+        "reviewer": {
+          "title": "Reviewer",
+          "type": "string"
+        },
+        "sensitivity": {
+          "$ref": "#/$defs/SensitivityClass"
+        },
+        "spatial_redaction": {
+          "title": "Spatial Redaction",
+          "type": "string"
+        }
+      },
+      "required": [
+        "asset_id",
+        "ownership",
+        "license_spdx_or_name",
+        "sensitivity",
+        "cloud_disposition",
+        "export_allowed",
+        "retention_policy",
+        "spatial_redaction",
+        "approved_deployments",
+        "reviewer",
+        "reviewed_at"
+      ],
+      "title": "SensitiveDataAuthorization",
+      "type": "object"
+    },
+    "SensitivityClass": {
+      "enum": [
+        "PUBLIC",
+        "INTERNAL",
+        "SENSITIVE_LOCATION",
+        "CRITICAL_INFRASTRUCTURE",
+        "TRIBAL_OR_CULTURAL",
+        "LICENSE_RESTRICTED"
+      ],
+      "title": "SensitivityClass",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.ecocorridor.local/1.0/ConnectivityProjectBundle.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "assets": {
+      "items": {
+        "$ref": "#/$defs/ConnectivityAsset"
+      },
+      "title": "Assets",
+      "type": "array"
+    },
+    "cost_basis": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ConnectivityCostBasis"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "decision_brief": {
+      "$ref": "#/$defs/ConnectivityDecisionBrief"
+    },
+    "decision_rules": {
+      "items": {
+        "$ref": "#/$defs/ConnectivityDecisionRule"
+      },
+      "title": "Decision Rules",
+      "type": "array"
+    },
+    "fitness": {
+      "$ref": "#/$defs/ConnectivityModelFitness"
+    },
+    "focal_area_sets": {
+      "items": {
+        "$ref": "#/$defs/FocalAreaSet"
+      },
+      "title": "Focal Area Sets",
+      "type": "array"
+    },
+    "intervention_options": {
+      "items": {
+        "$ref": "#/$defs/InterventionOption"
+      },
+      "title": "Intervention Options",
+      "type": "array"
+    },
+    "intervention_sites": {
+      "items": {
+        "$ref": "#/$defs/InterventionSite"
+      },
+      "title": "Intervention Sites",
+      "type": "array"
+    },
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    },
+    "resistance_hypotheses": {
+      "items": {
+        "$ref": "#/$defs/ResistanceHypothesis"
+      },
+      "title": "Resistance Hypotheses",
+      "type": "array"
+    },
+    "resource_policy": {
+      "$ref": "#/$defs/ResourcePolicy"
+    },
+    "review_masks": {
+      "items": {
+        "$ref": "#/$defs/RiskReviewMask"
+      },
+      "title": "Review Masks",
+      "type": "array"
+    },
+    "revision": {
+      "$ref": "#/$defs/ModelRevision"
+    },
+    "safeguards": {
+      "items": {
+        "$ref": "#/$defs/SafeguardRecord"
+      },
+      "title": "Safeguards",
+      "type": "array"
+    },
+    "scenarios": {
+      "items": {
+        "$ref": "#/$defs/ConnectivityScenario"
+      },
+      "title": "Scenarios",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    }
+  },
+  "required": [
+    "project_id",
+    "title",
+    "revision",
+    "decision_brief",
+    "assets",
+    "resistance_hypotheses",
+    "focal_area_sets",
+    "scenarios",
+    "intervention_sites",
+    "intervention_options",
+    "fitness",
+    "resource_policy"
+  ],
+  "title": "ConnectivityProjectBundle",
+  "type": "object"
+}

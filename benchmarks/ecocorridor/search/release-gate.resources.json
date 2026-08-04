@@ -1,0 +1,45 @@
+{
+  "boundary": "One local search-gate campaign process. Scientific scores and selection order are outside this observation and remain bound by the deterministic campaign digest.",
+  "campaign_sha256": "d43c377f886d753105f5fd8bf47e6763ddaa40763537740d1136b702cd39b509",
+  "claim_boundary": "Energy is an active-duration proxy estimate with coefficient bounds, not measured electricity or carbon. Peak memory is a sampled process lower bound.",
+  "execution_method_sources": {
+    "benchmark_sha256": "1215bca4fbcc8d37a598dec5835fa7be4c2f7dad3b9ae008667149a37d392642",
+    "resource_observability_sha256": "dfa5f7187975109e5fb0f0d7b73c8d116cf9e3c7f8b2715f2411f537ca86dc11"
+  },
+  "report_sha256": "5ad0da070803706302ad332f751cb73e9478473029c93d43bd9a994b61d3b71e",
+  "resource_observation": {
+    "assumptions": [
+      "The bounded proposer executes in one worker process; ExtraTrees uses n_jobs=1.",
+      "Search memory is whole-worker resident memory during the boundary, not incremental proposer allocation; unrelated concurrent worker activity may be included.",
+      "The energy value is a wall-time power proxy, not a meter reading.",
+      "Concurrent jobs are estimated independently from their own active durations."
+    ],
+    "boundary": "SEARCH_PROPOSER",
+    "boundary_description": "One complete local search release-gate campaign, including random, Sobol, and Sobol-plus-ExtraTrees proposal replays.",
+    "cache_lookup_wall_seconds": null,
+    "energy_estimate_lower_kwh": 4.7526751215264086e-05,
+    "energy_estimate_lower_watts": 5.0,
+    "energy_estimate_upper_kwh": 0.0003802140097221127,
+    "energy_estimate_upper_watts": 40.0,
+    "energy_estimate_watts": 15.0,
+    "energy_kwh": 0.00014258025364579226,
+    "energy_method": "SINGLE_THREAD_ACTIVE_POWER_PROXY_V1",
+    "energy_status": "ESTIMATED",
+    "exclusions": [
+      "Python orchestration, file synchronization, display, networking, cooling, and embodied energy are outside the estimate boundary.",
+      "Sampled process memory may miss peaks between samples and is a lower bound.",
+      "No location-based electricity or carbon conversion is performed."
+    ],
+    "hardware": "os=Darwin;arch=arm64;logical_cpus=18",
+    "observation_id": "resource:search-release-campaign",
+    "peak_memory_bytes": 121389632,
+    "peak_memory_is_lower_bound": true,
+    "peak_memory_method": "MACOS_PROC_PID_RUSAGE_V2_PHYS_FOOTPRINT_SAMPLED",
+    "peak_memory_sample_count": 318,
+    "peak_memory_sampling_interval_seconds": 0.1,
+    "peak_memory_status": "MEASURED",
+    "proposer_wall_seconds": 34.21926087499014,
+    "solver_wall_seconds": null
+  },
+  "schema_version": "ecocorridor-search-resource-observation/v1.0"
+}

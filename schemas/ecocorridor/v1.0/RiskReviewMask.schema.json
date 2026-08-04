@@ -1,0 +1,48 @@
+{
+  "$id": "https://schemas.ecocorridor.local/1.0/RiskReviewMask.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "asset_id": {
+      "title": "Asset Id",
+      "type": "string"
+    },
+    "grid_id": {
+      "title": "Grid Id",
+      "type": "string"
+    },
+    "interpretation": {
+      "title": "Interpretation",
+      "type": "string"
+    },
+    "mask_id": {
+      "title": "Mask Id",
+      "type": "string"
+    },
+    "not_an_objective_notice": {
+      "const": "Current redistribution is a diagnostic review signal, not predicted animal use.",
+      "default": "Current redistribution is a diagnostic review signal, not predicted animal use.",
+      "title": "Not An Objective Notice",
+      "type": "string"
+    },
+    "review_trigger_percent": {
+      "minimum": 0,
+      "title": "Review Trigger Percent",
+      "type": "number"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    }
+  },
+  "required": [
+    "mask_id",
+    "title",
+    "asset_id",
+    "grid_id",
+    "review_trigger_percent",
+    "interpretation"
+  ],
+  "title": "RiskReviewMask",
+  "type": "object"
+}

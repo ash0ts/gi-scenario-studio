@@ -1,0 +1,275 @@
+name: Eco protected W&B and Weave gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      evaluation_run_id:
+        description: Successful same-commit stage-one assistant evaluation run ID
+        required: true
+        type: string
+      practitioner_ratings_sha256:
+        description: Lowercase SHA-256 of the exact-answer-bound ratings envelope
+        required: true
+        type: string
+      practitioner_ratings_signature_sha256:
+        description: Lowercase SHA-256 of the detached ratings signature
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ecocorridor-observability-finalization
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  finalize-exact-evaluation:
+    name: Bind signed usefulness ratings to immutable evaluation evidence
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment:
+      # Required reviewers protect the approved ratings verification key and
+      # confirm this dispatch points at the intended stage-one evidence run.
+      name: ecocorridor-observability-integration
+    permissions:
+      actions: read
+      contents: read
+    env:
+      ECOCORRIDOR_ASSISTANT_RATINGS_PUBLIC_KEY_B64: ${{ vars.ECOCORRIDOR_ASSISTANT_RATINGS_PUBLIC_KEY_B64 }}
+      ECOCORRIDOR_ASSISTANT_RATINGS_PUBLIC_KEY_SHA256: ${{ vars.ECOCORRIDOR_ASSISTANT_RATINGS_PUBLIC_KEY_SHA256 }}
+    steps:
+      - name: Require the exact protected main source
+        shell: bash
+        run: |
+          test "${GITHUB_REF}" = "refs/heads/main" || {
+            echo "::error::Protected assistant finalization may run only from main."
+            exit 1
+          }
+          test "${GITHUB_WORKFLOW_SHA}" = "${GITHUB_SHA}" || {
+            echo "::error::Assistant finalization workflow source differs from the checked-out commit."
+            exit 1
+          }
+
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python and uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install locked release-evidence dependencies
+        run: uv sync --locked --extra ecocorridor --extra release
+
+      - name: Validate finalization inputs without printing protected values
+        shell: bash
+        env:
+          EVALUATION_RUN_ID: ${{ inputs.evaluation_run_id }}
+          RATINGS_SHA256: ${{ inputs.practitioner_ratings_sha256 }}
+          RATINGS_SIGNATURE_SHA256: ${{ inputs.practitioner_ratings_signature_sha256 }}
+        run: |
+          [[ "${EVALUATION_RUN_ID}" =~ ^[1-9][0-9]*$ ]] || {
+            echo "::error::Evaluation run ID must be a positive integer."
+            exit 1
+          }
+          [[ "${RATINGS_SHA256}" =~ ^[0-9a-f]{64}$ ]] || {
+            echo "::error::Ratings SHA-256 is invalid."
+            exit 1
+          }
+          [[ "${RATINGS_SIGNATURE_SHA256}" =~ ^[0-9a-f]{64}$ ]] || {
+            echo "::error::Ratings signature SHA-256 is invalid."
+            exit 1
+          }
+          test -n "${ECOCORRIDOR_ASSISTANT_RATINGS_PUBLIC_KEY_B64:-}" || {
+            echo "::error::Missing approved assistant-ratings public key."
+            exit 1
+          }
+          [[ "${ECOCORRIDOR_ASSISTANT_RATINGS_PUBLIC_KEY_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] || {
+            echo "::error::Assistant-ratings public-key SHA-256 is invalid."
+            exit 1
+          }
+      - name: Resolve exact successful stage-one run and immutable artifact
+        id: resolve_candidate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVALUATION_RUN_ID: ${{ inputs.evaluation_run_id }}
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          candidate_root="${RUNNER_TEMP}/assistant-evaluation-candidate"
+          mkdir -p "${candidate_root}"
+          gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/repos/${GITHUB_REPOSITORY}/actions/runs/${EVALUATION_RUN_ID}" \
+            > "${candidate_root}/source-run-api.json"
+          gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/repos/${GITHUB_REPOSITORY}/actions/runs/${EVALUATION_RUN_ID}/artifacts?name=ecocorridor-assistant-evaluation-candidate" \
+            > "${candidate_root}/source-artifacts-api.json"
+          uv run --no-sync python scripts/resolve_github_actions_provenance.py \
+            --run-json "${candidate_root}/source-run-api.json" \
+            --artifacts-json "${candidate_root}/source-artifacts-api.json" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --expected-run-id "${EVALUATION_RUN_ID}" \
+            --expected-sha "${EXPECTED_SHA}" \
+            --expected-workflow-path \
+            .github/workflows/ecocorridor-assistant-evaluation.yml \
+            --expected-artifact-name ecocorridor-assistant-evaluation-candidate \
+            --output \
+            "${candidate_root}/ecocorridor-assistant-evaluation-source-provenance.json" \
+            --github-output "${GITHUB_OUTPUT}"
+
+      - name: Download the exact digest-verified stage-one artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ steps.resolve_candidate.outputs.artifact_id }}
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.evaluation_run_id }}
+          path: ${{ runner.temp }}/assistant-evaluation-candidate
+          digest-mismatch: error
+
+      - name: Verify the downloaded stage-one evidence shape
+        shell: bash
+        run: |
+          candidate_root="${RUNNER_TEMP}/assistant-evaluation-candidate"
+          test -f "${candidate_root}/ecocorridor-assistant-evaluation-producer-identity.json"
+          test -f "${candidate_root}/ecocorridor-assistant-evaluation-pending.json"
+          test -f "${candidate_root}/ecocorridor-assistant-evaluation-cases.json"
+          test -f "${candidate_root}/ecocorridor-observability-release-gate.json"
+          python3 scripts/github_actions_producer_identity.py verify \
+            --identity \
+            "${candidate_root}/ecocorridor-assistant-evaluation-producer-identity.json" \
+            --provenance \
+            "${candidate_root}/ecocorridor-assistant-evaluation-source-provenance.json"
+
+      - name: Materialize checksum-pinned exact-answer-bound usefulness ratings
+        shell: bash
+        env:
+          RATINGS_SHA256: ${{ inputs.practitioner_ratings_sha256 }}
+          RATINGS_SIGNATURE_SHA256: ${{ inputs.practitioner_ratings_signature_sha256 }}
+          ECOCORRIDOR_ASSISTANT_RATINGS_B64: ${{ secrets.ECOCORRIDOR_ASSISTANT_RATINGS_B64 }}
+          ECOCORRIDOR_ASSISTANT_RATINGS_SIGNATURE_B64: ${{ secrets.ECOCORRIDOR_ASSISTANT_RATINGS_SIGNATURE_B64 }}
+        run: |
+          umask 077
+          test -n "${ECOCORRIDOR_ASSISTANT_RATINGS_B64:-}" || {
+            echo "::error::Missing exact signed practitioner ratings payload."
+            exit 1
+          }
+          test -n "${ECOCORRIDOR_ASSISTANT_RATINGS_SIGNATURE_B64:-}" || {
+            echo "::error::Missing detached practitioner-ratings signature."
+            exit 1
+          }
+          python3 - <<'PY'
+          import base64
+          import hashlib
+          import os
+          from pathlib import Path
+
+          ratings = base64.b64decode(
+              os.environ["ECOCORRIDOR_ASSISTANT_RATINGS_B64"], validate=True
+          )
+          signature = base64.b64decode(
+              os.environ["ECOCORRIDOR_ASSISTANT_RATINGS_SIGNATURE_B64"], validate=True
+          )
+          assert 1 <= len(ratings) <= 1024 * 1024
+          assert len(signature) == 64
+          assert hashlib.sha256(ratings).hexdigest() == os.environ["RATINGS_SHA256"]
+          assert (
+              hashlib.sha256(signature).hexdigest()
+              == os.environ["RATINGS_SIGNATURE_SHA256"]
+          )
+          Path(os.environ["RUNNER_TEMP"], "ecocorridor-assistant-ratings.json").write_bytes(
+              ratings
+          )
+          Path(os.environ["RUNNER_TEMP"], "ecocorridor-assistant-ratings.sig").write_bytes(
+              signature
+          )
+          PY
+
+      - name: Materialize and verify the approved public verification key
+        shell: bash
+        env:
+          PUBLIC_KEY_B64: ${{ vars.ECOCORRIDOR_ASSISTANT_RATINGS_PUBLIC_KEY_B64 }}
+          PUBLIC_KEY_SHA256: ${{ vars.ECOCORRIDOR_ASSISTANT_RATINGS_PUBLIC_KEY_SHA256 }}
+          PUBLIC_KEY_PATH: ${{ runner.temp }}/ecocorridor-assistant-ratings-public-key.bin
+        run: |
+          umask 077
+          python3 - <<'PY'
+          import base64
+          import hashlib
+          import os
+          from pathlib import Path
+
+          raw = base64.b64decode(os.environ["PUBLIC_KEY_B64"], validate=True)
+          assert len(raw) == 32, "approved ratings key is not one raw Ed25519 public key"
+          assert hashlib.sha256(raw).hexdigest() == os.environ["PUBLIC_KEY_SHA256"]
+          Path(os.environ["PUBLIC_KEY_PATH"]).write_bytes(raw)
+          PY
+
+      - name: Finalize the exact candidate without rerunning provider or traces
+        shell: bash
+        run: |
+          candidate_root="${RUNNER_TEMP}/assistant-evaluation-candidate"
+          uv run --no-sync python scripts/validate_ecocorridor_assistant_evaluation.py \
+            "${candidate_root}/ecocorridor-assistant-evaluation-pending.json" \
+            "${candidate_root}/ecocorridor-assistant-evaluation-cases.json" \
+            --finalized-report "${RUNNER_TEMP}/ecocorridor-assistant-evaluation.json" \
+            --ratings "${RUNNER_TEMP}/ecocorridor-assistant-ratings.json" \
+            --ratings-signature "${RUNNER_TEMP}/ecocorridor-assistant-ratings.sig" \
+            --ratings-public-key-b64 "${ECOCORRIDOR_ASSISTANT_RATINGS_PUBLIC_KEY_B64}" \
+            --expected-ratings-key-sha256 \
+            "${ECOCORRIDOR_ASSISTANT_RATINGS_PUBLIC_KEY_SHA256}" \
+            --expected-commit "${GITHUB_SHA}"
+          cp "${candidate_root}/ecocorridor-assistant-evaluation-source-provenance.json" \
+            "${RUNNER_TEMP}/ecocorridor-assistant-evaluation-source-provenance.json"
+          cp "${candidate_root}/ecocorridor-assistant-evaluation-producer-identity.json" \
+            "${RUNNER_TEMP}/ecocorridor-assistant-evaluation-producer-identity.json"
+          cp "${candidate_root}/ecocorridor-observability-release-gate.json" \
+            "${RUNNER_TEMP}/ecocorridor-observability-release-gate.json"
+          cp "${candidate_root}/ecocorridor-assistant-evaluation-pending.json" \
+            "${RUNNER_TEMP}/ecocorridor-assistant-evaluation-pending.json"
+          cp "${candidate_root}/ecocorridor-assistant-evaluation-cases.json" \
+            "${RUNNER_TEMP}/ecocorridor-assistant-evaluation-cases.json"
+
+      - name: Bind finalization bytes to this exact producer attempt
+        shell: bash
+        run: |
+          python3 scripts/github_actions_producer_identity.py create \
+            --output "${RUNNER_TEMP}/ecocorridor-observability-finalization-producer-identity.json" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --run-id "${GITHUB_RUN_ID}" \
+            --run-attempt "${GITHUB_RUN_ATTEMPT}" \
+            --workflow-path .github/workflows/ecocorridor-observability-integration.yml \
+            --git-ref "${GITHUB_REF}" \
+            --workflow-ref "${GITHUB_WORKFLOW_REF}" \
+            --workflow-sha "${GITHUB_WORKFLOW_SHA}" \
+            --head-sha "${GITHUB_SHA}"
+
+      - name: Preserve finalized protected release-gate evidence
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: ecocorridor-observability-release-evidence
+          path: |
+            ${{ runner.temp }}/ecocorridor-observability-finalization-producer-identity.json
+            ${{ runner.temp }}/ecocorridor-assistant-evaluation-producer-identity.json
+            ${{ runner.temp }}/ecocorridor-assistant-evaluation-source-provenance.json
+            ${{ runner.temp }}/ecocorridor-observability-release-gate.json
+            ${{ runner.temp }}/ecocorridor-assistant-evaluation-pending.json
+            ${{ runner.temp }}/ecocorridor-assistant-evaluation-cases.json
+            ${{ runner.temp }}/ecocorridor-assistant-evaluation.json
+            ${{ runner.temp }}/ecocorridor-assistant-ratings.json
+            ${{ runner.temp }}/ecocorridor-assistant-ratings.sig
+            ${{ runner.temp }}/ecocorridor-assistant-ratings-public-key.bin
+          if-no-files-found: error
+          retention-days: 90
