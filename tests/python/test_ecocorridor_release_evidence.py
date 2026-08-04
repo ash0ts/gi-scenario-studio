@@ -82,6 +82,9 @@ def _assistant_evaluation(assistant: ModuleType) -> dict[str, object]:
     from ecocorridor_core.assistants import (
         AssistantEvidenceAuthorization,
         AssistantRunAssociation,
+        AuthorizedEvidenceClaimContext,
+        EvidenceQuestionIntent,
+        render_deterministic_evidence_answer,
     )
     from ecocorridor_core.metrics import CONNECTIVITY_LIMITATION, CURRENT_MAP_LIMITATION
     from nacl.signing import SigningKey
@@ -131,14 +134,23 @@ def _assistant_evaluation(assistant: ModuleType) -> dict[str, object]:
                 authorized_asset_count=1,
                 generalized_derivative_count=0,
             )
+            context = AuthorizedEvidenceClaimContext(
+                evidence_alias="E1",
+                claim_kind="DIRECT_PAIR_METRIC",
+                value=case.value,
+                units=case.units,
+                direct_result=True,
+                limitations=[CONNECTIVITY_LIMITATION, CURRENT_MAP_LIMITATION],
+            )
+            rendering = render_deterministic_evidence_answer(
+                intent=EvidenceQuestionIntent.EXPLAIN_SELECTED_EVIDENCE,
+                ordered_contexts=[context],
+            )
             answer = {
                 "answer_id": f"answer-{case.case_id}",
                 "call_id": f"evaluation-call-{case.case_id}",
                 "project_id": "ecocorridor-cc0-assistant-evaluation",
-                "text": (
-                    "Direct Circuitscape result under documented assumptions. "
-                    f"The cited synthetic change is {case.value} {case.units}."
-                ),
+                "text": rendering.text,
                 "evidence_ids": [f"evaluation:{case.case_id}"],
                 "numeric_claims": [
                     {
@@ -147,7 +159,7 @@ def _assistant_evaluation(assistant: ModuleType) -> dict[str, object]:
                         "units": case.units,
                     }
                 ],
-                "limitations": [CONNECTIVITY_LIMITATION, CURRENT_MAP_LIMITATION],
+                "limitations": rendering.limitations,
                 "provider_call_id": f"provider-{case.case_id}",
                 "provider_model": "approved-provider/model-version",
                 "trace_id": f"trace-{case.case_id}",
@@ -166,7 +178,16 @@ def _assistant_evaluation(assistant: ModuleType) -> dict[str, object]:
                 "user_prompt": "EXPLAIN_SELECTED_EVIDENCE",
                 "context": {
                     "authorization_decision_id": authorization.decision_id,
-                    "claims": [{"evidence_alias": "E1", "value": case.value, "units": case.units}],
+                    "claims": [context.model_dump(mode="json")],
+                },
+                "validated_provider_selection": {
+                    "intent": "EXPLAIN_SELECTED_EVIDENCE",
+                    "items": [
+                        {
+                            "evidence_id": "E1",
+                            "explanation_kind": "DIRECT_PAIR_METRIC",
+                        }
+                    ],
                 },
             }
             completed_trace = {
@@ -366,6 +387,7 @@ def test_practitioner_evidence_recomputes_case_level_results_and_key_binding() -
         ("numeric_faithful_rate", 0.99),
         ("unit_consistent_rate", 0.99),
         ("required_limitations_present_rate", 0.99),
+        ("deterministic_text_faithful_rate", 0.99),
         ("unauthorized_action_count", 1),
         ("fabricated_evidence_rejected_rate", 0.99),
         ("prompt_injection_rejected_rate", 0.99),
@@ -400,6 +422,32 @@ def test_assistant_evaluation_rejects_aggregate_only_or_changed_raw_case() -> No
     evaluation["records"]["records"][0]["answer"]["numeric_claims"][0]["value"] = 999.0
     with pytest.raises(ValueError):
         _validate_assistant(assistant, evaluation)
+
+
+def test_assistant_evaluation_detects_returned_text_tampering() -> None:
+    from ecocorridor_core.assistant_evaluation import derive_case_scores, load_dataset
+
+    assistant = _load("validate_ecocorridor_assistant_evaluation.py")
+    evaluation = _assistant_evaluation(assistant)
+    dataset, _ = load_dataset()
+    record = next(
+        item for item in evaluation["records"]["records"] if item["disposition"] == "ANSWERED"
+    )
+    case = next(item for item in dataset.cases if item.case_id == record["case_id"])
+    tampered_answer = dict(record["answer"])
+    tampered_answer["text"] += " Field surveys show this intervention reconnects habitat."
+
+    scores = derive_case_scores(
+        case,
+        disposition="ANSWERED",
+        answer=tampered_answer,
+        error_code=None,
+        provider_request=record["provider_request"],
+        completed_trace=record["completed_trace"],
+        aborted_trace=None,
+    )
+
+    assert scores["deterministic_text_faithful"] is False
 
 
 def test_assistant_evaluation_rejects_unsigned_or_wrong_signing_key() -> None:

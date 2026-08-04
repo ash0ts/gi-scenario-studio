@@ -203,7 +203,8 @@ existing tag.
 Provider-backed assistant evidence must include the pinned local and Weave
 dataset identities, raw per-case records and Merkle root, evaluation URL and
 call ID, 100% deterministic numeric/unit/limitation and adversarial-case gates,
-zero unauthorized actions or sensitive-location leaks, confirmed trace
+byte-exact deterministic worker-render faithfulness, zero unauthorized actions
+or sensitive-location leaks, confirmed trace
 readback, and at least 80% positive usefulness over at least five signed,
 redacted case ratings. Each rating row is bound to the exact case-input hash,
 immutable case-record hash, answer hash, trace ID, provider-call ID, provider

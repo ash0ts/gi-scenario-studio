@@ -57,6 +57,7 @@ from .engine import (
     validate_effective_circuitscape_configuration,
 )
 from .footprints import ProfessionalFootprintProofDocument
+from .interventions import canonicalize_portfolio
 from .metrics import (
     CONNECTIVITY_LIMITATION,
     validate_evidence_claim,
@@ -2153,6 +2154,24 @@ class EcoProjectStore:
             raise ValueError("analysis bundle belongs to another project")
         if bundle.revision.revision_id != plan.revision_id:
             raise ValueError("analysis bundle revision differs from the immutable plan")
+        canonical_vectors: dict[tuple[str, ...], str] = {}
+        for portfolio in plan.portfolios:
+            expected = canonicalize_portfolio(
+                bundle.intervention_sites,
+                bundle.intervention_options,
+                portfolio.selections,
+            )
+            if portfolio != expected:
+                raise ValueError(
+                    "analysis portfolio identity differs from its canonical reviewed option vector"
+                )
+            previous = canonical_vectors.get(expected.canonical_option_ids)
+            if previous is not None:
+                raise ValueError(
+                    "analysis contains duplicate canonical portfolio vectors: "
+                    f"{previous}, {portfolio.portfolio_id}"
+                )
+            canonical_vectors[expected.canonical_option_ids] = portfolio.portfolio_id
         bundle_json = canonical_json(bundle.model_dump(mode="json"))
         bundle_sha256 = hashlib.sha256(bundle_json.encode("utf-8")).hexdigest()
         now = _now()

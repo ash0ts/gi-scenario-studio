@@ -28,11 +28,11 @@ from ecocorridor_core.contracts import (
     PairResistanceMetric,
     PortfolioDecisionSummary,
     PortfolioDisposition,
-    PortfolioSelection,
     QAStatus,
     RasterGrid,
     RasterValueKind,
 )
+from ecocorridor_core.interventions import canonicalize_portfolio
 from ecocorridor_core.metrics import build_pair_metric_claim
 from ecocorridor_core.observability import EcoRpcObservabilityAdapter
 from ecocorridor_core.project_store import EcoProjectStore
@@ -959,6 +959,24 @@ def test_analysis_gates_results_and_engine_start(tmp_path: Path) -> None:
     )["data"]
     assert planned["arithmetic"] == "1 portfolios × 12 scenarios = 12 direct Circuitscape jobs"
 
+    forged = baseline.model_copy(update={"portfolio_id": "portfolio_forged_identity"})
+    forged_plan = plan.model_copy(
+        update={
+            "analysis_id": "analysis-forged",
+            "portfolios": [forged],
+            "baseline_portfolio_id": forged.portfolio_id,
+        }
+    )
+    with pytest.raises(RPCFault) as forged_error:
+        dispatcher.dispatch(
+            "connectivity.analysis.plan",
+            {
+                "project_directory": str(project),
+                "plan": forged_plan.model_dump(mode="json"),
+            },
+        )
+    assert forged_error.value.error.code == "ANALYSIS_PLAN_INVALID"
+
     status = dispatcher.dispatch(
         "connectivity.analysis.status",
         {"project_directory": str(project), "analysis_id": "analysis-1"},
@@ -1452,10 +1470,10 @@ def test_synchronous_completed_executor_payload_is_rejected(tmp_path: Path) -> N
     )
     engine_manifest_file_digest = hashlib.sha256(engine_manifest_path.read_bytes()).hexdigest()
     no_action = next(item for item in site_options if item.kind.value == "NO_ACTION")
-    portfolio = PortfolioSelection(
-        portfolio_id="portfolio-direct",
-        selections={site.site_id: no_action.option_id},
-        canonical_option_ids=(no_action.option_id,),
+    portfolio = canonicalize_portfolio(
+        bundle.intervention_sites,
+        bundle.intervention_options,
+        {site.site_id: no_action.option_id},
     )
     plan = ConnectivityRunPlan(
         analysis_id="analysis-direct",

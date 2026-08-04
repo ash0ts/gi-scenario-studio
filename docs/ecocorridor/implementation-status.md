@@ -144,8 +144,20 @@ current direct evidence.
   synthetic-only no-login web replay.
 - Distinct accessible desktop UI, responsive screenshot baselines, and local
   Evidence Rail.
+- Reopened professional projects now hydrate the complete retained Decision
+  Brief and Resource Policy into their revision editors. Stable record IDs,
+  conceptual/reviewed class, guild lists, null-budget semantics, and custom
+  resource limits survive an edit; unchanged saves remain disabled and Undo
+  returns to the authoritative worker snapshot rather than an application
+  default.
 - Parameterized W&B/Weave adapters, sensitive-data authorization, separate
   native credential boundaries, and deterministic assistant response checks.
+- The Evidence Assistant provider can select and order only opaque authorized
+  evidence aliases with closed explanation kinds. It cannot author user-visible
+  prose, values, units, limitations, or recommendations. The worker renders the
+  complete answer from locally revalidated evidence, and release evaluation
+  independently re-renders it byte-for-byte so plausible unsupported habitat,
+  survey, or feasibility prose cannot pass as a validated answer.
 - W&B delivery now treats a deterministic immutable telemetry-projection
   Artifact—not mutable Run summary markers—as cloud completion authority. A
   retry validates and re-downloads that exact canonical projection plus every
@@ -167,6 +179,10 @@ current direct evidence.
   execution can resolve them differently. The same per-array identity rule is
   emitted in public JSON Schema and generated Zod validators, while the worker
   remains the authoritative import boundary.
+- Every analysis portfolio is re-derived from its complete site-sorted reviewed
+  option vector. Validation and the transactional repository both reject forged
+  portfolio IDs and duplicate vectors, preventing one ecological selection from
+  being scheduled or counted under multiple evidence identities.
 - Nested action-effect and action-effect-basis IDs are also globally unique.
   Professional preflight and intervention preview now block modeled actions
   whose site, option, external feasibility evidence, reviewer, source,

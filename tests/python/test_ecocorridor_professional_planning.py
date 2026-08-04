@@ -478,6 +478,26 @@ def test_run_plan_requires_canonical_complete_ensemble_and_no_action_baseline() 
     )
     assert "BASELINE_PORTFOLIO_NOT_NO_ACTION" in _codes(validate_run_plan(fixture.bundle, invalid))
 
+    forged = baseline.model_copy(update={"portfolio_id": "portfolio_forged_identity"})
+    forged_plan = plan.model_copy(
+        update={
+            "portfolios": [forged],
+            "baseline_portfolio_id": forged.portfolio_id,
+        }
+    )
+    assert "PORTFOLIO_IDENTITY_MISMATCH" in _codes(validate_run_plan(fixture.bundle, forged_plan))
+
+    duplicate_vector_plan = plan.model_copy(
+        update={
+            "portfolios": [baseline, forged],
+            "direct_job_count": 2 * len(fixture.bundle.scenarios),
+            "solver_job_cap": 2 * len(fixture.bundle.scenarios),
+        }
+    )
+    assert "PLAN_PORTFOLIO_VECTOR_DUPLICATE" in _codes(
+        validate_run_plan(fixture.bundle, duplicate_vector_plan)
+    )
+
 
 def test_analysis_model_snapshot_is_immutable_after_project_edits(tmp_path: Path) -> None:
     fixture = build_ridgeway_fixture()
@@ -505,6 +525,26 @@ def test_analysis_model_snapshot_is_immutable_after_project_edits(tmp_path: Path
             skeleton={"source": "test"},
         )
         store.store_bundle(fixture.bundle)
+        forged = baseline.model_copy(update={"portfolio_id": "portfolio_forged_identity"})
+        forged_plan = plan.model_copy(
+            update={
+                "analysis_id": "snapshot-analysis-forged",
+                "portfolios": [forged],
+                "baseline_portfolio_id": forged.portfolio_id,
+            }
+        )
+        with pytest.raises(ValueError, match="canonical reviewed option vector"):
+            store.create_analysis(forged_plan, bundle=fixture.bundle)
+        duplicate_plan = plan.model_copy(
+            update={
+                "analysis_id": "snapshot-analysis-duplicate",
+                "portfolios": [baseline, baseline],
+                "direct_job_count": 2 * len(fixture.bundle.scenarios),
+                "solver_job_cap": 2 * len(fixture.bundle.scenarios),
+            }
+        )
+        with pytest.raises(ValueError, match="duplicate canonical portfolio vectors"):
+            store.create_analysis(duplicate_plan, bundle=fixture.bundle)
         store.create_analysis(plan, bundle=fixture.bundle)
         changed = fixture.bundle.decision_brief.model_copy(
             update={"decision_question": "A later, different decision question"}

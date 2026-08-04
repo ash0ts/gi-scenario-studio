@@ -30,7 +30,7 @@ from .contracts import (
     canonical_sha256,
 )
 from .grid import grid_identity
-from .interventions import action_effect_sha256
+from .interventions import action_effect_sha256, canonicalize_portfolio
 from .metrics import iter_bundle_ecological_claim_texts
 
 FindingSeverity = Literal["BLOCKING", "REVIEW_REQUIRED", "INFORMATION"]
@@ -1353,6 +1353,26 @@ def validate_run_plan(
                 "Give each canonical portfolio one unique evidence identity.",
             )
         )
+    canonical_vector_owners: dict[tuple[str, ...], str] = {}
+    ordered_site_ids = sorted(sites)
+    for portfolio in plan.portfolios:
+        if set(portfolio.selections) != set(sites):
+            continue
+        vector = tuple(portfolio.selections[site_id] for site_id in ordered_site_ids)
+        previous = canonical_vector_owners.get(vector)
+        if previous is not None and previous != portfolio.portfolio_id:
+            findings.append(
+                _finding(
+                    "PLAN_PORTFOLIO_VECTOR_DUPLICATE",
+                    portfolio.portfolio_id,
+                    (
+                        "Remove the duplicate ecological portfolio vector; it is already "
+                        f"represented by {previous}."
+                    ),
+                )
+            )
+        else:
+            canonical_vector_owners[vector] = portfolio.portfolio_id
     if set(plan.scenario_ids) != scenario_ids:
         findings.append(
             _finding(
@@ -1444,11 +1464,13 @@ def _validate_portfolio(
         return findings
     canonical: list[str] = []
     contains_survey_first = False
+    option_reference_invalid = False
     for site_id in sorted(sites):
         site = sites[site_id]
         option_id = portfolio.selections[site_id]
         option = options.get(option_id)
         if option is None or option_id not in site.option_ids or option.site_id != site_id:
+            option_reference_invalid = True
             findings.append(
                 _finding(
                     "PORTFOLIO_OPTION_REFERENCE_INVALID",
@@ -1459,6 +1481,19 @@ def _validate_portfolio(
             continue
         canonical.append(option_id)
         contains_survey_first |= option.kind == InterventionKind.SURVEY_FIRST
+    if not option_reference_invalid:
+        expected = canonicalize_portfolio(sites.values(), options.values(), portfolio.selections)
+        if portfolio.portfolio_id != expected.portfolio_id:
+            findings.append(
+                _finding(
+                    "PORTFOLIO_IDENTITY_MISMATCH",
+                    portfolio.portfolio_id,
+                    (
+                        "Use the worker-derived portfolio ID for this exact site-sorted option "
+                        f"vector: {expected.portfolio_id}."
+                    ),
+                )
+            )
     if tuple(canonical) != portfolio.canonical_option_ids:
         findings.append(
             _finding(

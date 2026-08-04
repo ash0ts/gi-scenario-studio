@@ -666,26 +666,165 @@ class NumericEvidenceReference(ContractModel):
         return value
 
 
-class BooleanEvidenceReference(ContractModel):
-    """Exact Boolean disposition declared by the provider for one evidence alias."""
+class EvidenceExplanationKind(str, Enum):
+    """Closed provider vocabulary for ordering locally rendered evidence."""
 
-    evidence_id: str
-    value: bool
-    units: Literal["within_tolerance"]
+    DIRECT_PAIR_METRIC = "DIRECT_PAIR_METRIC"
+    DIRECT_REFERENCE_COMPARISON = "DIRECT_REFERENCE_COMPARISON"
+    DIRECT_MAP_DIAGNOSTIC = "DIRECT_MAP_DIAGNOSTIC"
+    DIRECT_QA = "DIRECT_QA"
+    COST = "COST"
+    FEASIBILITY = "FEASIBILITY"
+    AGGREGATE_RULE = "AGGREGATE_RULE"
+    PORTFOLIO_DISPOSITION = "PORTFOLIO_DISPOSITION"
+
+
+class _ProviderEvidenceItem(ContractModel):
+    """One opaque alias and its closed rendering kind; never provider prose."""
+
+    evidence_id: str = Field(pattern=r"^E[1-9][0-9]{0,3}$")
+    explanation_kind: EvidenceExplanationKind
 
 
 class _ProviderEvidenceAnswer(ContractModel):
-    answer: str
-    evidence_ids: list[str] = Field(min_length=1)
-    numeric_claims: list[NumericEvidenceReference] = Field(default_factory=list)
-    boolean_claims: list[BooleanEvidenceReference] = Field(default_factory=list)
-    limitations: list[str] = Field(min_length=1)
+    """Provider output is selection and ordering, not reportable language."""
+
+    intent: EvidenceQuestionIntent
+    items: list[_ProviderEvidenceItem] = Field(min_length=1)
 
     @model_validator(mode="after")
     def validate_shape(self) -> _ProviderEvidenceAnswer:
-        if not self.answer.strip() or len(set(self.evidence_ids)) != len(self.evidence_ids):
-            raise ValueError("assistant answer and unique evidence IDs are required")
+        aliases = [item.evidence_id for item in self.items]
+        if len(set(aliases)) != len(aliases):
+            raise ValueError("assistant evidence ordering must use unique aliases")
         return self
+
+
+class _DeterministicEvidenceRendering(ContractModel):
+    """Worker-authored response material derived solely from authorized context."""
+
+    text: str
+    evidence_ids: list[str] = Field(min_length=1)
+    numeric_claims: list[NumericEvidenceReference] = Field(default_factory=list)
+    limitations: list[str] = Field(min_length=1)
+
+
+_INTENT_LEADS: dict[EvidenceQuestionIntent, str] = {
+    EvidenceQuestionIntent.EXPLAIN_SELECTED_EVIDENCE: ("The selected evidence is listed below."),
+    EvidenceQuestionIntent.EXPLAIN_DISPOSITION: (
+        "The selected decision-disposition evidence is listed below."
+    ),
+    EvidenceQuestionIntent.EXPLAIN_CONTROLLING_ASSUMPTION: (
+        "The evidence selected for the controlling-assumption review is listed below."
+    ),
+    EvidenceQuestionIntent.EXPLAIN_BASELINE_CHANGE: (
+        "The selected within-scenario baseline evidence is listed below."
+    ),
+    EvidenceQuestionIntent.TRACE_EVIDENCE: (
+        "The selected direct-evidence references are listed below."
+    ),
+    EvidenceQuestionIntent.NEXT_FEASIBILITY_REVIEW: (
+        "The selected evidence for the next feasibility review is listed below."
+    ),
+}
+
+_EXPLANATION_LABELS: dict[EvidenceExplanationKind, str] = {
+    EvidenceExplanationKind.DIRECT_PAIR_METRIC: "focal-pair metric",
+    EvidenceExplanationKind.DIRECT_REFERENCE_COMPARISON: "reference comparison",
+    EvidenceExplanationKind.DIRECT_MAP_DIAGNOSTIC: "current-map diagnostic",
+    EvidenceExplanationKind.DIRECT_QA: "direct-run QA",
+    EvidenceExplanationKind.COST: "screening cost evidence",
+    EvidenceExplanationKind.FEASIBILITY: "feasibility evidence",
+    EvidenceExplanationKind.AGGREGATE_RULE: "decision-rule evidence",
+    EvidenceExplanationKind.PORTFOLIO_DISPOSITION: "portfolio disposition evidence",
+}
+
+
+def _rendered_context_value(context: AuthorizedEvidenceClaimContext) -> str:
+    if type(context.value) is bool:
+        if context.units == "within_tolerance":
+            return f"within_tolerance={str(context.value).lower()}"
+        return f"{str(context.value).lower()} {context.units}"
+    if isinstance(context.value, float):
+        return f"{json.dumps(context.value, allow_nan=False)} {context.units}"
+    return f"{context.value} {context.units}"
+
+
+def render_deterministic_evidence_answer(
+    *,
+    intent: EvidenceQuestionIntent,
+    ordered_contexts: Sequence[AuthorizedEvidenceClaimContext],
+    sensitive_policy: SensitiveContextPolicy | None = None,
+) -> _DeterministicEvidenceRendering:
+    """Render evidence without accepting any provider-authored prose.
+
+    This function is also the deterministic evaluation authority. The provider
+    may choose only the order of already-authorized aliases and a closed kind;
+    every word, number, unit, and limitation returned to the user is emitted
+    here from trusted local context.
+    """
+
+    if not ordered_contexts:
+        raise AssistantSafetyError("ASSISTANT_AUTHORIZED_EVIDENCE_EMPTY")
+    policy = sensitive_policy or SensitiveContextPolicy()
+    evidence_ids = [item.evidence_alias for item in ordered_contexts]
+    if len(set(evidence_ids)) != len(evidence_ids):
+        raise AssistantSafetyError("ASSISTANT_AUTHORIZED_EVIDENCE_DUPLICATED")
+
+    paragraphs: list[str] = []
+    if any(item.direct_result for item in ordered_contexts):
+        paragraphs.append(DIRECT_RESULT_QUALIFICATION)
+    paragraphs.append(_INTENT_LEADS[intent])
+    numeric_claims: list[NumericEvidenceReference] = []
+    for index, context in enumerate(ordered_contexts, start=1):
+        kind = EvidenceExplanationKind(context.claim_kind)
+        paragraphs.append(
+            f"Evidence {index} — {_EXPLANATION_LABELS[kind]}: {_rendered_context_value(context)}."
+        )
+        if isinstance(context.value, (int, float)) and not isinstance(context.value, bool):
+            numeric_claims.append(
+                NumericEvidenceReference(
+                    evidence_id=context.evidence_alias,
+                    value=context.value,
+                    units=context.units,
+                )
+            )
+    if intent == EvidenceQuestionIntent.NEXT_FEASIBILITY_REVIEW:
+        paragraphs.append(
+            "Next action: inspect the cited evidence and its documented limitations before "
+            "ecological, field, or engineering feasibility decisions."
+        )
+
+    limitations: list[str] = []
+    for context in ordered_contexts:
+        selected = (
+            context.limitations
+            if context.claim_kind == "DIRECT_REFERENCE_COMPARISON"
+            else [
+                limitation
+                for limitation in context.limitations
+                if limitation in {CONNECTIVITY_LIMITATION, CURRENT_MAP_LIMITATION}
+            ]
+        )
+        for limitation in selected:
+            if limitation not in limitations:
+                limitations.append(limitation)
+    if not limitations:
+        raise AssistantSafetyError("ASSISTANT_REQUIRED_LIMITATION_MISSING")
+    for limitation in limitations:
+        validate_assistant_limitation(limitation, policy)
+
+    body = " ".join(paragraphs)
+    _assert_safe_output(body)
+    _assert_no_prompt_injection(body)
+    _assert_no_sensitive_location(body, policy)
+    text = body + "\n\nLimitations:\n" + "\n".join(f"- {item}" for item in limitations)
+    return _DeterministicEvidenceRendering(
+        text=text,
+        evidence_ids=evidence_ids,
+        numeric_claims=numeric_claims,
+        limitations=limitations,
+    )
 
 
 class AssistantAnswer(ContractModel):
@@ -963,29 +1102,6 @@ def _number_tokens(value: str, *, evidence_ids: Sequence[str] = ()) -> list[Deci
         except InvalidOperation as exc:  # pragma: no cover - regex accepts decimal grammar
             raise AssistantSafetyError("ASSISTANT_NUMERIC_CLAIM_INVALID") from exc
     return result
-
-
-def _answer_mentions_numeric_claim(answer: str, claim: NumericEvidenceReference) -> bool:
-    """Require each structured value to appear in prose with its declared units."""
-
-    expected = Decimal(str(claim.value))
-    unit = claim.units.strip()
-    if not unit:
-        return False
-    for match in _NUMBER.finditer(answer):
-        try:
-            observed = Decimal(match.group(0))
-        except InvalidOperation:  # pragma: no cover - regex accepts decimal grammar
-            continue
-        if observed != expected:
-            continue
-        suffix = answer[match.end() :]
-        if unit.casefold() in {"percent", "%"}:
-            if re.match(r"\s*(?:%|percent\b)", suffix, re.IGNORECASE):
-                return True
-        elif re.match(rf"\s*{re.escape(unit)}(?![A-Za-z0-9_])", suffix, re.IGNORECASE):
-            return True
-    return False
 
 
 def _classify_evidence_intent(question: str) -> EvidenceQuestionIntent:
@@ -1304,12 +1420,10 @@ class EvidenceAssistant(_TracedAssistant):
             provider_response = self.provider.complete(
                 operation="evidence.explain",
                 system_prompt=(
-                    "Explain only the authorized direct Circuitscape evidence. Return strict JSON. "
-                    "Every structured numeric claim must appear in the answer beside its declared "
-                    "units. Every reference-comparison Boolean must be declared in boolean_claims "
-                    "and rendered exactly as '<evidence alias> within_tolerance=true' or "
-                    "'<evidence alias> within_tolerance=false'; do not restate that disposition "
-                    "in prose. Do not choose, approve, modify, or invent anything."
+                    "Return strict JSON containing only the supplied question intent and an ordered "
+                    "list of authorized evidence aliases with their exact closed explanation kinds. "
+                    "Do not return prose, values, units, limitations, recommendations, or any other "
+                    "field. The worker renders all user-visible language from local evidence."
                 ),
                 user_prompt=intent.value,
                 context=minimized_context,
@@ -1336,46 +1450,56 @@ class EvidenceAssistant(_TracedAssistant):
                 )
             except (ValueError, TypeError) as exc:
                 raise AssistantSafetyError("ASSISTANT_PROVIDER_SCHEMA_INVALID") from exc
-            self._step(
-                call_id,
-                "extract_numeric_claims",
-                inputs={"answer_bytes": len(proposed.answer.encode("utf-8"))},
-                output={
-                    "numeric_claims": [
-                        item.model_dump(mode="json") for item in proposed.numeric_claims
-                    ],
-                    "boolean_claims": [
-                        item.model_dump(mode="json") for item in proposed.boolean_claims
-                    ],
-                },
-            )
             claims_by_alias = {
                 item.context.evidence_alias: by_id[item.evidence_id]
                 for item in authorized_selection.items
             }
-            self._validate_evidence_answer(proposed, claims_by_alias, policy)
+            contexts_by_alias = {
+                item.context.evidence_alias: item.context for item in authorized_selection.items
+            }
+            rendering = self._validate_and_render_evidence_answer(
+                proposed,
+                claims_by_alias,
+                contexts_by_alias,
+                policy,
+                expected_intent=intent,
+            )
+            self._step(
+                call_id,
+                "extract_numeric_claims",
+                inputs={"ordered_evidence_count": len(rendering.evidence_ids)},
+                output={
+                    "numeric_claims": [
+                        item.model_dump(mode="json") for item in rendering.numeric_claims
+                    ],
+                    "numeric_source": "AUTHORITATIVE_LOCAL_EVIDENCE",
+                    "provider_authored_values": False,
+                },
+            )
             self._step(
                 call_id,
                 "validate_evidence_references",
-                inputs={"claimed_ids": proposed.evidence_ids},
-                output={"valid": True},
+                inputs={"claimed_ids": rendering.evidence_ids},
+                output={"valid": True, "selection_authorized": True},
             )
             self._step(
                 call_id,
                 "validate_units_and_limitations",
-                inputs={"limitation_count": len(proposed.limitations)},
-                output={"valid": True},
-            )
-            formatted = (
-                proposed.answer.strip()
-                + "\n\nLimitations:\n"
-                + "\n".join(f"- {limitation}" for limitation in proposed.limitations)
+                inputs={"limitation_count": len(rendering.limitations)},
+                output={
+                    "valid": True,
+                    "provider_authored_units": False,
+                    "provider_authored_limitations": False,
+                },
             )
             self._step(
                 call_id,
                 "format_response",
-                inputs={"answer_bytes": len(proposed.answer.encode("utf-8"))},
-                output={"formatted_bytes": len(formatted.encode("utf-8"))},
+                inputs={"render_contract": "ecocorridor-evidence-renderer/v1"},
+                output={
+                    "formatted_bytes": len(rendering.text.encode("utf-8")),
+                    "provider_authored_prose": False,
+                },
             )
             self._step(
                 call_id,
@@ -1393,32 +1517,33 @@ class EvidenceAssistant(_TracedAssistant):
                 call_id,
                 output={
                     "answer_id": answer_id,
-                    "evidence_aliases": proposed.evidence_ids,
+                    "evidence_aliases": rendering.evidence_ids,
                     "association_id": association.association_id,
                     "authorization_decision_id": authorization.decision_id,
+                    "provider_authored_prose": False,
                 },
                 association=association,
             )
             original_id_by_alias = {
                 item.context.evidence_alias: item.evidence_id for item in authorized_selection.items
             }
-            answer_evidence_ids = [original_id_by_alias[item] for item in proposed.evidence_ids]
+            answer_evidence_ids = [original_id_by_alias[item] for item in rendering.evidence_ids]
             answer_numeric_claims = [
                 NumericEvidenceReference(
                     evidence_id=original_id_by_alias[item.evidence_id],
                     value=item.value,
                     units=item.units,
                 )
-                for item in proposed.numeric_claims
+                for item in rendering.numeric_claims
             ]
             return AssistantAnswer(
                 answer_id=answer_id,
                 call_id=call_id,
                 project_id=project_id,
-                text=formatted,
+                text=rendering.text,
                 evidence_ids=answer_evidence_ids,
                 numeric_claims=answer_numeric_claims,
-                limitations=proposed.limitations,
+                limitations=rendering.limitations,
                 provider_call_id=provider_response.provider_call_id,
                 provider_model=provider_response.model,
                 trace_id=trace.trace_id,
@@ -1443,97 +1568,52 @@ class EvidenceAssistant(_TracedAssistant):
             raise AssistantSafetyError("ASSISTANT_INTERNAL_FAILURE") from exc
 
     @staticmethod
-    def _validate_evidence_answer(
+    def _validate_and_render_evidence_answer(
         proposed: _ProviderEvidenceAnswer,
         evidence: dict[str, ConnectivityEvidenceClaim],
+        contexts: dict[str, AuthorizedEvidenceClaimContext],
         policy: SensitiveContextPolicy,
-    ) -> None:
-        if len(set(proposed.evidence_ids)) != len(proposed.evidence_ids) or not set(
-            proposed.evidence_ids
-        ).issubset(evidence):
+        *,
+        expected_intent: EvidenceQuestionIntent,
+    ) -> _DeterministicEvidenceRendering:
+        if proposed.intent != expected_intent:
+            raise AssistantSafetyError("ASSISTANT_PROVIDER_INTENT_MISMATCH")
+        aliases = [item.evidence_id for item in proposed.items]
+        if (
+            not set(aliases).issubset(evidence)
+            or not set(aliases).issubset(contexts)
+            or set(contexts) != set(evidence)
+        ):
             raise AssistantSafetyError("ASSISTANT_FABRICATED_EVIDENCE")
-        if len({item.evidence_id for item in proposed.numeric_claims}) != len(
-            proposed.numeric_claims
-        ):
-            raise AssistantSafetyError("ASSISTANT_NUMERIC_EVIDENCE_DUPLICATED")
-        if len({item.evidence_id for item in proposed.boolean_claims}) != len(
-            proposed.boolean_claims
-        ):
-            raise AssistantSafetyError("ASSISTANT_BOOLEAN_EVIDENCE_DUPLICATED")
-        _assert_safe_output(proposed.answer)
-        _assert_no_prompt_injection(proposed.answer)
-        _assert_no_sensitive_location(proposed.answer, policy)
-        for item in proposed.numeric_claims:
-            claim = evidence.get(item.evidence_id)
-            if claim is None:
-                raise AssistantSafetyError("ASSISTANT_FABRICATED_EVIDENCE")
-            if isinstance(claim.value, bool) or not isinstance(claim.value, (int, float)):
-                raise AssistantSafetyError("ASSISTANT_NUMERIC_EVIDENCE_TYPE_MISMATCH")
-            if Decimal(str(item.value)) != Decimal(str(claim.value)):
-                raise AssistantSafetyError("ASSISTANT_NUMERIC_VALUE_MISMATCH")
-            if item.units != claim.units:
-                raise AssistantSafetyError("ASSISTANT_UNIT_MISMATCH")
-            if not _answer_mentions_numeric_claim(proposed.answer, item):
-                raise AssistantSafetyError("ASSISTANT_NUMERIC_UNIT_RENDERING_MISMATCH")
-        boolean_by_id = {item.evidence_id: item for item in proposed.boolean_claims}
-        selected_reference_ids = {
-            evidence_id
-            for evidence_id in proposed.evidence_ids
-            if evidence[evidence_id].claim_kind == "DIRECT_REFERENCE_COMPARISON"
-        }
-        if set(boolean_by_id) != selected_reference_ids:
-            raise AssistantSafetyError("ASSISTANT_BOOLEAN_EVIDENCE_INCOMPLETE")
-        disposition_free_answer = proposed.answer
-        for evidence_id, item in boolean_by_id.items():
-            claim = evidence[evidence_id]
+        ordered_contexts: list[AuthorizedEvidenceClaimContext] = []
+        for item in proposed.items:
+            claim = evidence[item.evidence_id]
+            context = contexts[item.evidence_id]
             if (
-                claim.claim_kind != "DIRECT_REFERENCE_COMPARISON"
-                or type(claim.value) is not bool
-                or claim.units != item.units
+                item.explanation_kind.value != claim.claim_kind
+                or context.claim_kind != claim.claim_kind
+                or context.value != claim.value
+                or context.units != claim.units
+                or context.direct_result != claim.claim_kind.startswith("DIRECT_")
             ):
-                raise AssistantSafetyError("ASSISTANT_BOOLEAN_EVIDENCE_TYPE_MISMATCH")
-            if item.value is not claim.value:
-                raise AssistantSafetyError("ASSISTANT_BOOLEAN_VALUE_MISMATCH")
-            marker = f"{evidence_id} {item.units}={str(item.value).lower()}"
-            if marker not in proposed.answer:
-                raise AssistantSafetyError("ASSISTANT_BOOLEAN_RENDERING_MISMATCH")
-            disposition_free_answer = disposition_free_answer.replace(marker, "")
-        if boolean_by_id and re.search(
-            r"\b(?:within[_ ]tolerance|toleran\w*|pass(?:ed|es|ing)?|"
-            r"fail(?:ed|s|ing)?|outside)\b",
-            disposition_free_answer,
-            re.IGNORECASE,
-        ):
-            raise AssistantSafetyError("ASSISTANT_BOOLEAN_RENDERING_AMBIGUOUS")
-        declared_values = {Decimal(str(item.value)) for item in proposed.numeric_claims}
-        if any(
-            token not in declared_values
-            for token in _number_tokens(proposed.answer, evidence_ids=proposed.evidence_ids)
-        ):
-            raise AssistantSafetyError("ASSISTANT_UNDECLARED_NUMERIC_CLAIM")
-        selected = [evidence[item] for item in proposed.evidence_ids]
-        required: list[str] = []
-        for item in selected:
-            limitations = (
-                item.limitations
-                if item.claim_kind == "DIRECT_REFERENCE_COMPARISON"
+                raise AssistantSafetyError("ASSISTANT_EVIDENCE_KIND_MISMATCH")
+            expected_limitations = (
+                claim.limitations
+                if claim.claim_kind == "DIRECT_REFERENCE_COMPARISON"
                 else [
                     limitation
-                    for limitation in item.limitations
+                    for limitation in claim.limitations
                     if limitation in {CONNECTIVITY_LIMITATION, CURRENT_MAP_LIMITATION}
                 ]
             )
-            for limitation in limitations:
-                if limitation not in required:
-                    required.append(limitation)
-        if proposed.limitations != required:
-            raise AssistantSafetyError("ASSISTANT_REQUIRED_LIMITATION_MISSING")
-        for limitation in proposed.limitations:
-            validate_assistant_limitation(limitation, policy)
-        if any(item.claim_kind.startswith("DIRECT_") for item in selected) and (
-            DIRECT_RESULT_QUALIFICATION not in proposed.answer
-        ):
-            raise AssistantSafetyError("ASSISTANT_DIRECT_RESULT_QUALIFICATION_MISSING")
+            if context.limitations != expected_limitations:
+                raise AssistantSafetyError("ASSISTANT_REQUIRED_LIMITATION_MISSING")
+            ordered_contexts.append(context)
+        return render_deterministic_evidence_answer(
+            intent=expected_intent,
+            ordered_contexts=ordered_contexts,
+            sensitive_policy=policy,
+        )
 
 
 class EvidenceIntakeAssistant(_TracedAssistant):

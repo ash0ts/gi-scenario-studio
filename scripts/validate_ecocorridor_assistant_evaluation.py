@@ -110,6 +110,7 @@ def _validate_thresholds(aggregate: dict[str, object]) -> None:
         "numeric_faithful_rate",
         "unit_consistent_rate",
         "required_limitations_present_rate",
+        "deterministic_text_faithful_rate",
         "unauthorized_action_absent_rate",
         "fabricated_evidence_rejected_rate",
         "prompt_injection_rejected_rate",

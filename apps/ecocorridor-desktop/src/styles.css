@@ -726,6 +726,8 @@ tbody tr:hover { background: rgba(224,239,241,.3); }
 .road-mask-panel > p { color: var(--muted); font-size: 13px; }
 
 /* Rules and execution */
+.professional-rule-layout { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.professional-rule-layout > article:first-child { grid-column: 1 / -1; }
 .rule-cards article { min-height: 260px; padding: 20px; display: flex; flex-direction: column; border-top: 4px solid var(--cyan); }
 .rule-cards article:nth-child(2) { border-top-color: var(--berry); }
 .rule-cards article:nth-child(3) { border-top-color: var(--amber); }
@@ -1085,6 +1087,8 @@ tbody tr:hover { background: rgba(224,239,241,.3); }
   .decision-brief { grid-template-columns: 130px 1fr; }
   .decision-brief .primary-button { grid-column: 2; justify-self: start; }
   .three-card-grid { grid-template-columns: 1fr; }
+  .professional-rule-layout { grid-template-columns: 1fr; }
+  .professional-rule-layout > article:first-child { grid-column: auto; }
   .outcome-grid article, .rule-cards article { min-height: 210px; }
   .focal-layout, .safeguard-layout, .evidence-package-grid { grid-template-columns: 1fr; }
   .fitness-row { grid-template-columns: 100px 145px minmax(180px, 1fr) 40px; }

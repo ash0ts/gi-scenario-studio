@@ -46,7 +46,7 @@ export const AssistantEvidenceAuthorizationSchema = z.object({
   selected_evidence_sha256: Sha256Schema,
   authorized_asset_count: z.number().int().nonnegative(),
   generalized_derivative_count: z.number().int().nonnegative(),
-  context_schema_version: z.literal("ecocorridor-assistant-context/v2"),
+  context_schema_version: z.literal("ecocorridor-assistant-context/v3"),
 }).strict();
 
 export const AssistantAnswerSchema = z.object({

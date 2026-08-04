@@ -269,7 +269,7 @@ function formatBytes(value: number): string {
   return `${(value / 1024 ** 3).toFixed(1)} GiB`;
 }
 
-function StudyContextScreen({ planning, onPlanning, projectSession, onProjectReady }: Pick<ScreensProps, "planning" | "onPlanning" | "projectSession" | "onProjectReady">) {
+function StudyContextScreen({ planning, onPlanning, projectSession, onProjectReady, onNavigate }: Pick<ScreensProps, "planning" | "onPlanning" | "projectSession" | "onProjectReady" | "onNavigate">) {
   const update = (field: keyof PlanningState, value: string | boolean) => onPlanning({ ...planning, [field]: value });
   const [state, setState] = useState<"idle" | "creating" | "error">("idle");
   const [message, setMessage] = useState("");
@@ -303,8 +303,10 @@ function StudyContextScreen({ planning, onPlanning, projectSession, onProjectRea
       <section className="paper-panel form-panel">
         <div className="form-section-heading"><span>Study record</span><h2>Purpose and responsible review</h2></div>
         <div className="authoritative-action form-command">
-          <div>{persisted ? <><Icon name="check" /><span><strong>Authoritative local draft created.</strong> Editing these identity fields now requires a semantic model revision, which is not yet available in this screen.</span></> : <><Icon name="info" /><span><strong>Complete the six required fields, then create the record.</strong> This commits the decision brief and a deliberately blocking Fitness Passport to project SQLite.</span></>}</div>
-          <button className="primary-button" type="button" disabled={persisted || missing.length > 0 || state === "creating" || !hasNativeHost()} onClick={() => void createPlanningProject()}>{state === "creating" ? "Creating project…" : "Create planning record"}</button>
+          <div>{persisted ? <><Icon name="check" /><span><strong>Authoritative local draft created.</strong> These creation fields stay locked so changes cannot bypass revision history. Use the reviewed Decision Boundary editor to publish a corrected question, use, owner, guild, or budget as a semantic revision.</span></> : <><Icon name="info" /><span><strong>Complete the six required fields, then create the record.</strong> This commits the decision brief and a deliberately blocking Fitness Passport to project SQLite.</span></>}</div>
+          {persisted
+            ? <button className="secondary-button" type="button" onClick={() => onNavigate("rules-costs")}>Revise decision boundary</button>
+            : <button className="primary-button" type="button" disabled={missing.length > 0 || state === "creating" || !hasNativeHost()} onClick={() => void createPlanningProject()}>{state === "creating" ? "Creating project…" : "Create planning record"}</button>}
         </div>
         <div className="field-grid two-up">
           <label><span>Project name *</span><input disabled={persisted} value={planning.projectName} onChange={(event) => update("projectName", event.target.value)} placeholder="e.g. Route 14 planning screen" /></label>
@@ -1492,9 +1494,37 @@ function SafeguardsScreen({ path, planning, onPlanning, projectSession, professi
 function RulesCostsScreen({ path, planning, onPlanning, fixture, guidedProjectionError, projectSession, professionalAssets, professionalRecords, onProfessionalRecords, observabilityDeployment }: Pick<ScreensProps, "path" | "planning" | "onPlanning" | "fixture" | "guidedProjectionError" | "projectSession" | "professionalAssets" | "professionalRecords" | "onProfessionalRecords" | "observabilityDeployment">) {
   const guided = path === "guided";
   type RuleMetric = "MIN_RESISTANCE_REDUCTION_PERCENT" | "MAX_RESISTANCE_INCREASE_PERCENT" | "MAX_REVIEW_MASK_CURRENT_INCREASE_PERCENT" | "MAX_COST" | "REQUIRE_ACCEPTED_QA" | "REQUIRE_SAFEGUARD_NONREGRESSION";
-  const [briefDraft, setBriefDraft, undoBriefDraft, briefDirty, commitBriefDraft] = useWorkspaceDraft("decision-brief-editor", () => ({ briefId: stableUiId("decision_brief"), briefTitle: "", currency: "USD", costVintage: "", nonGoals: "No animal-movement, crossing-use, collision-reduction, population, biodiversity, design, approval, or regulatory claim.", nextAction: "Ecological, field, engineering, ownership, and permitting feasibility review." }));
+  const [briefDraft, setBriefDraft, undoBriefDraft, briefDirty, commitBriefDraft] = useWorkspaceDraft(`decision-brief-editor:${projectSession?.projectId ?? "unbound"}:${professionalRecords.decisionBrief?.brief_id ?? "new"}`, () => {
+    const retained = professionalRecords.decisionBrief;
+    return {
+      briefId: retained?.brief_id ?? stableUiId("decision_brief"),
+      briefTitle: retained?.title ?? "",
+      decisionQuestion: retained?.decision_question ?? planning.decisionQuestion,
+      decisionOwner: retained?.decision_owner ?? planning.reviewer,
+      intendedUse: retained?.intended_use ?? planning.intendedUse,
+      targetGuilds: (retained?.target_guilds ?? (planning.targetGuild ? [planning.targetGuild] : [])).join("\n"),
+      safeguardGuilds: (retained?.safeguard_guilds ?? []).join("\n"),
+      budgetAmount: retained?.budget_amount == null ? planning.budgetUsd : String(retained.budget_amount),
+      currency: retained?.currency ?? "USD",
+      costVintage: retained?.cost_vintage ?? "",
+      nonGoals: (retained?.non_goals ?? ["No animal-movement, crossing-use, collision-reduction, population, biodiversity, design, approval, or regulatory claim."]).join("\n"),
+      nextAction: retained?.required_next_action ?? "Ecological, field, engineering, ownership, and permitting feasibility review.",
+      conceptual: retained?.conceptual ?? path === "planning",
+    };
+  });
   const [ruleDraft, setRuleDraft, undoRuleDraft, ruleDirty, commitRuleDraft] = useWorkspaceDraft("decision-rule-editor", () => ({ ruleId: stableUiId("rule"), ruleTitle: "", metric: "MIN_RESISTANCE_REDUCTION_PERCENT" as RuleMetric, ruleThreshold: "", ruleRationale: "" }));
-  const [policyDraft, setPolicyDraft, undoPolicyDraft, policyDirty, commitPolicyDraft] = useWorkspaceDraft("resource-policy-editor", () => ({ maxDirectJobs: "1000", maxInputMb: "2048", maxMaterializedMb: "8192", maxCurrentMb: "4096", maxWallSeconds: "1800" }));
+  const [policyDraft, setPolicyDraft, undoPolicyDraft, policyDirty, commitPolicyDraft] = useWorkspaceDraft(`resource-policy-editor:${projectSession?.projectId ?? "unbound"}:${professionalRecords.resourcePolicy ? "retained" : "new"}`, () => {
+    const retained = professionalRecords.resourcePolicy;
+    const mib = 1024 * 1024;
+    return {
+      maxDirectJobs: String(retained?.max_direct_jobs ?? 1000),
+      maxInputMb: String((retained?.max_input_bytes ?? 2048 * mib) / mib),
+      maxMaterializedMb: String((retained?.max_materialized_bytes ?? 8192 * mib) / mib),
+      maxCurrentMb: String((retained?.max_current_raster_bytes ?? 4096 * mib) / mib),
+      maxWallSeconds: String(retained?.max_wall_seconds_per_job ?? 1800),
+      requireExplicitOversizeApproval: retained?.require_explicit_oversize_approval ?? true,
+    };
+  });
   const [costBasisDraft, setCostBasisDraft, undoCostBasisDraft, costBasisDirty, commitCostBasisDraft] = useWorkspaceDraft("cost-basis-editor", () => {
     const basis = professionalRecords.costBasis;
     return {
@@ -1513,15 +1543,21 @@ function RulesCostsScreen({ path, planning, onPlanning, fixture, guidedProjectio
       confirmed: false,
     };
   });
-  const { briefId, briefTitle, currency, costVintage, nonGoals, nextAction } = briefDraft;
+  const { briefId, briefTitle, decisionQuestion, decisionOwner, intendedUse, targetGuilds, safeguardGuilds, budgetAmount, currency, costVintage, nonGoals, nextAction, conceptual } = briefDraft;
   const { ruleId, ruleTitle, metric, ruleThreshold, ruleRationale } = ruleDraft;
-  const { maxDirectJobs, maxInputMb, maxMaterializedMb, maxCurrentMb, maxWallSeconds } = policyDraft;
+  const { maxDirectJobs, maxInputMb, maxMaterializedMb, maxCurrentMb, maxWallSeconds, requireExplicitOversizeApproval } = policyDraft;
   const { costBasisId, source: costSource, currency: basisCurrency, vintage: basisVintage, analysisHorizonYears, realDiscountRatePercent, capexBasis, omAssumptions, replacementAssumptions, reviewer: costReviewer, reviewedAt: costReviewedAt, optionCosts, confirmed: costBasisConfirmed } = costBasisDraft;
   const setBriefField = <K extends keyof typeof briefDraft>(field: K, value: (typeof briefDraft)[K]) => setBriefDraft((current) => ({ ...current, [field]: value }));
   const setRuleField = <K extends keyof typeof ruleDraft>(field: K, value: (typeof ruleDraft)[K]) => setRuleDraft((current) => ({ ...current, [field]: value }));
   const setPolicyField = <K extends keyof typeof policyDraft>(field: K, value: (typeof policyDraft)[K]) => setPolicyDraft((current) => ({ ...current, [field]: value }));
   const setCostBasisField = <K extends keyof typeof costBasisDraft>(field: K, value: (typeof costBasisDraft)[K]) => setCostBasisDraft((current) => ({ ...current, [field]: value }));
   const setBriefTitle = (value: string) => setBriefField("briefTitle", value);
+  const setDecisionQuestion = (value: string) => setBriefField("decisionQuestion", value);
+  const setDecisionOwner = (value: string) => setBriefField("decisionOwner", value);
+  const setIntendedUse = (value: string) => setBriefField("intendedUse", value);
+  const setTargetGuilds = (value: string) => setBriefField("targetGuilds", value);
+  const setSafeguardGuilds = (value: string) => setBriefField("safeguardGuilds", value);
+  const setBudgetAmount = (value: string) => setBriefField("budgetAmount", value);
   const setCurrency = (value: string) => setBriefField("currency", value);
   const setCostVintage = (value: string) => setBriefField("costVintage", value);
   const setNonGoals = (value: string) => setBriefField("nonGoals", value);
@@ -1604,11 +1640,18 @@ function RulesCostsScreen({ path, planning, onPlanning, fixture, guidedProjectio
   };
   const saveBrief = () => {
     try {
-      if ([briefTitle, planning.decisionQuestion, planning.intendedUse, planning.reviewer, planning.targetGuild, nextAction, nonGoals].some((item) => !item.trim())) throw new Error("Complete the decision brief, owner, target guild, non-goals, and required next action.");
-      const amount = planning.budgetUsd ? Number(planning.budgetUsd) : null;
+      const targetGuildList = [...new Set(targetGuilds.split("\n").map((item) => item.trim()).filter(Boolean))];
+      const safeguardGuildList = [...new Set(safeguardGuilds.split("\n").map((item) => item.trim()).filter(Boolean))];
+      const nonGoalList = nonGoals.split("\n").map((item) => item.trim()).filter(Boolean);
+      if ([briefTitle, decisionQuestion, decisionOwner, intendedUse, nextAction].some((item) => !item.trim()) || !targetGuildList.length || !nonGoalList.length) throw new Error("Complete the title, question, owner, intended use, target guilds, non-goals, and required next action.");
+      const amount = budgetAmount.trim() ? Number(budgetAmount) : null;
       if (amount !== null && (!Number.isFinite(amount) || amount < 0 || !currency.trim() || !costVintage.trim())) throw new Error("A budget requires a nonnegative amount, currency, and cost vintage.");
-      const brief = ConnectivityDecisionBriefSchema.parse({ brief_id: briefId, title: briefTitle.trim(), decision_question: planning.decisionQuestion.trim(), decision_owner: planning.reviewer.trim(), intended_use: planning.intendedUse.trim(), target_guilds: [planning.targetGuild.trim()], safeguard_guilds: [...new Set(professionalRecords.safeguards.map((item) => item.guild_id))], budget_amount: amount, currency: amount === null ? null : currency.trim(), cost_vintage: amount === null ? null : costVintage.trim(), non_goals: nonGoals.split("\n").map((item) => item.trim()).filter(Boolean), required_next_action: nextAction.trim(), conceptual: true });
-      void saveRecord("connectivity.decision_brief.save", "decision_brief", brief, () => onProfessionalRecords({ ...professionalRecords, decisionBrief: brief }), commitBriefDraft);
+      const brief = ConnectivityDecisionBriefSchema.parse({ brief_id: briefId, title: briefTitle.trim(), decision_question: decisionQuestion.trim(), decision_owner: decisionOwner.trim(), intended_use: intendedUse.trim(), target_guilds: targetGuildList, safeguard_guilds: safeguardGuildList, budget_amount: amount, currency: amount === null ? null : currency.trim(), cost_vintage: amount === null ? null : costVintage.trim(), non_goals: nonGoalList, required_next_action: nextAction.trim(), conceptual });
+      void saveRecord("connectivity.decision_brief.save", "decision_brief", brief, () => {
+        setBriefDraft({ briefId: brief.brief_id, briefTitle: brief.title, decisionQuestion: brief.decision_question, decisionOwner: brief.decision_owner, intendedUse: brief.intended_use, targetGuilds: brief.target_guilds.join("\n"), safeguardGuilds: (brief.safeguard_guilds ?? []).join("\n"), budgetAmount: brief.budget_amount == null ? "" : String(brief.budget_amount), currency: brief.currency ?? "", costVintage: brief.cost_vintage ?? "", nonGoals: (brief.non_goals ?? []).join("\n"), nextAction: brief.required_next_action, conceptual: brief.conceptual ?? false });
+        onProfessionalRecords({ ...professionalRecords, decisionBrief: brief });
+        onPlanning({ ...planning, decisionQuestion: brief.decision_question, intendedUse: brief.intended_use, reviewer: brief.decision_owner, targetGuild: brief.target_guilds[0] ?? "", budgetUsd: brief.budget_amount == null ? "" : String(brief.budget_amount) });
+      }, commitBriefDraft);
     } catch (error) { setState("error"); setMessage(hostErrorMessage(error, "The decision brief is incomplete.")); }
   };
   const saveRule = () => {
@@ -1626,9 +1669,13 @@ function RulesCostsScreen({ path, planning, onPlanning, fixture, guidedProjectio
   };
   const savePolicy = () => {
     try {
+      if (!requireExplicitOversizeApproval) throw new Error("Explicit oversize approval is a required fail-closed safety control.");
       const mib = 1024 * 1024;
-      const policy = ResourcePolicySchema.parse({ max_input_bytes: Number(maxInputMb) * mib, max_materialized_bytes: Number(maxMaterializedMb) * mib, max_current_raster_bytes: Number(maxCurrentMb) * mib, max_direct_jobs: Number(maxDirectJobs), max_wall_seconds_per_job: Number(maxWallSeconds), require_explicit_oversize_approval: true });
-      void saveRecord("connectivity.resource_policy.save", "resource_policy", policy, () => onProfessionalRecords({ ...professionalRecords, resourcePolicy: policy }), commitPolicyDraft);
+      const policy = ResourcePolicySchema.parse({ max_input_bytes: Number(maxInputMb) * mib, max_materialized_bytes: Number(maxMaterializedMb) * mib, max_current_raster_bytes: Number(maxCurrentMb) * mib, max_direct_jobs: Number(maxDirectJobs), max_wall_seconds_per_job: Number(maxWallSeconds), require_explicit_oversize_approval: requireExplicitOversizeApproval });
+      void saveRecord("connectivity.resource_policy.save", "resource_policy", policy, () => {
+        setPolicyDraft({ maxDirectJobs: String(policy.max_direct_jobs), maxInputMb: String(policy.max_input_bytes / mib), maxMaterializedMb: String(policy.max_materialized_bytes / mib), maxCurrentMb: String(policy.max_current_raster_bytes / mib), maxWallSeconds: String(policy.max_wall_seconds_per_job), requireExplicitOversizeApproval: policy.require_explicit_oversize_approval ?? true });
+        onProfessionalRecords({ ...professionalRecords, resourcePolicy: policy });
+      }, commitPolicyDraft);
     } catch (error) { setState("error"); setMessage(hostErrorMessage(error, "Every resource limit must be a positive number.")); }
   };
   const saveCostBasis = async () => {
@@ -1682,10 +1729,10 @@ function RulesCostsScreen({ path, planning, onPlanning, fixture, guidedProjectio
     return (
       <>
         <PageIntro kicker="Decision contract" title="Make acceptance testable before running." description="No Ridgeway threshold is reused. Project rules retain their scenario, pair, direction, reducer, threshold, rationale, and reviewed cost basis." badge={<StatusPill state={professionalRecords.decisionRules.length && professionalRecords.decisionBrief && professionalRecords.costBasis && professionalRecords.resourcePolicy ? "pass" : "fail"}>{professionalRecords.costBasis ? `${professionalRecords.decisionRules.length} rule${professionalRecords.decisionRules.length === 1 ? "" : "s"} · cost basis reviewed` : "Cost basis required"}</StatusPill>} />
-        <div className="three-card-grid rule-cards">
-          <article className="paper-panel"><span className="rule-type">BRIEF</span><h2>Decision boundary</h2><div className="draft-actions"><small>{briefDirty ? "Draft retained in workspace" : "No unsaved field changes"}</small><button className="text-action" type="button" disabled={!briefDirty} onClick={undoBriefDraft}>Undo brief draft</button></div><label><span>Brief title *</span><input value={briefTitle} onChange={(event) => setBriefTitle(event.target.value)} /></label><label><span>Screening budget</span><input inputMode="decimal" value={planning.budgetUsd} onChange={(event) => onPlanning({ ...planning, budgetUsd: event.target.value.replace(/[^0-9.]/g, "") })} /></label><div className="field-grid two-up"><label><span>Currency</span><input value={currency} onChange={(event) => setCurrency(event.target.value)} /></label><label><span>Cost vintage</span><input value={costVintage} onChange={(event) => setCostVintage(event.target.value)} /></label></div><label><span>Permanent non-goals * · one per line</span><textarea rows={3} value={nonGoals} onChange={(event) => setNonGoals(event.target.value)} /></label><label><span>Required next action *</span><textarea rows={2} value={nextAction} onChange={(event) => setNextAction(event.target.value)} /></label><button className="secondary-button" type="button" disabled={!projectSession || state === "saving"} onClick={saveBrief}>Save decision brief</button></article>
+        <div className="professional-rule-layout rule-cards">
+          <article className="paper-panel"><span className="rule-type">BRIEF</span><h2>Decision boundary</h2><p>Revise the retained professional question without losing its stable record identity or silently replacing fields that are not on screen.</p><div className="draft-actions"><small>{briefDirty ? "Draft retained in workspace" : professionalRecords.decisionBrief ? "Authoritative decision brief loaded" : "No unsaved field changes"}</small><button className="text-action" type="button" disabled={!briefDirty} onClick={undoBriefDraft}>Undo brief draft</button></div><label><span>Brief title *</span><input value={briefTitle} onChange={(event) => setBriefTitle(event.target.value)} /></label><label><span>Decision question *</span><textarea rows={3} value={decisionQuestion} onChange={(event) => setDecisionQuestion(event.target.value)} /></label><label><span>Decision owner *</span><input value={decisionOwner} onChange={(event) => setDecisionOwner(event.target.value)} /></label><label><span>Intended use *</span><textarea rows={3} value={intendedUse} onChange={(event) => setIntendedUse(event.target.value)} /></label><div className="field-grid two-up"><label><span>Target guilds * · one per line</span><textarea rows={3} value={targetGuilds} onChange={(event) => setTargetGuilds(event.target.value)} /></label><label><span>Safeguard guilds · one per line</span><textarea rows={3} value={safeguardGuilds} onChange={(event) => setSafeguardGuilds(event.target.value)} /></label><label><span>Screening budget</span><input inputMode="decimal" value={budgetAmount} onChange={(event) => setBudgetAmount(event.target.value.replace(/[^0-9.]/g, ""))} /></label><label><span>Currency</span><input value={currency} onChange={(event) => setCurrency(event.target.value)} /></label><label><span>Cost vintage</span><input value={costVintage} onChange={(event) => setCostVintage(event.target.value)} /></label></div><label><span>Permanent non-goals * · one per line</span><textarea rows={3} value={nonGoals} onChange={(event) => setNonGoals(event.target.value)} /></label><label><span>Required next action *</span><textarea rows={2} value={nextAction} onChange={(event) => setNextAction(event.target.value)} /></label><p className="control-requirement"><strong>Record class:</strong> {conceptual ? "Conceptual planning screen" : "Reviewed-model screen"}. Saving retains <span className="mono">{briefId}</span>, publishes a semantic revision, and makes the prior fitness review stale.</p><button className="secondary-button" type="button" disabled={!projectSession || !briefDirty || state === "saving"} onClick={saveBrief}>Save decision brief</button></article>
           <article className="paper-panel"><span className="rule-type safeguard">RULE</span><h2>Testable criterion</h2><div className="draft-actions"><small>{ruleDirty ? "Draft retained in workspace" : "No unsaved field changes"}</small><button className="text-action" type="button" disabled={!ruleDirty} onClick={undoRuleDraft}>Undo rule draft</button></div><label><span>Rule title *</span><input value={ruleTitle} onChange={(event) => setRuleTitle(event.target.value)} /></label><label><span>Metric *</span><select value={metric} onChange={(event) => setMetric(event.target.value as RuleMetric)}><option value="MIN_RESISTANCE_REDUCTION_PERCENT">Minimum within-scenario resistance reduction</option><option value="MAX_RESISTANCE_INCREASE_PERCENT">Maximum within-scenario resistance increase</option><option value="MAX_REVIEW_MASK_CURRENT_INCREASE_PERCENT">Maximum diagnostic mask redistribution</option><option value="MAX_COST">Maximum screening cost</option><option value="REQUIRE_ACCEPTED_QA">Require accepted QA</option><option value="REQUIRE_SAFEGUARD_NONREGRESSION">Require safeguard nonregression</option></select></label><label><span>Threshold * {metric.startsWith("REQUIRE_") ? "(true or false)" : ""}</span><input value={ruleThreshold} onChange={(event) => setRuleThreshold(event.target.value)} /></label><label><span>Rationale *</span><textarea rows={3} value={ruleRationale} onChange={(event) => setRuleRationale(event.target.value)} /></label><button className="secondary-button" type="button" disabled={!projectSession || !professionalRecords.scenarios.length || state === "saving"} onClick={saveRule}>Save required rule</button><small>Binds all currently persisted required scenarios and applicable focal pairs.</small></article>
-          <article className="paper-panel"><span className="rule-type cost">RESOURCES</span><h2>Hard project policy</h2><div className="draft-actions"><small>{policyDirty ? "Draft retained in workspace" : "No unsaved field changes"}</small><button className="text-action" type="button" disabled={!policyDirty} onClick={undoPolicyDraft}>Undo policy draft</button></div><label><span>Maximum direct jobs</span><input inputMode="numeric" value={maxDirectJobs} onChange={(event) => setMaxDirectJobs(event.target.value)} /></label><label><span>Maximum input (MiB)</span><input inputMode="numeric" value={maxInputMb} onChange={(event) => setMaxInputMb(event.target.value)} /></label><label><span>Maximum materialized (MiB)</span><input inputMode="numeric" value={maxMaterializedMb} onChange={(event) => setMaxMaterializedMb(event.target.value)} /></label><label><span>Maximum current rasters (MiB)</span><input inputMode="numeric" value={maxCurrentMb} onChange={(event) => setMaxCurrentMb(event.target.value)} /></label><label><span>Per-job wall time (seconds)</span><input inputMode="numeric" value={maxWallSeconds} onChange={(event) => setMaxWallSeconds(event.target.value)} /></label><button className="secondary-button" type="button" disabled={!projectSession || state === "saving"} onClick={savePolicy}>Save resource policy</button><small>Oversize inputs always require explicit approval; no current raster is silently omitted.</small></article>
+          <article className="paper-panel"><span className="rule-type cost">RESOURCES</span><h2>Hard project policy</h2><div className="draft-actions"><small>{policyDirty ? "Draft retained in workspace" : professionalRecords.resourcePolicy ? "Authoritative resource policy loaded" : "No unsaved field changes"}</small><button className="text-action" type="button" disabled={!policyDirty} onClick={undoPolicyDraft}>Undo policy draft</button></div><label><span>Maximum direct jobs</span><input inputMode="numeric" value={maxDirectJobs} onChange={(event) => setMaxDirectJobs(event.target.value)} /></label><label><span>Maximum input (MiB)</span><input inputMode="numeric" value={maxInputMb} onChange={(event) => setMaxInputMb(event.target.value)} /></label><label><span>Maximum materialized (MiB)</span><input inputMode="numeric" value={maxMaterializedMb} onChange={(event) => setMaxMaterializedMb(event.target.value)} /></label><label><span>Maximum current rasters (MiB)</span><input inputMode="numeric" value={maxCurrentMb} onChange={(event) => setMaxCurrentMb(event.target.value)} /></label><label><span>Per-job wall time (seconds)</span><input inputMode="numeric" value={maxWallSeconds} onChange={(event) => setMaxWallSeconds(event.target.value)} /></label><label className="confirmation-row"><input type="checkbox" checked={requireExplicitOversizeApproval} disabled={requireExplicitOversizeApproval} onChange={(event) => { if (event.target.checked) setPolicyField("requireExplicitOversizeApproval", true); }} /><span><strong>Require explicit approval for every oversize run.</strong> This fail-closed control can be enabled here but cannot be weakened in the editor.</span></label><button className="secondary-button" type="button" disabled={!projectSession || !policyDirty || state === "saving"} onClick={savePolicy}>Save resource policy</button><small>No current raster is silently omitted while the application claims complete synchronization.</small></article>
         </div>
         <section className="paper-panel cost-basis-ledger" aria-labelledby="cost-basis-heading">
           <div className="cost-basis-heading">
@@ -2242,7 +2289,7 @@ function EvidencePackageScreen({ path, publicMode, onEvidence, selectedPortfolio
 export function ScreenContent(props: ScreensProps) {
   switch (props.step) {
     case "overview": return <OverviewScreen path={props.path} publicMode={props.publicMode} localPreview={props.localPreview} onNavigate={props.onNavigate} projectSession={props.projectSession} onProjectReady={props.onProjectReady} fixture={props.fixture} fixtureVerified={props.fixtureVerified} guidedProjectionError={props.guidedProjectionError} />;
-    case "study-context": return <StudyContextScreen planning={props.planning} onPlanning={props.onPlanning} projectSession={props.projectSession} onProjectReady={props.onProjectReady} />;
+    case "study-context": return <StudyContextScreen planning={props.planning} onPlanning={props.onPlanning} projectSession={props.projectSession} onProjectReady={props.onProjectReady} onNavigate={props.onNavigate} />;
     case "source-assets": return <SourceAssetsScreen projectSession={props.projectSession} planning={props.planning} professionalAssets={props.professionalAssets} onAssetPersisted={props.onAssetPersisted} />;
     case "grid-alignment": return <GridAlignmentScreen planning={props.planning} onPlanning={props.onPlanning} projectSession={props.projectSession} professionalAssets={props.professionalAssets} professionalGridApprovals={props.professionalGridApprovals} onGridApproved={props.onGridApproved} />;
     case "hypotheses": return <HypothesesScreen planning={props.planning} onPlanning={props.onPlanning} projectSession={props.projectSession} professionalAssets={props.professionalAssets} professionalRecords={props.professionalRecords} onProfessionalRecords={props.onProfessionalRecords} />;

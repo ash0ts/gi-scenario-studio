@@ -498,7 +498,7 @@ describe("EcoCorridor desktop entry paths", () => {
               selected_evidence_sha256: "8".repeat(64),
               authorized_asset_count: 1,
               generalized_derivative_count: 0,
-              context_schema_version: "ecocorridor-assistant-context/v2",
+              context_schema_version: "ecocorridor-assistant-context/v3",
             },
             deterministic_validation: "PASSED",
             validator_version: "ecocorridor-assistant-validator-v1",
@@ -934,6 +934,17 @@ describe("authoritative professional workspace", () => {
     await user.selectOptions(screen.getByLabelText("Retained supporting document *"), "asset_reviewed_memo");
     expect(screen.getByText("Authorized for DEDICATED")).toBeInTheDocument();
     const briefTitle = screen.getByLabelText("Brief title *");
+    expect(briefTitle).toHaveValue("Retained professional editors");
+    expect(screen.getByLabelText("Decision question *")).toHaveValue("Which reviewed concept should advance to feasibility review?");
+    expect(screen.getByLabelText("Decision owner *")).toHaveValue("Agency ecologist");
+    expect(screen.getByLabelText("Target guilds * · one per line")).toHaveValue("Anonymous forest-associated focal guild");
+    expect(screen.getByLabelText("Maximum direct jobs")).toHaveValue("5000");
+    expect(screen.getByLabelText("Maximum input (MiB)")).toHaveValue("2048");
+    expect(screen.getByLabelText("Maximum materialized (MiB)")).toHaveValue("8192");
+    expect(screen.getByLabelText("Maximum current rasters (MiB)")).toHaveValue("4096");
+    expect(screen.getByRole("button", { name: "Save decision brief" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save resource policy" })).toBeDisabled();
+    await user.clear(briefTitle);
     await user.type(briefTitle, "North approach screening brief");
     expect(screen.getByText("Draft retained in workspace")).toBeInTheDocument();
 
@@ -941,8 +952,139 @@ describe("authoritative professional workspace", () => {
     await user.click(screen.getAllByRole("button", { name: "Rules and costs" })[0]);
     expect(screen.getByLabelText("Brief title *")).toHaveValue("North approach screening brief");
     await user.click(screen.getByRole("button", { name: "Undo brief draft" }));
-    expect(screen.getByLabelText("Brief title *")).toHaveValue("");
-    expect(screen.getAllByText("No unsaved field changes").length).toBeGreaterThan(0);
+    expect(screen.getByLabelText("Brief title *")).toHaveValue("Retained professional editors");
+    expect(screen.getByText("Authoritative decision brief loaded")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save decision brief" })).toBeDisabled();
+
+    await user.click(screen.getAllByRole("button", { name: "Study context" })[0]);
+    expect(screen.getByText(/These creation fields stay locked so changes cannot bypass revision history/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Revise decision boundary" }));
+    expect(screen.getByRole("heading", { name: "Decision boundary" })).toBeInTheDocument();
+  });
+
+  it("preserves retained decision and resource fields when publishing semantic revisions", async () => {
+    const user = userEvent.setup();
+    const base = projectState("retained-contracts", "Retained contracts", "IMPORTED");
+    const retainedBrief = {
+      ...base.effective_bundle.decision_brief,
+      brief_id: "brief_stable_professional_identity",
+      title: "Northern linkage decision boundary",
+      decision_question: "Which reviewed package should receive field diligence?",
+      decision_owner: "DOT ecology program lead",
+      intended_use: "Compare reviewed connectivity hypotheses for feasibility screening only.",
+      target_guilds: ["Guild alpha", "Guild beta"],
+      safeguard_guilds: ["Safeguard gamma"],
+      budget_amount: 387500,
+      currency: "USD",
+      cost_vintage: "FY2026 planning dollars",
+      non_goals: ["No animal-use prediction", "No crossing design approval"],
+      required_next_action: "Complete field, ownership, and engineering feasibility review.",
+      conceptual: false,
+    };
+    const mib = 1024 * 1024;
+    const retainedPolicy = {
+      max_input_bytes: 768 * mib,
+      max_materialized_bytes: 3072 * mib,
+      max_current_raster_bytes: 1536 * mib,
+      max_direct_jobs: 321,
+      max_wall_seconds_per_job: 777,
+      require_explicit_oversize_approval: true,
+    };
+    const savedState: ProfessionalProjectState = {
+      ...base,
+      effective_bundle: {
+        ...base.effective_bundle,
+        decision_brief: retainedBrief,
+        resource_policy: retainedPolicy,
+      },
+      resource_policy: retainedPolicy,
+    };
+    const request = vi.fn(async (method: string, params: Record<string, unknown> = {}) => {
+      if (method === "connectivity.project.get_state") return payload(method, savedState);
+      if (method === "assistant.status") return payload(method, { configured: false, provider: null, project_id: "retained-contracts", wandb_external_project_id: "wandb-retained-contracts", trace_required: true });
+      if (method === "connectivity.decision_brief.save") return payload(method, { record_id: retainedBrief.brief_id, revision: 8 });
+      if (method === "connectivity.resource_policy.save") return payload(method, { record_id: "resource_policy", revision: 9 });
+      if (method === "connectivity.cost_basis.get") throw new Error("No reviewed cost basis in this focused fixture.");
+      throw new Error(`Unexpected method ${method}: ${JSON.stringify(params)}`);
+    });
+    window.__ECOCORRIDOR_HOST__ = { request: request as unknown as HostBridge["request"] };
+
+    render(<Workspace mode="desktop" path="existing" localPreview={false} preflight={null} reopenedProject={{ projectHandle: "project_retained_contracts", lastModifiedMs: Date.now(), projectState: savedState }} />);
+    expect(await screen.findByText(/Authoritative records restored/i)).toBeInTheDocument();
+    await user.click(screen.getAllByRole("button", { name: "Rules and costs" })[0]);
+
+    const briefEditor = screen.getByRole("heading", { name: "Decision boundary" }).closest("article");
+    const resourceEditor = screen.getByRole("heading", { name: "Hard project policy" }).closest("article");
+    expect(briefEditor).not.toBeNull();
+    expect(resourceEditor).not.toBeNull();
+    const brief = within(briefEditor as HTMLElement);
+    const policy = within(resourceEditor as HTMLElement);
+    expect(brief.getByLabelText("Brief title *")).toHaveValue(retainedBrief.title);
+    expect(brief.getByLabelText("Decision question *")).toHaveValue(retainedBrief.decision_question);
+    expect(brief.getByLabelText("Decision owner *")).toHaveValue(retainedBrief.decision_owner);
+    expect(brief.getByLabelText("Intended use *")).toHaveValue(retainedBrief.intended_use);
+    expect(brief.getByLabelText("Target guilds * · one per line")).toHaveValue("Guild alpha\nGuild beta");
+    expect(brief.getByLabelText("Safeguard guilds · one per line")).toHaveValue("Safeguard gamma");
+    expect(brief.getByLabelText("Screening budget")).toHaveValue("387500");
+    expect(brief.getByLabelText("Currency")).toHaveValue("USD");
+    expect(brief.getByLabelText("Cost vintage")).toHaveValue("FY2026 planning dollars");
+    expect(brief.getByLabelText("Permanent non-goals * · one per line")).toHaveValue("No animal-use prediction\nNo crossing design approval");
+    expect(brief.getByLabelText("Required next action *")).toHaveValue(retainedBrief.required_next_action);
+    expect(brief.getByText(retainedBrief.brief_id)).toBeInTheDocument();
+    expect(brief.getByRole("button", { name: "Save decision brief" })).toBeDisabled();
+
+    const question = brief.getByLabelText("Decision question *");
+    await user.clear(question);
+    await user.type(question, "Which reviewed package should advance to site diligence?");
+    await user.click(brief.getByRole("button", { name: "Save decision brief" }));
+    await waitFor(() => expect(brief.getByRole("button", { name: "Save decision brief" })).toBeDisabled());
+    const briefCall = request.mock.calls.find(([method]) => method === "connectivity.decision_brief.save");
+    expect(briefCall?.[1]).toEqual({
+      project_handle: "project_retained_contracts",
+      decision_brief: {
+        ...retainedBrief,
+        decision_question: "Which reviewed package should advance to site diligence?",
+      },
+    });
+    await user.clear(brief.getByLabelText("Screening budget"));
+    await user.click(brief.getByRole("button", { name: "Save decision brief" }));
+    await waitFor(() => expect(request.mock.calls.filter(([method]) => method === "connectivity.decision_brief.save")).toHaveLength(2));
+    const nullBudgetCall = request.mock.calls.filter(([method]) => method === "connectivity.decision_brief.save").at(-1);
+    expect(nullBudgetCall?.[1]).toMatchObject({
+      decision_brief: {
+        brief_id: retainedBrief.brief_id,
+        budget_amount: null,
+        currency: null,
+        cost_vintage: null,
+      },
+    });
+    expect(brief.getByLabelText("Currency")).toHaveValue("");
+    expect(brief.getByLabelText("Cost vintage")).toHaveValue("");
+    expect(brief.getByRole("button", { name: "Save decision brief" })).toBeDisabled();
+
+    expect(policy.getByLabelText("Maximum direct jobs")).toHaveValue("321");
+    expect(policy.getByLabelText("Maximum input (MiB)")).toHaveValue("768");
+    expect(policy.getByLabelText("Maximum materialized (MiB)")).toHaveValue("3072");
+    expect(policy.getByLabelText("Maximum current rasters (MiB)")).toHaveValue("1536");
+    expect(policy.getByLabelText("Per-job wall time (seconds)")).toHaveValue("777");
+    expect(policy.getByLabelText(/Require explicit approval for every oversize run/i)).toBeChecked();
+    expect(policy.getByRole("button", { name: "Save resource policy" })).toBeDisabled();
+    await user.clear(policy.getByLabelText("Maximum direct jobs"));
+    await user.type(policy.getByLabelText("Maximum direct jobs"), "400");
+    await user.click(policy.getByRole("button", { name: "Undo policy draft" }));
+    expect(policy.getByLabelText("Maximum direct jobs")).toHaveValue("321");
+    await user.clear(policy.getByLabelText("Per-job wall time (seconds)"));
+    await user.type(policy.getByLabelText("Per-job wall time (seconds)"), "900");
+    await user.click(policy.getByRole("button", { name: "Save resource policy" }));
+    await waitFor(() => expect(policy.getByRole("button", { name: "Save resource policy" })).toBeDisabled());
+    const policyCall = request.mock.calls.find(([method]) => method === "connectivity.resource_policy.save");
+    expect(policyCall?.[1]).toEqual({
+      project_handle: "project_retained_contracts",
+      resource_policy: {
+        ...retainedPolicy,
+        max_wall_seconds_per_job: 900,
+      },
+    });
   });
 
   it("publishes one reviewed cost basis with exact coverage for every persisted option", async () => {

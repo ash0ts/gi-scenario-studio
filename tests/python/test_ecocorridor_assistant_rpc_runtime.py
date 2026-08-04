@@ -27,7 +27,7 @@ from ecocorridor_core.contracts import (
     SensitivityClass,
 )
 from ecocorridor_core.interventions import canonicalize_portfolio
-from ecocorridor_core.metrics import CONNECTIVITY_LIMITATION, CURRENT_MAP_LIMITATION
+from ecocorridor_core.metrics import CONNECTIVITY_LIMITATION
 from ecocorridor_core.project_store import EcoProjectStore
 from ecocorridor_core.raster_io import render_esri_ascii
 from ecocorridor_core.ridgeway import build_ridgeway_fixture
@@ -149,13 +149,13 @@ class _Provider:
         self.requests.append(request)
         if operation == "evidence.explain":
             payload = {
-                "answer": (
-                    "Direct Circuitscape result under documented assumptions. "
-                    "The cited within-scenario change is 0%."
-                ),
-                "evidence_ids": ["E1"],
-                "numeric_claims": [{"evidence_id": "E1", "value": 0.0, "units": "percent"}],
-                "limitations": [CONNECTIVITY_LIMITATION, CURRENT_MAP_LIMITATION],
+                "intent": request["user_prompt"],
+                "items": [
+                    {
+                        "evidence_id": "E1",
+                        "explanation_kind": "DIRECT_PAIR_METRIC",
+                    }
+                ],
             }
         else:
             page_text = "Screening cost must remain below 200000 USD."

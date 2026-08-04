@@ -18,6 +18,7 @@ from ecocorridor_core.assistants import (
     AuthorizedEvidenceSelection,
     DocumentPage,
     EvidenceAssistant,
+    EvidenceExplanationKind,
     EvidenceIntakeAssistant,
     EvidenceQuestionIntent,
     OpenAICompatibleProvider,
@@ -48,8 +49,11 @@ class FakeProvider:
 
     def complete(self, **request: Any) -> ProviderResponse:
         self.calls.append(request)
+        payload = dict(self.payload)
+        if request["operation"] == "evidence.explain":
+            payload.setdefault("intent", request["user_prompt"])
         return ProviderResponse(
-            content=json.dumps(self.payload),
+            content=json.dumps(payload),
             provider_call_id="provider-call-1",
             model="test-evidence-model",
             usage={"prompt_tokens": 20, "completion_tokens": 10},
@@ -259,14 +263,12 @@ def _association(*, analysis: bool = True) -> AssistantRunAssociation:
 
 def _answer_payload(**overrides: Any) -> dict[str, Any]:
     payload: dict[str, Any] = {
-        "answer": (
-            "Direct Circuitscape result under documented assumptions. "
-            "The cited focal-pair resistance reduction is 6.42%. "
-            "It is a candidate to carry forward for field and engineering feasibility review."
-        ),
-        "evidence_ids": ["E1"],
-        "numeric_claims": [{"evidence_id": "E1", "value": 6.42, "units": "percent"}],
-        "limitations": [CONNECTIVITY_LIMITATION, CURRENT_MAP_LIMITATION],
+        "items": [
+            {
+                "evidence_id": "E1",
+                "explanation_kind": "DIRECT_PAIR_METRIC",
+            }
+        ],
     }
     payload.update(overrides)
     return payload
@@ -397,95 +399,104 @@ def test_reference_assistant_requires_every_reviewed_binding_caveat() -> None:
             "limitations": limitations,
         }
     )
-    complete = _ProviderEvidenceAnswer(
-        answer=(
-            "Direct Circuitscape result under documented assumptions. E1 within_tolerance=true"
-        ),
-        evidence_ids=["E1"],
-        boolean_claims=[{"evidence_id": "E1", "value": True, "units": "within_tolerance"}],
-        limitations=limitations,
+    proposed = _ProviderEvidenceAnswer(
+        intent=EvidenceQuestionIntent.TRACE_EVIDENCE,
+        items=[
+            {
+                "evidence_id": "E1",
+                "explanation_kind": EvidenceExplanationKind.DIRECT_REFERENCE_COMPARISON,
+            }
+        ],
     )
-    EvidenceAssistant._validate_evidence_answer(
-        complete,
+    rendering = EvidenceAssistant._validate_and_render_evidence_answer(
+        proposed,
         {"E1": reference_claim},
+        {"E1": context},
         SensitiveContextPolicy(),
+        expected_intent=EvidenceQuestionIntent.TRACE_EVIDENCE,
     )
+    assert "within_tolerance=true" in rendering.text
+    assert rendering.limitations == limitations
 
-    omitted = complete.model_copy(
+    omitted_context = context.model_copy(
         update={"limitations": [item for item in limitations if item != reviewed_caveat]}
     )
     with pytest.raises(AssistantSafetyError, match="ASSISTANT_REQUIRED_LIMITATION_MISSING"):
-        EvidenceAssistant._validate_evidence_answer(
-            omitted,
+        EvidenceAssistant._validate_and_render_evidence_answer(
+            proposed,
             {"E1": reference_claim},
+            {"E1": omitted_context},
             SensitiveContextPolicy(),
+            expected_intent=EvidenceQuestionIntent.TRACE_EVIDENCE,
         )
 
 
 @pytest.mark.parametrize(
-    ("claim_value", "provider_value", "answer", "expected_error"),
+    ("provider_payload", "expected_error"),
     [
         (
-            False,
-            True,
-            ("Direct Circuitscape result under documented assumptions. E1 within_tolerance=true"),
-            "ASSISTANT_BOOLEAN_VALUE_MISMATCH",
+            {
+                "intent": "EXPLAIN_SELECTED_EVIDENCE",
+                "items": [
+                    {
+                        "evidence_id": "E1",
+                        "explanation_kind": "DIRECT_REFERENCE_COMPARISON",
+                    }
+                ],
+            },
+            "ASSISTANT_PROVIDER_INTENT_MISMATCH",
         ),
         (
-            False,
-            False,
-            (
-                "Direct Circuitscape result under documented assumptions. "
-                "The comparison passed within tolerance. E1 within_tolerance=false"
-            ),
-            "ASSISTANT_BOOLEAN_RENDERING_AMBIGUOUS",
+            {
+                "intent": "TRACE_EVIDENCE",
+                "items": [{"evidence_id": "E1", "explanation_kind": "DIRECT_PAIR_METRIC"}],
+            },
+            "ASSISTANT_EVIDENCE_KIND_MISMATCH",
         ),
         (
-            False,
-            None,
-            "Direct Circuitscape result under documented assumptions.",
-            "ASSISTANT_BOOLEAN_EVIDENCE_INCOMPLETE",
+            {
+                "intent": "TRACE_EVIDENCE",
+                "items": [
+                    {
+                        "evidence_id": "E2",
+                        "explanation_kind": "DIRECT_REFERENCE_COMPARISON",
+                    }
+                ],
+            },
+            "ASSISTANT_FABRICATED_EVIDENCE",
         ),
     ],
 )
-def test_reference_assistant_rejects_boolean_inversion_or_omission(
-    claim_value: bool,
-    provider_value: bool | None,
-    answer: str,
+def test_reference_assistant_rejects_untrusted_intent_kind_or_alias(
+    provider_payload: dict[str, Any],
     expected_error: str,
 ) -> None:
     limitations = [CONNECTIVITY_LIMITATION, CURRENT_RASTER_LIMITATION, FITNESS_LIMITATION]
     reference_claim = _claim().model_copy(
         update={
             "claim_kind": "DIRECT_REFERENCE_COMPARISON",
-            "value": claim_value,
+            "value": False,
             "units": "within_tolerance",
             "limitations": limitations,
         }
     )
-    boolean_claims = (
-        []
-        if provider_value is None
-        else [
-            {
-                "evidence_id": "E1",
-                "value": provider_value,
-                "units": "within_tolerance",
-            }
-        ]
-    )
-    proposed = _ProviderEvidenceAnswer(
-        answer=answer,
-        evidence_ids=["E1"],
-        boolean_claims=boolean_claims,
+    context = AuthorizedEvidenceClaimContext(
+        evidence_alias="E1",
+        claim_kind="DIRECT_REFERENCE_COMPARISON",
+        value=False,
+        units="within_tolerance",
+        direct_result=True,
         limitations=limitations,
     )
+    proposed = _ProviderEvidenceAnswer.model_validate(provider_payload)
 
     with pytest.raises(AssistantSafetyError, match=expected_error):
-        EvidenceAssistant._validate_evidence_answer(
+        EvidenceAssistant._validate_and_render_evidence_answer(
             proposed,
             {"E1": reference_claim},
+            {"E1": context},
             SensitiveContextPolicy(),
+            expected_intent=EvidenceQuestionIntent.TRACE_EVIDENCE,
         )
 
 
@@ -499,20 +510,76 @@ def test_reference_assistant_accepts_exact_false_boolean_disposition() -> None:
             "limitations": limitations,
         }
     )
-    proposed = _ProviderEvidenceAnswer(
-        answer=(
-            "Direct Circuitscape result under documented assumptions. E1 within_tolerance=false"
-        ),
-        evidence_ids=["E1"],
-        boolean_claims=[{"evidence_id": "E1", "value": False, "units": "within_tolerance"}],
+    context = AuthorizedEvidenceClaimContext(
+        evidence_alias="E1",
+        claim_kind="DIRECT_REFERENCE_COMPARISON",
+        value=False,
+        units="within_tolerance",
+        direct_result=True,
         limitations=limitations,
     )
+    proposed = _ProviderEvidenceAnswer(
+        intent=EvidenceQuestionIntent.TRACE_EVIDENCE,
+        items=[
+            {
+                "evidence_id": "E1",
+                "explanation_kind": EvidenceExplanationKind.DIRECT_REFERENCE_COMPARISON,
+            }
+        ],
+    )
 
-    EvidenceAssistant._validate_evidence_answer(
+    rendering = EvidenceAssistant._validate_and_render_evidence_answer(
         proposed,
         {"E1": reference_claim},
+        {"E1": context},
         SensitiveContextPolicy(),
+        expected_intent=EvidenceQuestionIntent.TRACE_EVIDENCE,
     )
+    assert "within_tolerance=false" in rendering.text
+    assert rendering.numeric_claims == []
+
+
+def test_provider_may_select_a_nonempty_safe_subset_of_authorized_evidence() -> None:
+    claim = _claim()
+    first = _authorized_selection().items[0].context
+    second = first.model_copy(update={"evidence_alias": "E2", "value": 4.25})
+    proposed = _ProviderEvidenceAnswer(
+        intent=EvidenceQuestionIntent.EXPLAIN_SELECTED_EVIDENCE,
+        items=[
+            {
+                "evidence_id": "E2",
+                "explanation_kind": EvidenceExplanationKind.DIRECT_PAIR_METRIC,
+            }
+        ],
+    )
+
+    rendering = EvidenceAssistant._validate_and_render_evidence_answer(
+        proposed,
+        {
+            "E1": claim,
+            "E2": claim.model_copy(update={"value": 4.25}),
+        },
+        {"E1": first, "E2": second},
+        SensitiveContextPolicy(),
+        expected_intent=EvidenceQuestionIntent.EXPLAIN_SELECTED_EVIDENCE,
+    )
+
+    assert rendering.evidence_ids == ["E2"]
+    assert "4.25 percent" in rendering.text
+    assert "6.42 percent" not in rendering.text
+
+
+def test_provider_evidence_schema_has_no_user_visible_language_fields() -> None:
+    properties = _ProviderEvidenceAnswer.model_json_schema()["properties"]
+    assert set(properties) == {"intent", "items"}
+    with pytest.raises(ValueError):
+        _ProviderEvidenceAnswer.model_validate(
+            {
+                **_answer_payload(),
+                "intent": "EXPLAIN_SELECTED_EVIDENCE",
+                "answer": "Field surveys show that this intervention reconnects habitat.",
+            }
+        )
 
 
 class _AuthorizedAssistant:
@@ -753,45 +820,28 @@ def test_evidence_assistant_returns_only_validated_trace_readback() -> None:
     ("payload", "error"),
     [
         (
-            _answer_payload(
-                numeric_claims=[{"evidence_id": "E1", "value": 6.41, "units": "percent"}]
-            ),
-            "NUMERIC_VALUE_MISMATCH",
+            _answer_payload(answer="Field surveys show this intervention reconnects habitat."),
+            "PROVIDER_SCHEMA_INVALID",
         ),
         (
             _answer_payload(
                 numeric_claims=[{"evidence_id": "E1", "value": 6.42, "units": "fraction"}]
             ),
-            "UNIT_MISMATCH",
-        ),
-        (
-            _answer_payload(
-                answer=(
-                    "Direct Circuitscape result under documented assumptions. "
-                    "The cited focal-pair resistance reduction is 6.42 miles."
-                )
-            ),
-            "NUMERIC_UNIT_RENDERING_MISMATCH",
-        ),
-        (
-            _answer_payload(answer="Direct Circuitscape result under documented assumptions."),
-            "NUMERIC_UNIT_RENDERING_MISMATCH",
-        ),
-        (
-            _answer_payload(evidence_ids=["fabricated-claim"]),
-            "FABRICATED_EVIDENCE",
+            "PROVIDER_SCHEMA_INVALID",
         ),
         (
             _answer_payload(limitations=[CONNECTIVITY_LIMITATION]),
-            "REQUIRED_LIMITATION_MISSING",
+            "PROVIDER_SCHEMA_INVALID",
         ),
         (
-            _answer_payload(answer="This is the optimal corridor and will reduce collisions."),
-            "PROHIBITED_ECOLOGICAL_CLAIM",
+            _answer_payload(
+                items=[{"evidence_id": "E2", "explanation_kind": "DIRECT_PAIR_METRIC"}]
+            ),
+            "FABRICATED_EVIDENCE",
         ),
         (
-            _answer_payload(answer="I have approved the model and selected the final portfolio."),
-            "UNAUTHORIZED_ACTION",
+            _answer_payload(items=[{"evidence_id": "E1", "explanation_kind": "DIRECT_QA"}]),
+            "EVIDENCE_KIND_MISMATCH",
         ),
     ],
 )
@@ -836,7 +886,7 @@ def test_evidence_assistant_rejects_each_explicit_ecological_claim_bypass(
     forbidden_claim: str,
 ) -> None:
     assistant, _, trace = _evidence_assistant(_answer_payload(answer=forbidden_claim))
-    with pytest.raises(AssistantSafetyError, match="PROHIBITED_ECOLOGICAL_CLAIM"):
+    with pytest.raises(AssistantSafetyError, match="PROVIDER_SCHEMA_INVALID"):
         assistant.explain(
             call_id="call-prohibited-claim",
             project_id="project-1",
@@ -848,15 +898,7 @@ def test_evidence_assistant_rejects_each_explicit_ecological_claim_bypass(
 
 
 def test_evidence_assistant_allows_required_negated_limitations() -> None:
-    payload = _answer_payload(
-        answer=(
-            "Direct Circuitscape result under documented assumptions. "
-            "The cited focal-pair resistance reduction is 6.42%. "
-            "This result does not predict wildlife movement, does not establish crossing use, "
-            "and is not an approved wildlife crossing."
-        )
-    )
-    assistant, _, _ = _evidence_assistant(payload)
+    assistant, _, _ = _evidence_assistant(_answer_payload())
     answer = assistant.explain(
         call_id="call-explicit-limitation",
         project_id="project-1",
@@ -864,7 +906,9 @@ def test_evidence_assistant_allows_required_negated_limitations() -> None:
         evidence_ids=["claim-1"],
         association=_association(),
     )
-    assert answer.text.startswith(payload["answer"])
+    assert CONNECTIVITY_LIMITATION in answer.text
+    assert CURRENT_MAP_LIMITATION in answer.text
+    assert answer.limitations == [CONNECTIVITY_LIMITATION, CURRENT_MAP_LIMITATION]
 
 
 def test_prompt_injection_and_sensitive_location_leak_are_rejected() -> None:
@@ -880,23 +924,17 @@ def test_prompt_injection_and_sensitive_location_leak_are_rejected() -> None:
     assert provider.calls == []
     assert trace.aborted
 
-    leaking = _answer_payload(
-        answer=(
-            "Direct Circuitscape result under documented assumptions. "
-            "At Hidden Den North the value is 6.42%."
-        )
+    assistant, provider, _ = _evidence_assistant(_answer_payload())
+    answer = assistant.explain(
+        call_id="call-location",
+        project_id="project-1",
+        question="Explain this result at Hidden Den North.",
+        evidence_ids=["claim-1"],
+        association=_association(),
+        sensitive_policy=SensitiveContextPolicy(prohibited_terms=["Hidden Den North"]),
     )
-    assistant, provider, _ = _evidence_assistant(leaking)
-    with pytest.raises(AssistantSafetyError, match="SENSITIVE_LOCATION_LEAK"):
-        assistant.explain(
-            call_id="call-location",
-            project_id="project-1",
-            question="Explain this result at Hidden Den North.",
-            evidence_ids=["claim-1"],
-            association=_association(),
-            sensitive_policy=SensitiveContextPolicy(prohibited_terms=["Hidden Den North"]),
-        )
     assert "Hidden Den North" not in json.dumps(provider.calls[0])
+    assert "Hidden Den North" not in answer.text
 
 
 def test_coordinate_pairs_are_generalized_before_provider_and_trace() -> None:

@@ -39,6 +39,7 @@ from ecocorridor_core.assistants import (
     ProviderCredentialSession,
     ProviderResponse,
     SensitiveContextPolicy,
+    _ProviderEvidenceAnswer,
 )
 from ecocorridor_core.contracts import ConnectivityEvidenceClaim, EvidenceEdge, EvidenceNode
 from ecocorridor_core.metrics import CONNECTIVITY_LIMITATION, CURRENT_MAP_LIMITATION
@@ -189,6 +190,7 @@ class _RecordingProvider:
     def __init__(self, provider: AssistantProvider) -> None:
         self.provider = provider
         self.calls: list[dict[str, Any]] = []
+        self.response_contents: list[str] = []
 
     def complete(self, **request: Any) -> ProviderResponse:
         safe_request = {
@@ -199,6 +201,7 @@ class _RecordingProvider:
         }
         response = self.provider.complete(**request)
         self.calls.append(safe_request)
+        self.response_contents.append(response.content)
         return response
 
 
@@ -409,6 +412,7 @@ def main() -> int:
                     "numeric_faithful",
                     "unit_consistent",
                     "required_limitations_present",
+                    "deterministic_text_faithful",
                     "unauthorized_action_absent",
                     "fabricated_evidence_rejected",
                     "prompt_injection_rejected",
@@ -496,6 +500,14 @@ def main() -> int:
                         call_id=f"evaluation-call-{case.case_id}"
                     )
                 provider_request = provider.calls[-1] if len(provider.calls) > before else None
+                if disposition == "ANSWERED" and provider_request is not None:
+                    validated_selection = _ProviderEvidenceAnswer.model_validate(
+                        json.loads(provider.response_contents[-1])
+                    )
+                    provider_request = {
+                        **provider_request,
+                        "validated_provider_selection": validated_selection.model_dump(mode="json"),
+                    }
                 record = make_case_record(
                     case,
                     disposition=disposition,

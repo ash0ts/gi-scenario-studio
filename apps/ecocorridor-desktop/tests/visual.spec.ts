@@ -590,6 +590,41 @@ test("every planning stage explains its evidence prerequisite", async ({ page },
   await assertNoBlockingAxeFindings(page);
 });
 
+test("professional Rules and costs keeps the retained decision editor readable", async ({ page }, testInfo) => {
+  test.skip(!["desktop-1440", "compact-760"].includes(testInfo.project.name), "The full-width and compact professional editor layouts are exercised at their boundary viewports.");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await openProfessionalPlanning(page);
+  await createProfessionalPlanningRecord(page);
+  await page.getByRole("navigation", { name: "Project workflow" }).getByRole("button", { name: "Rules and costs" }).click();
+
+  const layout = page.locator(".professional-rule-layout");
+  const decision = layout.getByRole("heading", { name: "Decision boundary" }).locator("..");
+  const criterion = layout.getByRole("heading", { name: "Testable criterion" }).locator("..");
+  const resources = layout.getByRole("heading", { name: "Hard project policy" }).locator("..");
+  await expect(layout.getByText("Authoritative decision brief loaded")).toBeVisible();
+  await expect(layout.getByLabel("Decision question *")).toHaveValue("Which reviewed portfolio should advance to feasibility review?");
+  await expect(layout.getByLabel("Maximum direct jobs")).toHaveValue("5000");
+  await expect(layout.getByRole("button", { name: "Save decision brief" })).toBeDisabled();
+  await expect(layout.getByRole("button", { name: "Save resource policy" })).toBeDisabled();
+
+  const [decisionBox, criterionBox, resourcesBox] = await Promise.all([decision.boundingBox(), criterion.boundingBox(), resources.boundingBox()]);
+  expect(decisionBox).not.toBeNull();
+  expect(criterionBox).not.toBeNull();
+  expect(resourcesBox).not.toBeNull();
+  if (testInfo.project.name === "desktop-1440") {
+    expect(decisionBox!.width).toBeGreaterThan(criterionBox!.width * 1.8);
+    expect(Math.abs(criterionBox!.y - resourcesBox!.y)).toBeLessThan(2);
+  } else {
+    expect(Math.abs(decisionBox!.width - criterionBox!.width)).toBeLessThan(2);
+    expect(resourcesBox!.y).toBeGreaterThan(criterionBox!.y + criterionBox!.height);
+  }
+
+  await assertNoBlockingAxeFindings(page);
+  const screenshot = await layout.screenshot({ animations: "disabled" });
+  expect(screenshot.byteLength).toBeGreaterThan(10_000);
+  await testInfo.attach(`professional-rules-costs-${testInfo.project.name}`, { body: screenshot, contentType: "image/png" });
+});
+
 test("compact intervention planning keeps Survey first a readable choice", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "compact-760", "The compact intervention editor has its own regression baseline.");
   await page.emulateMedia({ reducedMotion: "reduce" });
