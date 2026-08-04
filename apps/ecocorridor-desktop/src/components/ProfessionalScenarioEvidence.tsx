@@ -59,7 +59,11 @@ function mapEvidenceSelection(detail: ScenarioDetailResponse, claimId: string): 
     title: `Direct current-map diagnostic · ${detail.scenario.scenario_id}`,
     value: "Resolved from retained map claim",
     units: "diagnostic current redistribution",
-    status: "review",
+    // The worker returned this retained claim identity only after rehashing both
+    // current rasters. "verified" describes that evidence identity; the units,
+    // reducer, assumption, and surrounding copy keep its ecological meaning
+    // explicitly diagnostic and review-only.
+    status: "verified",
     portfolioId: detail.portfolio_id,
     scenarioId: detail.scenario.scenario_id,
     runId: detail.portfolio_run.direct_run_id,

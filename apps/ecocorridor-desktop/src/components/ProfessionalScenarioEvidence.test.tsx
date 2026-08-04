@@ -1,9 +1,11 @@
+import { useState } from "react";
 import axe from "axe-core";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
 
-import type { HostBridge } from "../types";
+import type { EvidenceSelection, HostBridge } from "../types";
+import { EvidencePanel } from "./EvidencePanel";
 import { ProfessionalScenarioEvidence } from "./ProfessionalScenarioEvidence";
 
 const sha = (character: string) => character.repeat(64);
@@ -125,6 +127,18 @@ function installHost(mapAvailable = true) {
   return request;
 }
 
+function payload(method: string, data: unknown) {
+  return { api_version: "1.0", method, data, data_sha256: sha("f") };
+}
+
+function MapEvidenceHarness() {
+  const [selection, setSelection] = useState<EvidenceSelection | null>(null);
+  return <>
+    <ProfessionalScenarioEvidence projectHandle="project-handle" analysisId="analysis-reviewed" portfolioId="portfolio-selected" scenarioIds={["scenario-forest"]} initialScenarioId="scenario-forest" onEvidence={setSelection} />
+    {selection && <EvidencePanel open selection={selection} fixture={null} verified publicMode={false} projectHandle="project-handle" onClose={() => setSelection(null)} />}
+  </>;
+}
+
 afterEach(() => {
   delete window.__ECOCORRIDOR_HOST__;
 });
@@ -158,6 +172,50 @@ test("keeps matrix and scrubber synchronized to one authoritative ecological sce
 
   const results = await axe.run(container);
   expect(results.violations.filter((item) => item.impact === "serious" || item.impact === "critical")).toEqual([]);
+});
+
+test("traces a worker-verified diagnostic map claim through the Evidence Rail", async () => {
+  const request = vi.fn(async (method: string, params: Record<string, unknown>) => {
+    if (method === "connectivity.results.scenario_detail") {
+      return payload(method, response(String(params.scenario_id), Number(params.cell_offset ?? 0), true));
+    }
+    if (method === "connectivity.evidence.resolve") {
+      return payload(method, {
+        claim: {
+          claim_id: "claim-map-reviewed",
+          portfolio_id: "portfolio-selected",
+          scenario_id: "scenario-forest",
+          value: 10,
+          units: "% diagnostic review-mask current redistribution",
+          reducer: "Configured review-mask reducer over same-scenario retained current rasters",
+          direct_run_ids: ["run-baseline-scenario-forest", "run-selected-scenario-forest"],
+          nodes: [
+            { node_id: "claim:claim-map-reviewed", node_type: "CLAIM", label: "Diagnostic road-mask redistribution" },
+            { node_id: "run:run-selected-scenario-forest", node_type: "DIRECT_RUN", label: "Direct Circuitscape current-map run" },
+          ],
+          edges: [{ from_node_id: "claim:claim-map-reviewed", to_node_id: "run:run-selected-scenario-forest", relation: "SUPPORTED_BY" }],
+          limitations: ["Current density is a circuit diagnostic, not observed or predicted animal use."],
+        },
+        limitations: ["The road-mask result is review evidence, not an ecological outcome or project approval."],
+      });
+    }
+    if (method === "assistant.status") return payload(method, { configured: false });
+    throw new Error(`Unexpected method ${method}`);
+  });
+  window.__ECOCORRIDOR_HOST__ = { request: request as unknown as HostBridge["request"] };
+
+  render(<MapEvidenceHarness />);
+  await screen.findByText("guild-forest · hypothesis-reviewed-a");
+  await userEvent.click(screen.getByRole("button", { name: "Trace map diagnostic" }));
+
+  await waitFor(() => expect(request).toHaveBeenCalledWith("connectivity.evidence.resolve", {
+    project_handle: "project-handle",
+    claim_id: "claim-map-reviewed",
+  }));
+  expect(await screen.findByText("Worker evidence resolved")).toBeInTheDocument();
+  expect(screen.getAllByText("claim-map-reviewed").length).toBeGreaterThanOrEqual(1);
+  expect(screen.getAllByText(/diagnostic/i).length).toBeGreaterThanOrEqual(1);
+  expect(screen.getAllByText(/not observed or predicted animal use/i).length).toBeGreaterThanOrEqual(1);
 });
 
 test("pages exact cells through the worker and leaves pair evidence visible when maps are absent", async () => {

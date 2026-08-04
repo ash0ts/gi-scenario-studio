@@ -90,3 +90,34 @@ test("withholds a reference claim when the resolved value or units do not match 
   expect(screen.getByText(/does not match the selected projection value and direct-run identity/)).toBeInTheDocument();
   expect(screen.queryByText("Within tolerance")).not.toBeInTheDocument();
 });
+
+test("does not resolve a professional map identity that has not been verified", async () => {
+  const request = vi.fn(async (method: string) => {
+    if (method === "assistant.status") return payload({ configured: false });
+    return payload(resolvedEvidence(12.5, "% diagnostic review-mask current redistribution"));
+  });
+  window.__ECOCORRIDOR_HOST__ = { request: request as unknown as HostBridge["request"] };
+
+  render(<EvidencePanel
+    open
+    selection={{
+      ...selection,
+      claimId: "claim-map-unverified",
+      title: "Direct current-map diagnostic · reviewed scenario",
+      value: "Resolved from retained map claim",
+      units: "diagnostic current redistribution",
+      status: "review",
+      reducer: "Configured review-mask reducer over same-scenario retained current rasters",
+      assumption: "Current density is a model diagnostic, not observed or predicted animal use.",
+    }}
+    fixture={null}
+    verified
+    publicMode={false}
+    projectHandle="opaque-project"
+    onClose={vi.fn()}
+  />);
+
+  expect(await screen.findByText("Withheld")).toBeInTheDocument();
+  expect(screen.getByText(/verified claim identity is unavailable/i)).toBeInTheDocument();
+  expect(request).not.toHaveBeenCalledWith("connectivity.evidence.resolve", expect.anything());
+});
