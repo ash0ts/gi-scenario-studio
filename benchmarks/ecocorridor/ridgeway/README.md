@@ -10,11 +10,11 @@ The repository retains two deliberately distinct packages:
 - `ridgeway-direct-evidence-4858c0a48841.tar.gz` is checksum-pinned historical
   v1.0 benchmark material. It predates the current model identity and v1.1
   semantic/resource evidence contract and is never loaded as the active replay.
-- `ridgeway-direct-evidence-f93ad36f3cdc.tar.gz` is the locally verified current
+- `ridgeway-direct-evidence-80fb1af09b74.tar.gz` is the locally verified current
   package. It contains 1,536 accepted matrix jobs and 60 accepted current-map
   jobs, 1,596 whole-process-tree exit confirmations, one resource observation
   per job, and the complete current v1.2 UI projection. Its archive SHA-256 is
-  `f93ad36f3cdc36b702a3cb612cbd52c306f5b231f353982de0adaee6174e5e24`.
+  `80fb1af09b744d19b83dffff69f8bb015a46d558e5887ced986c12ae934d6821`.
 
 The active desktop and no-login replay now use the current, manifest-bound
 projection. This is local semantic evidence, not the protected GitHub Actions

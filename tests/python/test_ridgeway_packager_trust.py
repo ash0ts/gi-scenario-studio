@@ -142,6 +142,29 @@ def test_packager_binds_and_rejects_tampered_claim_safety_dependency(tmp_path: P
         packager.ensure_reviewed_report_snapshots(tmp_path)
 
 
+def test_packager_pins_reviewed_ledgers_in_public_manifest() -> None:
+    manifest: dict[str, object] = {}
+    assumption_sha = "a" * 64
+    cost_sha = "b" * 64
+
+    packager.pin_public_ledger_identities(
+        manifest,
+        assumption_ledger_sha256=assumption_sha,
+        cost_basis_sha256=cost_sha,
+    )
+
+    assert manifest == {
+        "assumption_ledger_sha256": assumption_sha,
+        "cost_basis_sha256": cost_sha,
+    }
+    with pytest.raises(packager.PackagingError, match="lowercase SHA-256"):
+        packager.pin_public_ledger_identities(
+            {},
+            assumption_ledger_sha256="not-a-digest",
+            cost_basis_sha256=cost_sha,
+        )
+
+
 def test_packager_requires_full_canonical_indexed_metric_shape() -> None:
     from ecocorridor_core.engine import ProtocolPairMetric
 

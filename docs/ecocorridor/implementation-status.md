@@ -40,20 +40,20 @@ package rather than an `ENGINE_RUN_REQUIRED` placeholder:
 - 128 fixed portfolios × 12 scenarios = 1,536 accepted direct matrix jobs;
 - baseline plus four evidence-selected teaching portfolios × 12 scenarios =
   60 accepted direct current-map jobs;
-- 264 prior completion records were reused only after their immutable requests,
+- 506 prior completion records were reused only after their immutable requests,
   results, artifacts, QA, and hashes were revalidated; the finished package
   still contains direct evidence and confirmed whole-process-tree exit records
   for all 1,596 jobs;
 - current archive SHA-256:
-  `f93ad36f3cdc36b702a3cb612cbd52c306f5b231f353982de0adaee6174e5e24`;
+  `80fb1af09b744d19b83dffff69f8bb015a46d558e5887ced986c12ae934d6821`;
 - direct-evidence manifest SHA-256:
-  `433acb8e9b5c98e6b73f570891cd79a8b02c99221d4395d00fb1d2e1ab8d3afb`;
+  `4a6f7605625f873587449bfe387af7228cc7cf6a7fa7b1ffee3119badaae2076`;
 - engine manifest SHA-256:
-  `5997a813487ea3ebbf9fac4b850d59f348fc0d9625ceebb3b92118f8c21afcdc`;
+  `4fdf058be0bb2e33bc014858e01decb808ecc7296e1fca78fce58f62331a7a86`;
 - workflow manifest SHA-256:
-  `c875c9ac3bdfb1a7921843c1e0f926cacfc6979e964b2fd546fa6a62313eac6f`;
+  `5983c8154c9601148eedfcb6f3e553955561d69885c9d37ab8c01fa3bdd21cc4`;
 - evidence-index SHA-256:
-  `b4e1c893cf7ed37adfa6de7be427cdd2793504358caaefbc83333b280144b28c`.
+  `5abe0ab591376f8ba34201b33a53ab1080b63587336453cff583787aaebd1a0e`.
 
 The package reconciles all 120 teaching map-run pair values to their study
 matrix values with zero observed difference under the declared tolerances,

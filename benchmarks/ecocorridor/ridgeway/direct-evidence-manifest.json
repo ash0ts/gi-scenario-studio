@@ -4,19 +4,19 @@
   "cost_basis_sha256": "7eaae1d47e6905fd126e73497534542b2de9a863d5f612e5f718c8b0910dd439",
   "decision_snapshot_sha256": "95ec18ac16524f8d82d8b40128867ee0efdfde0e9776237c6a091d53b96045e7",
   "engine_environment_sha256": "cd7d041f0067ac4cc252196c571e4f020b66bf7f0cb0778059a7125be225223f",
-  "engine_manifest_sha256": "5997a813487ea3ebbf9fac4b850d59f348fc0d9625ceebb3b92118f8c21afcdc",
+  "engine_manifest_sha256": "4fdf058be0bb2e33bc014858e01decb808ecc7296e1fca78fce58f62331a7a86",
   "evidence_bundle": {
-    "byte_size": 11744721,
+    "byte_size": 11787650,
     "claim_safety_sha256": "7f0d951b1fc090246f85bcf61f253cdad5f84084401c831ba50acdb47eb8e34f",
     "file_count": 19288,
-    "filename": "ridgeway-direct-evidence-f93ad36f3cdc.tar.gz",
+    "filename": "ridgeway-direct-evidence-80fb1af09b74.tar.gz",
     "format": "tar+gzip",
     "internal_index_path": "bundle-index.json",
-    "internal_index_sha256": "125e341cd537d3511cf2db57379c2f40d91cbf4dce041e5dd6d852f9ee5af427",
-    "packager_sha256": "d716a2deecd512a1722d7da8409b2e70efbd5fab5caa7622ed617f2b1d5d4599",
-    "sha256": "f93ad36f3cdc36b702a3cb612cbd52c306f5b231f353982de0adaee6174e5e24"
+    "internal_index_sha256": "970e4fe6b9eb953df6fa47fe29f95b7efd0767005be2c4754a63770264c02acc",
+    "packager_sha256": "306cf47532964aa010709fbe17debf086f8db9d288697be000089eac3f2b473b",
+    "sha256": "80fb1af09b744d19b83dffff69f8bb015a46d558e5887ced986c12ae934d6821"
   },
-  "evidence_index_sha256": "b4e1c893cf7ed37adfa6de7be427cdd2793504358caaefbc83333b280144b28c",
+  "evidence_index_sha256": "5abe0ab591376f8ba34201b33a53ab1080b63587336453cff583787aaebd1a0e",
   "fixture_version": "1.2.0",
   "license": "CC0-1.0",
   "map_job_count": 60,
@@ -43,15 +43,15 @@
   "projection_contract": "RidgewayFixture/ecocorridor-replay/v1.2",
   "release_replay_eligible": true,
   "resource_observability": {
-    "directSolverWallSeconds": 22015.057006754534,
+    "directSolverWallSeconds": 53216.657060214115,
     "energyStatus": "ESTIMATED",
-    "estimatedEnergyKwh": 0.09172940419481056,
-    "estimatedEnergyLowerKwh": 0.030576468064936854,
-    "estimatedEnergyUpperKwh": 0.24461174451949483,
+    "estimatedEnergyKwh": 0.22173607108422547,
+    "estimatedEnergyLowerKwh": 0.07391202369474183,
+    "estimatedEnergyUpperKwh": 0.5912961895579346,
     "jobsWithObservations": 1596,
     "jobsWithoutObservations": 0,
     "limitation": "Energy values are active-duration proxy estimates with recorded coefficient bounds, not meter readings or carbon values. Memory is the maximum sampled single-process footprint and may miss between-sample peaks.",
-    "maximumObservedSingleProcessMemoryBytes": 819838976,
+    "maximumObservedSingleProcessMemoryBytes": 822050816,
     "peakMemoryIsSampledLowerBound": true,
     "peakMemoryStatus": "MEASURED",
     "proposerWallTimeStatus": "NOT_APPLICABLE_FIXED_ENUMERATION"
@@ -84,5 +84,5 @@
       "over_budget": "Passes all configured modeled connectivity rules across the 12 reviewed scenarios but exceeds the synthetic screening cost cap."
     }
   },
-  "workflow_manifest_sha256": "c875c9ac3bdfb1a7921843c1e0f926cacfc6979e964b2fd546fa6a62313eac6f"
+  "workflow_manifest_sha256": "5983c8154c9601148eedfcb6f3e553955561d69885c9d37ab8c01fa3bdd21cc4"
 }

@@ -19,7 +19,7 @@ satisfied.
 
 | Evidence area | Current state |
 |---|---|
-| Ridgeway 1,536 matrix + 60 map jobs | Local reference verified: 1,596 accepted jobs, complete pair/current-raster evidence, archive `f93ad36f3cdc…`; not protected execution attestation |
+| Ridgeway 1,536 matrix + 60 map jobs | Local reference verified: 1,596 accepted jobs, complete pair/current-raster evidence, archive `80fb1af09b74…`; not protected execution attestation |
 | Ridgeway execution provenance | Gate implemented, evidence blocked: the manual protected producer workflow must execute a clean same-commit 1,596-job study after green Eco CI, publish its immutable Actions artifact, and pass the complete metric/current-raster differential; no successful producer run exists yet |
 | Ecological asset classification | Synthetic CC0 assets, including the manifest-bound local-reference trust record, are checksum- and relationship-checked; protected producer trust remains a separate unsatisfied gate |
 | Adaptive search | Historical campaign failed its scientific gate and is independently `HISTORICAL_BENCHMARK_ONLY` / production `PROHIBITED`; production remains scrambled Sobol |

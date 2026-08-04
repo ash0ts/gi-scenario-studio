@@ -4,8 +4,8 @@
   "files": [
     {
       "path": "apps/ecocorridor-desktop/src/data/ridgewayFixture.json",
-      "sha256": "dbe6ca97c1f2b933c586be4539dd7628ef9390bddf199f058a41db39bc0edc69",
-      "byte_size": 576134,
+      "sha256": "67f75386277f86615f2b49fa6f410aecbe87c534ef3693485401720c612a435b",
+      "byte_size": 576132,
       "media_type": "application/json",
       "asset_role": "PUBLIC_REPLAY_FIXTURE",
       "repository_use": "PUBLIC_REPLAY_SOURCE",
@@ -20,7 +20,7 @@
     },
     {
       "path": "apps/ecocorridor-desktop/src/data/ridgewayReleaseTrust.json",
-      "sha256": "130836d5ac14718a7a3ea444eec46979218728ab4dc6b1acd7ed9955bc86b77f",
+      "sha256": "47c13617d1872a0d12fcfbd25bd41e05f9fdaa2e62a82f6ca6e3f30210e67f46",
       "byte_size": 231,
       "media_type": "application/json",
       "asset_role": "RELEASE_TRUST_RECORD",
@@ -901,7 +901,7 @@
     },
     {
       "path": "benchmarks/ecocorridor/ridgeway/README.md",
-      "sha256": "7700857e0b6f5ba8392fe216957e54389229646bef413f1e5aa60292ed433bfe",
+      "sha256": "4d0db3bc6ddc7bd498f5f48579a289da0cf7389b102bca5c6503a97fb259e3af",
       "byte_size": 5737,
       "media_type": "text/markdown",
       "asset_role": "DOCUMENTATION",
@@ -917,8 +917,8 @@
     },
     {
       "path": "benchmarks/ecocorridor/ridgeway/direct-evidence-manifest.json",
-      "sha256": "433acb8e9b5c98e6b73f570891cd79a8b02c99221d4395d00fb1d2e1ab8d3afb",
-      "byte_size": 4655,
+      "sha256": "4a6f7605625f873587449bfe387af7228cc7cf6a7fa7b1ffee3119badaae2076",
+      "byte_size": 4653,
       "media_type": "application/json",
       "asset_role": "DIRECT_EVIDENCE_MANIFEST",
       "repository_use": "BENCHMARK_ONLY",
@@ -966,9 +966,9 @@
       "public_replay_allowed": false
     },
     {
-      "path": "benchmarks/ecocorridor/ridgeway/ridgeway-direct-evidence-f93ad36f3cdc.tar.gz",
-      "sha256": "f93ad36f3cdc36b702a3cb612cbd52c306f5b231f353982de0adaee6174e5e24",
-      "byte_size": 11744721,
+      "path": "benchmarks/ecocorridor/ridgeway/ridgeway-direct-evidence-80fb1af09b74.tar.gz",
+      "sha256": "80fb1af09b744d19b83dffff69f8bb015a46d558e5887ced986c12ae934d6821",
+      "byte_size": 11787650,
       "media_type": "application/gzip",
       "asset_role": "DIRECT_EVIDENCE_ARCHIVE",
       "repository_use": "BENCHMARK_ONLY",
@@ -984,8 +984,8 @@
     },
     {
       "path": "benchmarks/ecocorridor/ridgeway/ui_projection.json",
-      "sha256": "dbe6ca97c1f2b933c586be4539dd7628ef9390bddf199f058a41db39bc0edc69",
-      "byte_size": 576134,
+      "sha256": "67f75386277f86615f2b49fa6f410aecbe87c534ef3693485401720c612a435b",
+      "byte_size": 576132,
       "media_type": "application/json",
       "asset_role": "UI_PROJECTION",
       "repository_use": "PUBLIC_REPLAY_SOURCE",

@@ -218,18 +218,18 @@ def test_committed_ridgeway_projection_and_data_manifest_are_hash_locked() -> No
     assert direct_manifest["map_job_count"] == 60
     assert direct_manifest["model_sha256"] == fixture.bundle.revision.model_sha256
     assert hashlib.sha256(direct_manifest_path.read_bytes()).hexdigest() == (
-        "433acb8e9b5c98e6b73f570891cd79a8b02c99221d4395d00fb1d2e1ab8d3afb"
+        "4a6f7605625f873587449bfe387af7228cc7cf6a7fa7b1ffee3119badaae2076"
     )
     assert direct_manifest["cost_basis_sha256"] == fixture.cost_basis_sha256
     assert direct_manifest["assumption_ledger_sha256"] == fixture.assumption_ledger_sha256
     bundle = direct_manifest["evidence_bundle"]
-    assert bundle["filename"] == "ridgeway-direct-evidence-f93ad36f3cdc.tar.gz"
-    assert bundle["sha256"] == ("f93ad36f3cdc36b702a3cb612cbd52c306f5b231f353982de0adaee6174e5e24")
+    assert bundle["filename"] == "ridgeway-direct-evidence-80fb1af09b74.tar.gz"
+    assert bundle["sha256"] == ("80fb1af09b744d19b83dffff69f8bb015a46d558e5887ced986c12ae934d6821")
     assert projection["schemaVersion"] == "ecocorridor-replay/v1.2"
     assert projection["evidenceState"] == "VERIFIED_DIRECT_EVIDENCE"
     assert projection["releaseReplayEligible"] is True
     assert projection["manifestSha256"] == (
-        "433acb8e9b5c98e6b73f570891cd79a8b02c99221d4395d00fb1d2e1ab8d3afb"
+        "4a6f7605625f873587449bfe387af7228cc7cf6a7fa7b1ffee3119badaae2076"
     )
     assert projection["baselinePortfolioId"] == "portfolio_7c18e581b57ca9363bb7"
     assert projection["study"]["portfolioCount"] == 128

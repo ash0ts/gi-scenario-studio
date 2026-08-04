@@ -107,6 +107,23 @@ def canonical_sha256(value: object) -> str:
     ).hexdigest()
 
 
+def pin_public_ledger_identities(
+    direct_manifest: dict[str, Any],
+    *,
+    assumption_ledger_sha256: str,
+    cost_basis_sha256: str,
+) -> None:
+    """Bind the reviewed assumption and cost ledgers at the replay boundary."""
+
+    for label, digest in (
+        ("assumption_ledger_sha256", assumption_ledger_sha256),
+        ("cost_basis_sha256", cost_basis_sha256),
+    ):
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise PackagingError(f"{label} must be a lowercase SHA-256 digest")
+        direct_manifest[label] = digest
+
+
 def reviewed_engine_sources() -> dict[str, Path]:
     """Return the repository sources independently trusted by this packager."""
 
@@ -2417,6 +2434,14 @@ def package(evidence_root: Path, publish_directory: Path, desktop_fixture: Path)
     except ValueError as exc:
         raise PackagingError("public teaching-selection copy violates claim policy") from exc
     direct_manifest["projection_contract"] = "RidgewayFixture/ecocorridor-replay/v1.2"
+    # The ledgers are already retained in the hash-indexed evidence archive.
+    # Pin the same reviewed identities at the public-manifest boundary so a
+    # replay can resolve its assumptions and costs before unpacking the bundle.
+    pin_public_ledger_identities(
+        direct_manifest,
+        assumption_ledger_sha256=fixture.assumption_ledger_sha256,
+        cost_basis_sha256=fixture.cost_basis_sha256,
+    )
     direct_manifest["claim_safety_sha256"] = claim_safety_sha
     direct_manifest["resource_observability"] = package_resource_observability
     direct_manifest["process_tree_exit_evidence"] = package_process_tree_exits

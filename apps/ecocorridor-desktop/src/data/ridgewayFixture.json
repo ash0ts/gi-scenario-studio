@@ -15259,7 +15259,7 @@
   "disclaimer": "Ridgeway Crossing is synthetic. It is not a real place, species assessment, wildlife-crossing design, collision analysis, or regulatory recommendation.",
   "evidenceState": "VERIFIED_DIRECT_EVIDENCE",
   "fixtureId": "ridgeway_crossing",
-  "manifestSha256": "433acb8e9b5c98e6b73f570891cd79a8b02c99221d4395d00fb1d2e1ab8d3afb",
+  "manifestSha256": "4a6f7605625f873587449bfe387af7228cc7cf6a7fa7b1ffee3119badaae2076",
   "manifestVersion": "1.2.0",
   "portfolios": [
     {
@@ -17087,15 +17087,15 @@
   "releaseBlocker": "",
   "releaseReplayEligible": true,
   "resourceObservability": {
-    "directSolverWallSeconds": 22015.057006754534,
+    "directSolverWallSeconds": 53216.657060214115,
     "energyStatus": "ESTIMATED",
-    "estimatedEnergyKwh": 0.09172940419481056,
-    "estimatedEnergyLowerKwh": 0.030576468064936854,
-    "estimatedEnergyUpperKwh": 0.24461174451949483,
+    "estimatedEnergyKwh": 0.22173607108422547,
+    "estimatedEnergyLowerKwh": 0.07391202369474183,
+    "estimatedEnergyUpperKwh": 0.5912961895579346,
     "jobsWithObservations": 1596,
     "jobsWithoutObservations": 0,
     "limitation": "Energy values are active-duration proxy estimates with recorded coefficient bounds, not meter readings or carbon values. Memory is the maximum sampled single-process footprint and may miss between-sample peaks.",
-    "maximumObservedSingleProcessMemoryBytes": 819838976,
+    "maximumObservedSingleProcessMemoryBytes": 822050816,
     "peakMemoryIsSampledLowerBound": true,
     "peakMemoryStatus": "MEASURED",
     "proposerWallTimeStatus": "NOT_APPLICABLE_FIXED_ENUMERATION"

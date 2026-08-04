@@ -36,9 +36,9 @@ projection. Its locally packaged reference contains 1,536 accepted matrix jobs,
 60 accepted current-map jobs, a complete focal-pair matrix for every teaching
 scenario, and one resource/process-tree observation per job. The committed
 archive SHA-256 is
-`f93ad36f3cdc36b702a3cb612cbd52c306f5b231f353982de0adaee6174e5e24`;
+`80fb1af09b744d19b83dffff69f8bb015a46d558e5887ced986c12ae934d6821`;
 the direct-evidence manifest SHA-256 is
-`433acb8e9b5c98e6b73f570891cd79a8b02c99221d4395d00fb1d2e1ab8d3afb`.
+`4a6f7605625f873587449bfe387af7228cc7cf6a7fa7b1ffee3119badaae2076`.
 This reference is semantically verified local evidence, not protected
 execution attestation. A local rerun uses the packaged engine with real progress,
 pause/resume/cancel, cache status, QA, and a tolerance-based differential
