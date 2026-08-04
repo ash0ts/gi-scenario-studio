@@ -980,6 +980,63 @@ def validate_professional_bundle(
                 "Author at least one required, evidence-resolvable decision rule.",
             )
         )
+    required_safeguard_rules = [
+        item for item in required_rules if item.metric == RuleMetric.REQUIRE_SAFEGUARD_NONREGRESSION
+    ]
+    if safeguard_scenarios and not required_safeguard_rules:
+        findings.append(
+            _finding(
+                "SAFEGUARD_NONREGRESSION_RULE_MISSING",
+                "decision_rules",
+                (
+                    "Author a required safeguard non-regression rule that covers every "
+                    "safeguard scenario and every required included focal pair."
+                ),
+            )
+        )
+    else:
+        for scenario_id in sorted(safeguard_scenarios):
+            scenario = scenarios[scenario_id]
+            applicable_rules = [
+                rule
+                for rule in required_safeguard_rules
+                if not rule.scenario_ids or scenario_id in rule.scenario_ids
+            ]
+            if not applicable_rules:
+                findings.append(
+                    _finding(
+                        "SAFEGUARD_RULE_SCENARIO_COVERAGE_INCOMPLETE",
+                        scenario_id,
+                        (
+                            "Add this safeguard scenario to at least one required safeguard "
+                            "non-regression rule."
+                        ),
+                    )
+                )
+                continue
+            focal_set = focal_sets.get(scenario.focal_set_id)
+            if focal_set is None:
+                continue
+            required_included_pairs = {
+                pair.pair_id
+                for pair in focal_set.pairs
+                if pair.required and pair.pair_id in scenario.included_pair_ids
+            }
+            covered_pairs: set[str] = set()
+            for rule in applicable_rules:
+                covered_pairs.update(rule.pair_ids or scenario.included_pair_ids)
+            uncovered_pairs = sorted(required_included_pairs - covered_pairs)
+            if uncovered_pairs:
+                findings.append(
+                    _finding(
+                        "SAFEGUARD_RULE_PAIR_COVERAGE_INCOMPLETE",
+                        scenario_id,
+                        (
+                            "Add required safeguard non-regression rule coverage for focal "
+                            f"pairs: {', '.join(uncovered_pairs)}."
+                        ),
+                    )
+                )
     for rule in bundle.decision_rules:
         unknown_scenarios = sorted(set(rule.scenario_ids) - set(scenarios))
         unknown_pair_ids = sorted(set(rule.pair_ids) - all_pair_ids)

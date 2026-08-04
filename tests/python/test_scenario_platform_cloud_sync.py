@@ -636,6 +636,36 @@ def test_sdk_boundary_rejects_provider_links_outside_verified_target(
     assert sdk.runs[0].finished
 
 
+def test_provider_contracts_reject_query_bearing_api_web_run_and_artifact_urls() -> None:
+    evidence_payload = _target().scope_evidence.model_dump(mode="json")
+    evidence_payload["api_base_url"] = "https://api.wandb.example?api_key=must-not-persist"
+    with pytest.raises(ValueError, match="API base URL|scope-evidence API base URL"):
+        ProjectScopeEvidence.model_validate(evidence_payload)
+
+    target_payload = _target().model_dump(mode="json")
+    target_payload["web_base_url"] = "https://wandb.example?token=must-not-persist"
+    with pytest.raises(ValueError, match="web base URL"):
+        WandbTarget.model_validate(target_payload)
+
+    with pytest.raises(ValueError, match="credential-free"):
+        CloudUploadReceipt(
+            run_id="run-1",
+            run_url="https://wandb.example/run/run-1?token=must-not-persist",
+            envelope_id="outbox-1",
+        )
+
+    with pytest.raises(ValueError, match="credential-free"):
+        CloudArtifactReference(
+            local_artifact_id="artifact-1",
+            provider_artifact_id="provider-artifact-1",
+            provider_artifact_ref="wildlife-team/ridgeway/artifact:v1",
+            provider_artifact_url=(
+                "https://wandb.example/artifacts/artifact-1?api_key=must-not-persist"
+            ),
+            sha256="a" * 64,
+        )
+
+
 def test_redaction_detects_arbitrary_absolute_paths_and_inline_credentials() -> None:
     payload = {
         "note": "read /Volumes/ecology/private/model.tif",
@@ -1267,6 +1297,24 @@ def test_weave_trace_link_cannot_downgrade_verified_target_origin(tmp_path: Path
     sink.finish(call_id="assistant_1", output={"answer_id": "answer_1"})
     trace_id = sink.flush(call_id="assistant_1")
     client.calls["provider-call-1"].ui_url = "http://wandb.example/weave/traces/downgrade"
+    with pytest.raises(RuntimeError, match="URL_OUTSIDE_VERIFIED_TARGET"):
+        sink.readback(trace_id=trace_id)
+
+
+def test_weave_trace_link_rejects_query_bearing_provider_url(tmp_path: Path) -> None:
+    client = _FakeWeaveClient()
+    sink = WeaveNestedTraceSink(
+        target=_target(),
+        scope_resolver=_resolver(),
+        project_root=tmp_path,
+        client_factory=_FakeWeaveFactory(client),
+    )
+    sink.start(call_id="assistant_1", operation="assistant.request", inputs=_trace_inputs())
+    sink.finish(call_id="assistant_1", output={"answer_id": "answer_1"})
+    trace_id = sink.flush(call_id="assistant_1")
+    client.calls[
+        "provider-call-1"
+    ].ui_url = "https://wandb.example/weave/traces/provider-call-1?token=must-not-persist"
     with pytest.raises(RuntimeError, match="URL_OUTSIDE_VERIFIED_TARGET"):
         sink.readback(trace_id=trace_id)
 

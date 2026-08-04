@@ -112,6 +112,7 @@ def _allowed_target_url(url: str, target: WandbTarget) -> bool:
         and parsed.scheme.casefold() == expected.scheme.casefold()
         and not parsed.username
         and not parsed.password
+        and not parsed.query
         and not parsed.fragment
     )
 

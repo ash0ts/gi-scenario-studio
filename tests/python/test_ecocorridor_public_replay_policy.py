@@ -465,6 +465,73 @@ def test_public_replay_rejects_professional_or_uninventoried_files(
         )
 
 
+@pytest.mark.parametrize("name", ["unclassified-location-layer.png", "unreviewed-icon.ico"])
+def test_public_replay_rejects_unclassified_binary_images(
+    checker: ModuleType, tmp_path: Path, name: str
+) -> None:
+    root, fixture, projection, trust, manifest = _inputs(tmp_path)
+    (root / "assets" / name).write_bytes(b"unclassified binary payload")
+
+    with pytest.raises(ValueError, match="unapproved file type"):
+        checker.validate_and_inventory(
+            root,
+            source_sha="a" * 40,
+            fixture=fixture,
+            projection=projection,
+            trust_record=trust,
+            data_manifest=manifest,
+        )
+
+
+def test_public_replay_rejects_font_bytes_outside_locked_font_packages(
+    checker: ModuleType, tmp_path: Path
+) -> None:
+    root, fixture, projection, trust, manifest = _inputs(tmp_path)
+    (root / "assets" / "unreviewed-location-font.woff2").write_bytes(
+        b"not a locked font package file"
+    )
+
+    with pytest.raises(ValueError, match="exact locked source package"):
+        checker.validate_and_inventory(
+            root,
+            source_sha="a" * 40,
+            fixture=fixture,
+            projection=projection,
+            trust_record=trust,
+            data_manifest=manifest,
+        )
+
+
+def test_public_replay_records_exact_locked_font_source(
+    checker: ModuleType, tmp_path: Path
+) -> None:
+    root, fixture, projection, trust, manifest = _inputs(tmp_path)
+    source = (
+        checker.PUBLIC_REPLAY_APP
+        / "node_modules/@fontsource/atkinson-hyperlegible/files/atkinson-hyperlegible-latin-400-normal.woff2"
+    )
+    emitted = root / "assets" / "atkinson-hyperlegible-latin-400-normal-buildhash.woff2"
+    emitted.write_bytes(source.read_bytes())
+
+    payload = checker.validate_and_inventory(
+        root,
+        source_sha="a" * 40,
+        fixture=fixture,
+        projection=projection,
+        trust_record=trust,
+        data_manifest=manifest,
+    )
+
+    record = next(
+        item for item in payload["files"] if item["path"] == emitted.relative_to(root).as_posix()
+    )
+    assert record["source_binding"] == {
+        "package": "@fontsource/atkinson-hyperlegible",
+        "version": "5.3.0",
+        "file": "atkinson-hyperlegible-latin-400-normal.woff2",
+    }
+
+
 def test_public_replay_rejects_fixture_drift(checker: ModuleType, tmp_path: Path) -> None:
     root, fixture, projection, trust, manifest = _inputs(tmp_path)
     projection.write_text('{"synthetic":false}\n', encoding="utf-8")

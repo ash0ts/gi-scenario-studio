@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ecocorridor_core.contracts import ConnectivityProjectBundle
+from ecocorridor_core.contracts import ConnectivityProjectBundle, RuleMetric
 from ecocorridor_core.professional_validation import validate_professional_bundle
 from ecocorridor_core.ridgeway import build_ridgeway_fixture
 
@@ -57,3 +57,68 @@ def test_safeguard_scenario_cannot_be_owned_by_overlapping_records() -> None:
     assert finding.object_reference == overlapping.safeguard_id
     assert overlapping_scenario_id in finding.remediation
     assert retained.safeguard_id in finding.remediation
+
+
+def test_safeguard_scenarios_require_a_required_nonregression_rule() -> None:
+    fixture = build_ridgeway_fixture()
+    bundle = fixture.bundle.model_copy(
+        update={
+            "decision_rules": [
+                rule
+                for rule in fixture.bundle.decision_rules
+                if rule.metric != RuleMetric.REQUIRE_SAFEGUARD_NONREGRESSION
+            ]
+        }
+    )
+
+    findings = validate_professional_bundle(bundle)
+    missing = [item for item in findings if item.code == "SAFEGUARD_NONREGRESSION_RULE_MISSING"]
+
+    assert len(missing) == 1
+    assert missing[0].severity == "BLOCKING"
+    assert missing[0].object_reference == "decision_rules"
+    assert "every safeguard scenario" in missing[0].remediation
+    assert "every required included focal pair" in missing[0].remediation
+
+
+def test_required_safeguard_rule_must_cover_every_scenario_and_required_pair() -> None:
+    fixture = build_ridgeway_fixture()
+    safeguard_rule = next(
+        rule
+        for rule in fixture.bundle.decision_rules
+        if rule.metric == RuleMetric.REQUIRE_SAFEGUARD_NONREGRESSION
+    )
+    covered_scenario_id = safeguard_rule.scenario_ids[0]
+    covered_scenario = next(
+        item for item in fixture.bundle.scenarios if item.scenario_id == covered_scenario_id
+    )
+    partially_covered_rule = safeguard_rule.model_copy(
+        update={
+            "scenario_ids": [covered_scenario_id],
+            "pair_ids": [covered_scenario.included_pair_ids[0]],
+        }
+    )
+    bundle = fixture.bundle.model_copy(
+        update={
+            "decision_rules": [
+                partially_covered_rule if rule.rule_id == safeguard_rule.rule_id else rule
+                for rule in fixture.bundle.decision_rules
+            ]
+        }
+    )
+
+    findings = validate_professional_bundle(bundle)
+    scenario_findings = [
+        item for item in findings if item.code == "SAFEGUARD_RULE_SCENARIO_COVERAGE_INCOMPLETE"
+    ]
+    pair_findings = [
+        item for item in findings if item.code == "SAFEGUARD_RULE_PAIR_COVERAGE_INCOMPLETE"
+    ]
+
+    assert {item.object_reference for item in scenario_findings} == set(
+        safeguard_rule.scenario_ids[1:]
+    )
+    assert all(item.severity == "BLOCKING" for item in scenario_findings)
+    assert len(pair_findings) == 1
+    assert pair_findings[0].object_reference == covered_scenario_id
+    assert covered_scenario.included_pair_ids[1] in pair_findings[0].remediation

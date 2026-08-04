@@ -13,7 +13,13 @@ from pathlib import Path
 
 from ecocorridor_core.claim_safety import assert_safe_rendered_ecological_copy
 
-ALLOWED_SUFFIXES = {".css", ".html", ".ico", ".js", ".png", ".svg", ".woff", ".woff2"}
+ALLOWED_SUFFIXES = {".css", ".html", ".js", ".woff", ".woff2"}
+FONT_SUFFIXES = {".woff", ".woff2"}
+APPROVED_FONT_PACKAGES = (
+    "@fontsource/atkinson-hyperlegible",
+    "@fontsource/barlow-condensed",
+    "@fontsource/ibm-plex-mono",
+)
 GENERATED_MANIFEST = "public-replay-manifest.json"
 PRODUCER_IDENTITY = "ecocorridor-pages-producer-identity.json"
 PROTECTED_RIDGEWAY_FILES = frozenset(
@@ -37,6 +43,7 @@ PUBLIC_REPLAY_SOURCE = (
     / "src"
     / "PublicReplayApp.tsx"
 )
+PUBLIC_REPLAY_APP = PUBLIC_REPLAY_SOURCE.parents[1]
 PROCESS_INTERVAL_OVERLAP_KEYS = frozenset(
     {
         "schema_version",
@@ -86,6 +93,49 @@ def digest(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             value.update(chunk)
     return value.hexdigest()
+
+
+def approved_font_sources() -> dict[str, dict[str, str]]:
+    """Bind emitted fonts to exact files from the replay's locked dependencies."""
+
+    package_manifest = _json_object(
+        PUBLIC_REPLAY_APP / "package.json",
+        label="public replay package manifest",
+    )
+    dependencies = package_manifest.get("dependencies")
+    if not isinstance(dependencies, dict):
+        raise TypeError("public replay package manifest omits dependencies")
+    approved: dict[str, dict[str, str]] = {}
+    for package_name in APPROVED_FONT_PACKAGES:
+        expected_version = dependencies.get(package_name)
+        if not isinstance(expected_version, str) or not re.fullmatch(
+            r"[0-9]+\.[0-9]+\.[0-9]+", expected_version
+        ):
+            raise ValueError(f"public replay font dependency is not exactly pinned: {package_name}")
+        package_root = PUBLIC_REPLAY_APP / "node_modules" / package_name
+        metadata = _json_object(package_root / "package.json", label=f"installed {package_name}")
+        if metadata.get("name") != package_name or metadata.get("version") != expected_version:
+            raise ValueError(f"installed public replay font does not match its pin: {package_name}")
+        files_root = (package_root / "files").resolve(strict=True)
+        resolved_package_root = package_root.resolve(strict=True)
+        if not files_root.is_relative_to(resolved_package_root):
+            raise ValueError(f"public replay font files escape their package: {package_name}")
+        for candidate in sorted(files_root.iterdir()):
+            if candidate.suffix.casefold() not in FONT_SUFFIXES:
+                continue
+            if candidate.is_symlink() or not candidate.is_file():
+                raise ValueError(f"public replay font source is unsafe: {package_name}")
+            approved.setdefault(
+                digest(candidate),
+                {
+                    "package": package_name,
+                    "version": expected_version,
+                    "file": candidate.name,
+                },
+            )
+    if not approved:
+        raise ValueError("public replay has no approved locked font sources")
+    return approved
 
 
 def _regular(path: Path, *, label: str) -> Path:
@@ -413,6 +463,7 @@ def validate_and_inventory(
 
     files: list[dict[str, object]] = []
     total_bytes = 0
+    font_sources: dict[str, dict[str, str]] | None = None
     for directory, names, filenames in os.walk(root, followlinks=False):
         for name in names:
             candidate = Path(directory) / name
@@ -444,13 +495,22 @@ def validate_and_inventory(
                 text = candidate.read_text(encoding="utf-8")
                 if any(pattern.search(text) for pattern in FORBIDDEN_TEXT):
                     raise ValueError(f"public replay contains private/runtime material: {relative}")
-            files.append(
-                {
-                    "path": relative,
-                    "bytes": size,
-                    "sha256": digest(candidate),
-                }
-            )
+            sha256 = digest(candidate)
+            record: dict[str, object] = {
+                "path": relative,
+                "bytes": size,
+                "sha256": sha256,
+            }
+            if suffix in FONT_SUFFIXES:
+                if font_sources is None:
+                    font_sources = approved_font_sources()
+                source = font_sources.get(sha256)
+                if source is None:
+                    raise ValueError(
+                        f"public replay font is not from an exact locked source package: {relative}"
+                    )
+                record["source_binding"] = source
+            files.append(record)
     if not files or len(files) > MAX_FILES:
         raise ValueError("public replay file count is outside its release policy")
     index = root / "index.html"

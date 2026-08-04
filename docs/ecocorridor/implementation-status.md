@@ -51,9 +51,9 @@ package rather than an `ENGINE_RUN_REQUIRED` placeholder:
 - engine manifest SHA-256:
   `4fdf058be0bb2e33bc014858e01decb808ecc7296e1fca78fce58f62331a7a86`;
 - workflow manifest SHA-256:
-  `5983c8154c9601148eedfcb6f3e553955561d69885c9d37ab8c01fa3bdd21cc4`;
+  `a12e7c05308f211a3e58969e476162dd902b9307ddbd210cebe673815dc82f6f`;
 - evidence-index SHA-256:
-  `5abe0ab591376f8ba34201b33a53ab1080b63587336453cff583787aaebd1a0e`.
+  `ecb2c163b880d048372fd60a5e5e33b1a0d04295d22c4de2514e089c57c3f3ab`.
 
 The package reconciles all 120 teaching map-run pair values to their study
 matrix values with zero observed difference under the declared tolerances,

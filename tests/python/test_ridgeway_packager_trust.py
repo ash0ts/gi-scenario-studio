@@ -478,3 +478,28 @@ def test_packager_derives_retained_interval_overlap_without_inventing_worker_cou
     assert "may understate true process concurrency" in str(forward["limitation"])
     assert "coincident endpoints may overstate" in str(forward["limitation"])
     assert "configured worker count" in str(forward["limitation"])
+
+
+def test_implementation_status_pins_the_active_ridgeway_manifest_identities() -> None:
+    repository = Path(__file__).resolve().parents[2]
+    manifest = json.loads(
+        (repository / "benchmarks/ecocorridor/ridgeway/direct-evidence-manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    status = (repository / "docs/ecocorridor/implementation-status.md").read_text(encoding="utf-8")
+
+    for key in (
+        "engine_manifest_sha256",
+        "workflow_manifest_sha256",
+        "evidence_index_sha256",
+    ):
+        value = manifest[key]
+        assert isinstance(value, str) and len(value) == 64
+        assert f"`{value}`" in status
+
+    bundle = manifest["evidence_bundle"]
+    assert isinstance(bundle, dict)
+    archive_sha256 = bundle["sha256"]
+    assert isinstance(archive_sha256, str) and len(archive_sha256) == 64
+    assert f"`{archive_sha256}`" in status

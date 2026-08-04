@@ -267,6 +267,7 @@ def _require_safe_provider_url(value: str, *, label: str) -> str:
         or not parsed.hostname
         or parsed.username
         or parsed.password
+        or parsed.query
         or parsed.fragment
         or (parsed.scheme != "https" and not loopback)
     ):
