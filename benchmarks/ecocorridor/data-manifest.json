@@ -1,6 +1,6 @@
 {
-  "manifest_version": "1.0",
-  "policy": "Only checksum-verified, self-authored CC0 synthetic ecological release assets may be committed or used by the public Ridgeway replay.",
+  "manifest_version": "1.1",
+  "policy": "Only checksum-verified, self-authored CC0 synthetic ecological assets may be committed. Public replay and signed desktop packaging require separate, explicit per-asset authorization.",
   "files": [
     {
       "path": "apps/ecocorridor-desktop/src/data/ridgewayFixture.json",
@@ -32,6 +32,7 @@
       "sensitivity": "PUBLIC",
       "contains_real_locations": false,
       "contains_species_occurrences": false,
+      "signed_desktop_bundle_allowed": true,
       "public_replay_allowed": true
     },
     {
@@ -496,6 +497,7 @@
       "sensitivity": "PUBLIC",
       "contains_real_locations": false,
       "contains_species_occurrences": false,
+      "signed_desktop_bundle_allowed": true,
       "public_replay_allowed": false
     },
     {
@@ -528,6 +530,7 @@
       "sensitivity": "PUBLIC",
       "contains_real_locations": false,
       "contains_species_occurrences": false,
+      "signed_desktop_bundle_allowed": false,
       "public_replay_allowed": false
     },
     {
@@ -544,6 +547,7 @@
       "sensitivity": "PUBLIC",
       "contains_real_locations": false,
       "contains_species_occurrences": false,
+      "signed_desktop_bundle_allowed": true,
       "public_replay_allowed": false
     },
     {
@@ -560,6 +564,7 @@
       "sensitivity": "PUBLIC",
       "contains_real_locations": false,
       "contains_species_occurrences": false,
+      "signed_desktop_bundle_allowed": true,
       "public_replay_allowed": true
     },
     {

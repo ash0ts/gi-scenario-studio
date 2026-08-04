@@ -511,6 +511,22 @@ def test_eco_pr_ci_validates_the_built_public_replay() -> None:
     assert "--require-verified-evidence" not in frontend_job
 
 
+def test_packaged_boundary_preserves_verifiable_success_evidence_without_masking_failure() -> None:
+    root = Path(__file__).resolve().parents[2]
+    workflow = (root / ".github/workflows/ecocorridor-ci.yml").read_text(encoding="utf-8")
+    job = workflow.split("  packaged-scientific-boundary:", 1)[1].split("\n  eco-frontend:", 1)[0]
+    smoke = job.split("- name: Execute staged scientific boundary offline", 1)[1].split(
+        "- name: Preserve packaged-boundary evidence", 1
+    )[0]
+    upload = job.split("- name: Preserve packaged-boundary evidence", 1)[1]
+
+    assert '--disposition-output "${RUNNER_TEMP}/ecocorridor-packaged-boundary-smoke.json"' in smoke
+    assert "${{ runner.temp }}/ci-resource-public-key.hex" in upload
+    assert "${{ runner.temp }}/ecocorridor-packaged-boundary-smoke.json" in upload
+    assert "release-generated/dependency-inventory.json" in upload
+    assert "if: always()" not in upload
+
+
 def _ecocorridor_workflows() -> dict[str, str]:
     root = Path(__file__).resolve().parents[2]
     return {

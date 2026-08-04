@@ -43,6 +43,13 @@ DESKTOP_FIXTURE = "apps/ecocorridor-desktop/src/data/ridgewayFixture.json"
 DESKTOP_TRUST_RECORD = "apps/ecocorridor-desktop/src/data/ridgewayReleaseTrust.json"
 SCREENSHOT_PREFIX = "apps/ecocorridor-desktop/tests/__screenshots__/"
 MANIFEST_PATH = "benchmarks/ecocorridor/data-manifest.json"
+MANIFEST_VERSION = "1.1"
+SIGNED_DESKTOP_BUNDLE_ROLES = {
+    "DIRECT_EVIDENCE_ARCHIVE",
+    "DIRECT_EVIDENCE_MANIFEST",
+    "RELEASE_TRUST_RECORD",
+    "UI_PROJECTION",
+}
 NON_ASSET_CONTROL_FILES = {
     MANIFEST_PATH,
     f"{RIDGEWAY_PREFIX}materialize_inputs.py",
@@ -177,6 +184,84 @@ RIDGEWAY_HISTORICAL_ROLE_COUNTS = {
     "map_materialized_input": 60 * 3,
     "map_current_raster": 60,
 }
+
+
+def validate_signed_desktop_bundle_policy(
+    path: str,
+    record: dict[str, object],
+) -> str | None:
+    """Require an explicit, role-bounded decision for desktop fixture bytes.
+
+    This permission is deliberately independent of ``public_replay_allowed``:
+    the public site remains projection-only, while a signed desktop fixture may
+    carry the directly executed synthetic evidence needed by its Evidence Rail.
+    """
+
+    role = record.get("asset_role")
+    declared = "signed_desktop_bundle_allowed" in record
+    if role in SIGNED_DESKTOP_BUNDLE_ROLES:
+        if not declared or not isinstance(record.get("signed_desktop_bundle_allowed"), bool):
+            return f"Desktop-bundle ecological data must declare an explicit decision: {path}"
+    elif declared:
+        return f"Desktop-bundle authorization is not valid for this ecological asset role: {path}"
+    if (
+        record.get("signed_desktop_bundle_allowed") is True
+        and path != DESKTOP_TRUST_RECORD
+        and not path.startswith(RIDGEWAY_PREFIX)
+    ):
+        return f"Signed desktop fixture authorization is limited to Ridgeway assets: {path}"
+    return None
+
+
+def validate_signed_desktop_bundle_authorizations(
+    records: dict[str, dict[str, object]],
+) -> str | None:
+    """Authorize only the current, independently trusted Ridgeway evidence set."""
+
+    direct_path = f"{RIDGEWAY_PREFIX}direct-evidence-manifest.json"
+    try:
+        direct = json.loads((ROOT / direct_path).read_text(encoding="utf-8"))
+        archive_name = direct["evidence_bundle"]["filename"]
+    except (OSError, KeyError, TypeError, UnicodeDecodeError, json.JSONDecodeError):
+        return "Signed desktop authorization cannot resolve the active Ridgeway evidence archive."
+    if (
+        not isinstance(archive_name, str)
+        or PurePosixPath(archive_name).name != archive_name
+        or "/" in archive_name
+        or "\\" in archive_name
+    ):
+        return "Signed desktop authorization resolved an unsafe Ridgeway evidence archive."
+
+    expected = {
+        DESKTOP_TRUST_RECORD,
+        direct_path,
+        f"{RIDGEWAY_PREFIX}{archive_name}",
+        f"{RIDGEWAY_PREFIX}ui_projection.json",
+    }
+    authorized = {
+        path
+        for path, record in records.items()
+        if record.get("signed_desktop_bundle_allowed") is True
+    }
+    if authorized != expected:
+        missing = ", ".join(sorted(expected - authorized)) or "none"
+        unexpected = ", ".join(sorted(authorized - expected)) or "none"
+        return (
+            "Signed desktop fixture authorization must match the current trusted evidence set "
+            f"exactly (missing: {missing}; unexpected: {unexpected})."
+        )
+
+    expected_public = {
+        DESKTOP_TRUST_RECORD,
+        f"{RIDGEWAY_PREFIX}ui_projection.json",
+    }
+    for path in expected:
+        record = records.get(path)
+        if not isinstance(record, dict):
+            return f"Signed desktop fixture authorization references an unclassified asset: {path}"
+        if record.get("public_replay_allowed") is not (path in expected_public):
+            return f"Signed desktop fixture has the wrong public-replay disposition: {path}"
+    return None
 
 
 def requires_classification(path: str) -> bool:
@@ -1005,8 +1090,8 @@ def main() -> int:
         print("Ecological data manifest is missing.")
         return 1
     payload = json.loads(MANIFEST.read_text(encoding="utf-8"))
-    if payload.get("manifest_version") != "1.0":
-        print("Ecological data manifest must use manifest version 1.0.")
+    if payload.get("manifest_version") != MANIFEST_VERSION:
+        print(f"Ecological data manifest must use manifest version {MANIFEST_VERSION}.")
         return 1
     records = payload.get("files")
     if not isinstance(records, list):
@@ -1067,6 +1152,9 @@ def main() -> int:
             return 1
         if not isinstance(record["public_replay_allowed"], bool):
             print(f"Tracked synthetic data must declare whether public replay is allowed: {path}")
+            return 1
+        if desktop_policy_error := validate_signed_desktop_bundle_policy(path, record):
+            print(desktop_policy_error)
             return 1
         if (
             record["public_replay_allowed"] is False
@@ -1131,6 +1219,10 @@ def main() -> int:
                 if source.read(8) != b"\x89PNG\r\n\x1a\n":
                     print(f"Ecological screenshot is not a PNG file: {path}")
                     return 1
+
+    if desktop_authorization_error := validate_signed_desktop_bundle_authorizations(by_path):
+        print(desktop_authorization_error)
+        return 1
 
     relationship_errors = [
         *validate_ridgeway_relationships(),

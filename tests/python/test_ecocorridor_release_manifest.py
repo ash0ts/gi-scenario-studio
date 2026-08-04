@@ -130,6 +130,111 @@ def test_packaged_engine_smoke_requires_hand_calculated_series_result() -> None:
         smoke.validate_hand_calculated_engine_result(result)
 
 
+def test_packaged_guided_evidence_uses_distinct_public_and_desktop_authorizations(
+    tmp_path: Path,
+) -> None:
+    smoke = _load_script("smoke_ecocorridor_release_bundle.py")
+    root = Path(__file__).resolve().parents[2]
+    data_manifest = root / "benchmarks/ecocorridor/data-manifest.json"
+    ridgeway = root / "benchmarks/ecocorridor/ridgeway"
+    direct_manifest = ridgeway / "direct-evidence-manifest.json"
+    archive_name = json.loads(direct_manifest.read_text(encoding="utf-8"))["evidence_bundle"][
+        "filename"
+    ]
+    projection = ridgeway / "ui_projection.json"
+    trust = root / "apps/ecocorridor-desktop/src/data/ridgewayReleaseTrust.json"
+    archive = ridgeway / archive_name
+
+    smoke.validate_staged_data_classification(
+        data_manifest,
+        projection,
+        trust,
+        direct_manifest,
+        archive,
+    )
+    records = json.loads(data_manifest.read_text(encoding="utf-8"))["files"]
+    by_path = {record["path"]: record for record in records}
+    assert (
+        by_path["benchmarks/ecocorridor/ridgeway/direct-evidence-manifest.json"][
+            "public_replay_allowed"
+        ]
+        is False
+    )
+    assert (
+        by_path[f"benchmarks/ecocorridor/ridgeway/{archive_name}"]["public_replay_allowed"] is False
+    )
+
+    blocked = tmp_path / "blocked-data-manifest.json"
+    for record in records:
+        if record["path"] == "apps/ecocorridor-desktop/src/data/ridgewayReleaseTrust.json":
+            record["signed_desktop_bundle_allowed"] = False
+    blocked.write_text(json.dumps({"manifest_version": "1.1", "files": records}), encoding="utf-8")
+    with pytest.raises(SystemExit, match="exactly the current trusted desktop evidence set"):
+        smoke.validate_staged_data_classification(
+            blocked,
+            projection,
+            trust,
+            direct_manifest,
+            archive,
+        )
+
+
+def test_packaged_boundary_success_receipt_is_unsigned_path_free_ci_evidence(
+    tmp_path: Path,
+) -> None:
+    smoke = _load_script("smoke_ecocorridor_release_bundle.py")
+    release = tmp_path / "release"
+    files = {
+        "release-manifest.json": b"signed manifest",
+        "release-manifest.sig": b"signature",
+        "engine-manifest.json": b"engine manifest",
+        "dependency-inventory.json": b"inventory",
+        "guided/data-manifest.json": b"data manifest",
+        "guided/ridgeway-release-trust.json": b"trust",
+        "guided/direct-evidence-manifest.json": b"direct manifest",
+        "bin/ecocorridor-worker": b"worker",
+        "engine/bin/ecocorridor-engine": b"engine",
+    }
+    for relative, payload in files.items():
+        target = release / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(payload)
+    public_key = tmp_path / "resource-public-key.hex"
+    public_key.write_text("a" * 64 + "\n", encoding="ascii")
+    output = tmp_path / "ecocorridor-packaged-boundary-smoke.json"
+
+    smoke.write_success_disposition(
+        output,
+        release_root=release,
+        public_key=public_key,
+        expected_version="0.1.0",
+        expected_source_commit="b" * 40,
+        expected_target="linux-x64",
+        signed_manifest={"resources": [{"path": path} for path in sorted(files)]},
+    )
+
+    receipt = json.loads(output.read_text(encoding="utf-8"))
+    assert receipt["schema_version"] == "ecocorridor-packaged-boundary-smoke/v1.0"
+    assert receipt["evidence_kind"] == "UNSIGNED_CI_SUCCESS_RECEIPT"
+    assert receipt["status"] == "PASSED"
+    assert receipt["source_commit_sha"] == "b" * 40
+    assert receipt["signed_resource_count"] == len(files)
+    assert receipt["ridgeway_release_trust_sha256"] == hashlib.sha256(b"trust").hexdigest()
+    assert all(str(tmp_path) not in str(value) for value in receipt.values())
+    assert "HAND_CALCULATED_CIRCUITSCAPE_RESULT_REPRODUCED" in receipt["checks"]
+
+    with pytest.raises(SystemExit, match="outside the signed resource tree"):
+        smoke.write_success_disposition(
+            release / "receipt.json",
+            release_root=release,
+            public_key=public_key,
+            expected_version="0.1.0",
+            expected_source_commit="b" * 40,
+            expected_target="linux-x64",
+            signed_manifest={"resources": []},
+        )
+
+
 def test_packaged_engine_manifest_hashes_final_staged_tree(tmp_path: Path) -> None:
     smoke = _load_script("smoke_ecocorridor_release_bundle.py")
     engine = tmp_path / "engine"

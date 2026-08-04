@@ -73,3 +73,13 @@ The public replay is built only from the approved synthetic fixture. A record's
 `public_replay_allowed` field is authorization, not proof that the file is
 actually bundled; benchmark-only and screenshot assets remain outside the web
 application build.
+
+Signed desktop resources use a separate `signed_desktop_bundle_allowed`
+decision. The manifest checker permits exactly the current Ridgeway UI
+projection, release-trust record, direct-evidence manifest, and archive selected
+by that manifest. The projection and trust record remain public-replay approved;
+the direct manifest and archive remain explicitly prohibited from the public
+web replay. Release staging copies all four, and the packaged-boundary smoke
+rechecks their byte counts, hashes, sensitivity declarations, and distinct
+authorizations from the signed resource tree. Superseded evidence archives
+remain explicitly unauthorized for desktop packaging.

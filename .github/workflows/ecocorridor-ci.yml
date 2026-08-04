@@ -333,6 +333,7 @@ jobs:
           --expected-version 0.1.0
           --expected-source-commit "${GITHUB_SHA}"
           --expected-target linux-x64
+          --disposition-output "${RUNNER_TEMP}/ecocorridor-packaged-boundary-smoke.json"
 
       - name: Preserve packaged-boundary evidence
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
@@ -342,6 +343,9 @@ jobs:
             apps/ecocorridor-desktop/src-tauri/release-generated/release-manifest.json
             apps/ecocorridor-desktop/src-tauri/release-generated/release-manifest.sig
             apps/ecocorridor-desktop/src-tauri/release-generated/engine-manifest.json
+            apps/ecocorridor-desktop/src-tauri/release-generated/dependency-inventory.json
+            ${{ runner.temp }}/ci-resource-public-key.hex
+            ${{ runner.temp }}/ecocorridor-packaged-boundary-smoke.json
           if-no-files-found: error
           retention-days: 14
 

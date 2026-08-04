@@ -22,6 +22,67 @@ def checker() -> ModuleType:
     return module
 
 
+def test_signed_desktop_bundle_authorization_is_explicit_and_exact(
+    checker: ModuleType,
+) -> None:
+    root = Path(__file__).resolve().parents[2]
+    payload = json.loads(
+        (root / "benchmarks/ecocorridor/data-manifest.json").read_text(encoding="utf-8")
+    )
+    assert payload["manifest_version"] == checker.MANIFEST_VERSION == "1.1"
+    records = {record["path"]: record for record in payload["files"]}
+    direct = json.loads(
+        (root / "benchmarks/ecocorridor/ridgeway/direct-evidence-manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    selected_archive = "benchmarks/ecocorridor/ridgeway/" + direct["evidence_bundle"]["filename"]
+    expected = {
+        "apps/ecocorridor-desktop/src/data/ridgewayReleaseTrust.json",
+        "benchmarks/ecocorridor/ridgeway/direct-evidence-manifest.json",
+        selected_archive,
+        "benchmarks/ecocorridor/ridgeway/ui_projection.json",
+    }
+
+    assert {
+        path
+        for path, record in records.items()
+        if record.get("signed_desktop_bundle_allowed") is True
+    } == expected
+    assert checker.validate_signed_desktop_bundle_authorizations(records) is None
+    assert (
+        records["benchmarks/ecocorridor/ridgeway/direct-evidence-manifest.json"][
+            "public_replay_allowed"
+        ]
+        is False
+    )
+    assert records[selected_archive]["public_replay_allowed"] is False
+
+    superseded = "benchmarks/ecocorridor/ridgeway/ridgeway-direct-evidence-4858c0a48841.tar.gz"
+    records[superseded] = {**records[superseded], "signed_desktop_bundle_allowed": True}
+    assert "exactly" in str(checker.validate_signed_desktop_bundle_authorizations(records))
+
+
+def test_signed_desktop_bundle_roles_require_a_boolean_decision(checker: ModuleType) -> None:
+    direct = {"asset_role": "DIRECT_EVIDENCE_MANIFEST"}
+    assert "explicit decision" in str(
+        checker.validate_signed_desktop_bundle_policy("benchmarks/ecocorridor/ridgeway/x", direct)
+    )
+    direct["signed_desktop_bundle_allowed"] = "yes"
+    assert "explicit decision" in str(
+        checker.validate_signed_desktop_bundle_policy("benchmarks/ecocorridor/ridgeway/x", direct)
+    )
+    unrelated = {
+        "asset_role": "DOCUMENTATION",
+        "signed_desktop_bundle_allowed": False,
+    }
+    assert "not valid" in str(
+        checker.validate_signed_desktop_bundle_policy(
+            "benchmarks/ecocorridor/ridgeway/README.md", unrelated
+        )
+    )
+
+
 @pytest.mark.parametrize(
     "path",
     [

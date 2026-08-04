@@ -24,6 +24,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 APPLICATION_ID = "org.ecocorridor.scenariostudio"
 RELEASE_MANIFEST_SCHEMA = "1.1"
+ECOLOGICAL_DATA_MANIFEST_SCHEMA = "1.1"
+SMOKE_DISPOSITION_SCHEMA = "ecocorridor-packaged-boundary-smoke/v1.0"
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 SOURCE_COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 SEMVER = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\Z")
@@ -277,6 +279,7 @@ def run_packaged_runtime_inventory(worker: Path, dependency_inventory: Path) -> 
 def validate_staged_data_classification(
     data_manifest: Path,
     projection: Path,
+    trust_record: Path,
     direct_manifest: Path,
     archive: Path,
 ) -> None:
@@ -287,7 +290,7 @@ def validate_staged_data_classification(
     records = payload.get("files") if isinstance(payload, dict) else None
     if (
         not isinstance(payload, dict)
-        or payload.get("manifest_version") != "1.0"
+        or payload.get("manifest_version") != ECOLOGICAL_DATA_MANIFEST_SCHEMA
         or not isinstance(records, list)
     ):
         raise SystemExit("The staged ecological data manifest is invalid.")
@@ -297,22 +300,117 @@ def validate_staged_data_classification(
         if isinstance(item, dict) and isinstance(item.get("path"), str)
     }
     archive_source = f"benchmarks/ecocorridor/ridgeway/{archive.name}"
-    for source_path, staged in (
-        ("benchmarks/ecocorridor/ridgeway/ui_projection.json", projection),
-        ("benchmarks/ecocorridor/ridgeway/direct-evidence-manifest.json", direct_manifest),
-        (archive_source, archive),
+    expected_authorized = {
+        "apps/ecocorridor-desktop/src/data/ridgewayReleaseTrust.json",
+        "benchmarks/ecocorridor/ridgeway/ui_projection.json",
+        "benchmarks/ecocorridor/ridgeway/direct-evidence-manifest.json",
+        archive_source,
+    }
+    authorized = {
+        path
+        for path, record in by_path.items()
+        if record.get("signed_desktop_bundle_allowed") is True
+    }
+    if authorized != expected_authorized:
+        raise SystemExit(
+            "The staged ecological manifest does not authorize exactly the current trusted "
+            "desktop evidence set."
+        )
+    for source_path, staged, public_replay_allowed in (
+        ("benchmarks/ecocorridor/ridgeway/ui_projection.json", projection, True),
+        (
+            "apps/ecocorridor-desktop/src/data/ridgewayReleaseTrust.json",
+            trust_record,
+            True,
+        ),
+        (
+            "benchmarks/ecocorridor/ridgeway/direct-evidence-manifest.json",
+            direct_manifest,
+            False,
+        ),
+        (archive_source, archive, False),
     ):
         record = by_path.get(source_path)
         if (
             not isinstance(record, dict)
             or record.get("synthetic") is not True
-            or record.get("public_replay_allowed") is not True
+            or record.get("signed_desktop_bundle_allowed") is not True
+            or record.get("public_replay_allowed") is not public_replay_allowed
             or record.get("contains_real_locations") is not False
             or record.get("contains_species_occurrences") is not False
             or record.get("sha256") != digest(staged)
             or record.get("byte_size") != staged.stat().st_size
         ):
-            raise SystemExit(f"Staged ecological evidence is not manifest-approved: {source_path}")
+            raise SystemExit(
+                f"Staged ecological evidence is not authorized for the signed desktop bundle: "
+                f"{source_path}"
+            )
+
+
+def write_success_disposition(
+    output: Path,
+    *,
+    release_root: Path,
+    public_key: Path,
+    expected_version: str,
+    expected_source_commit: str,
+    expected_target: str,
+    signed_manifest: dict[str, object],
+) -> None:
+    """Write a path-free CI success receipt after every smoke assertion passes."""
+
+    destination = output.resolve()
+    if output.is_symlink() or destination.exists():
+        raise SystemExit("Packaged-boundary smoke disposition must be a new regular file.")
+    if destination == release_root or release_root in destination.parents:
+        raise SystemExit("The CI smoke disposition must remain outside the signed resource tree.")
+    worker_suffix = ".exe" if expected_target == "windows-x64" else ""
+    receipt = {
+        "schema_version": SMOKE_DISPOSITION_SCHEMA,
+        "evidence_kind": "UNSIGNED_CI_SUCCESS_RECEIPT",
+        "status": "PASSED",
+        "application_id": APPLICATION_ID,
+        "application_version": expected_version,
+        "source_commit_sha": expected_source_commit,
+        "target": expected_target,
+        "signed_resource_count": len(signed_manifest.get("resources", [])),
+        "release_manifest_sha256": digest(release_root / "release-manifest.json"),
+        "release_signature_sha256": digest(release_root / "release-manifest.sig"),
+        "resource_public_key_sha256": digest(public_key),
+        "engine_manifest_sha256": digest(release_root / "engine-manifest.json"),
+        "dependency_inventory_sha256": digest(release_root / "dependency-inventory.json"),
+        "ecological_data_manifest_sha256": digest(release_root / "guided" / "data-manifest.json"),
+        "ridgeway_release_trust_sha256": digest(
+            release_root / "guided" / "ridgeway-release-trust.json"
+        ),
+        "ridgeway_direct_evidence_manifest_sha256": digest(
+            release_root / "guided" / "direct-evidence-manifest.json"
+        ),
+        "worker_sha256": digest(release_root / "bin" / f"ecocorridor-worker{worker_suffix}"),
+        "engine_executable_sha256": digest(
+            release_root / "engine" / "bin" / f"ecocorridor-engine{worker_suffix}"
+        ),
+        "checks": [
+            "SIGNED_RESOURCE_INVENTORY_VERIFIED",
+            "PACKAGED_RUNTIME_INVENTORY_MATCHED",
+            "SIGNED_DESKTOP_BUNDLE_AUTHORIZATION_VERIFIED",
+            "ENGINE_MANIFEST_TREE_MATCHED",
+            "HAND_CALCULATED_CIRCUITSCAPE_RESULT_REPRODUCED",
+            "WORKER_JSON_RPC_RESTART_AND_EVIDENCE_VERIFIED",
+        ],
+    }
+    payload = (json.dumps(receipt, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(f".{destination.name}.tmp")
+    try:
+        with temporary.open("xb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temporary, 0o644)
+        os.replace(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 EXPECTED_SERIES_RESISTANCE = 4.0
@@ -594,11 +692,12 @@ def main() -> int:
     parser.add_argument("--expected-version", required=True)
     parser.add_argument("--expected-source-commit", required=True)
     parser.add_argument("--expected-target", choices=sorted(TARGETS), required=True)
+    parser.add_argument("--disposition-output", type=Path)
     arguments = parser.parse_args()
     release_root = arguments.release_root.resolve(strict=True)
     if arguments.release_root.is_symlink() or not release_root.is_dir():
         raise SystemExit("Release root must be a regular non-symlink directory.")
-    verify_signed_release_inventory(
+    signed_manifest = verify_signed_release_inventory(
         release_root,
         arguments.public_key,
         expected_version=arguments.expected_version,
@@ -612,6 +711,7 @@ def main() -> int:
     dependency_inventory = release_root / "dependency-inventory.json"
     data_manifest = release_root / "guided" / "data-manifest.json"
     guided_projection = release_root / "guided" / "ridgeway-ui-projection.json"
+    guided_trust = release_root / "guided" / "ridgeway-release-trust.json"
     guided_manifest = release_root / "guided" / "direct-evidence-manifest.json"
     try:
         archive_name = json.loads(guided_manifest.read_text(encoding="utf-8"))["evidence_bundle"][
@@ -629,6 +729,7 @@ def main() -> int:
         dependency_inventory,
         data_manifest,
         guided_projection,
+        guided_trust,
         guided_manifest,
         guided_archive,
     ):
@@ -644,6 +745,7 @@ def main() -> int:
     validate_staged_data_classification(
         data_manifest,
         guided_projection,
+        guided_trust,
         guided_manifest,
         guided_archive,
     )
@@ -659,6 +761,16 @@ def main() -> int:
             guided_manifest,
             guided_archive,
             smoke_root / "worker-run",
+        )
+    if arguments.disposition_output is not None:
+        write_success_disposition(
+            arguments.disposition_output,
+            release_root=release_root,
+            public_key=arguments.public_key.resolve(strict=True),
+            expected_version=arguments.expected_version,
+            expected_source_commit=arguments.expected_source_commit,
+            expected_target=arguments.expected_target,
+            signed_manifest=signed_manifest,
         )
     print("EcoCorridor staged worker and direct Circuitscape engine smoke passed.")
     return 0
