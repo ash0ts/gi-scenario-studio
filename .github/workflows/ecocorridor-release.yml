@@ -785,6 +785,7 @@ jobs:
         env:
           JULIA_DEPOT_PATH: ${{ runner.temp }}/julia-depot
           JULIA_NUM_THREADS: "1"
+          JULIA_NUM_PRECOMPILE_TASKS: "1"
           OPENBLAS_NUM_THREADS: "1"
           OMP_NUM_THREADS: "1"
         run: >-
@@ -797,6 +798,7 @@ jobs:
           ECOCORRIDOR_ENGINE_OUTPUT: ${{ runner.temp }}/ecocorridor-engine
           JULIA_DEPOT_PATH: ${{ runner.temp }}/julia-depot
           JULIA_NUM_THREADS: "1"
+          JULIA_NUM_PRECOMPILE_TASKS: "1"
           OPENBLAS_NUM_THREADS: "1"
           OMP_NUM_THREADS: "1"
         run: >-

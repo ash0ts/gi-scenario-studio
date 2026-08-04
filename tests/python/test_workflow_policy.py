@@ -518,13 +518,44 @@ def test_packaged_boundary_preserves_verifiable_success_evidence_without_masking
     smoke = job.split("- name: Execute staged scientific boundary offline", 1)[1].split(
         "- name: Preserve packaged-boundary evidence", 1
     )[0]
-    upload = job.split("- name: Preserve packaged-boundary evidence", 1)[1]
+    upload = job.split("- name: Preserve packaged-boundary evidence", 1)[1].split(
+        "- name: Remove PackageCompiler swap", 1
+    )[0]
 
     assert '--disposition-output "${RUNNER_TEMP}/ecocorridor-packaged-boundary-smoke.json"' in smoke
     assert "${{ runner.temp }}/ci-resource-public-key.hex" in upload
     assert "${{ runner.temp }}/ecocorridor-packaged-boundary-smoke.json" in upload
     assert "release-generated/dependency-inventory.json" in upload
     assert "if: always()" not in upload
+
+
+def test_packaged_boundary_provisions_bounded_swap_for_nonincremental_sysimage() -> None:
+    root = Path(__file__).resolve().parents[2]
+    workflow = (root / ".github" / "workflows" / "ecocorridor-ci.yml").read_text(encoding="utf-8")
+    job = workflow.split("  packaged-scientific-boundary:", 1)[1].split("\n  eco-frontend:", 1)[0]
+    provision = job.split("- name: Provision bounded PackageCompiler swap", 1)[1].split(
+        "- name: Build target-native engine application", 1
+    )[0]
+    cleanup = job.split("- name: Remove PackageCompiler swap", 1)[1]
+
+    assert 'swap_path="${RUNNER_TEMP}/ecocorridor-packagecompiler.swap"' in provision
+    assert '[[ -e "${swap_path}" || -L "${swap_path}" ]]' in provision
+    assert 'sudo fallocate --length 4G "${swap_path}"' in provision
+    assert 'sudo chmod 600 "${swap_path}"' in provision
+    assert 'sudo mkswap "${swap_path}"' in provision
+    assert 'sudo swapon "${swap_path}"' in provision
+    assert 'JULIA_NUM_PRECOMPILE_TASKS: "1"' in job
+    assert "if: always()" in cleanup
+    assert 'sudo swapoff "${swap_path}" || true' in cleanup
+    assert 'sudo rm -f -- "${swap_path}"' in cleanup
+
+    release = (root / ".github" / "workflows" / "ecocorridor-release.yml").read_text(
+        encoding="utf-8"
+    )
+    package_job = release.split("  build-signed-installers:", 1)[1].split(
+        "\n  installed-artifact-smoke:", 1
+    )[0]
+    assert package_job.count('JULIA_NUM_PRECOMPILE_TASKS: "1"') == 2
 
 
 def _ecocorridor_workflows() -> dict[str, str]:

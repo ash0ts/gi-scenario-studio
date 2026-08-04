@@ -262,6 +262,7 @@ jobs:
         env:
           JULIA_DEPOT_PATH: ${{ runner.temp }}/julia-depot
           JULIA_NUM_THREADS: "1"
+          JULIA_NUM_PRECOMPILE_TASKS: "1"
           OPENBLAS_NUM_THREADS: "1"
           OMP_NUM_THREADS: "1"
         run: >-
@@ -269,11 +270,27 @@ jobs:
           --startup-file=no --history-file=no
           -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
 
+      - name: Provision bounded PackageCompiler swap
+        shell: bash
+        run: |
+          set -euo pipefail
+          swap_path="${RUNNER_TEMP}/ecocorridor-packagecompiler.swap"
+          if [[ -e "${swap_path}" || -L "${swap_path}" ]]; then
+            echo "::error::Refusing to replace an existing PackageCompiler swap path."
+            exit 1
+          fi
+          sudo fallocate --length 4G "${swap_path}"
+          sudo chmod 600 "${swap_path}"
+          sudo mkswap "${swap_path}"
+          sudo swapon "${swap_path}"
+          sudo swapon --show --bytes
+
       - name: Build target-native engine application
         env:
           ECOCORRIDOR_ENGINE_OUTPUT: ${{ runner.temp }}/ecocorridor-engine
           JULIA_DEPOT_PATH: ${{ runner.temp }}/julia-depot
           JULIA_NUM_THREADS: "1"
+          JULIA_NUM_PRECOMPILE_TASKS: "1"
           OPENBLAS_NUM_THREADS: "1"
           OMP_NUM_THREADS: "1"
         run: >-
@@ -348,6 +365,14 @@ jobs:
             ${{ runner.temp }}/ecocorridor-packaged-boundary-smoke.json
           if-no-files-found: error
           retention-days: 14
+
+      - name: Remove PackageCompiler swap
+        if: always()
+        shell: bash
+        run: |
+          swap_path="${RUNNER_TEMP}/ecocorridor-packagecompiler.swap"
+          sudo swapoff "${swap_path}" || true
+          sudo rm -f -- "${swap_path}"
 
   eco-frontend:
     name: Eco desktop and public replay
