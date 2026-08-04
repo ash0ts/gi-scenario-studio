@@ -27,8 +27,34 @@ PROTECTED_RIDGEWAY_FILES = frozenset(
 MAX_FILES = 256
 MAX_FILE_BYTES = 12 * 1024 * 1024
 MAX_TOTAL_BYTES = 40 * 1024 * 1024
+MAX_SOURCE_COPY_BYTES = 2 * 1024 * 1024
 SOURCE_SHA = re.compile(r"[0-9a-f]{40}\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+PUBLIC_REPLAY_SOURCE = (
+    Path(__file__).resolve().parents[1]
+    / "apps"
+    / "ecocorridor-replay"
+    / "src"
+    / "PublicReplayApp.tsx"
+)
+PROCESS_INTERVAL_OVERLAP_KEYS = frozenset(
+    {
+        "schema_version",
+        "observation_method",
+        "maximum_overlapping_retained_process_intervals",
+        "retained_interval_count",
+        "coincident_endpoint_policy",
+        "scientific_identity_role",
+        "limitation",
+    }
+)
+PROCESS_INTERVAL_OVERLAP_LIMITATION = (
+    "Derived only from retained post-spawn launched_at-to-confirmed_at measurement "
+    "intervals. It may understate true process concurrency because launched_at is "
+    "recorded after process creation, and coincident endpoints may overstate interval "
+    "overlap at retained timestamp resolution. It is not the configured worker count, "
+    "CPU utilization, or proof of simultaneous physical execution."
+)
 REQUIRED_CSP = {
     "default-src 'self'",
     "connect-src 'none'",
@@ -71,11 +97,50 @@ def _regular(path: Path, *, label: str) -> Path:
     return resolved
 
 
+def validate_public_replay_source_copy(source_path: Path = PUBLIC_REPLAY_SOURCE) -> None:
+    """Apply the production claim policy to all hard-coded public replay UI copy."""
+
+    source = _regular(source_path, label="public replay UI source")
+    if source.stat().st_size > MAX_SOURCE_COPY_BYTES:
+        raise ValueError("public replay UI source exceeds its claim-audit size limit")
+    try:
+        text = source.read_text(encoding="utf-8")
+        assert_safe_rendered_ecological_copy({"publicReplaySource": text})
+    except UnicodeDecodeError as exc:
+        raise ValueError("public replay UI source is not UTF-8") from exc
+    except ValueError as exc:
+        raise ValueError("public replay source copy violates ecological claim policy") from exc
+
+
 def _json_object(path: Path, *, label: str) -> dict[str, object]:
     value = json.loads(_regular(path, label=label).read_text(encoding="utf-8"))
     if not isinstance(value, dict):
         raise TypeError(f"{label} must contain a JSON object")
     return value
+
+
+def _valid_retained_process_interval_overlap(value: object) -> bool:
+    maximum = (
+        value.get("maximum_overlapping_retained_process_intervals")
+        if isinstance(value, dict)
+        else None
+    )
+    interval_count = value.get("retained_interval_count") if isinstance(value, dict) else None
+    return bool(
+        isinstance(value, dict)
+        and set(value) == PROCESS_INTERVAL_OVERLAP_KEYS
+        and value.get("schema_version") == "ridgeway-retained-process-interval-overlap/v1.0"
+        and value.get("observation_method") == "MAXIMUM_OVERLAPPING_RETAINED_PROCESS_INTERVALS"
+        and not isinstance(maximum, bool)
+        and isinstance(maximum, int)
+        and not isinstance(interval_count, bool)
+        and interval_count == 1_596
+        and 1 <= maximum <= interval_count
+        and value.get("coincident_endpoint_policy")
+        == "COUNTED_AS_OVERLAPPING_AT_RETAINED_TIMESTAMP_RESOLUTION"
+        and value.get("scientific_identity_role") == "AUDIT_ONLY_EXCLUDED"
+        and value.get("limitation") == PROCESS_INTERVAL_OVERLAP_LIMITATION
+    )
 
 
 def _validate_protected_ridgeway_receipts(
@@ -117,7 +182,7 @@ def _validate_protected_ridgeway_receipts(
         or attestation.get("direct_evidence_manifest_sha256") != evidence_manifest_sha256
         or attestation.get("matrix_job_count") != 1_536
         or attestation.get("map_job_count") != 60
-        or differential.get("schema_version") != "ridgeway-protected-rerun-differential/v1.0"
+        or differential.get("schema_version") != "ridgeway-protected-rerun-differential/v1.1"
         or differential.get("source_commit_sha") != source_sha
         or differential.get("status") != "PASSED"
         or differential.get("reference_manifest_sha256") != evidence_manifest_sha256
@@ -126,6 +191,14 @@ def _validate_protected_ridgeway_receipts(
         or differential.get("absolute_tolerance") != 1e-8
         or differential.get("relative_tolerance") != 1e-7
         or differential.get("teaching_selection_matched") is not True
+        or not _valid_retained_process_interval_overlap(
+            differential.get("reference_retained_process_interval_overlap")
+        )
+        or not _valid_retained_process_interval_overlap(
+            differential.get("producer_retained_process_interval_overlap")
+        )
+        or differential.get("retained_process_interval_overlap_comparison_policy")
+        != "AUDIT_ONLY_EXCLUDED_FROM_SCIENTIFIC_EQUIVALENCE"
         or identity.get("schema_version") != "ecocorridor-github-actions-producer-identity/v1.0"
         or identity.get("workflow_path") != ".github/workflows/ecocorridor-ridgeway-evidence.yml"
         or identity.get("head_sha") != source_sha
@@ -172,6 +245,7 @@ def validate_and_inventory(
     data_manifest: Path,
     require_verified_evidence: bool = False,
 ) -> dict[str, object]:
+    validate_public_replay_source_copy()
     supplied_root = root
     if supplied_root.is_symlink():
         raise ValueError("public replay root may not be a symlink")
@@ -196,12 +270,12 @@ def validate_and_inventory(
     ) != replay.get("fixtureId"):
         raise ValueError("Ridgeway replay and trust contracts are incompatible")
 
+    try:
+        assert_safe_rendered_ecological_copy(replay)
+    except ValueError as exc:
+        raise ValueError("Ridgeway public replay violates ecological claim policy") from exc
     replay_eligible = replay.get("releaseReplayEligible") is True
     if replay_eligible:
-        try:
-            assert_safe_rendered_ecological_copy(replay)
-        except ValueError as exc:
-            raise ValueError("Ridgeway public replay violates ecological claim policy") from exc
         manifest_sha = replay.get("manifestSha256")
         portfolios = replay.get("portfolios")
         scenarios = replay.get("scenarios")

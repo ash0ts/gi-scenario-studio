@@ -45,6 +45,7 @@ from .contracts import (
     PairResistanceMetric,
     PortfolioDecisionSummary,
     QAStatus,
+    ReferenceComparisonPlan,
     RuleMetric,
     RuleOperator,
     canonical_sha256,
@@ -97,6 +98,7 @@ from .raster_io import (
     load_raster,
     write_esri_ascii,
 )
+from .reference_workflow import recover_pending_reference_results
 from .resource_observability import ObservedProcessCancelled, unmeasured_cache_observation
 from .ridgeway import RidgewayFixture, build_ridgeway_fixture
 from .semantic_diff import (
@@ -505,13 +507,43 @@ class DurableAnalysisExecutor:
         )
         return f"direct_{digest[:24]}"
 
-    def _validate_plan(self, bundle: ConnectivityProjectBundle, plan: ConnectivityRunPlan) -> None:
+    def _validate_plan(
+        self,
+        bundle: ConnectivityProjectBundle,
+        plan: ConnectivityRunPlan,
+        *,
+        reference_plan: ReferenceComparisonPlan | None = None,
+    ) -> None:
         if plan.engine_manifest_sha256 != self.engine_manifest.sha256:
             raise DurableAnalysisError("run plan references another EngineManifest")
         scenario_by_id = {item.scenario_id: item for item in bundle.scenarios}
-        if set(plan.scenario_ids) != set(scenario_by_id):
+        if reference_plan is None and set(plan.scenario_ids) != set(scenario_by_id):
             raise DurableAnalysisError("run plan omits a required target or safeguard scenario")
-        for scenario in scenario_by_id.values():
+        if reference_plan is not None:
+            if reference_plan.run_plan != plan:
+                raise DurableAnalysisError(
+                    "reference comparison plan differs from the immutable run plan"
+                )
+            if (
+                set(plan.scenario_ids) != set(reference_plan.bound_scenario_ids)
+                or not set(plan.scenario_ids).issubset(scenario_by_id)
+                or len(plan.portfolios) != 1
+                or plan.portfolios[0].portfolio_id != plan.baseline_portfolio_id
+                or plan.current_maps_for_portfolio_ids
+            ):
+                raise DurableAnalysisError(
+                    "reference comparison must be one baseline across exactly its bound scenarios"
+                )
+            options = {item.option_id: item for item in bundle.intervention_options}
+            if any(
+                option_id not in options or options[option_id].kind.value != "NO_ACTION"
+                for option_id in plan.portfolios[0].canonical_option_ids
+            ):
+                raise DurableAnalysisError(
+                    "reference comparison baseline contains a modeled intervention"
+                )
+        for scenario_id in plan.scenario_ids:
+            scenario = scenario_by_id[scenario_id]
             if (
                 scenario.neighbor_rule != self.engine_manifest.neighbor_rule
                 or scenario.resistance_average != self.engine_manifest.resistance_average
@@ -531,7 +563,7 @@ class DurableAnalysisExecutor:
             for item in bundle.decision_rules
             if item.metric == RuleMetric.MAX_REVIEW_MASK_CURRENT_INCREASE_PERCENT and item.required
         ]
-        if current_rules:
+        if current_rules and reference_plan is None:
             if not bundle.review_masks:
                 raise DurableAnalysisError(
                     "a required current-map rule has no configured review mask"
@@ -540,6 +572,29 @@ class DurableAnalysisExecutor:
                 raise DurableAnalysisError(
                     "a required current-map rule requires maps for every compared portfolio"
                 )
+
+    def _validate_resume_workflow(
+        self,
+        store: EcoProjectStore,
+        analysis_id: str,
+    ) -> None:
+        """Revalidate immutable model/plan/engine state before resume mutation."""
+
+        analysis = store.analysis(analysis_id)
+        plan = ConnectivityRunPlan.model_validate(analysis["plan"])
+        bundle = store.analysis_bundle(analysis_id)
+        stored_reference = store.reference_comparison_plan_for_analysis(analysis_id)
+        reference_plan = stored_reference[0] if stored_reference is not None else None
+        expected_reference = analysis.get("analysis_kind") == "REFERENCE"
+        if expected_reference != (reference_plan is not None):
+            raise DurableAnalysisError(
+                "analysis kind and immutable reference-plan identity are inconsistent"
+            )
+        if reference_plan is not None:
+            # The replay path performs canonical plan reconstruction against the
+            # immutable analysis snapshot without changing scientific state.
+            store.store_reference_comparison_plan(reference_plan)
+        self._validate_plan(bundle, plan, reference_plan=reference_plan)
 
     def _job_specs(self, plan: ConnectivityRunPlan) -> list[dict[str, Any]]:
         by_id = {item.portfolio_id: item for item in plan.portfolios}
@@ -579,7 +634,21 @@ class DurableAnalysisExecutor:
         self._validate_engine(engine_executable, engine_sha256)
         self._configured_engine = engine_executable.resolve()
         self._configured_engine_sha256 = engine_sha256
-        self._validate_plan(bundle, plan)
+        store = EcoProjectStore(project_directory)
+        try:
+            analysis = store.analysis(plan.analysis_id)
+            stored_reference = store.reference_comparison_plan_for_analysis(plan.analysis_id)
+            if (analysis.get("analysis_kind") == "REFERENCE") != (stored_reference is not None):
+                raise DurableAnalysisError(
+                    "analysis kind and immutable reference-plan identity are inconsistent"
+                )
+        finally:
+            store.close()
+        self._validate_plan(
+            bundle,
+            plan,
+            reference_plan=(stored_reference[0] if stored_reference is not None else None),
+        )
         control, acquired = self._acquire_project_control(project_directory, plan.analysis_id)
         if not acquired:
             return {"state": "RUNNING"}
@@ -888,6 +957,8 @@ class DurableAnalysisExecutor:
             target_analysis_id = (
                 self._guided_active_analysis(guided[1]) if guided is not None else analysis_id
             )
+            if guided is None:
+                self._validate_resume_workflow(store, target_analysis_id)
         finally:
             store.close()
         control, acquired = self._acquire_project_control(key[0], primary_analysis_id)
@@ -943,6 +1014,8 @@ class DurableAnalysisExecutor:
         engine_executable: Path,
         engine_sha256: str,
     ) -> None:
+        if engine_sha256 != self.engine_manifest.executable_sha256:
+            raise DurableAnalysisError("recovery executable differs from the EngineManifest")
         self._validate_engine(engine_executable, engine_sha256)
         store = EcoProjectStore(project_directory)
         try:
@@ -952,6 +1025,8 @@ class DurableAnalysisExecutor:
             target_analysis_id = (
                 self._guided_active_analysis(guided[1]) if guided is not None else analysis_id
             )
+            if guided is None:
+                self._validate_resume_workflow(store, target_analysis_id)
         finally:
             store.close()
         control, acquired = self._acquire_project_control(key[0], primary_analysis_id)
@@ -1349,7 +1424,14 @@ class DurableAnalysisExecutor:
                         counts.get(DirectJobState.QUEUED.value, 0) == 0
                         and counts.get(DirectJobState.RUNNING.value, 0) == 0
                     ):
-                        self._complete_analysis(store, bundle, plan)
+                        if store.reference_comparison_plan_for_analysis(plan.analysis_id):
+                            store.complete_reference_direct_analysis(plan.analysis_id)
+                            recover_pending_reference_results(
+                                store=store,
+                                analysis_id=plan.analysis_id,
+                            )
+                        else:
+                            self._complete_analysis(store, bundle, plan)
                     return
                 succeeded = self._execute_one(
                     store=store,

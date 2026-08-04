@@ -471,8 +471,8 @@ def verify_signed_ratings(
 ) -> tuple[dict[str, str], dict[str, str]]:
     """Verify detached Ed25519 case feedback against protected release identity."""
 
-    from cryptography.exceptions import InvalidSignature
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    from nacl.exceptions import BadSignatureError
+    from nacl.signing import VerifyKey
 
     try:
         public_key_bytes = base64.b64decode(public_key_b64, validate=True)
@@ -482,8 +482,8 @@ def verify_signed_ratings(
     if key_sha256 != expected_key_sha256:
         raise ValueError("assistant ratings signing key differs from protected policy")
     try:
-        Ed25519PublicKey.from_public_bytes(public_key_bytes).verify(signature, ratings_bytes)
-    except (ValueError, InvalidSignature) as exc:
+        VerifyKey(public_key_bytes).verify(ratings_bytes, signature)
+    except (ValueError, BadSignatureError) as exc:
         raise ValueError("assistant ratings detached signature is invalid") from exc
     payload = json.loads(ratings_bytes.decode("utf-8"))
     required = {

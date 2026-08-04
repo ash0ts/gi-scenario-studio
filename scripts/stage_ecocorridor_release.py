@@ -195,7 +195,7 @@ def main() -> int:
         Path(archive_name).name != archive_name
         or "/" in archive_name
         or "\\" in archive_name
-        or guided_payload.get("schema_version") != "ridgeway-direct-evidence/v1.1"
+        or guided_payload.get("schema_version") != "ridgeway-direct-evidence/v1.2"
         or guided_payload.get("evidence_contract_status") == "SUPERSEDED_NON_RELEASE"
         or guided_payload.get("historical_evidence_only") is True
         or guided_payload.get("release_replay_eligible") is not True

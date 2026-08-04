@@ -25,6 +25,81 @@ permissions:\n  contents: read\nenv:\n  CACHE: ${{ runner.temp }}/cache\njobs:\n
     assert sum("runner context used before step scope" in item for item in findings) == 2
 
 
+def test_runtime_contexts_are_rejected_in_other_pre_job_locations(policy: ModuleType) -> None:
+    workflow = """\
+permissions:
+  contents: read
+concurrency:
+  group: unsafe-${{ needs.prepare.result }}
+jobs:
+  test:
+    name: ${{ steps.prepare.outputs.label }}
+    runs-on: ${{ runner.os }}
+    if: ${{ matrix.enabled }}
+    timeout-minutes: 5
+    strategy:
+      matrix:
+        os: [${{ job.status }}]
+    steps: []
+"""
+
+    findings = policy.evaluate_workflow(Path("unsafe.yml"), workflow)
+
+    assert any("needs context is unavailable in workflow concurrency" in item for item in findings)
+    assert any("steps context is unavailable in jobs.test.name" in item for item in findings)
+    assert any("runner context used before step scope" in item for item in findings)
+    assert any("matrix context is unavailable in jobs.test.if" in item for item in findings)
+    assert any("job context is unavailable in jobs.test.strategy" in item for item in findings)
+
+
+def test_supported_pre_job_contexts_do_not_create_false_positives(policy: ModuleType) -> None:
+    workflow = """\
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.channel }}
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps: []
+  test:
+    needs: prepare
+    name: ${{ github.workflow }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    if: ${{ needs.prepare.result == 'success' }}
+    timeout-minutes: ${{ inputs.timeout }}
+    concurrency:
+      group: ${{ github.workflow }}-${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-24.04]
+    env:
+      CACHE_KEY: ${{ needs.prepare.result }}-${{ vars.CACHE_VERSION }}
+    steps: []
+"""
+
+    assert policy.evaluate_workflow(Path("safe.yml"), workflow) == []
+
+
+def test_github_token_is_rejected_before_step_scope(policy: ModuleType) -> None:
+    workflow = """\
+permissions:
+  contents: read
+env:
+  TOKEN: ${{ github.token }}
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps: []
+"""
+
+    findings = policy.evaluate_workflow(Path("unsafe.yml"), workflow)
+
+    assert any("github.token is unavailable before step scope" in item for item in findings)
+
+
 def test_pull_request_workflow_cannot_receive_secrets_or_write_scope(
     policy: ModuleType,
 ) -> None:
@@ -211,6 +286,101 @@ jobs:
 """
     findings = policy.evaluate_workflow(Path("unsafe.yml"), workflow)
     assert any("checkout must set persist-credentials: false" in item for item in findings)
+
+
+@pytest.mark.parametrize(
+    ("upload_path", "message"),
+    (
+        ("${{ runner.temp }}", "broad RUNNER_TEMP root"),
+        ("${{ runner.temp }}/**/*", "broad RUNNER_TEMP root"),
+        (
+            "${{ runner.temp }}/ecocorridor-resource-signing-key.seed.hex",
+            "credential path ecocorridor-resource-signing-key.seed.hex",
+        ),
+        (
+            "${{ runner.temp }}/ci-resource-key.seed.hex",
+            "credential path ci-resource-key.seed.hex",
+        ),
+        ("${{ runner.temp }}/AuthKey.p8", "credential path authkey.p8"),
+        (
+            "${{ runner.temp }}/ecocorridor-build.keychain-db",
+            "credential path ecocorridor-build.keychain",
+        ),
+        ("${{ runner.temp }}/ecocorridor-signing.p12", "credential path ecocorridor-signing.p12"),
+        ("${{ runner.temp }}/ecocorridor-signing.pfx", "credential path ecocorridor-signing.pfx"),
+    ),
+)
+def test_artifact_upload_rejects_broad_temp_and_credential_paths(
+    policy: ModuleType,
+    upload_path: str,
+    message: str,
+) -> None:
+    workflow = f"""\
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  upload:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        with:
+          name: unsafe
+          path: {upload_path}
+"""
+
+    findings = policy.evaluate_workflow(Path("unsafe.yml"), workflow)
+
+    assert any(message in item for item in findings)
+
+
+def test_artifact_upload_allows_a_narrow_noncredential_temp_directory(
+    policy: ModuleType,
+) -> None:
+    workflow = """\
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  upload:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Safe upload
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        env:
+          path: ${{ runner.temp }}
+        with:
+          name: release-assets
+          path: ${{ runner.temp }}/release-assets
+"""
+
+    assert policy.evaluate_workflow(Path("safe.yml"), workflow) == []
+
+
+def test_artifact_upload_checks_each_multiline_path(policy: ModuleType) -> None:
+    workflow = """\
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  upload:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Unsafe upload
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        with:
+          name: unsafe
+          path: |
+            ${{ runner.temp }}/release-assets
+            ${{ runner.temp }}/ecocorridor-signing.pfx
+"""
+
+    findings = policy.evaluate_workflow(Path("unsafe.yml"), workflow)
+
+    assert any("credential path ecocorridor-signing.pfx" in item for item in findings)
 
 
 def test_inline_pull_request_trigger_cannot_bypass_secret_policy(policy: ModuleType) -> None:
@@ -640,6 +810,167 @@ def _ecocorridor_workflows() -> dict[str, str]:
     }
 
 
+def test_release_signing_policy_requires_canonical_pynacl_seed_boundary(
+    policy: ModuleType,
+) -> None:
+    workflows = _ecocorridor_workflows()
+
+    assert policy.evaluate_release_signing_security_topology(workflows) == []
+
+
+@pytest.mark.parametrize(
+    "removed_token",
+    (
+        "trap cleanup_ci_resource_seed EXIT HUP INT TERM",
+        'rm -f -- "${seed_path}"',
+        "cleanup_ci_resource_seed\n",
+        "trap - EXIT HUP INT TERM",
+    ),
+)
+def test_ci_ephemeral_signing_seed_requires_failure_safe_exact_cleanup(
+    policy: ModuleType,
+    removed_token: str,
+) -> None:
+    workflows = _ecocorridor_workflows()
+    ci = workflows[policy.ECOCORRIDOR_CI_WORKFLOW]
+    assert removed_token in ci
+    workflows[policy.ECOCORRIDOR_CI_WORKFLOW] = ci.replace(
+        removed_token,
+        "REMOVED_CI_SEED_CLEANUP_BOUNDARY",
+        1,
+    )
+
+    findings = policy.evaluate_release_signing_security_topology(workflows)
+
+    assert any("ephemeral resource-signing step" in item for item in findings)
+
+
+def test_release_signing_policy_rejects_legacy_or_weakened_key_input(
+    policy: ModuleType,
+) -> None:
+    workflows = _ecocorridor_workflows()
+    unsafe = dict(workflows)
+    unsafe[policy.ECOCORRIDOR_CI_WORKFLOW] = unsafe[policy.ECOCORRIDOR_CI_WORKFLOW].replace(
+        "from nacl.signing import SigningKey", "import cryptography"
+    )
+    release = unsafe[policy.ECOCORRIDOR_RELEASE_WORKFLOW]
+    unsafe[policy.ECOCORRIDOR_RELEASE_WORKFLOW] = release.replace(
+        '[[ ! "${RESOURCE_SIGNING_SEED_HEX:-}" =~ ^[0-9a-f]{64}$ ]]',
+        '[[ -z "${RESOURCE_SIGNING_SEED_HEX:-}" ]]',
+    )
+
+    findings = policy.evaluate_release_signing_security_topology(unsafe)
+
+    assert any("forbidden legacy token cryptography" in item for item in findings)
+    assert any("protected release signing is missing" in item for item in findings)
+
+
+@pytest.mark.parametrize(
+    ("removed_token", "expected_finding"),
+    (
+        (
+            "trap cleanup_resource_seed EXIT HUP INT TERM",
+            "Sign the exact native-resource inventory",
+        ),
+        (
+            "trap cleanup_apple_certificate_file EXIT HUP INT TERM",
+            "Import Apple signing identity",
+        ),
+        (
+            'printf \'path=%s\\n\' "${original_default_keychain}" >> "${GITHUB_OUTPUT}"',
+            "Capture Apple default keychain",
+        ),
+        ("finally {", "Import Windows signing identity"),
+        (
+            'security delete-keychain "${keychain_path}"',
+            "Remove Apple signing material",
+        ),
+        (
+            'security default-keychain -d user -s "${original_default_keychain}"',
+            "Remove Apple signing material",
+        ),
+        (
+            "if: always() && matrix.target == 'windows-x64'",
+            "Remove Windows signing material",
+        ),
+    ),
+)
+def test_release_signing_policy_requires_failure_safe_exact_cleanup(
+    policy: ModuleType,
+    removed_token: str,
+    expected_finding: str,
+) -> None:
+    workflows = _ecocorridor_workflows()
+    release = workflows[policy.ECOCORRIDOR_RELEASE_WORKFLOW]
+    assert removed_token in release
+    workflows[policy.ECOCORRIDOR_RELEASE_WORKFLOW] = release.replace(
+        removed_token,
+        "REMOVED_SECURITY_BOUNDARY",
+        1,
+    )
+
+    findings = policy.evaluate_release_signing_security_topology(workflows)
+
+    assert any(expected_finding in item for item in findings)
+
+
+def test_release_signing_cleanup_occurs_after_build_and_before_verification(
+    policy: ModuleType,
+) -> None:
+    workflows = _ecocorridor_workflows()
+    release = workflows[policy.ECOCORRIDOR_RELEASE_WORKFLOW]
+    apple_cleanup = release.split("      - name: Remove Apple signing material", 1)[1].split(
+        "      - name: Remove Windows signing material", 1
+    )[0]
+    apple_capture = release.split("      - name: Capture Apple default keychain", 1)[1].split(
+        "      - name: Import Apple signing identity", 1
+    )[0]
+    windows_cleanup = release.split("      - name: Remove Windows signing material", 1)[1].split(
+        "      - name: Verify Apple signatures and notarization", 1
+    )[0]
+
+    assert "if: always() && startsWith(matrix.target, 'macos')" in apple_cleanup
+    assert "id: capture_apple_default_keychain" in apple_capture
+    assert "security default-keychain -d user" in apple_capture
+    assert "${GITHUB_OUTPUT}" in apple_capture
+    assert "${GITHUB_ENV}" not in apple_capture
+    assert release.count("steps.capture_apple_default_keychain.outputs.path") == 1
+    assert release.count("          ECOCORRIDOR_ORIGINAL_DEFAULT_KEYCHAIN: ") == 1
+    assert (
+        "ECOCORRIDOR_ORIGINAL_DEFAULT_KEYCHAIN: "
+        "${{ steps.capture_apple_default_keychain.outputs.path }}"
+    ) in apple_cleanup
+    restore_index = apple_cleanup.index(
+        'security default-keychain -d user -s "${original_default_keychain}"'
+    )
+    delete_index = apple_cleanup.index('security delete-keychain "${keychain_path}"')
+    assert restore_index < delete_index
+    assert 'security delete-keychain "${keychain_path}"' in apple_cleanup
+    assert "if: always() && matrix.target == 'windows-x64'" in windows_cleanup
+    assert "^[0-9A-F]{40}$" in windows_cleanup
+    assert policy.evaluate_release_signing_security_topology(workflows) == []
+
+
+def test_release_signing_policy_rejects_keychain_deletion_before_restore(
+    policy: ModuleType,
+) -> None:
+    workflows = _ecocorridor_workflows()
+    release = workflows[policy.ECOCORRIDOR_RELEASE_WORKFLOW]
+    restore = 'security default-keychain -d user -s "${original_default_keychain}"'
+    delete = 'security delete-keychain "${keychain_path}"'
+    assert restore in release and delete in release
+    unsafe_release = release.replace(restore, "RESTORE_MOVED_AFTER_DELETE", 1).replace(
+        delete,
+        f"{delete}\n          {restore}",
+        1,
+    )
+    workflows[policy.ECOCORRIDOR_RELEASE_WORKFLOW] = unsafe_release
+
+    findings = policy.evaluate_release_signing_security_topology(workflows)
+
+    assert any("before deleting the temporary Apple keychain" in item for item in findings)
+
+
 def test_eco_geospatial_runtime_is_confined_to_the_three_post_sync_jobs(
     policy: ModuleType,
 ) -> None:
@@ -756,6 +1087,8 @@ def test_protected_ridgeway_execution_is_required_by_pages_and_release(
 
     assert policy.evaluate_ridgeway_release_topology(producer, pages, release) == []
     assert "benchmarks/ecocorridor/ridgeway/run_direct_study.py" in producer
+    assert "scripts/publish_ridgeway_evidence.py" in producer
+    assert "scripts/package_ridgeway_evidence.py" not in producer
     assert "--job-limit" not in producer
     assert "source_ci_run_id:" in producer
     assert producer.count('test "${GITHUB_WORKFLOW_SHA}" = "${GITHUB_SHA}"') == 1

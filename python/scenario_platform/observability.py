@@ -14,7 +14,7 @@ from .contracts import ContractModel, Field, canonical_json
 _NAME = re.compile(r"[a-z][a-z0-9_-]{0,63}\Z")
 _FILE_URI = re.compile(r"\bfile:(?://)?/[^\s\"']+", re.IGNORECASE)
 _ABSOLUTE_PATH = re.compile(
-    r"(?:(?<![A-Za-z0-9])[A-Za-z]:[\\/]|\\\\|(?<![:/A-Za-z0-9])/(?!/))[^\s\"']+"
+    r"(?:(?<![A-Za-z0-9])[A-Za-z]:[\\/]|\\\\|(?<![<:/A-Za-z0-9])/(?!/))[^\s\"']+"
 )
 _INLINE_SECRET = re.compile(
     r"(?i)\b(?:api[ _-]?key|authorization|cookie|credential|password|private[ _-]?key|"
@@ -73,6 +73,17 @@ def _normalized_api_base_url(value: str) -> str:
             "scope-evidence API base URL must be credential-free HTTPS or loopback HTTP"
         )
     return normalized
+
+
+def contains_local_absolute_path(value: str) -> bool:
+    """Return whether text discloses a file URI or absolute local path.
+
+    This intentionally shares the same broad matcher used by cloud-metadata
+    redaction.  Callers that publish immutable evidence must reject these
+    values rather than silently rewriting scientific artifacts.
+    """
+
+    return bool(_FILE_URI.search(value) or _ABSOLUTE_PATH.search(value))
 
 
 class AppProfile(ContractModel):

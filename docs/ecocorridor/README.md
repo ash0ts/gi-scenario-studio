@@ -52,7 +52,7 @@ export.
 ## Status
 
 This is a source implementation with a checksum-pinned historical archive and
-a separate, locally verified current direct-evidence v1.1 synthetic package—not
+a separate, locally verified current direct-evidence v1.2 synthetic package—not
 a published practitioner release. The current package drives a manifest-bound
 v1.2 replay, but it is not a protected same-commit producer attestation. The
 evidence-by-evidence status is in

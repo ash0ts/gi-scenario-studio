@@ -10,14 +10,14 @@ import os
 import re
 from pathlib import Path
 
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from nacl.signing import SigningKey
 
 APPLICATION_ID = "org.ecocorridor.scenariostudio"
 SEMVER = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\Z")
 SOURCE_COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 TARGETS = {"linux-x64", "macos-arm64", "macos-x64", "windows-x64"}
 MAX_RELEASE_RESOURCES = 100_000
+SIGNING_SEED_FILE = re.compile(rb"[0-9a-f]{64}\n\Z")
 
 
 def digest(path: Path) -> str:
@@ -37,6 +37,29 @@ def atomic_write(path: Path, payload: bytes, *, mode: int = 0o644) -> None:
         os.fsync(stream.fileno())
     temporary.chmod(mode)
     temporary.replace(path)
+
+
+def load_signing_key(path: Path) -> SigningKey:
+    """Load exactly one canonical raw Ed25519 seed without accepting PEM variants."""
+
+    if os.name != "nt":
+        try:
+            if path.stat().st_mode & 0o077:
+                raise SystemExit(
+                    "Release manifest signing seed must have owner-only POSIX permissions."
+                )
+        except OSError as exc:
+            raise SystemExit("Release manifest signing seed metadata is unreadable.") from exc
+    try:
+        seed_hex = path.read_bytes()
+    except OSError as exc:
+        raise SystemExit("Release manifest signing seed is unreadable.") from exc
+    if not SIGNING_SEED_FILE.fullmatch(seed_hex):
+        raise SystemExit(
+            "Release manifest signing key must be a canonical 32-byte Ed25519 seed "
+            "encoded as 64 lowercase hex characters plus one newline."
+        )
+    return SigningKey(bytes.fromhex(seed_hex[:-1].decode("ascii")))
 
 
 def main() -> int:
@@ -105,15 +128,10 @@ def main() -> int:
         "resources": resources,
     }
     manifest_bytes = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
-    key_bytes = signing_key.read_bytes()
-    private_key = serialization.load_pem_private_key(key_bytes, password=None)
-    if not isinstance(private_key, Ed25519PrivateKey):
-        raise SystemExit("Release manifest signing key must be an Ed25519 private key.")
+    private_key = load_signing_key(signing_key)
     signature = private_key.sign(manifest_bytes)
-    public_key = private_key.public_key().public_bytes(
-        encoding=serialization.Encoding.Raw,
-        format=serialization.PublicFormat.Raw,
-    )
+    signature = signature.signature
+    public_key = private_key.verify_key.encode()
     atomic_write(manifest_output, manifest_bytes)
     atomic_write(signature_output, signature)
     atomic_write(public_key_output, public_key.hex().encode("ascii") + b"\n")

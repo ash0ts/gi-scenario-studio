@@ -14,8 +14,8 @@ import tempfile
 from pathlib import Path
 from urllib.parse import quote
 
-from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from nacl.exceptions import BadSignatureError
+from nacl.signing import VerifyKey
 
 REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
 SEMVER = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\Z")
@@ -68,14 +68,14 @@ def verify_tauri_minisign_signature(
         raise ValueError("updater signature must use Minisign pre-hashed Ed25519 mode")
     if public_record[2:10] != signature_record[2:10]:
         raise ValueError("updater signature key ID does not match the embedded public key")
-    key = Ed25519PublicKey.from_public_bytes(public_record[10:42])
+    key = VerifyKey(public_record[10:42])
     primary_signature = signature_record[10:74]
     message_digest = hashlib.blake2b(artifact.read_bytes(), digest_size=64).digest()
     trusted_comment = signature_lines[2][len("trusted comment: ") :].encode("utf-8")
     try:
-        key.verify(primary_signature, message_digest)
-        key.verify(global_signature, primary_signature + trusted_comment)
-    except InvalidSignature as exc:
+        key.verify(message_digest, primary_signature)
+        key.verify(primary_signature + trusted_comment, global_signature)
+    except (BadSignatureError, ValueError) as exc:
         raise ValueError(f"updater signature does not verify for {artifact.name}") from exc
 
 

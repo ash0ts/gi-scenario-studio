@@ -19,8 +19,8 @@ import subprocess
 import tempfile
 from pathlib import Path, PurePosixPath
 
-from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from nacl.exceptions import BadSignatureError
+from nacl.signing import VerifyKey
 
 APPLICATION_ID = "org.ecocorridor.scenariostudio"
 RELEASE_MANIFEST_SCHEMA = "1.1"
@@ -111,10 +111,8 @@ def verify_signed_release_inventory(
     if len(signature) != 64:
         raise SystemExit("The detached resource signature has an invalid length.")
     try:
-        Ed25519PublicKey.from_public_bytes(_read_public_key(public_key)).verify(
-            signature, manifest_bytes
-        )
-    except (InvalidSignature, ValueError) as exc:
+        VerifyKey(_read_public_key(public_key)).verify(manifest_bytes, signature)
+    except (BadSignatureError, ValueError) as exc:
         raise SystemExit("The detached resource signature is invalid.") from exc
     try:
         manifest = json.loads(manifest_bytes)

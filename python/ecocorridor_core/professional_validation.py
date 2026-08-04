@@ -9,6 +9,7 @@ rules.  These checks never repair or reinterpret an input.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from typing import Literal
 
@@ -22,8 +23,10 @@ from .contracts import (
     InterventionSite,
     PortfolioSelection,
     RasterValueKind,
+    ReferenceComparisonResult,
     RuleMetric,
     RuleOperator,
+    canonical_sha256,
 )
 from .grid import grid_identity
 from .interventions import action_effect_sha256
@@ -62,6 +65,41 @@ _UNBOUND_REFERENCE_ASSET_KINDS = {
     AssetKind.REFERENCE_MATRIX,
     AssetKind.REFERENCE_CURRENT,
 }
+
+
+def reference_scientific_fingerprints(
+    result: ReferenceComparisonResult,
+) -> dict[str, str]:
+    """Return per-binding identities that ignore workflow/run bookkeeping.
+
+    Repeated executions with byte-identical scientific evidence collapse to the
+    same fingerprint. Any change in the reviewed/observed matrices, compared
+    pair values, tolerance, or scientific disposition remains distinguishable.
+    """
+
+    return {
+        comparison.binding_id: canonical_sha256(
+            {
+                "revision_id": result.revision_id,
+                "model_sha256": result.model_sha256,
+                "engine_manifest_sha256": result.engine_manifest_sha256,
+                "binding_id": comparison.binding_id,
+                "scenario_id": comparison.scenario_id,
+                "reference_matrix_sha256": comparison.reference_matrix_sha256,
+                "observed_matrix_sha256": comparison.observed_matrix_sha256,
+                "tolerance": comparison.tolerance.model_dump(mode="json"),
+                "status": comparison.status,
+                "pair_comparisons": [
+                    item.model_dump(mode="json")
+                    for item in sorted(
+                        comparison.pair_comparisons,
+                        key=lambda item: item.pair_id,
+                    )
+                ],
+            }
+        )
+        for comparison in result.scenario_comparisons
+    }
 
 
 def _finding(
@@ -112,7 +150,12 @@ def _duplicate_identities(values: list[str]) -> set[str]:
     return duplicates
 
 
-def validate_professional_bundle(bundle: ConnectivityProjectBundle) -> list[ModelFinding]:
+def validate_professional_bundle(
+    bundle: ConnectivityProjectBundle,
+    *,
+    authoritative_reference_results: Sequence[ReferenceComparisonResult] = (),
+    expected_engine_manifest_sha256: str | None = None,
+) -> list[ModelFinding]:
     """Return deterministic findings for a complete professional bundle.
 
     The function deliberately accumulates findings instead of stopping at the
@@ -303,6 +346,68 @@ def validate_professional_bundle(bundle: ConnectivityProjectBundle) -> list[Mode
                 )
             )
 
+    active_binding_ids = {item.binding_id for item in reference_bindings}
+    exact_results: list[ReferenceComparisonResult] = []
+    for result in authoritative_reference_results:
+        if (
+            result.revision_id != bundle.revision.revision_id
+            or result.model_sha256 != bundle.revision.model_sha256
+            or (
+                expected_engine_manifest_sha256 is not None
+                and result.engine_manifest_sha256 != expected_engine_manifest_sha256
+            )
+            or not result.exact_direct_evidence_only
+            or result.current_raster_numeric_comparison_performed
+        ):
+            continue
+        comparisons = {item.binding_id: item for item in result.scenario_comparisons}
+        if set(comparisons) != active_binding_ids:
+            continue
+        exact_binding_identity = True
+        for binding in reference_bindings:
+            comparison = comparisons[binding.binding_id]
+            matrix_asset = assets.get(binding.reference_matrix_asset_id)
+            current_asset = (
+                assets.get(binding.reference_current_asset_id)
+                if binding.reference_current_asset_id is not None
+                else None
+            )
+            if (
+                comparison.scenario_id != binding.scenario_id
+                or comparison.binding_id != binding.binding_id
+                or comparison.reference_matrix_asset_id != binding.reference_matrix_asset_id
+                or matrix_asset is None
+                or comparison.reference_matrix_sha256 != matrix_asset.sha256
+                or comparison.reference_current_asset_id != binding.reference_current_asset_id
+                or comparison.reference_current_sha256
+                != (current_asset.sha256 if current_asset is not None else None)
+                or comparison.tolerance != binding.tolerance
+                or comparison.revision_id != result.revision_id
+                or comparison.model_sha256 != result.model_sha256
+                or comparison.engine_manifest_sha256 != result.engine_manifest_sha256
+            ):
+                exact_binding_identity = False
+                break
+        if exact_binding_identity:
+            exact_results.append(result)
+    passed_reference_result = next(
+        (item for item in exact_results if item.status == "PASSED"),
+        None,
+    )
+    failed_reference_result = next(
+        (item for item in exact_results if item.status == "FAILED"),
+        None,
+    )
+    status_conflict = passed_reference_result is not None and failed_reference_result is not None
+    fingerprints_by_binding: dict[str, set[str]] = {
+        binding_id: set() for binding_id in active_binding_ids
+    }
+    for result in exact_results:
+        for binding_id, fingerprint in reference_scientific_fingerprints(result).items():
+            fingerprints_by_binding.setdefault(binding_id, set()).add(fingerprint)
+    scientific_conflict = any(len(items) > 1 for items in fingerprints_by_binding.values())
+    conflicting_reference_results = status_conflict or scientific_conflict
+
     valid_bound_scenario_ids: set[str] = set()
     for binding in reference_bindings:
         binding_valid = True
@@ -410,21 +515,57 @@ def validate_professional_bundle(bundle: ConnectivityProjectBundle) -> list[Mode
         if not binding_valid:
             continue
         valid_bound_scenario_ids.add(binding.scenario_id)
-        # Future seam: once the authoritative repository can supply a revision-bound
-        # ReferenceComparisonResult, this validator can consume that stored result.
-        # Its current signature has no such input, so a supplied matrix must remain
-        # pending instead of inferring success from a binding or asset alone.
-        findings.append(
-            _finding(
-                "REFERENCE_COMPARISON_REQUIRED",
-                binding.binding_id,
-                (
-                    "Run and retain the repository-backed baseline matrix comparison for this "
-                    "scenario and semantic revision. Until that authoritative result is "
-                    "available to validation, do not treat the reference binding as passed."
-                ),
+        if conflicting_reference_results:
+            findings.append(
+                _finding(
+                    "REFERENCE_COMPARISON_CONFLICT",
+                    binding.binding_id,
+                    (
+                        "Scientifically different exact reference results exist for this "
+                        "revision, model, engine, and binding set. Investigate the retained "
+                        "matrices and comparisons and create a reviewed semantic revision; do "
+                        "not select a favorable repeat."
+                    ),
+                )
             )
-        )
+        elif passed_reference_result is not None:
+            findings.append(
+                _finding(
+                    "REFERENCE_COMPARISON_PASSED",
+                    binding.binding_id,
+                    (
+                        "The exact repository-backed baseline matrix comparison passed for "
+                        "this binding, revision, model, engine, and complete binding set. This "
+                        "does not attest Model Fitness or validate ecological assumptions."
+                    ),
+                    severity="INFORMATION",
+                )
+            )
+        elif failed_reference_result is not None:
+            findings.append(
+                _finding(
+                    "REFERENCE_COMPARISON_FAILED",
+                    binding.binding_id,
+                    (
+                        "The exact repository-backed baseline matrix comparison failed its "
+                        "reviewed tolerance. Review the direct run and reference evidence; do "
+                        "not override or reinterpret the failed result."
+                    ),
+                )
+            )
+        else:
+            findings.append(
+                _finding(
+                    "REFERENCE_COMPARISON_REQUIRED",
+                    binding.binding_id,
+                    (
+                        "Run and retain the repository-backed baseline matrix comparison for "
+                        "this exact analysis, semantic revision, model, engine, and complete "
+                        "binding set. A missing, stale, partial, or unverified result cannot "
+                        "satisfy this gate."
+                    ),
+                )
+            )
 
     if valid_bound_scenario_ids and valid_bound_scenario_ids != set(scenarios):
         missing_reference_scenarios = sorted(set(scenarios) - valid_bound_scenario_ids)
@@ -1123,8 +1264,17 @@ def _validate_portfolio(
     return findings
 
 
-def validation_projection(bundle: ConnectivityProjectBundle) -> dict[str, object]:
-    findings = validate_professional_bundle(bundle)
+def validation_projection(
+    bundle: ConnectivityProjectBundle,
+    *,
+    authoritative_reference_results: Sequence[ReferenceComparisonResult] = (),
+    expected_engine_manifest_sha256: str | None = None,
+) -> dict[str, object]:
+    findings = validate_professional_bundle(
+        bundle,
+        authoritative_reference_results=authoritative_reference_results,
+        expected_engine_manifest_sha256=expected_engine_manifest_sha256,
+    )
     blockers = [item for item in findings if item.severity == "BLOCKING"]
     return {
         "project_id": bundle.project_id,

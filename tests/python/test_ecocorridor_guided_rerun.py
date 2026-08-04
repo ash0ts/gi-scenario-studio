@@ -43,11 +43,11 @@ def pinned_reference(tmp_path_factory: pytest.TempPathFactory):
     manifest_path = RIDGEWAY / "direct-evidence-manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if (
-        manifest.get("schema_version") != "ridgeway-direct-evidence/v1.1"
+        manifest.get("schema_version") != "ridgeway-direct-evidence/v1.2"
         or manifest.get("release_replay_eligible") is not True
     ):
         pytest.skip(
-            "guided rerun differential integration requires the regenerated v1.1 direct-evidence package"
+            "guided rerun differential integration requires the regenerated v1.2 direct-evidence package"
         )
     archive_path = RIDGEWAY / manifest["evidence_bundle"]["filename"]
     projection_path = RIDGEWAY / "ui_projection.json"

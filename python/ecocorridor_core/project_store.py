@@ -12,6 +12,7 @@ import stat
 import threading
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -42,6 +43,7 @@ from .contracts import (
     ReferenceComparisonPlan,
     ReferenceComparisonResult,
     ReferencePairComparison,
+    ReferenceScenarioComparison,
     SemanticChange,
     SemanticModelDiff,
     canonical_sha256,
@@ -61,9 +63,16 @@ from .metrics import (
     validate_portfolio_disposition_support,
     verify_direct_claim_against_retained_evidence,
 )
+from .reference_comparison import assemble_reference_comparison_result
 from .reference_matrix_parser import (
     REFERENCE_MATRIX_PARSER_SHA256,
     parse_reference_matrix_bytes,
+)
+from .reference_workflow import (
+    build_reference_comparison_plan,
+    reference_evidence_claim_links,
+    reference_result_id,
+    reference_scenario_comparison_id,
 )
 
 
@@ -142,6 +151,64 @@ def _assumption_node_id(limitation: str) -> str:
     return f"assumption:{hashlib.sha256(limitation.encode('utf-8')).hexdigest()}"
 
 
+_RENDERER_LOCAL_PATH = re.compile(
+    r"(?:[A-Za-z]:[\\/]|\\\\|/(?:Users|home|var|private|tmp|opt|etc)/)[^\s\"']+"
+)
+
+
+def _assert_renderer_safe(value: Any) -> None:
+    """Reject internal paths before an Evidence Rail projection leaves the worker."""
+
+    if isinstance(value, dict):
+        forbidden_keys = {
+            "cas_relative_path",
+            "relative_path",
+            "source_path",
+            "project_directory",
+            "work_directory",
+        }
+        if forbidden_keys.intersection(value):
+            raise ValueError("renderer evidence contains an internal path field")
+        for item in value.values():
+            _assert_renderer_safe(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            _assert_renderer_safe(item)
+    elif isinstance(value, Path) or (isinstance(value, str) and _RENDERER_LOCAL_PATH.search(value)):
+        raise ValueError("renderer evidence contains a local filesystem path")
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedDirectRunEvidence:
+    """Fully revalidated local chain for one successful durable direct run.
+
+    Paths remain worker-local. Callers may use them for a second descriptor-backed
+    export/upload read, but they must never serialize this object across RPC.
+    """
+
+    run: DirectConnectivityRun
+    prepared: PreparedConnectivityRun
+    artifacts: tuple[dict[str, Any], ...]
+    artifact_paths_by_role: dict[str, Path]
+    evidence_nodes: tuple[dict[str, Any], ...]
+    qa_status: QAStatus
+    qa_findings: tuple[str, ...]
+    resource_observation: ComputationalResourceObservation | None
+    terminal_sha256: str
+    phase: str
+    cached: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ReferenceValidationSeal:
+    """Lightweight database identity captured around heavy reference verification."""
+
+    project_id: str
+    claims_by_id: dict[str, ConnectivityEvidenceClaim]
+    persistence_sha256: str
+    verified_runs: dict[str, VerifiedDirectRunEvidence]
+
+
 _ASSISTANT_AUDIT_ERROR = re.compile(r"[A-Z][A-Z0-9_]{2,127}\Z")
 
 
@@ -176,6 +243,42 @@ def _legacy_outbox_stream_id(row: sqlite3.Row) -> str:
     if event_type == "evidence_export":
         return f"evidence_export:{subject_id}"
     raise RuntimeError(f"cannot migrate unsupported telemetry event: {event_type}")
+
+
+def _reference_completion_manifest(
+    *,
+    plan: ReferenceComparisonPlan,
+    direct_runs: Sequence[dict[str, Any]],
+) -> tuple[str, dict[str, Any], str]:
+    """Build the deterministic producer identity for a completed direct ensemble."""
+
+    ordered = sorted(
+        (
+            {
+                "direct_run_id": str(item["direct_run_id"]),
+                "portfolio_id": str(item["portfolio_id"]),
+                "scenario_id": str(item["scenario_id"]),
+                "terminal_sha256": str(item["terminal_sha256"]),
+                "result_sha256": str(item["result_sha256"]),
+            }
+            for item in direct_runs
+        ),
+        key=lambda item: (item["portfolio_id"], item["scenario_id"], item["direct_run_id"]),
+    )
+    payload = {
+        "schema_version": "ecocorridor/reference-completion/v1.0",
+        "analysis_id": plan.analysis_id,
+        "plan_id": plan.plan_id,
+        "revision_id": plan.revision_id,
+        "model_sha256": plan.model_sha256,
+        "engine_manifest_sha256": plan.engine_manifest_sha256,
+        "reference_matrix_parser_sha256": REFERENCE_MATRIX_PARSER_SHA256,
+        "direct_runs": ordered,
+    }
+    payload_json = canonical_json(payload)
+    payload_sha256 = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+    completion_id = f"reference_completion_{payload_sha256[:24]}"
+    return completion_id, payload, payload_sha256
 
 
 class SolverShutdownReceiptError(RuntimeError):
@@ -218,6 +321,8 @@ CREATE TABLE IF NOT EXISTS eco_record_history (
 CREATE TABLE IF NOT EXISTS eco_analyses (
     analysis_id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES eco_projects(project_id) ON DELETE CASCADE,
+    analysis_kind TEXT NOT NULL DEFAULT 'ALTERNATIVES'
+      CHECK(analysis_kind IN ('ALTERNATIVES','REFERENCE')),
     state TEXT NOT NULL CHECK(state IN (
       'DRAFT','VALIDATING','READY','RUNNING','PAUSING','PAUSED','COMPLETED','FAILED','CANCELLED'
     )),
@@ -334,6 +439,16 @@ CREATE TABLE IF NOT EXISTS eco_reference_comparison_plans (
     payload_sha256 TEXT NOT NULL,
     created_at TEXT NOT NULL,
     UNIQUE(plan_id,analysis_id)
+);
+CREATE TABLE IF NOT EXISTS eco_reference_completion_intents (
+    completion_id TEXT PRIMARY KEY,
+    analysis_id TEXT NOT NULL UNIQUE REFERENCES eco_analyses(analysis_id) ON DELETE CASCADE,
+    plan_id TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    payload_sha256 TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(plan_id,analysis_id)
+      REFERENCES eco_reference_comparison_plans(plan_id,analysis_id)
 );
 CREATE TABLE IF NOT EXISTS eco_reference_comparison_results (
     result_id TEXT PRIMARY KEY,
@@ -465,8 +580,9 @@ BEFORE DELETE ON eco_record_history
 BEGIN SELECT RAISE(ABORT, 'record history is immutable'); END;
 
 CREATE TRIGGER IF NOT EXISTS eco_analysis_plan_immutable
-BEFORE UPDATE OF project_id,plan_json,created_at ON eco_analyses
+BEFORE UPDATE OF project_id,analysis_kind,plan_json,created_at ON eco_analyses
 WHEN OLD.project_id IS NOT NEW.project_id
+  OR OLD.analysis_kind IS NOT NEW.analysis_kind
   OR OLD.plan_json IS NOT NEW.plan_json
   OR OLD.created_at IS NOT NEW.created_at
 BEGIN SELECT RAISE(ABORT, 'analysis plan is immutable'); END;
@@ -561,6 +677,12 @@ BEGIN SELECT RAISE(ABORT, 'reference comparison plan is immutable'); END;
 CREATE TRIGGER IF NOT EXISTS eco_reference_plan_immutable_delete
 BEFORE DELETE ON eco_reference_comparison_plans
 BEGIN SELECT RAISE(ABORT, 'reference comparison plan is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS eco_reference_completion_immutable_update
+BEFORE UPDATE ON eco_reference_completion_intents
+BEGIN SELECT RAISE(ABORT, 'reference completion intent is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS eco_reference_completion_immutable_delete
+BEFORE DELETE ON eco_reference_completion_intents
+BEGIN SELECT RAISE(ABORT, 'reference completion intent is immutable'); END;
 CREATE TRIGGER IF NOT EXISTS eco_reference_result_immutable_update
 BEFORE UPDATE ON eco_reference_comparison_results
 BEGIN SELECT RAISE(ABORT, 'reference comparison result is immutable'); END;
@@ -690,7 +812,7 @@ class EcoProjectStore:
         self._connection.execute("PRAGMA journal_mode=WAL")
         self._connection.execute("PRAGMA synchronous=FULL")
         version = int(self._connection.execute("PRAGMA user_version").fetchone()[0])
-        if version not in {0, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111}:
+        if version not in {0, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112}:
             self._connection.close()
             raise RuntimeError(f"unsupported EcoCorridor database version: {version}")
         self._connection.executescript(_SCHEMA)
@@ -809,6 +931,120 @@ class EcoProjectStore:
                 "OR stream_sequence IS NULL OR outbox_sequence IS NULL"
             ).fetchone()[0]:
                 raise RuntimeError("EcoCorridor telemetry sequence migration is incomplete")
+        if version < 112:
+            analysis_columns = {
+                str(row[1]) for row in self._connection.execute("PRAGMA table_info(eco_analyses)")
+            }
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                if "analysis_kind" not in analysis_columns:
+                    self._connection.execute(
+                        "ALTER TABLE eco_analyses ADD COLUMN analysis_kind TEXT NOT NULL "
+                        "DEFAULT 'ALTERNATIVES' CHECK(analysis_kind IN ('ALTERNATIVES','REFERENCE'))"
+                    )
+                self._connection.execute(
+                    "UPDATE eco_analyses SET analysis_kind='REFERENCE' WHERE EXISTS ("
+                    "SELECT 1 FROM eco_reference_comparison_plans AS plan "
+                    "WHERE plan.analysis_id=eco_analyses.analysis_id)"
+                )
+                completed_reference_rows = self._connection.execute(
+                    "SELECT plan.payload_json FROM eco_reference_comparison_plans AS plan "
+                    "JOIN eco_analyses AS analysis ON analysis.analysis_id=plan.analysis_id "
+                    "WHERE analysis.state='COMPLETED' ORDER BY plan.analysis_id"
+                ).fetchall()
+                for completed_row in completed_reference_rows:
+                    reference_plan = ReferenceComparisonPlan.model_validate_json(
+                        str(completed_row["payload_json"])
+                    )
+                    run_rows = self._reference_completion_rows(
+                        self._connection,
+                        reference_plan.analysis_id,
+                    )
+                    expected = {
+                        (portfolio.portfolio_id, scenario_id)
+                        for portfolio in reference_plan.run_plan.portfolios
+                        for scenario_id in reference_plan.run_plan.scenario_ids
+                    }
+                    observed = {
+                        (str(row["portfolio_id"]), str(row["scenario_id"])) for row in run_rows
+                    }
+                    durable_job_count = int(
+                        self._connection.execute(
+                            "SELECT COUNT(*) FROM eco_direct_jobs WHERE analysis_id=?",
+                            (reference_plan.analysis_id,),
+                        ).fetchone()[0]
+                    )
+                    if (
+                        observed != expected
+                        or len(run_rows) != len(expected)
+                        or durable_job_count != len(expected)
+                        or any(
+                            row["phase"] != "MATRIX"
+                            or row["state"] != DirectJobState.SUCCEEDED.value
+                            or not re.fullmatch(r"[0-9a-f]{64}", str(row["terminal_sha256"] or ""))
+                            or not re.fullmatch(r"[0-9a-f]{64}", str(row["result_sha256"] or ""))
+                            for row in run_rows
+                        )
+                    ):
+                        raise RuntimeError(
+                            "completed legacy reference analysis lacks its exact terminal run set"
+                        )
+                    completion_id, completion_payload, completion_sha256 = (
+                        _reference_completion_manifest(
+                            plan=reference_plan,
+                            direct_runs=[dict(row) for row in run_rows],
+                        )
+                    )
+                    completion_json = canonical_json(completion_payload)
+                    self._connection.execute(
+                        "INSERT OR IGNORE INTO eco_reference_completion_intents("
+                        "completion_id,analysis_id,plan_id,payload_json,payload_sha256,created_at) "
+                        "VALUES(?,?,?,?,?,?)",
+                        (
+                            completion_id,
+                            reference_plan.analysis_id,
+                            reference_plan.plan_id,
+                            completion_json,
+                            completion_sha256,
+                            _now(),
+                        ),
+                    )
+                    project_row = self._connection.execute(
+                        "SELECT project_id FROM eco_analyses WHERE analysis_id=?",
+                        (reference_plan.analysis_id,),
+                    ).fetchone()
+                    if project_row is None:
+                        raise RuntimeError("reference completion migration lost its project")
+                    self._enqueue_outbox(
+                        self._connection,
+                        project_id=str(project_row["project_id"]),
+                        analysis_id=reference_plan.analysis_id,
+                        event_type="analysis_completion",
+                        subject_id=reference_plan.analysis_id,
+                        stream_id=f"connectivity_analysis:{reference_plan.analysis_id}",
+                        payload={
+                            "analysis_id": reference_plan.analysis_id,
+                            "completion_kind": "REFERENCE_RESULT_PENDING",
+                            "completion_id": completion_id,
+                            "plan_id": reference_plan.plan_id,
+                            "reference_completion_sha256": completion_sha256,
+                            "direct_run_ids": sorted(str(row["direct_run_id"]) for row in run_rows),
+                        },
+                        # Schema 111 completed reference-shaped analyses through the generic
+                        # completion producer, which already used ``analysis_completion:<id>``.
+                        # Append a cryptographically bound corrective event instead of mutating
+                        # or deleting that immutable telemetry history.
+                        idempotency_key=(
+                            f"reference_analysis_completion:{reference_plan.analysis_id}:"
+                            f"{completion_sha256}"
+                        ),
+                    )
+            except BaseException:
+                self._connection.rollback()
+                self._connection.close()
+                raise
+            else:
+                self._connection.commit()
         self._connection.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS eco_telemetry_outbox_stream_sequence "
             "ON eco_telemetry_outbox(project_id,stream_id,stream_sequence)"
@@ -851,9 +1087,12 @@ class EcoProjectStore:
             )
         if version < 109:
             self._connection.execute("DROP TRIGGER IF EXISTS eco_outbox_evidence_immutable")
+        # The v112 definition also freezes ``analysis_kind``. Recreate rather
+        # than relying on ``IF NOT EXISTS`` against a pre-v112 trigger body.
+        self._connection.execute("DROP TRIGGER IF EXISTS eco_analysis_plan_immutable")
         self._connection.executescript(_MIGRATION_105_TRIGGERS)
         self._connection.executescript(_MIGRATION_106_EVENT_POLICY)
-        self._connection.execute("PRAGMA user_version=111")
+        self._connection.execute("PRAGMA user_version=112")
         # Expired leases are process-abandoned cloud work, not scientific state.
         # Releasing them at open makes retry durable without stealing a live lease.
         self.recover_expired_outbox_leases()
@@ -1180,7 +1419,7 @@ class EcoProjectStore:
         }
         if overlays:
             heads.update(overlays)
-        return {
+        projection = {
             "schema": "ecocorridor-semantic-snapshot/v1",
             "project_id": project_id,
             "title": str(project["title"]),
@@ -1199,6 +1438,7 @@ class EcoProjectStore:
                 for (record_type, record_id), payload_json in sorted(heads.items())
             ],
         }
+        return projection
 
     def publish_semantic_change(
         self,
@@ -1557,6 +1797,11 @@ class EcoProjectStore:
         analyses = [
             {
                 "analysis_id": str(row["analysis_id"]),
+                "analysis_kind": str(row["analysis_kind"]),
+                "plan_id": str(row["plan_id"]) if row["plan_id"] is not None else None,
+                "revision_id": ConnectivityRunPlan.model_validate_json(
+                    str(row["plan_json"])
+                ).revision_id,
                 "analysis_state": str(row["state"]),
                 "executor_active": str(row["analysis_id"]) in live_analysis_ids,
                 "recovery_required": str(row["analysis_id"]) not in live_analysis_ids,
@@ -1570,8 +1815,12 @@ class EcoProjectStore:
                 ],
             }
             for row in self._connection.execute(
-                "SELECT analysis_id,state FROM eco_analyses "
-                "WHERE state IN ('RUNNING','PAUSING') ORDER BY created_at,analysis_id"
+                "SELECT analysis.analysis_id,analysis.analysis_kind,analysis.plan_json,analysis.state,"
+                "reference.plan_id FROM eco_analyses AS analysis "
+                "LEFT JOIN eco_reference_comparison_plans AS reference "
+                "ON reference.analysis_id=analysis.analysis_id "
+                "WHERE analysis.state IN ('RUNNING','PAUSING') "
+                "ORDER BY analysis.created_at,analysis.analysis_id"
             )
         ]
         interrupted = [item for item in analyses if item["recovery_required"]]
@@ -1878,11 +2127,12 @@ class EcoProjectStore:
         now = _now()
         with self.transaction() as connection:
             connection.execute(
-                "INSERT INTO eco_analyses(analysis_id,project_id,state,plan_json,created_at,updated_at) "
-                "VALUES(?,?,?,?,?,?)",
+                "INSERT INTO eco_analyses(analysis_id,project_id,analysis_kind,state,plan_json,"
+                "created_at,updated_at) VALUES(?,?,?, ?,?,?,?)",
                 (
                     plan.analysis_id,
                     project_id,
+                    "ALTERNATIVES",
                     AnalysisState.READY.value,
                     canonical_json(plan.model_dump(mode="json")),
                     now,
@@ -2691,6 +2941,459 @@ class EcoProjectStore:
             )
         ]
 
+    def verify_authoritative_direct_run(
+        self,
+        direct_run_id: str,
+        *,
+        expected_analysis_id: str | None = None,
+    ) -> VerifiedDirectRunEvidence:
+        """Rebuild and verify the complete durable chain for one successful run.
+
+        This is the read-side counterpart to :meth:`finalize_direct_job`. It
+        descriptor-hashes every retained artifact (including console artifacts
+        that are later omitted from professional exports), reconstructs the
+        terminal payload hash, and reconciles the run, prepared request, result
+        protocol, raw matrix, metrics, QA, resource observation, provenance
+        nodes, cache entry, and outbox identity.
+        """
+
+        with self._lock:
+            job = self._connection.execute(
+                "SELECT * FROM eco_direct_jobs WHERE direct_job_id=?",
+                (direct_run_id,),
+            ).fetchone()
+            run_row = self._connection.execute(
+                "SELECT * FROM eco_analysis_runs WHERE direct_run_id=?",
+                (direct_run_id,),
+            ).fetchone()
+            if job is None or run_row is None:
+                raise ValueError("direct evidence has no successful durable direct job and run")
+            if expected_analysis_id is not None and str(job["analysis_id"]) != expected_analysis_id:
+                raise ValueError("direct evidence belongs to a different analysis")
+
+            run_json = str(run_row["payload_json"])
+            run = DirectConnectivityRun.model_validate_json(run_json)
+            analysis_row = self._connection.execute(
+                "SELECT plan_json FROM eco_analyses WHERE analysis_id=?",
+                (run.analysis_id,),
+            ).fetchone()
+            if analysis_row is None:
+                raise ValueError("direct evidence has no immutable analysis plan")
+            analysis_plan = ConnectivityRunPlan.model_validate_json(str(analysis_row["plan_json"]))
+            if canonical_json(run.model_dump(mode="json")) != run_json:
+                raise ValueError("direct-run payload is not canonical immutable evidence")
+            if (
+                job["state"] != DirectJobState.SUCCEEDED.value
+                or run_row["state"] != DirectJobState.SUCCEEDED.value
+                or run.state.value != DirectJobState.SUCCEEDED.value
+                or str(job["direct_job_id"]) != run.direct_run_id
+                or str(job["analysis_id"]) != run.analysis_id
+                or str(job["portfolio_id"]) != run.portfolio_id
+                or str(job["scenario_id"]) != run.scenario_id
+                or str(job["phase"]) not in {"MATRIX", "MAP"}
+                or str(job["model_run_cache_key"]) != run.model_run_cache_key
+                or str(run_row["analysis_id"]) != run.analysis_id
+                or str(run_row["portfolio_id"]) != run.portfolio_id
+                or str(run_row["scenario_id"]) != run.scenario_id
+                or str(run_row["model_run_cache_key"]) != run.model_run_cache_key
+                or str(run_row["result_sha256"]) != run.result_sha256
+                or not run.exact
+                or run.test_only
+                or run.engine_name != "Circuitscape"
+                or run.engine_manifest_sha256 != analysis_plan.engine_manifest_sha256
+                or run.revision_id != analysis_plan.revision_id
+                or run.portfolio_id not in {item.portfolio_id for item in analysis_plan.portfolios}
+                or run.scenario_id not in analysis_plan.scenario_ids
+                or run.qa_status not in {QAStatus.ACCEPTED, QAStatus.WARNING_ACCEPTED}
+                or job["completed_at"] is None
+                or not re.fullmatch(r"[0-9a-f]{64}", str(job["terminal_sha256"] or ""))
+            ):
+                raise ValueError("direct evidence differs from its terminal durable job")
+
+            prepared_json = job["prepared_json"]
+            if not isinstance(prepared_json, str):
+                raise TypeError("successful direct evidence has no prepared-run manifest")
+            prepared = PreparedConnectivityRun.model_validate_json(prepared_json)
+            if canonical_json(prepared.model_dump(mode="json")) != prepared_json or (
+                prepared.prepared_run_id != run.direct_run_id
+                or prepared.analysis_id != run.analysis_id
+                or prepared.revision_id != run.revision_id
+                or prepared.portfolio_id != run.portfolio_id
+                or prepared.scenario.scenario_id != run.scenario_id
+                or prepared.engine_manifest_sha256 != run.engine_manifest_sha256
+                or prepared.model_run_cache_key != run.model_run_cache_key
+            ):
+                raise ValueError("prepared-run evidence differs from its durable direct run")
+
+            run_artifact_rows = self._connection.execute(
+                "SELECT rowid,role,sha256,byte_size,cas_relative_path,media_type "
+                "FROM eco_run_artifacts WHERE direct_run_id=? ORDER BY rowid",
+                (direct_run_id,),
+            ).fetchall()
+            terminal_artifact_rows = self._connection.execute(
+                "SELECT rowid,role,sha256,byte_size,cas_relative_path,media_type "
+                "FROM eco_terminal_job_artifacts WHERE direct_job_id=? ORDER BY rowid",
+                (direct_run_id,),
+            ).fetchall()
+            run_artifacts = [
+                {
+                    key: row[key]
+                    for key in ("role", "sha256", "byte_size", "cas_relative_path", "media_type")
+                }
+                for row in run_artifact_rows
+            ]
+            terminal_artifacts = [
+                {
+                    key: row[key]
+                    for key in ("role", "sha256", "byte_size", "cas_relative_path", "media_type")
+                }
+                for row in terminal_artifact_rows
+            ]
+            roles = [str(item["role"]) for item in run_artifacts]
+            required_roles = {
+                "request",
+                "result_protocol",
+                "matrix",
+                "circuitscape_configuration",
+                "action_raster_diff",
+                "footprint_proof_document",
+                "input_resistance",
+                "input_focal",
+                "input_included_pairs",
+            }
+            if (
+                not run_artifacts
+                or run_artifacts != terminal_artifacts
+                or len(roles) != len(set(roles))
+                or required_roles - set(roles)
+            ):
+                raise ValueError("run and terminal artifact manifests are incomplete or detached")
+
+            artifact_paths: dict[str, Path] = {}
+            captured: dict[str, bytes] = {}
+            capture_roles = {
+                "request",
+                "result_protocol",
+                "matrix",
+                "circuitscape_configuration",
+                "action_raster_diff",
+                "footprint_proof_document",
+            }
+            for artifact in run_artifacts:
+                role = str(artifact["role"])
+                digest = str(artifact["sha256"])
+                media_type = str(artifact["media_type"])
+                try:
+                    byte_size = int(artifact["byte_size"])
+                    path = contained_path(self.root, str(artifact["cas_relative_path"]))
+                except (PathSecurityError, TypeError, ValueError) as exc:
+                    raise ValueError("retained direct artifact metadata is unsafe") from exc
+                if not re.fullmatch(r"[0-9a-f]{64}", digest) or byte_size < 0 or not media_type:
+                    raise ValueError("retained direct artifact metadata is invalid")
+                payload = _read_verified_regular_file(
+                    path,
+                    expected_sha256=digest,
+                    expected_byte_size=byte_size,
+                    capture_bytes=role in capture_roles,
+                )
+                artifact_paths[role] = path
+                if payload is not None:
+                    captured[role] = payload
+
+            artifacts_by_role = {str(item["role"]): item for item in run_artifacts}
+            if (
+                artifacts_by_role["request"]["sha256"] != run.input_sha256
+                or artifacts_by_role["result_protocol"]["sha256"] != run.result_sha256
+                or artifacts_by_role["matrix"]["sha256"] != run.matrix_sha256
+                or (
+                    run.current_map_sha256 is not None
+                    and artifacts_by_role.get("current_map", {}).get("sha256")
+                    != run.current_map_sha256
+                )
+                or (run.current_map_sha256 is None and "current_map" in artifacts_by_role)
+            ):
+                raise ValueError("direct-run hashes differ from retained artifact identities")
+            for resource in prepared.resources:
+                artifact = artifacts_by_role.get(f"input_{resource.logical_name}")
+                if artifact is None or artifact["sha256"] != resource.sha256:
+                    raise ValueError("prepared resource differs from its retained input artifact")
+            if (
+                artifacts_by_role["action_raster_diff"]["sha256"] != prepared.action_raster_sha256
+                or artifacts_by_role["footprint_proof_document"]["sha256"]
+                != hashlib.sha256(captured["footprint_proof_document"]).hexdigest()
+            ):
+                raise ValueError("prepared semantic evidence differs from retained artifacts")
+
+            evidence_rows = self._connection.execute(
+                "SELECT rowid,node_id,payload_json FROM eco_run_evidence "
+                "WHERE direct_run_id=? ORDER BY rowid",
+                (direct_run_id,),
+            ).fetchall()
+            evidence_nodes: list[dict[str, Any]] = []
+            for row in evidence_rows:
+                payload_json = str(row["payload_json"])
+                node = json.loads(payload_json)
+                if (
+                    not isinstance(node, dict)
+                    or canonical_json(node) != payload_json
+                    or row["node_id"] != node.get("node_id")
+                ):
+                    raise ValueError("direct-run provenance node differs from its stored payload")
+                evidence_nodes.append(node)
+            node_ids = [str(item.get("node_id", "")) for item in evidence_nodes]
+            if not node_ids or len(node_ids) != len(set(node_ids)):
+                raise ValueError("direct-run provenance node identities are incomplete")
+            subject_nodes = [
+                item
+                for item in evidence_nodes
+                if item.get("node_type") == "DIRECT_RUN" and not item.get("cache_source")
+            ]
+            scenario_nodes = [
+                item for item in evidence_nodes if item.get("node_type") == "SCENARIO"
+            ]
+            engine_nodes = [
+                item for item in evidence_nodes if item.get("node_type") == "ENGINE_MANIFEST"
+            ]
+            qa_nodes = [
+                item
+                for item in evidence_nodes
+                if item.get("node_type") == "QA" and not item.get("cache_source")
+            ]
+            diff_nodes = [item for item in evidence_nodes if item.get("node_type") == "RASTER_DIFF"]
+            proof_nodes = [
+                item for item in evidence_nodes if item.get("node_type") == "FOOTPRINT_PROOF"
+            ]
+            artifact_nodes = [
+                item for item in evidence_nodes if item.get("node_type") == "ARTIFACT"
+            ]
+            expected_artifact_nodes = {
+                (f"artifact:{item['role']}:{item['sha256']}", item["role"], item["sha256"])
+                for item in run_artifacts
+            }
+            observed_artifact_nodes = {
+                (item.get("node_id"), item.get("role"), item.get("sha256"))
+                for item in artifact_nodes
+            }
+            if (
+                subject_nodes
+                != [
+                    {
+                        "node_id": f"run:{run.direct_run_id}",
+                        "node_type": "DIRECT_RUN",
+                        "sha256": run.result_sha256,
+                    }
+                ]
+                or scenario_nodes
+                != [{"node_id": f"scenario:{run.scenario_id}", "node_type": "SCENARIO"}]
+                or engine_nodes
+                != [
+                    {
+                        "node_id": f"engine:{run.engine_manifest_sha256}",
+                        "node_type": "ENGINE_MANIFEST",
+                        "sha256": run.engine_manifest_sha256,
+                    }
+                ]
+                or len(qa_nodes) != 1
+                or qa_nodes[0].get("node_id") != f"qa:{run.direct_run_id}"
+                or qa_nodes[0].get("status") != run.qa_status.value
+                or len(diff_nodes) != 1
+                or diff_nodes[0].get("node_id") != f"diff:{prepared.action_raster_sha256}"
+                or diff_nodes[0].get("sha256") != prepared.action_raster_sha256
+                or diff_nodes[0].get("footprint_proof_sha256") != prepared.footprint_proof_sha256
+                or len(proof_nodes) != 1
+                or proof_nodes[0].get("sha256")
+                != artifacts_by_role["footprint_proof_document"]["sha256"]
+                or observed_artifact_nodes != expected_artifact_nodes
+                or len(artifact_nodes) != len(expected_artifact_nodes)
+                or not any(item.get("node_type") == "ASSET" for item in evidence_nodes)
+            ):
+                raise ValueError("direct-run provenance graph differs from retained evidence")
+
+            qa_row = self._connection.execute(
+                "SELECT status,findings_json FROM eco_run_qa WHERE direct_run_id=?",
+                (direct_run_id,),
+            ).fetchone()
+            metric_rows = self._connection.execute(
+                "SELECT pair_id,effective_resistance,units FROM eco_run_metrics "
+                "WHERE direct_run_id=? ORDER BY pair_id",
+                (direct_run_id,),
+            ).fetchall()
+            if qa_row is None:
+                raise ValueError("direct-run QA record is absent")
+            qa_status = QAStatus(str(qa_row["status"]))
+            qa_findings = json.loads(str(qa_row["findings_json"]))
+            if (
+                not isinstance(qa_findings, list)
+                or canonical_json(qa_findings) != str(qa_row["findings_json"])
+                or qa_status != run.qa_status
+                or qa_findings != run.qa_findings
+                or any(str(item["units"]) != "effective_resistance" for item in metric_rows)
+                or {
+                    str(item["pair_id"]): float(item["effective_resistance"])
+                    for item in metric_rows
+                }
+                != {item.pair_id: item.effective_resistance for item in run.pair_metrics}
+            ):
+                raise ValueError("direct-run metrics or QA findings differ from retained evidence")
+
+            resource_payload = (
+                json.loads(str(job["resource_observation_json"]))
+                if job["resource_observation_json"] is not None
+                else None
+            )
+            resource_observation = (
+                ComputationalResourceObservation.model_validate(resource_payload)
+                if resource_payload is not None
+                else None
+            )
+            if (
+                (
+                    resource_payload is not None
+                    and canonical_json(resource_payload) != job["resource_observation_json"]
+                )
+                or resource_observation != run.resource_observation
+                or job["error_json"] is not None
+            ):
+                raise ValueError(
+                    "direct-run resource or error evidence differs from its terminal job"
+                )
+
+            try:
+                request = json.loads(captured["request"])
+                protocol = EngineProtocolResult.model_validate_json(captured["result_protocol"])
+                diff = json.loads(captured["action_raster_diff"])
+                proof = ProfessionalFootprintProofDocument.model_validate_json(
+                    captured["footprint_proof_document"]
+                )
+            except (KeyError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                raise ValueError(
+                    "retained direct protocol or semantic evidence is invalid"
+                ) from exc
+            cache_lineage = [
+                item for item in evidence_nodes if item.get("node_type") == "CACHE_LINEAGE"
+            ]
+            request_run_id = run.direct_run_id
+            if bool(job["cached"]):
+                if (
+                    len(cache_lineage) != 1
+                    or cache_lineage[0].get("requested_direct_run_id") != run.direct_run_id
+                ):
+                    raise ValueError("cached direct evidence has no exact source-run lineage")
+                request_run_id = str(cache_lineage[0].get("source_direct_run_id", ""))
+            elif cache_lineage:
+                raise ValueError("uncached direct evidence carries unexpected cache lineage")
+            if request != engine_request_payload(prepared, prepared_run_id=request_run_id):
+                raise ValueError("retained request differs from the immutable prepared run")
+            parsed_matrix = parse_reference_matrix_bytes(captured["matrix"], prepared.pairs)
+            protocol_metrics = {
+                item.pair_id: item.effective_resistance for item in protocol.pair_metrics
+            }
+            if (
+                protocol.status != "SUCCEEDED"
+                or protocol.warnings
+                or protocol_metrics != parsed_matrix
+                or parsed_matrix
+                != {item.pair_id: item.effective_resistance for item in run.pair_metrics}
+                or bool(protocol.current_map_path) != bool(run.current_map_sha256)
+                or diff.get("revision_id") != prepared.revision_id
+                or diff.get("portfolio_id") != prepared.portfolio_id
+                or diff.get("scenario_id") != prepared.scenario.scenario_id
+                or diff.get("prepared_resistance_sha256") != prepared.prepared_resistance_sha256
+                or proof.revision_id != prepared.revision_id
+                or proof.portfolio_id != prepared.portfolio_id
+                or proof.scenario_id != prepared.scenario.scenario_id
+                or proof.footprint_proof_sha256 != prepared.footprint_proof_sha256
+            ):
+                raise ValueError("retained direct outputs differ from prepared evidence")
+
+            cache_row = self._connection.execute(
+                "SELECT result_sha256,source_direct_run_id FROM eco_model_run_cache "
+                "WHERE model_run_cache_key=?",
+                (run.model_run_cache_key,),
+            ).fetchone()
+            expected_cache_source_id = request_run_id if bool(job["cached"]) else run.direct_run_id
+            if (
+                cache_row is None
+                or str(cache_row["result_sha256"]) != run.result_sha256
+                or str(cache_row["source_direct_run_id"]) != expected_cache_source_id
+                or run.cache_source_direct_run_id
+                != (expected_cache_source_id if bool(job["cached"]) else None)
+            ):
+                raise ValueError("direct-run cache identity is absent or inconsistent")
+
+            terminal_payload = {
+                "state": DirectJobState.SUCCEEDED.value,
+                "run": run.model_dump(mode="json"),
+                "artifacts": terminal_artifacts,
+                "evidence_nodes": evidence_nodes,
+                "resource_observation": (
+                    resource_observation.model_dump(mode="json")
+                    if resource_observation is not None
+                    else None
+                ),
+                "error": None,
+                "cached": bool(job["cached"]),
+            }
+            terminal_sha256 = hashlib.sha256(
+                canonical_json(terminal_payload).encode("utf-8")
+            ).hexdigest()
+            if terminal_sha256 != str(job["terminal_sha256"]):
+                raise ValueError("durable direct-job terminal hash failed reconstruction")
+
+            analysis_project = self._connection.execute(
+                "SELECT project_id FROM eco_analyses WHERE analysis_id=?",
+                (run.analysis_id,),
+            ).fetchone()
+            if analysis_project is None:
+                raise ValueError("direct-run terminal telemetry has no analysis project")
+            outbox_rows = self._connection.execute(
+                "SELECT project_id,analysis_id,event_type,subject_id,stream_id,payload_json,"
+                "payload_sha256,idempotency_key FROM eco_telemetry_outbox "
+                "WHERE project_id=? AND idempotency_key=?",
+                (
+                    analysis_project["project_id"],
+                    f"direct_job_terminal:{run.direct_run_id}",
+                ),
+            ).fetchall()
+            if len(outbox_rows) != 1:
+                raise ValueError("direct-run terminal telemetry identity is missing or ambiguous")
+            outbox_row = outbox_rows[0]
+            outbox_json = str(outbox_row["payload_json"])
+            outbox_payload = json.loads(outbox_json)
+            if outbox_payload != {
+                "cached": bool(job["cached"]),
+                "direct_job_id": run.direct_run_id,
+                "portfolio_id": run.portfolio_id,
+                "result_sha256": run.result_sha256,
+                "scenario_id": run.scenario_id,
+                "state": DirectJobState.SUCCEEDED.value,
+            } or (
+                canonical_json(outbox_payload) != outbox_json
+                or hashlib.sha256(outbox_json.encode("utf-8")).hexdigest()
+                != outbox_row["payload_sha256"]
+                or outbox_row["project_id"] != analysis_project["project_id"]
+                or outbox_row["analysis_id"] != run.analysis_id
+                or outbox_row["event_type"] != "direct_job_terminal"
+                or outbox_row["subject_id"] != run.direct_run_id
+                or outbox_row["stream_id"] != f"connectivity_analysis:{run.analysis_id}"
+                or outbox_row["idempotency_key"] != f"direct_job_terminal:{run.direct_run_id}"
+            ):
+                raise ValueError("direct-run terminal telemetry differs from local science")
+
+            return VerifiedDirectRunEvidence(
+                run=run,
+                prepared=prepared,
+                artifacts=tuple(sorted(run_artifacts, key=lambda item: str(item["role"]))),
+                artifact_paths_by_role=artifact_paths,
+                evidence_nodes=tuple(evidence_nodes),
+                qa_status=qa_status,
+                qa_findings=tuple(str(item) for item in qa_findings),
+                resource_observation=resource_observation,
+                terminal_sha256=terminal_sha256,
+                phase=str(job["phase"]),
+                cached=bool(job["cached"]),
+            )
+
     def finalize_direct_job(
         self,
         direct_job_id: str,
@@ -2834,6 +3537,26 @@ class EcoProjectStore:
             if run is not None:
                 if not job["prepared_json"]:
                     raise ValueError("successful direct job lacks immutable prepared evidence")
+                analysis_row = connection.execute(
+                    "SELECT plan_json FROM eco_analyses WHERE analysis_id=?",
+                    (str(job["analysis_id"]),),
+                ).fetchone()
+                if analysis_row is None:
+                    raise ValueError("successful direct job lacks an immutable analysis plan")
+                analysis_plan = ConnectivityRunPlan.model_validate_json(
+                    str(analysis_row["plan_json"])
+                )
+                if (
+                    run.analysis_id != analysis_plan.analysis_id
+                    or run.revision_id != analysis_plan.revision_id
+                    or run.engine_manifest_sha256 != analysis_plan.engine_manifest_sha256
+                    or run.portfolio_id
+                    not in {item.portfolio_id for item in analysis_plan.portfolios}
+                    or run.scenario_id not in analysis_plan.scenario_ids
+                ):
+                    raise ValueError(
+                        "finalized direct run differs from its immutable analysis plan or engine"
+                    )
                 prepared = PreparedConnectivityRun.model_validate_json(job["prepared_json"])
                 if (
                     prepared.prepared_run_id != direct_job_id
@@ -3303,6 +4026,164 @@ class EcoProjectStore:
             raise ValueError("reference comparison plan row differs from its payload")
         return plan
 
+    def create_reference_analysis(
+        self,
+        reference_plan: ReferenceComparisonPlan,
+        *,
+        bundle: ConnectivityProjectBundle,
+    ) -> tuple[ReferenceComparisonPlan, dict[str, Any]]:
+        """Atomically create a READY reference analysis, snapshot, plan, and outbox.
+
+        This is the only supported transition into ``analysis_kind=REFERENCE``.
+        The transaction removes the former window in which generic analysis
+        execution could queue work before the reference plan existed.
+        """
+
+        reference_plan = ReferenceComparisonPlan.model_validate(
+            reference_plan.model_dump(mode="json")
+        )
+        bundle = ConnectivityProjectBundle.model_validate(bundle.model_dump(mode="json"))
+        project_id = self.project()["project_id"]
+        if bundle.project_id != project_id:
+            raise ValueError("reference analysis bundle belongs to another project")
+        if (
+            bundle.revision.revision_id != reference_plan.revision_id
+            or bundle.revision.model_sha256 != reference_plan.model_sha256
+        ):
+            raise ValueError("reference plan differs from its immutable model snapshot")
+        canonical_plan = build_reference_comparison_plan(
+            bundle=bundle,
+            analysis_id=reference_plan.analysis_id,
+            engine_manifest_sha256=reference_plan.engine_manifest_sha256,
+            created_at=reference_plan.created_at,
+        )
+        if canonical_plan != reference_plan:
+            raise ValueError(
+                "reference plan is not the canonical complete No Action binding ensemble"
+            )
+
+        plan_json = canonical_json(reference_plan.run_plan.model_dump(mode="json"))
+        bundle_json = canonical_json(bundle.model_dump(mode="json"))
+        bundle_sha256 = hashlib.sha256(bundle_json.encode("utf-8")).hexdigest()
+        reference_json = canonical_json(reference_plan.model_dump(mode="json"))
+        reference_sha256 = hashlib.sha256(reference_json.encode("utf-8")).hexdigest()
+        now = _now()
+        with self.transaction() as connection:
+            analysis = connection.execute(
+                "SELECT * FROM eco_analyses WHERE analysis_id=?",
+                (reference_plan.analysis_id,),
+            ).fetchone()
+            replayed = analysis is not None
+            authoritative_state = (
+                str(analysis["state"]) if analysis is not None else AnalysisState.READY.value
+            )
+            if analysis is None:
+                connection.execute(
+                    "INSERT INTO eco_analyses(analysis_id,project_id,analysis_kind,state,plan_json,"
+                    "created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+                    (
+                        reference_plan.analysis_id,
+                        project_id,
+                        "REFERENCE",
+                        AnalysisState.READY.value,
+                        plan_json,
+                        now,
+                        now,
+                    ),
+                )
+                connection.execute(
+                    "INSERT INTO eco_analysis_models(analysis_id,bundle_sha256,bundle_json,"
+                    "created_at) VALUES(?,?,?,?)",
+                    (reference_plan.analysis_id, bundle_sha256, bundle_json, now),
+                )
+                connection.execute(
+                    "INSERT INTO eco_reference_comparison_plans(plan_id,analysis_id,revision_id,"
+                    "model_sha256,engine_manifest_sha256,reference_matrix_parser_sha256,"
+                    "payload_json,payload_sha256,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                    (
+                        reference_plan.plan_id,
+                        reference_plan.analysis_id,
+                        reference_plan.revision_id,
+                        reference_plan.model_sha256,
+                        reference_plan.engine_manifest_sha256,
+                        REFERENCE_MATRIX_PARSER_SHA256,
+                        reference_json,
+                        reference_sha256,
+                        now,
+                    ),
+                )
+                self._enqueue_outbox(
+                    connection,
+                    project_id=project_id,
+                    analysis_id=reference_plan.analysis_id,
+                    event_type="analysis_plan",
+                    subject_id=reference_plan.analysis_id,
+                    stream_id=f"connectivity_analysis:{reference_plan.analysis_id}",
+                    payload={
+                        "analysis_id": reference_plan.analysis_id,
+                        "revision_id": reference_plan.revision_id,
+                        "bundle_sha256": bundle_sha256,
+                    },
+                    idempotency_key=(f"analysis_plan:{reference_plan.analysis_id}:{bundle_sha256}"),
+                )
+                persisted_plan = reference_plan
+            else:
+                model_row = connection.execute(
+                    "SELECT bundle_sha256,bundle_json FROM eco_analysis_models WHERE analysis_id=?",
+                    (reference_plan.analysis_id,),
+                ).fetchone()
+                stored_plan_rows = connection.execute(
+                    "SELECT plan_id FROM eco_reference_comparison_plans WHERE analysis_id=?",
+                    (reference_plan.analysis_id,),
+                ).fetchall()
+                if (
+                    analysis["project_id"] != project_id
+                    or analysis["analysis_kind"] != "REFERENCE"
+                    or analysis["plan_json"] != plan_json
+                    or model_row is None
+                    or model_row["bundle_sha256"] != bundle_sha256
+                    or model_row["bundle_json"] != bundle_json
+                    or len(stored_plan_rows) != 1
+                ):
+                    raise ValueError(
+                        "reference analysis identity was reused for different or incomplete evidence"
+                    )
+                persisted_plan = self._load_reference_comparison_plan(
+                    connection,
+                    plan_id=str(stored_plan_rows[0]["plan_id"]),
+                    analysis_id=reference_plan.analysis_id,
+                )
+                comparable = reference_plan.model_copy(
+                    update={"created_at": persisted_plan.created_at}
+                )
+                if comparable != persisted_plan:
+                    raise ValueError(
+                        "reference analysis identity was reused for different immutable evidence"
+                    )
+                reference_json = canonical_json(persisted_plan.model_dump(mode="json"))
+                reference_sha256 = hashlib.sha256(reference_json.encode("utf-8")).hexdigest()
+                self._enqueue_outbox(
+                    connection,
+                    project_id=project_id,
+                    analysis_id=reference_plan.analysis_id,
+                    event_type="analysis_plan",
+                    subject_id=reference_plan.analysis_id,
+                    stream_id=f"connectivity_analysis:{reference_plan.analysis_id}",
+                    payload={
+                        "analysis_id": reference_plan.analysis_id,
+                        "revision_id": reference_plan.revision_id,
+                        "bundle_sha256": bundle_sha256,
+                    },
+                    idempotency_key=(f"analysis_plan:{reference_plan.analysis_id}:{bundle_sha256}"),
+                )
+        return persisted_plan, {
+            "plan_id": persisted_plan.plan_id,
+            "plan_sha256": reference_sha256,
+            "reference_matrix_parser_sha256": REFERENCE_MATRIX_PARSER_SHA256,
+            "replayed": replayed,
+            "state": authoritative_state,
+        }
+
     def store_reference_comparison_plan(
         self,
         reference_plan: ReferenceComparisonPlan,
@@ -3316,11 +4197,13 @@ class EcoProjectStore:
         payload_sha256 = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
         with self.transaction() as connection:
             analysis = connection.execute(
-                "SELECT state,plan_json FROM eco_analyses WHERE analysis_id=?",
+                "SELECT analysis_kind,state,plan_json FROM eco_analyses WHERE analysis_id=?",
                 (reference_plan.analysis_id,),
             ).fetchone()
             if analysis is None:
                 raise KeyError(reference_plan.analysis_id)
+            if analysis["analysis_kind"] != "REFERENCE":
+                raise ValueError("reference plans require an atomically created reference analysis")
             if canonical_json(reference_plan.run_plan.model_dump(mode="json")) != canonical_json(
                 ConnectivityRunPlan.model_validate_json(str(analysis["plan_json"])).model_dump(
                     mode="json"
@@ -3340,19 +4223,20 @@ class EcoProjectStore:
             ):
                 raise ValueError("analysis model snapshot failed its immutable checksum")
             bundle = ConnectivityProjectBundle.model_validate_json(bundle_json)
-            bindings_by_id = {item.binding_id: item for item in bundle.reference_bindings}
-            selected_bindings = [
-                bindings_by_id.get(binding_id) for binding_id in reference_plan.binding_ids
-            ]
-            if (
-                reference_plan.revision_id != bundle.revision.revision_id
-                or reference_plan.model_sha256 != bundle.revision.model_sha256
-                or any(item is None for item in selected_bindings)
-                or {item.scenario_id for item in selected_bindings if item is not None}
-                != set(reference_plan.bound_scenario_ids)
-            ):
+            try:
+                canonical_plan = build_reference_comparison_plan(
+                    bundle=bundle,
+                    analysis_id=reference_plan.analysis_id,
+                    engine_manifest_sha256=reference_plan.engine_manifest_sha256,
+                    created_at=reference_plan.created_at,
+                )
+            except ValueError as exc:
                 raise ValueError(
-                    "reference plan identity or binding scope differs from its model snapshot"
+                    "reference plan cannot be reconstructed from its immutable model snapshot"
+                ) from exc
+            if reference_plan != canonical_plan:
+                raise ValueError(
+                    "reference plan is not the canonical complete No Action binding ensemble"
                 )
             existing = connection.execute(
                 "SELECT * FROM eco_reference_comparison_plans WHERE plan_id=?",
@@ -3373,36 +4257,8 @@ class EcoProjectStore:
                         "reference comparison plan identity was reused for different evidence"
                     )
             else:
-                if (
-                    connection.execute(
-                        "SELECT 1 FROM eco_direct_jobs WHERE analysis_id=? LIMIT 1",
-                        (reference_plan.analysis_id,),
-                    ).fetchone()
-                    is not None
-                    or connection.execute(
-                        "SELECT 1 FROM eco_analysis_runs WHERE analysis_id=? LIMIT 1",
-                        (reference_plan.analysis_id,),
-                    ).fetchone()
-                    is not None
-                ):
-                    raise ValueError("reference plan cannot be introduced after direct work exists")
-                if analysis["state"] != AnalysisState.READY.value:
-                    raise ValueError("reference plan must be stored while its analysis is ready")
-                connection.execute(
-                    "INSERT INTO eco_reference_comparison_plans(plan_id,analysis_id,revision_id,"
-                    "model_sha256,engine_manifest_sha256,reference_matrix_parser_sha256,"
-                    "payload_json,payload_sha256,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
-                    (
-                        reference_plan.plan_id,
-                        reference_plan.analysis_id,
-                        reference_plan.revision_id,
-                        reference_plan.model_sha256,
-                        reference_plan.engine_manifest_sha256,
-                        REFERENCE_MATRIX_PARSER_SHA256,
-                        payload_json,
-                        payload_sha256,
-                        _now(),
-                    ),
+                raise ValueError(
+                    "reference plan is missing from its atomic reference-analysis creation"
                 )
         return {
             "plan_id": reference_plan.plan_id,
@@ -3430,6 +4286,436 @@ class EcoProjectStore:
             ).hexdigest()
             return plan, payload_sha256
 
+    def reference_comparison_plan_for_analysis(
+        self,
+        analysis_id: str,
+    ) -> tuple[ReferenceComparisonPlan, str] | None:
+        """Return the sole immutable reference plan bound to an analysis.
+
+        Ambiguous plan ownership is treated as integrity failure instead of
+        selecting an arbitrary row. The workflow uses this readback before it
+        schedules or completes direct work.
+        """
+
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT plan_id FROM eco_reference_comparison_plans "
+                "WHERE analysis_id=? ORDER BY plan_id",
+                (analysis_id,),
+            ).fetchall()
+            if not rows:
+                return None
+            if len(rows) != 1:
+                raise ValueError("analysis has ambiguous immutable reference plans")
+            return self.reference_comparison_plan(
+                str(rows[0]["plan_id"]),
+                analysis_id=analysis_id,
+            )
+
+    @staticmethod
+    def _reference_completion_rows(
+        connection: sqlite3.Connection,
+        analysis_id: str,
+    ) -> list[dict[str, Any]]:
+        rows = connection.execute(
+            "SELECT run.direct_run_id,run.portfolio_id,run.scenario_id,"
+            "job.phase,job.state,job.terminal_sha256,run.result_sha256 "
+            "FROM eco_analysis_runs AS run JOIN eco_direct_jobs AS job "
+            "ON job.direct_job_id=run.direct_run_id WHERE run.analysis_id=? "
+            "ORDER BY run.portfolio_id,run.scenario_id,run.direct_run_id",
+            (analysis_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    @staticmethod
+    def _load_reference_completion_intent(
+        connection: sqlite3.Connection,
+        *,
+        analysis_id: str,
+    ) -> tuple[str, dict[str, Any], str] | None:
+        row = connection.execute(
+            "SELECT completion_id,plan_id,payload_json,payload_sha256 "
+            "FROM eco_reference_completion_intents WHERE analysis_id=?",
+            (analysis_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        payload_json = str(row["payload_json"])
+        payload_sha256 = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+        try:
+            payload = json.loads(payload_json)
+        except json.JSONDecodeError as exc:
+            raise ValueError("reference completion intent is not valid JSON") from exc
+        if (
+            canonical_json(payload) != payload_json
+            or row["payload_sha256"] != payload_sha256
+            or payload.get("analysis_id") != analysis_id
+            or payload.get("plan_id") != row["plan_id"]
+            or row["completion_id"] != f"reference_completion_{payload_sha256[:24]}"
+        ):
+            raise ValueError("reference completion intent failed its immutable identity")
+        return str(row["completion_id"]), payload, payload_sha256
+
+    def reference_completion_intent(
+        self,
+        analysis_id: str,
+    ) -> tuple[str, dict[str, Any], str] | None:
+        with self._lock:
+            return self._load_reference_completion_intent(
+                self._connection,
+                analysis_id=analysis_id,
+            )
+
+    def pending_reference_completions(self) -> list[str]:
+        """Return completed reference analyses whose canonical result is not retained yet."""
+
+        with self._lock:
+            return [
+                str(row["analysis_id"])
+                for row in self._connection.execute(
+                    "SELECT intent.analysis_id FROM eco_reference_completion_intents AS intent "
+                    "LEFT JOIN eco_reference_comparison_results AS result "
+                    "ON result.analysis_id=intent.analysis_id AND result.plan_id=intent.plan_id "
+                    "WHERE result.result_id IS NULL ORDER BY intent.analysis_id"
+                )
+            ]
+
+    def complete_reference_direct_analysis(self, analysis_id: str) -> dict[str, Any]:
+        """Atomically commit terminal state plus a recoverable producer identity.
+
+        Descriptor hashing and protocol parsing happen before the write
+        transaction. The short commit re-derives the exact immutable run
+        manifest before changing state and enqueuing completion telemetry.
+        """
+
+        with self._lock:
+            analysis = self._connection.execute(
+                "SELECT project_id,analysis_kind,state,plan_json FROM eco_analyses "
+                "WHERE analysis_id=?",
+                (analysis_id,),
+            ).fetchone()
+            if analysis is None:
+                raise KeyError(analysis_id)
+            if analysis["analysis_kind"] != "REFERENCE":
+                raise ValueError("reference completion requires a reference analysis")
+            if analysis["state"] not in {
+                AnalysisState.RUNNING.value,
+                AnalysisState.COMPLETED.value,
+            }:
+                raise ValueError("reference completion requires a running analysis")
+            entry = self.reference_comparison_plan_for_analysis(analysis_id)
+            if entry is None:
+                raise ValueError("reference completion requires an immutable reference plan")
+            reference_plan, _ = entry
+            analysis_plan = ConnectivityRunPlan.model_validate_json(str(analysis["plan_json"]))
+            if canonical_json(analysis_plan.model_dump(mode="json")) != canonical_json(
+                reference_plan.run_plan.model_dump(mode="json")
+            ):
+                raise ValueError("reference completion plan differs from the analysis plan")
+            expected = {
+                (portfolio.portfolio_id, scenario_id)
+                for portfolio in analysis_plan.portfolios
+                for scenario_id in analysis_plan.scenario_ids
+            }
+            completion_rows = self._reference_completion_rows(self._connection, analysis_id)
+            observed = {
+                (str(row["portfolio_id"]), str(row["scenario_id"])) for row in completion_rows
+            }
+            if (
+                observed != expected
+                or len(completion_rows) != len(expected)
+                or any(
+                    row["phase"] != "MATRIX"
+                    or row["state"] != DirectJobState.SUCCEEDED.value
+                    or not re.fullmatch(r"[0-9a-f]{64}", str(row["terminal_sha256"] or ""))
+                    for row in completion_rows
+                )
+            ):
+                raise ValueError(
+                    "reference completion requires every planned durable matrix job to succeed"
+                )
+            verified = {
+                str(row["direct_run_id"]): self.verify_authoritative_direct_run(
+                    str(row["direct_run_id"]),
+                    expected_analysis_id=analysis_id,
+                )
+                for row in completion_rows
+            }
+            if any(
+                verified[str(row["direct_run_id"])].run.result_sha256 != row["result_sha256"]
+                for row in completion_rows
+            ):
+                raise ValueError("reference completion run manifest changed during verification")
+            completion_id, completion_payload, completion_sha256 = _reference_completion_manifest(
+                plan=reference_plan,
+                direct_runs=completion_rows,
+            )
+
+        completion_json = canonical_json(completion_payload)
+        with self.transaction() as connection:
+            current = connection.execute(
+                "SELECT project_id,analysis_kind,state,plan_json FROM eco_analyses "
+                "WHERE analysis_id=?",
+                (analysis_id,),
+            ).fetchone()
+            if (
+                current is None
+                or current["analysis_kind"] != "REFERENCE"
+                or current["plan_json"] != canonical_json(analysis_plan.model_dump(mode="json"))
+            ):
+                raise ValueError("reference completion analysis identity changed before commit")
+            committed_plan = self._load_reference_comparison_plan(
+                connection,
+                plan_id=reference_plan.plan_id,
+                analysis_id=analysis_id,
+            )
+            current_rows = self._reference_completion_rows(connection, analysis_id)
+            if current_rows != completion_rows:
+                raise ValueError("reference completion durable rows changed before commit")
+            current_id, current_payload, current_sha256 = _reference_completion_manifest(
+                plan=committed_plan,
+                direct_runs=current_rows,
+            )
+            if (
+                current_id != completion_id
+                or current_payload != completion_payload
+                or current_sha256 != completion_sha256
+            ):
+                raise ValueError("reference completion evidence changed before commit")
+            existing = self._load_reference_completion_intent(
+                connection,
+                analysis_id=analysis_id,
+            )
+            replayed = existing is not None
+            if existing is not None:
+                if existing != (completion_id, completion_payload, completion_sha256):
+                    raise ValueError(
+                        "reference completion identity was reused for different evidence"
+                    )
+                if current["state"] != AnalysisState.COMPLETED.value:
+                    raise ValueError("reference completion intent exists before terminal state")
+            else:
+                if current["state"] != AnalysisState.RUNNING.value:
+                    raise ValueError("completed reference analysis lacks its producer identity")
+                assert_transition(current["state"], AnalysisState.COMPLETED, kind="analysis")
+                connection.execute(
+                    "INSERT INTO eco_reference_completion_intents(completion_id,analysis_id,plan_id,"
+                    "payload_json,payload_sha256,created_at) VALUES(?,?,?,?,?,?)",
+                    (
+                        completion_id,
+                        analysis_id,
+                        reference_plan.plan_id,
+                        completion_json,
+                        completion_sha256,
+                        _now(),
+                    ),
+                )
+                connection.execute(
+                    "UPDATE eco_analyses SET state='COMPLETED',updated_at=? WHERE analysis_id=?",
+                    (_now(), analysis_id),
+                )
+            outbox_id = self._enqueue_outbox(
+                connection,
+                project_id=str(current["project_id"]),
+                analysis_id=analysis_id,
+                event_type="analysis_completion",
+                subject_id=analysis_id,
+                stream_id=f"connectivity_analysis:{analysis_id}",
+                payload={
+                    "analysis_id": analysis_id,
+                    "completion_kind": "REFERENCE_RESULT_PENDING",
+                    "completion_id": completion_id,
+                    "plan_id": reference_plan.plan_id,
+                    "reference_completion_sha256": completion_sha256,
+                    "direct_run_ids": sorted(verified),
+                },
+                idempotency_key=f"analysis_completion:{analysis_id}",
+            )
+        return {
+            "completion_id": completion_id,
+            "reference_completion_sha256": completion_sha256,
+            "outbox_id": outbox_id,
+            "replayed": replayed,
+        }
+
+    @staticmethod
+    def _reference_persistence_sha256(
+        connection: sqlite3.Connection,
+        *,
+        analysis_id: str,
+    ) -> str:
+        """Hash immutable database identities used by reference verification.
+
+        Cloud-delivery state is intentionally excluded: leases and receipts may
+        advance while scientific evidence is being descriptor-verified.
+        """
+
+        tables: list[tuple[str, str, tuple[Any, ...]]] = [
+            (
+                "analysis",
+                (
+                    "SELECT analysis_id,project_id,analysis_kind,state,plan_json,error_json,"
+                    "created_at FROM eco_analyses WHERE analysis_id=?"
+                ),
+                (analysis_id,),
+            ),
+            (
+                "model",
+                (
+                    "SELECT analysis_id,bundle_sha256,bundle_json,created_at "
+                    "FROM eco_analysis_models WHERE analysis_id=?"
+                ),
+                (analysis_id,),
+            ),
+            (
+                "reference_plan",
+                "SELECT * FROM eco_reference_comparison_plans WHERE analysis_id=? ORDER BY plan_id",
+                (analysis_id,),
+            ),
+            (
+                "reference_completion",
+                (
+                    "SELECT * FROM eco_reference_completion_intents WHERE analysis_id=? "
+                    "ORDER BY completion_id"
+                ),
+                (analysis_id,),
+            ),
+            (
+                "jobs",
+                (
+                    "SELECT direct_job_id,analysis_id,portfolio_id,scenario_id,phase,"
+                    "sequence_number,state,emit_current_map,prepared_json,model_run_cache_key,"
+                    "terminal_sha256,resource_observation_json,error_json,cached,attempt_count,"
+                    "created_at,started_at,completed_at FROM eco_direct_jobs WHERE analysis_id=? "
+                    "ORDER BY sequence_number"
+                ),
+                (analysis_id,),
+            ),
+            (
+                "runs",
+                "SELECT * FROM eco_analysis_runs WHERE analysis_id=? ORDER BY direct_run_id",
+                (analysis_id,),
+            ),
+            (
+                "artifacts",
+                (
+                    "SELECT artifact.* FROM eco_run_artifacts AS artifact "
+                    "JOIN eco_analysis_runs AS run ON run.direct_run_id=artifact.direct_run_id "
+                    "WHERE run.analysis_id=? ORDER BY artifact.direct_run_id,artifact.role"
+                ),
+                (analysis_id,),
+            ),
+            (
+                "terminal_artifacts",
+                (
+                    "SELECT artifact.* FROM eco_terminal_job_artifacts AS artifact "
+                    "JOIN eco_direct_jobs AS job ON job.direct_job_id=artifact.direct_job_id "
+                    "WHERE job.analysis_id=? ORDER BY artifact.direct_job_id,artifact.role"
+                ),
+                (analysis_id,),
+            ),
+            (
+                "metrics",
+                (
+                    "SELECT metric.* FROM eco_run_metrics AS metric JOIN eco_analysis_runs AS run "
+                    "ON run.direct_run_id=metric.direct_run_id WHERE run.analysis_id=? "
+                    "ORDER BY metric.direct_run_id,metric.pair_id"
+                ),
+                (analysis_id,),
+            ),
+            (
+                "qa",
+                (
+                    "SELECT qa.* FROM eco_run_qa AS qa JOIN eco_analysis_runs AS run "
+                    "ON run.direct_run_id=qa.direct_run_id WHERE run.analysis_id=? "
+                    "ORDER BY qa.direct_run_id"
+                ),
+                (analysis_id,),
+            ),
+            (
+                "evidence",
+                (
+                    "SELECT evidence.* FROM eco_run_evidence AS evidence "
+                    "JOIN eco_analysis_runs AS run ON run.direct_run_id=evidence.direct_run_id "
+                    "WHERE run.analysis_id=? ORDER BY evidence.direct_run_id,evidence.node_id"
+                ),
+                (analysis_id,),
+            ),
+            (
+                "cache",
+                (
+                    "SELECT DISTINCT cache.* FROM eco_model_run_cache AS cache "
+                    "JOIN eco_analysis_runs AS run "
+                    "ON run.model_run_cache_key=cache.model_run_cache_key WHERE run.analysis_id=? "
+                    "ORDER BY cache.model_run_cache_key"
+                ),
+                (analysis_id,),
+            ),
+            (
+                "outbox",
+                (
+                    "SELECT project_id,analysis_id,event_type,subject_id,stream_id,"
+                    "stream_sequence,outbox_sequence,payload_json,payload_sha256,idempotency_key,"
+                    "created_at FROM eco_telemetry_outbox WHERE analysis_id=? AND event_type IN "
+                    "('analysis_plan','direct_job_terminal','analysis_completion') "
+                    "ORDER BY outbox_sequence,outbox_id"
+                ),
+                (analysis_id,),
+            ),
+        ]
+        snapshot = {
+            name: [dict(row) for row in connection.execute(sql, parameters).fetchall()]
+            for name, sql, parameters in tables
+        }
+        return hashlib.sha256(canonical_json(snapshot).encode("utf-8")).hexdigest()
+
+    def _preflight_reference_result(
+        self,
+        *,
+        result: ReferenceComparisonResult,
+        claims: Sequence[ConnectivityEvidenceClaim],
+    ) -> tuple[ReferenceComparisonPlan, ReferenceValidationSeal]:
+        """Perform descriptor-heavy validation without holding a writer lock."""
+
+        with self._lock:
+            reference_plan = self._load_reference_comparison_plan(
+                self._connection,
+                plan_id=result.plan_id,
+                analysis_id=result.analysis_id,
+            )
+            completion = self._load_reference_completion_intent(
+                self._connection,
+                analysis_id=result.analysis_id,
+            )
+            if completion is None or completion[1].get("plan_id") != result.plan_id:
+                raise ValueError(
+                    "reference result requires its atomic terminal completion identity"
+                )
+            before = self._reference_persistence_sha256(
+                self._connection,
+                analysis_id=result.analysis_id,
+            )
+            verified_runs: dict[str, VerifiedDirectRunEvidence] = {}
+            project_id, claims_by_id = self._validate_reference_comparison_evidence(
+                self._connection,
+                reference_plan=reference_plan,
+                result=result,
+                claims=claims,
+                verified_runs=verified_runs,
+            )
+            after = self._reference_persistence_sha256(
+                self._connection,
+                analysis_id=result.analysis_id,
+            )
+            if before != after:
+                raise ValueError("reference evidence changed during descriptor verification")
+            return reference_plan, ReferenceValidationSeal(
+                project_id=project_id,
+                claims_by_id=claims_by_id,
+                persistence_sha256=after,
+                verified_runs=verified_runs,
+            )
+
     def _validate_reference_comparison_evidence(
         self,
         connection: sqlite3.Connection,
@@ -3437,6 +4723,7 @@ class EcoProjectStore:
         reference_plan: ReferenceComparisonPlan,
         result: ReferenceComparisonResult,
         claims: Sequence[ConnectivityEvidenceClaim],
+        verified_runs: dict[str, VerifiedDirectRunEvidence] | None = None,
     ) -> tuple[str, dict[str, ConnectivityEvidenceClaim]]:
         """Reconcile a reference result with immutable local science and source bytes."""
 
@@ -3453,18 +4740,39 @@ class EcoProjectStore:
         claims_by_id = {item.claim_id: item for item in validated_claims}
         if len(claims_by_id) != len(validated_claims):
             raise ValueError("reference comparison contains duplicate evidence claim IDs")
-        links_by_claim_id = {item.claim_id: item for item in result.evidence_claim_links}
-        if set(claims_by_id) != set(links_by_claim_id):
-            raise ValueError(
-                "reference comparison claims differ from its authoritative evidence links"
+        run_evidence = verified_runs if verified_runs is not None else {}
+
+        def verified_direct_run(direct_run_id: str) -> VerifiedDirectRunEvidence:
+            existing = run_evidence.get(direct_run_id)
+            if existing is not None:
+                if existing.run.analysis_id != result.analysis_id:
+                    raise ValueError("cached direct evidence belongs to another analysis")
+                return existing
+            verified = self.verify_authoritative_direct_run(
+                direct_run_id,
+                expected_analysis_id=result.analysis_id,
             )
+            run_evidence[direct_run_id] = verified
+            return verified
 
         analysis = connection.execute(
-            "SELECT project_id,plan_json FROM eco_analyses WHERE analysis_id=?",
+            "SELECT project_id,analysis_kind,state,plan_json FROM eco_analyses WHERE analysis_id=?",
             (result.analysis_id,),
         ).fetchone()
         if analysis is None:
             raise KeyError(result.analysis_id)
+        if analysis["state"] != AnalysisState.COMPLETED.value:
+            raise ValueError(
+                "reference comparison result requires a completed baseline direct ensemble"
+            )
+        if analysis["analysis_kind"] != "REFERENCE":
+            raise ValueError("reference comparison result belongs to a non-reference analysis")
+        completion = self._load_reference_completion_intent(
+            connection,
+            analysis_id=result.analysis_id,
+        )
+        if completion is None or completion[1].get("plan_id") != result.plan_id:
+            raise ValueError("reference comparison result has no terminal producer identity")
         analysis_plan = ConnectivityRunPlan.model_validate_json(str(analysis["plan_json"]))
         model_row = connection.execute(
             "SELECT bundle_sha256,bundle_json FROM eco_analysis_models WHERE analysis_id=?",
@@ -3493,6 +4801,65 @@ class EcoProjectStore:
             raise ValueError(
                 "reference plan or result differs from its analysis, revision, model, or engine"
             )
+        try:
+            canonical_plan = build_reference_comparison_plan(
+                bundle=bundle,
+                analysis_id=reference_plan.analysis_id,
+                engine_manifest_sha256=reference_plan.engine_manifest_sha256,
+                created_at=reference_plan.created_at,
+            )
+        except ValueError as exc:
+            raise ValueError(
+                "reference plan cannot be reconstructed from its immutable model snapshot"
+            ) from exc
+        if reference_plan != canonical_plan:
+            raise ValueError(
+                "stored reference plan is not the canonical complete No Action binding ensemble"
+            )
+
+        expected_direct_subjects = {
+            (portfolio.portfolio_id, scenario_id)
+            for portfolio in analysis_plan.portfolios
+            for scenario_id in analysis_plan.scenario_ids
+        }
+        job_rows = connection.execute(
+            "SELECT direct_job_id,portfolio_id,scenario_id,phase,state "
+            "FROM eco_direct_jobs WHERE analysis_id=? ORDER BY sequence_number",
+            (result.analysis_id,),
+        ).fetchall()
+        observed_job_subjects = {
+            (str(row["portfolio_id"]), str(row["scenario_id"])) for row in job_rows
+        }
+        if (
+            observed_job_subjects != expected_direct_subjects
+            or len(job_rows) != len(expected_direct_subjects)
+            or any(
+                row["phase"] != "MATRIX" or row["state"] != DirectJobState.SUCCEEDED.value
+                for row in job_rows
+            )
+        ):
+            raise ValueError(
+                "reference result requires exact successful durable coverage of its run plan"
+            )
+        run_rows = connection.execute(
+            "SELECT direct_run_id,portfolio_id,scenario_id FROM eco_analysis_runs "
+            "WHERE analysis_id=? ORDER BY direct_run_id",
+            (result.analysis_id,),
+        ).fetchall()
+        observed_run_subjects = {
+            (str(row["portfolio_id"]), str(row["scenario_id"])) for row in run_rows
+        }
+        if (
+            observed_run_subjects != expected_direct_subjects
+            or len(run_rows) != len(expected_direct_subjects)
+            or {str(row["direct_job_id"]) for row in job_rows}
+            != {str(row["direct_run_id"]) for row in run_rows}
+        ):
+            raise ValueError(
+                "reference result requires one exact durable run for every planned job"
+            )
+        for run_row in run_rows:
+            verified_direct_run(str(run_row["direct_run_id"]))
 
         scenarios = {item.scenario_id: item for item in bundle.scenarios}
         planned_binding_ids = set(reference_plan.binding_ids)
@@ -3589,6 +4956,7 @@ class EcoProjectStore:
                 reference_matrix_bytes,
                 prepared_pairs,
             )
+            current_asset = None
             if comparison.reference_current_asset_id is not None:
                 current_asset, _ = verify_asset_bytes(
                     comparison.reference_current_asset_id,
@@ -3602,24 +4970,10 @@ class EcoProjectStore:
             elif comparison.reference_current_sha256 is not None:
                 raise ValueError("reference current hash has no reviewed source asset")
 
-            run_row = connection.execute(
-                "SELECT analysis_id,portfolio_id,scenario_id,state,model_run_cache_key,"
-                "result_sha256,payload_json "
-                "FROM eco_analysis_runs WHERE direct_run_id=?",
-                (comparison.direct_run_id,),
-            ).fetchone()
-            if run_row is None:
-                raise ValueError("reference comparison direct run is not stored")
-            run = DirectConnectivityRun.model_validate_json(str(run_row["payload_json"]))
+            verified_run = verified_direct_run(comparison.direct_run_id)
+            run = verified_run.run
             if (
-                run_row["state"] != "SUCCEEDED"
-                or run.state.value != "SUCCEEDED"
-                or run_row["analysis_id"] != result.analysis_id
-                or run_row["portfolio_id"] != analysis_plan.baseline_portfolio_id
-                or run_row["scenario_id"] != scenario_id
-                or run_row["model_run_cache_key"] != run.model_run_cache_key
-                or run_row["result_sha256"] != run.result_sha256
-                or run.analysis_id != result.analysis_id
+                run.analysis_id != result.analysis_id
                 or run.revision_id != result.revision_id
                 or run.portfolio_id != analysis_plan.baseline_portfolio_id
                 or run.scenario_id != scenario_id
@@ -3634,33 +4988,7 @@ class EcoProjectStore:
                 raise ValueError(
                     "reference comparison differs from its exact stored successful direct run"
                 )
-            direct_job_row = connection.execute(
-                "SELECT direct_job_id,analysis_id,portfolio_id,scenario_id,phase,state,"
-                "model_run_cache_key,prepared_json,terminal_sha256,completed_at "
-                "FROM eco_direct_jobs WHERE direct_job_id=?",
-                (run.direct_run_id,),
-            ).fetchone()
-            if direct_job_row is None:
-                raise ValueError(
-                    "reference comparison direct run has no successful durable direct job"
-                )
-            prepared_json = direct_job_row["prepared_json"]
-            terminal_sha256 = direct_job_row["terminal_sha256"]
-            if (
-                direct_job_row["analysis_id"] != run.analysis_id
-                or direct_job_row["portfolio_id"] != run.portfolio_id
-                or direct_job_row["scenario_id"] != run.scenario_id
-                or direct_job_row["phase"] != "MATRIX"
-                or direct_job_row["state"] != DirectJobState.SUCCEEDED.value
-                or direct_job_row["model_run_cache_key"] != run.model_run_cache_key
-                or not isinstance(prepared_json, str)
-                or not re.fullmatch(r"[0-9a-f]{64}", str(terminal_sha256 or ""))
-                or direct_job_row["completed_at"] is None
-            ):
-                raise ValueError(
-                    "reference comparison direct run differs from its terminal durable job"
-                )
-            prepared = PreparedConnectivityRun.model_validate_json(prepared_json)
+            prepared = verified_run.prepared
             if (
                 prepared.prepared_run_id != run.direct_run_id
                 or prepared.analysis_id != run.analysis_id
@@ -3675,68 +5003,13 @@ class EcoProjectStore:
                     "reference comparison prepared evidence differs from its direct run"
                 )
             run_metrics = {item.pair_id: item.effective_resistance for item in run.pair_metrics}
-            stored_metric_rows = connection.execute(
-                "SELECT pair_id,effective_resistance,units FROM eco_run_metrics "
-                "WHERE direct_run_id=? ORDER BY pair_id",
-                (run.direct_run_id,),
-            ).fetchall()
-            stored_metrics = {
-                str(item["pair_id"]): float(item["effective_resistance"])
-                for item in stored_metric_rows
-                if item["units"] == "effective_resistance"
-            }
-            qa_row = connection.execute(
-                "SELECT status,findings_json FROM eco_run_qa WHERE direct_run_id=?",
-                (run.direct_run_id,),
-            ).fetchone()
-            if qa_row is not None and str(qa_row["findings_json"]) != canonical_json(
-                run.qa_findings
-            ):
-                raise ValueError(
-                    "reference comparison direct-run QA findings differ from its retained QA "
-                    "evidence"
-                )
-            artifact_row = connection.execute(
-                "SELECT sha256,byte_size,cas_relative_path FROM eco_run_artifacts "
-                "WHERE direct_run_id=? AND role='matrix'",
-                (run.direct_run_id,),
-            ).fetchone()
-            run_artifact_rows = connection.execute(
-                "SELECT role,sha256,byte_size,cas_relative_path,media_type "
-                "FROM eco_run_artifacts WHERE direct_run_id=? ORDER BY role",
-                (run.direct_run_id,),
-            ).fetchall()
-            terminal_artifact_rows = connection.execute(
-                "SELECT role,sha256,byte_size,cas_relative_path,media_type "
-                "FROM eco_terminal_job_artifacts WHERE direct_job_id=? ORDER BY role",
-                (run.direct_run_id,),
-            ).fetchall()
-            run_artifact_tuples = [tuple(item) for item in run_artifact_rows]
-            terminal_artifact_tuples = [tuple(item) for item in terminal_artifact_rows]
-            run_artifacts_by_role = {str(item["role"]): dict(item) for item in run_artifact_rows}
-            if (
-                len(stored_metrics) != len(stored_metric_rows)
-                or stored_metrics != run_metrics
-                or qa_row is None
-                or qa_row["status"] != run.qa_status.value
-                or artifact_row is None
-                or artifact_row["sha256"] != run.matrix_sha256
-                or not run_artifact_tuples
-                or run_artifact_tuples != terminal_artifact_tuples
-                or run_artifacts_by_role.get("request", {}).get("sha256") != run.input_sha256
-                or run_artifacts_by_role.get("result_protocol", {}).get("sha256")
-                != run.result_sha256
-            ):
-                raise ValueError(
-                    "reference comparison direct run lacks authoritative metrics, QA, or matrix"
-                )
-            try:
-                observed_matrix_path = contained_path(
-                    self.root,
-                    str(artifact_row["cas_relative_path"]),
-                )
-            except PathSecurityError as exc:
-                raise ValueError("direct-run matrix artifact escapes the project") from exc
+            artifact_row = next(
+                (item for item in verified_run.artifacts if item["role"] == "matrix"),
+                None,
+            )
+            if artifact_row is None or artifact_row["sha256"] != run.matrix_sha256:
+                raise ValueError("reference comparison direct run has no exact matrix artifact")
+            observed_matrix_path = verified_run.artifact_paths_by_role["matrix"]
             observed_matrix_bytes = _read_verified_regular_file(
                 observed_matrix_path,
                 expected_sha256=run.matrix_sha256,
@@ -3760,7 +5033,7 @@ class EcoProjectStore:
                 raise ValueError(
                     "reference comparison does not cover the complete direct-run focal-pair set"
                 )
-            if run_metrics != parsed_observed or stored_metrics != parsed_observed:
+            if run_metrics != parsed_observed:
                 raise ValueError(
                     "stored direct metrics differ from the exact retained matrix bytes"
                 )
@@ -3785,26 +5058,50 @@ class EcoProjectStore:
                 )
                 canonical_pairs.append(canonical_pair)
                 pair_comparison_by_subject[(scenario_id, pair_id)] = canonical_pair
-            canonical_comparison = type(comparison).model_validate(
-                {
-                    **comparison.model_dump(mode="json"),
-                    "pair_comparisons": [item.model_dump(mode="json") for item in canonical_pairs],
-                    "qa_status": run.qa_status.value,
-                    "limitations": list(
-                        dict.fromkeys(
-                            [
-                                *binding.limitations,
-                                CURRENT_RASTER_LIMITATION,
-                                FITNESS_LIMITATION,
-                            ]
-                        )
-                    ),
-                    "status": (
-                        "PASSED"
-                        if all(item.within_tolerance for item in canonical_pairs)
-                        else "FAILED"
-                    ),
-                }
+            canonical_comparison = ReferenceScenarioComparison(
+                comparison_id=reference_scenario_comparison_id(
+                    plan_id=reference_plan.plan_id,
+                    binding_id=binding.binding_id,
+                    scenario_id=scenario_id,
+                    direct_run_id=run.direct_run_id,
+                    result_sha256=run.result_sha256,
+                    reference_matrix_sha256=matrix_asset.sha256,
+                ),
+                analysis_id=reference_plan.analysis_id,
+                revision_id=reference_plan.revision_id,
+                model_sha256=reference_plan.model_sha256,
+                binding_id=binding.binding_id,
+                scenario_id=scenario_id,
+                direct_run_id=run.direct_run_id,
+                reference_matrix_asset_id=matrix_asset.asset_id,
+                reference_matrix_sha256=matrix_asset.sha256,
+                observed_matrix_sha256=run.matrix_sha256,
+                engine_manifest_sha256=run.engine_manifest_sha256,
+                tolerance=binding.tolerance,
+                pair_comparisons=canonical_pairs,
+                qa_status=run.qa_status,
+                status=(
+                    "PASSED" if all(item.within_tolerance for item in canonical_pairs) else "FAILED"
+                ),
+                reference_current_asset_id=(
+                    current_asset.asset_id if current_asset is not None else None
+                ),
+                reference_current_sha256=(
+                    current_asset.sha256 if current_asset is not None else None
+                ),
+                current_raster_disposition=binding.current_raster_disposition,
+                current_raster_numeric_comparison_performed=False,
+                exact_direct_evidence_only=True,
+                completed_at=run.completed_at,
+                limitations=list(
+                    dict.fromkeys(
+                        [
+                            *binding.limitations,
+                            CURRENT_RASTER_LIMITATION,
+                            FITNESS_LIMITATION,
+                        ]
+                    )
+                ),
             )
             if canonical_json(comparison.model_dump(mode="json")) != canonical_json(
                 canonical_comparison.model_dump(mode="json")
@@ -3816,43 +5113,45 @@ class EcoProjectStore:
             run_by_scenario[scenario_id] = run
             matrix_asset_by_scenario[scenario_id] = matrix_asset
 
-        canonical_result = ReferenceComparisonResult.model_validate(
-            {
-                **result.model_dump(mode="json"),
-                "scenario_comparisons": [
-                    canonical_comparisons[scenario_id].model_dump(mode="json")
-                    for scenario_id in sorted(canonical_comparisons)
-                ],
-                "status": (
-                    "PASSED"
-                    if all(item.status == "PASSED" for item in canonical_comparisons.values())
-                    else "FAILED"
-                ),
-                "evidence_claim_links": [
-                    item.model_dump(mode="json")
-                    for item in sorted(
-                        result.evidence_claim_links,
-                        key=lambda item: (
-                            item.scenario_id,
-                            item.pair_id,
-                            item.comparison_id,
-                            item.direct_run_id,
-                            item.claim_id,
-                        ),
-                    )
-                ],
-            }
+        ordered_comparisons = sorted(
+            canonical_comparisons.values(),
+            key=lambda item: (item.scenario_id, item.binding_id, item.comparison_id),
+        )
+        canonical_links = reference_evidence_claim_links(ordered_comparisons)
+        canonical_result = assemble_reference_comparison_result(
+            result_id=reference_result_id(
+                plan_id=reference_plan.plan_id,
+                comparisons=ordered_comparisons,
+                claim_links=canonical_links,
+            ),
+            plan=reference_plan,
+            scenario_comparisons=ordered_comparisons,
+            evidence_claim_links=canonical_links,
+            completed_at=max(item.completed_at for item in ordered_comparisons),
+            limitations=[
+                limitation
+                for comparison in ordered_comparisons
+                for limitation in comparison.limitations
+            ],
         )
         if canonical_json(result.model_dump(mode="json")) != canonical_json(
             canonical_result.model_dump(mode="json")
         ):
             raise ValueError(
-                "reference result ordering or status differs from canonical direct evidence"
+                "reference result identity, time, links, limitations, ordering, or status differs "
+                "from canonical direct evidence"
+            )
+
+        links_by_claim_id = {item.claim_id: item for item in canonical_links}
+        if set(claims_by_id) != set(links_by_claim_id):
+            raise ValueError(
+                "reference comparison claims differ from its authoritative evidence links"
             )
 
         for claim_id, link in links_by_claim_id.items():
             claim = claims_by_id[claim_id]
             validate_evidence_claim(claim)
+            canonical_claim_text = "Direct Circuitscape result under documented assumptions."
             comparison = canonical_comparisons.get(link.scenario_id)
             pair_comparison = pair_comparison_by_subject.get((link.scenario_id, link.pair_id))
             run = run_by_scenario.get(link.scenario_id)
@@ -3863,6 +5162,7 @@ class EcoProjectStore:
                 link.comparison_id != comparison.comparison_id
                 or link.direct_run_id != comparison.direct_run_id
                 or claim.claim_kind != "DIRECT_REFERENCE_COMPARISON"
+                or claim.text != canonical_claim_text
                 or claim.root_node_id != claim.claim_id
                 or claim.portfolio_id != analysis_plan.baseline_portfolio_id
                 or claim.scenario_id != link.scenario_id
@@ -3898,7 +5198,7 @@ class EcoProjectStore:
                 EvidenceNode(
                     node_id=claim.claim_id,
                     node_type="CLAIM",
-                    label=claim.text,
+                    label=canonical_claim_text,
                 ),
                 EvidenceNode(
                     node_id=comparison_node_id,
@@ -4102,8 +5402,9 @@ class EcoProjectStore:
     ) -> dict[str, Any]:
         """Atomically persist a direct reference result, its claims, and outbox event."""
 
-        # Canonical revalidation happens again inside the transaction so an
-        # invalid ``model_copy`` cannot reach either science or telemetry rows.
+        # Canonical model validation and descriptor-heavy evidence verification
+        # happen before the write transaction. The commit compares a lightweight
+        # identity seal over every immutable database input.
         result = ReferenceComparisonResult.model_validate(result.model_dump(mode="json"))
         claims = tuple(
             ConnectivityEvidenceClaim.model_validate(item.model_dump(mode="json"))
@@ -4117,21 +5418,36 @@ class EcoProjectStore:
         if len(claim_json_by_id) != len(claims):
             raise ValueError("reference comparison contains duplicate evidence claim IDs")
         links_by_id = {item.claim_id: item for item in result.evidence_claim_links}
+        reference_plan, validation_seal = self._preflight_reference_result(
+            result=result,
+            claims=claims,
+        )
+        plan_sha256 = hashlib.sha256(
+            canonical_json(reference_plan.model_dump(mode="json")).encode("utf-8")
+        ).hexdigest()
+        project_id = validation_seal.project_id
+        claims_by_id = validation_seal.claims_by_id
         with self.transaction() as connection:
-            reference_plan = self._load_reference_comparison_plan(
+            committed_plan = self._load_reference_comparison_plan(
                 connection,
                 plan_id=result.plan_id,
                 analysis_id=result.analysis_id,
             )
-            plan_sha256 = hashlib.sha256(
-                canonical_json(reference_plan.model_dump(mode="json")).encode("utf-8")
-            ).hexdigest()
-            project_id, claims_by_id = self._validate_reference_comparison_evidence(
+            completion = self._load_reference_completion_intent(
                 connection,
-                reference_plan=reference_plan,
-                result=result,
-                claims=claims,
+                analysis_id=result.analysis_id,
             )
+            if (
+                committed_plan != reference_plan
+                or completion is None
+                or completion[1].get("plan_id") != result.plan_id
+                or self._reference_persistence_sha256(
+                    connection,
+                    analysis_id=result.analysis_id,
+                )
+                != validation_seal.persistence_sha256
+            ):
+                raise ValueError("reference evidence changed before atomic result commit")
             existing = connection.execute(
                 "SELECT * FROM eco_reference_comparison_results WHERE result_id=?",
                 (result.result_id,),
@@ -4342,6 +5658,40 @@ class EcoProjectStore:
             )
             return result, claims
 
+    def reference_comparison_results(
+        self,
+        *,
+        analysis_id: str | None = None,
+        revision_id: str | None = None,
+        model_sha256: str | None = None,
+        engine_manifest_sha256: str | None = None,
+        exclude_result_ids: Sequence[str] = (),
+    ) -> list[tuple[ReferenceComparisonResult, list[ConnectivityEvidenceClaim]]]:
+        """List immutable reference results through the full validated read path."""
+
+        clauses: list[str] = []
+        parameters: list[str] = []
+        for column, value in (
+            ("analysis_id", analysis_id),
+            ("revision_id", revision_id),
+            ("model_sha256", model_sha256),
+            ("engine_manifest_sha256", engine_manifest_sha256),
+        ):
+            if value is not None:
+                clauses.append(f"{column}=?")
+                parameters.append(value)
+        excluded = sorted(set(exclude_result_ids))
+        if excluded:
+            clauses.append(f"result_id NOT IN ({','.join('?' for _ in excluded)})")
+            parameters.extend(excluded)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._lock:
+            rows = self._connection.execute(
+                f"SELECT result_id FROM eco_reference_comparison_results{where} ORDER BY result_id",
+                parameters,
+            ).fetchall()
+            return [self.reference_comparison_result(str(row["result_id"])) for row in rows]
+
     def store_results(
         self,
         analysis_id: str,
@@ -4377,11 +5727,14 @@ class EcoProjectStore:
             raise ValueError("completed analysis requires portfolio summaries")
         with self.transaction() as connection:
             analysis = connection.execute(
-                "SELECT project_id,state,plan_json FROM eco_analyses WHERE analysis_id=?",
+                "SELECT project_id,analysis_kind,state,plan_json FROM eco_analyses "
+                "WHERE analysis_id=?",
                 (analysis_id,),
             ).fetchone()
             if analysis is None or analysis["state"] != AnalysisState.RUNNING.value:
                 raise ValueError("analysis completion requires a running authoritative analysis")
+            if analysis["analysis_kind"] != "ALTERNATIVES":
+                raise ValueError("reference analyses require reference completion semantics")
             plan = ConnectivityRunPlan.model_validate(json.loads(analysis["plan_json"]))
             rows = connection.execute(
                 "SELECT direct_run_id,portfolio_id,scenario_id,payload_json "
@@ -4488,23 +5841,291 @@ class EcoProjectStore:
         ]
         return runs, summaries, claims
 
-    def evidence_claim(self, claim_id: str) -> ConnectivityEvidenceClaim:
-        row = self._connection.execute(
-            "SELECT payload_json FROM eco_evidence_claims WHERE claim_id=?", (claim_id,)
-        ).fetchone()
-        if row is None:
+    def _evidence_claim_owner(self, claim_id: str) -> tuple[str, sqlite3.Row]:
+        ordinary = self._connection.execute(
+            "SELECT analysis_id,payload_json,NULL AS payload_sha256,NULL AS result_id "
+            "FROM eco_evidence_claims WHERE claim_id=?",
+            (claim_id,),
+        ).fetchall()
+        reference = self._connection.execute(
+            "SELECT analysis_id,payload_json,payload_sha256,result_id "
+            "FROM eco_reference_comparison_claims WHERE claim_id=?",
+            (claim_id,),
+        ).fetchall()
+        owners = [("ORDINARY", row) for row in ordinary] + [("REFERENCE", row) for row in reference]
+        if not owners:
             raise KeyError(claim_id)
-        return ConnectivityEvidenceClaim.model_validate(json.loads(row["payload_json"]))
+        if len(owners) != 1:
+            raise ValueError("evidence claim identity is ambiguous across authoritative stores")
+        return owners[0]
+
+    @staticmethod
+    def _validated_claim_row(row: sqlite3.Row, *, reference: bool) -> ConnectivityEvidenceClaim:
+        payload_json = str(row["payload_json"])
+        if reference:
+            payload_sha256 = str(row["payload_sha256"] or "")
+            if hashlib.sha256(payload_json.encode("utf-8")).hexdigest() != payload_sha256:
+                raise ValueError("reference evidence claim failed its immutable checksum")
+        claim = ConnectivityEvidenceClaim.model_validate_json(payload_json)
+        if canonical_json(claim.model_dump(mode="json")) != payload_json:
+            raise ValueError("evidence claim payload is not canonical immutable evidence")
+        return claim
+
+    def evidence_claim(self, claim_id: str) -> ConnectivityEvidenceClaim:
+        with self._lock:
+            owner, row = self._evidence_claim_owner(claim_id)
+            claim = self._validated_claim_row(row, reference=owner == "REFERENCE")
+            if owner == "REFERENCE":
+                result, claims = self.reference_comparison_result(str(row["result_id"]))
+                del result
+                authoritative = {item.claim_id: item for item in claims}
+                if authoritative.get(claim_id) != claim:
+                    raise ValueError(
+                        "reference evidence claim differs from its authoritative comparison result"
+                    )
+            return claim
 
     def evidence_claim_analysis_id(self, claim_id: str) -> str:
         """Return the authoritative analysis that owns a persisted evidence claim."""
 
-        row = self._connection.execute(
-            "SELECT analysis_id FROM eco_evidence_claims WHERE claim_id=?", (claim_id,)
+        with self._lock:
+            owner, row = self._evidence_claim_owner(claim_id)
+            claim = self._validated_claim_row(row, reference=owner == "REFERENCE")
+            if claim.claim_id != claim_id:
+                raise ValueError("evidence claim row has a different immutable identity")
+            if owner == "REFERENCE":
+                self.reference_comparison_result(str(row["result_id"]))
+            return str(row["analysis_id"])
+
+    def _resolve_reference_evidence_claim(
+        self,
+        claim_id: str,
+        claim_row: sqlite3.Row,
+    ) -> dict[str, Any]:
+        """Build one renderer-safe, fully revalidated reference Evidence Rail."""
+
+        result, claims = self.reference_comparison_result(str(claim_row["result_id"]))
+        claims_by_id = {item.claim_id: item for item in claims}
+        claim = claims_by_id.get(claim_id)
+        if claim is None or claim != self._validated_claim_row(claim_row, reference=True):
+            raise ValueError("reference claim is detached from its comparison result")
+        link = next(
+            (item for item in result.evidence_claim_links if item.claim_id == claim_id),
+            None,
+        )
+        if link is None:
+            raise ValueError("reference claim has no authoritative comparison link")
+        comparison = next(
+            (
+                item
+                for item in result.scenario_comparisons
+                if item.comparison_id == link.comparison_id
+                and item.scenario_id == link.scenario_id
+                and item.direct_run_id == link.direct_run_id
+            ),
+            None,
+        )
+        if comparison is None:
+            raise ValueError("reference claim comparison link is detached from its result")
+        pair_comparison = next(
+            (item for item in comparison.pair_comparisons if item.pair_id == link.pair_id),
+            None,
+        )
+        if pair_comparison is None or (
+            type(claim.value) is not bool
+            or claim.value != pair_comparison.within_tolerance
+            or claim.units != "within_tolerance"
+        ):
+            raise ValueError("reference claim value differs from its exact pair comparison")
+
+        reference_plan, reference_plan_sha256 = self.reference_comparison_plan(
+            result.plan_id,
+            analysis_id=result.analysis_id,
+        )
+        result_payload_sha256 = hashlib.sha256(
+            canonical_json(result.model_dump(mode="json")).encode("utf-8")
+        ).hexdigest()
+        verified = self.verify_authoritative_direct_run(
+            link.direct_run_id,
+            expected_analysis_id=result.analysis_id,
+        )
+        run = verified.run
+        bundle = self.analysis_bundle(result.analysis_id)
+        scenarios = {item.scenario_id: item for item in bundle.scenarios}
+        scenario = scenarios.get(link.scenario_id)
+        if scenario is None or verified.prepared.scenario != scenario:
+            raise ValueError("reference claim scenario differs from its immutable model snapshot")
+        model_row = self._connection.execute(
+            "SELECT bundle_sha256 FROM eco_analysis_models WHERE analysis_id=?",
+            (result.analysis_id,),
         ).fetchone()
-        if row is None:
-            raise KeyError(claim_id)
-        return str(row["analysis_id"])
+        if model_row is None:
+            raise ValueError("reference claim has no immutable model snapshot")
+
+        artifacts = [
+            {
+                "artifact_id": f"artifact:{run.direct_run_id}:{item['role']}",
+                "direct_run_id": run.direct_run_id,
+                "role": str(item["role"]),
+                "sha256": str(item["sha256"]),
+                "byte_size": int(item["byte_size"]),
+                "media_type": str(item["media_type"]),
+            }
+            for item in verified.artifacts
+        ]
+        prepared_run = {
+            "prepared_run_id": verified.prepared.prepared_run_id,
+            "direct_run_id": run.direct_run_id,
+            "portfolio_id": run.portfolio_id,
+            "scenario_id": run.scenario_id,
+            "phase": "MATRIX",
+            "action_raster_sha256": verified.prepared.action_raster_sha256,
+            "footprint_proof_sha256": verified.prepared.footprint_proof_sha256,
+            "engine_manifest_sha256": verified.prepared.engine_manifest_sha256,
+            "model_run_cache_key": verified.prepared.model_run_cache_key,
+            "emit_current_map": verified.prepared.emit_current_map,
+            "cached": verified.cached,
+            "resources": [
+                {
+                    "logical_name": item.logical_name,
+                    "sha256": item.sha256,
+                    "target_filename": item.target_filename,
+                }
+                for item in verified.prepared.resources
+            ],
+        }
+
+        asset_ids = {
+            comparison.reference_matrix_asset_id,
+            *(
+                [comparison.reference_current_asset_id]
+                if comparison.reference_current_asset_id is not None
+                else []
+            ),
+        }
+        for node in (*verified.evidence_nodes, *claim.model_dump(mode="json")["nodes"]):
+            if node.get("node_type") != "ASSET":
+                continue
+            node_id = str(node.get("node_id", ""))
+            asset_id = node_id.removeprefix("asset:")
+            if asset_id and asset_id != node_id:
+                asset_ids.add(asset_id)
+            attributed_id = node.get("attributes", {}).get("asset_id")
+            if isinstance(attributed_id, str) and attributed_id:
+                asset_ids.add(attributed_id)
+        resource_hashes = {item.sha256 for item in verified.prepared.resources}
+        asset_ids.update(item.asset_id for item in bundle.assets if item.sha256 in resource_hashes)
+        assets_by_id = {item.asset_id: item for item in bundle.assets}
+        source_assets: list[dict[str, Any]] = []
+        for asset_id in sorted(asset_ids):
+            asset = assets_by_id.get(asset_id)
+            if asset is None:
+                raise ValueError("reference evidence graph names an unavailable source asset")
+            retained = self.resolve_asset_path(asset.relative_path)
+            _read_verified_regular_file(
+                retained,
+                expected_sha256=asset.sha256,
+                expected_byte_size=asset.byte_size,
+                capture_bytes=False,
+            )
+            authorization = asset.authorization
+            source_assets.append(
+                {
+                    "asset_id": asset.asset_id,
+                    "kind": asset.kind.value,
+                    "title": asset.title,
+                    "sha256": asset.sha256,
+                    "byte_size": asset.byte_size,
+                    "media_type": asset.media_type,
+                    "vintage": asset.vintage,
+                    "license": asset.license,
+                    "authorization": {
+                        "asset_id": authorization.asset_id,
+                        "ownership": authorization.ownership,
+                        "license_spdx_or_name": authorization.license_spdx_or_name,
+                        "sensitivity": authorization.sensitivity.value,
+                        "cloud_disposition": authorization.cloud_disposition.value,
+                        "export_allowed": authorization.export_allowed,
+                        "retention_policy": authorization.retention_policy,
+                        "spatial_redaction": authorization.spatial_redaction,
+                        "approved_deployments": authorization.approved_deployments,
+                        "reviewer": authorization.reviewer,
+                        "reviewed_at": authorization.reviewed_at.isoformat(),
+                        "generalized_asset_id": authorization.generalized_asset_id,
+                    },
+                }
+            )
+
+        cloud_references: dict[str, Any] | None = None
+        for row in reversed(
+            self.telemetry_rows(
+                event_type="reference_comparison",
+                analysis_id=result.analysis_id,
+                subject_id=result.result_id,
+            )
+        ):
+            reference = row.get("external_reference")
+            if row.get("state") != "SYNCED" or not isinstance(reference, dict):
+                continue
+            try:
+                receipt = CloudUploadReceipt.model_validate(reference)
+            except (TypeError, ValueError):
+                continue
+            if receipt.envelope_id != row["outbox_id"]:
+                continue
+            cloud_references = {
+                "state": "SYNCED",
+                "analysis_run_id": receipt.run_id,
+                "artifacts": [
+                    {
+                        "local_artifact_id": item.local_artifact_id,
+                        "provider_artifact_id": item.provider_artifact_id,
+                        "provider_artifact_ref": item.provider_artifact_ref,
+                        "sha256": item.sha256,
+                    }
+                    for item in receipt.artifacts
+                ],
+            }
+            break
+
+        projection = {
+            "claim": claim.model_dump(mode="json"),
+            "analysis_id": result.analysis_id,
+            "analysis_plan_sha256": canonical_sha256(
+                reference_plan.run_plan.model_dump(mode="json")
+            ),
+            "model_revision": bundle.revision.model_dump(mode="json"),
+            "model_bundle_sha256": str(model_row["bundle_sha256"]),
+            "reference_plan": reference_plan.model_dump(mode="json"),
+            "reference_plan_sha256": reference_plan_sha256,
+            "reference_result": result.model_dump(mode="json"),
+            "reference_result_sha256": result_payload_sha256,
+            "reference_comparison": comparison.model_dump(mode="json"),
+            "reference_pair_comparison": pair_comparison.model_dump(mode="json"),
+            "reference_matrix_parser_sha256": REFERENCE_MATRIX_PARSER_SHA256,
+            "reference_claim_link": link.model_dump(mode="json"),
+            "direct_runs": [{**run.model_dump(mode="json"), "role": "REFERENCE_BASELINE"}],
+            "baseline_runs": [{**run.model_dump(mode="json"), "role": "REFERENCE_BASELINE"}],
+            "portfolio_runs": [],
+            "prepared_runs": [prepared_run],
+            "artifact_records": artifacts,
+            "map_descriptors": [],
+            "source_assets": source_assets,
+            "scenarios": [scenario.model_dump(mode="json")],
+            "engine_manifest_sha256": result.engine_manifest_sha256,
+            "qa_records": [
+                {
+                    "direct_run_id": run.direct_run_id,
+                    "status": verified.qa_status.value,
+                    "findings": list(verified.qa_findings),
+                }
+            ],
+            "assumptions": [node.label for node in claim.nodes if node.node_type == "ASSUMPTION"],
+            "cloud_references": cloud_references,
+            "limitations": claim.limitations,
+        }
+        _assert_renderer_safe(projection)
+        return projection
 
     def resolve_evidence_claim(self, claim_id: str) -> dict[str, Any]:
         """Resolve a claim against retained authoritative rows and verified bytes.
@@ -4515,32 +6136,20 @@ class EcoProjectStore:
         the Evidence Rail cannot present a graph detached from the local record.
         """
 
-        row = self._connection.execute(
-            "SELECT analysis_id,payload_json FROM eco_evidence_claims WHERE claim_id=?",
-            (claim_id,),
-        ).fetchone()
-        if row is None:
-            raise KeyError(claim_id)
+        owner, row = self._evidence_claim_owner(claim_id)
+        if owner == "REFERENCE":
+            return self._resolve_reference_evidence_claim(claim_id, row)
         analysis_id = str(row["analysis_id"])
-        claim = ConnectivityEvidenceClaim.model_validate(json.loads(row["payload_json"]))
+        claim = self._validated_claim_row(row, reference=False)
         validate_evidence_claim(claim)
-        if claim.direct_run_ids:
-            placeholders = ",".join("?" for _ in claim.direct_run_ids)
-            run_rows = self._connection.execute(
-                "SELECT direct_run_id,payload_json FROM eco_analysis_runs "
-                f"WHERE analysis_id=? AND direct_run_id IN ({placeholders})",
-                (analysis_id, *claim.direct_run_ids),
-            ).fetchall()
-        else:
-            run_rows = []
-        run_by_id = {
-            str(item["direct_run_id"]): DirectConnectivityRun.model_validate(
-                json.loads(item["payload_json"])
+        verified_by_id = {
+            direct_run_id: self.verify_authoritative_direct_run(
+                direct_run_id,
+                expected_analysis_id=analysis_id,
             )
-            for item in run_rows
+            for direct_run_id in claim.direct_run_ids
         }
-        if set(run_by_id) != set(claim.direct_run_ids):
-            raise ValueError("evidence claim references missing authoritative direct runs")
+        run_by_id = {key: item.run for key, item in verified_by_id.items()}
 
         analysis = self.analysis(analysis_id)
         plan = ConnectivityRunPlan.model_validate(analysis["plan"])
@@ -4552,18 +6161,9 @@ class EcoProjectStore:
         artifact_paths: dict[tuple[str, str], Path] = {}
         map_descriptors: list[dict[str, Any]] = []
         for direct_run_id in claim.direct_run_ids:
-            for artifact in self.run_artifacts(direct_run_id):
-                try:
-                    path = contained_path(self.root, str(artifact["cas_relative_path"]))
-                except PathSecurityError as exc:
-                    raise ValueError("evidence artifact path escapes the project") from exc
-                if (
-                    not path.is_file()
-                    or path.is_symlink()
-                    or path.stat().st_size != int(artifact["byte_size"])
-                    or _sha256_file(path) != str(artifact["sha256"])
-                ):
-                    raise ValueError("retained evidence artifact failed integrity verification")
+            verified = verified_by_id[direct_run_id]
+            for artifact in verified.artifacts:
+                path = verified.artifact_paths_by_role[str(artifact["role"])]
                 public_record = {
                     "artifact_id": f"artifact:{direct_run_id}:{artifact['role']}",
                     "direct_run_id": direct_run_id,
@@ -4589,27 +6189,38 @@ class EcoProjectStore:
                         }
                     )
 
-        asset_ids = sorted(
-            {
-                node.node_id.removeprefix("asset:")
-                for node in claim.nodes
-                if node.node_type == "ASSET" and node.node_id.startswith("asset:")
-            }
-        )
+        asset_ids = {
+            node.node_id.removeprefix("asset:")
+            for node in claim.nodes
+            if node.node_type == "ASSET" and node.node_id.startswith("asset:")
+        }
+        for verified in verified_by_id.values():
+            for node in verified.evidence_nodes:
+                if node.get("node_type") == "ASSET" and str(node.get("node_id", "")).startswith(
+                    "asset:"
+                ):
+                    asset_ids.add(str(node["node_id"]).removeprefix("asset:"))
+        resource_hashes = {
+            resource.sha256
+            for verified in verified_by_id.values()
+            for resource in verified.prepared.resources
+        }
+        asset_ids.update(item.asset_id for item in bundle.assets if item.sha256 in resource_hashes)
         assets_by_id = {item.asset_id: item for item in bundle.assets}
         source_assets: list[dict[str, Any]] = []
         source_asset_paths: dict[str, Path] = {}
-        for asset_id in asset_ids:
+        for asset_id in sorted(asset_ids):
             asset = assets_by_id.get(asset_id)
             if asset is None:
                 raise ValueError("evidence graph references an asset outside its model snapshot")
             retained = self.resolve_asset_path(asset.relative_path)
-            if (
-                retained.is_symlink()
-                or retained.stat().st_size != asset.byte_size
-                or _sha256_file(retained) != asset.sha256
-            ):
-                raise ValueError("evidence source asset failed integrity verification")
+            _read_verified_regular_file(
+                retained,
+                expected_sha256=asset.sha256,
+                expected_byte_size=asset.byte_size,
+                capture_bytes=False,
+            )
+            authorization = asset.authorization
             source_assets.append(
                 {
                     "asset_id": asset.asset_id,
@@ -4618,44 +6229,50 @@ class EcoProjectStore:
                     "sha256": asset.sha256,
                     "byte_size": asset.byte_size,
                     "media_type": asset.media_type,
-                    "source": asset.source,
                     "vintage": asset.vintage,
                     "license": asset.license,
-                    "authorization": asset.authorization.model_dump(mode="json"),
+                    "authorization": {
+                        "asset_id": authorization.asset_id,
+                        "ownership": authorization.ownership,
+                        "license_spdx_or_name": authorization.license_spdx_or_name,
+                        "sensitivity": authorization.sensitivity.value,
+                        "cloud_disposition": authorization.cloud_disposition.value,
+                        "export_allowed": authorization.export_allowed,
+                        "retention_policy": authorization.retention_policy,
+                        "spatial_redaction": authorization.spatial_redaction,
+                        "approved_deployments": authorization.approved_deployments,
+                        "reviewer": authorization.reviewer,
+                        "reviewed_at": authorization.reviewed_at.isoformat(),
+                        "generalized_asset_id": authorization.generalized_asset_id,
+                    },
                 }
             )
             source_asset_paths[asset_id] = retained
 
-        job_rows = self._connection.execute(
-            "SELECT direct_job_id,portfolio_id,scenario_id,phase,prepared_json,cached "
-            "FROM eco_direct_jobs WHERE analysis_id=?",
-            (analysis_id,),
-        ).fetchall()
         prepared_runs: list[dict[str, Any]] = []
-        for job in job_rows:
-            if str(job["direct_job_id"]) not in run_by_id or not job["prepared_json"]:
-                continue
-            prepared = json.loads(job["prepared_json"])
+        for direct_run_id in claim.direct_run_ids:
+            verified = verified_by_id[direct_run_id]
+            prepared = verified.prepared
             prepared_runs.append(
                 {
-                    "prepared_run_id": prepared["prepared_run_id"],
-                    "direct_run_id": str(job["direct_job_id"]),
-                    "portfolio_id": str(job["portfolio_id"]),
-                    "scenario_id": str(job["scenario_id"]),
-                    "phase": str(job["phase"]),
-                    "action_raster_sha256": prepared["action_raster_sha256"],
-                    "footprint_proof_sha256": prepared["footprint_proof_sha256"],
-                    "engine_manifest_sha256": prepared["engine_manifest_sha256"],
-                    "model_run_cache_key": prepared["model_run_cache_key"],
-                    "emit_current_map": bool(prepared.get("emit_current_map", False)),
-                    "cached": bool(job["cached"]),
+                    "prepared_run_id": prepared.prepared_run_id,
+                    "direct_run_id": direct_run_id,
+                    "portfolio_id": prepared.portfolio_id,
+                    "scenario_id": prepared.scenario.scenario_id,
+                    "phase": verified.phase,
+                    "action_raster_sha256": prepared.action_raster_sha256,
+                    "footprint_proof_sha256": prepared.footprint_proof_sha256,
+                    "engine_manifest_sha256": prepared.engine_manifest_sha256,
+                    "model_run_cache_key": prepared.model_run_cache_key,
+                    "emit_current_map": prepared.emit_current_map,
+                    "cached": verified.cached,
                     "resources": [
                         {
-                            "logical_name": resource["logical_name"],
-                            "sha256": resource["sha256"],
-                            "target_filename": resource["target_filename"],
+                            "logical_name": resource.logical_name,
+                            "sha256": resource.sha256,
+                            "target_filename": resource.target_filename,
                         }
-                        for resource in prepared.get("resources", [])
+                        for resource in prepared.resources
                     ],
                 }
             )
@@ -4783,7 +6400,7 @@ class EcoProjectStore:
             }
             break
 
-        return {
+        projection = {
             "claim": claim.model_dump(mode="json"),
             "analysis_id": analysis_id,
             "analysis_plan_sha256": hashlib.sha256(
@@ -4816,6 +6433,8 @@ class EcoProjectStore:
             "cloud_references": cloud_references,
             "limitations": claim.limitations,
         }
+        _assert_renderer_safe(projection)
+        return projection
 
     def set_observability(self, payload: dict[str, Any]) -> None:
         project_id = self.project()["project_id"]
@@ -5301,23 +6920,26 @@ class EcoProjectStore:
             raise ValueError("assistant trace identity resolves to multiple retained answers")
         return {"answer": json.loads(rows[0]["answer_json"]), "trace_id": rows[0]["trace_id"]}
 
-    def store_export(
+    def _validated_export_package(
         self,
-        export_id: str,
-        analysis_id: str,
-        payload: dict[str, Any],
         *,
+        export_id: str,
+        payload: dict[str, Any],
         package_files: Sequence[dict[str, Any]],
-    ) -> None:
-        """Commit export metadata and its upload envelope as one local transaction.
+        package_root: Path,
+    ) -> list[dict[str, Any]]:
+        """Validate one complete package against its final project-relative inventory.
 
-        Export bytes are created beneath ``exports/<export_id>`` before this call.  The
-        producer records only project-relative, hash-verified files; a later native
-        "save a copy" operation may copy these bytes elsewhere but is never cloud input.
+        ``package_root`` may be an unpublished staging directory or the final
+        ``exports/<export_id>`` directory.  Package-file identities always use
+        their final paths so a durable publication intent remains stable across
+        the atomic directory rename.
         """
 
         if not package_files:
             raise ValueError("an evidence export requires project-contained package files")
+        if not package_root.is_dir() or package_root.is_symlink():
+            raise ValueError("an evidence export package root is absent or unsafe")
         normalized_files: list[dict[str, Any]] = []
         seen_paths: set[str] = set()
         expected_root = PurePosixPath("exports") / export_id
@@ -5343,7 +6965,11 @@ class EcoProjectStore:
                 or relative.as_posix() in seen_paths
             ):
                 raise ValueError("export package files must be unique and recursively contained")
-            path = contained_path(self.root, relative.as_posix())
+            package_relative = relative.relative_to(expected_root)
+            try:
+                path = contained_path(package_root, package_relative.as_posix())
+            except PathSecurityError as exc:
+                raise ValueError("export package contains an unsafe evidence path") from exc
             digest = str(item.get("sha256", ""))
             byte_size = int(item.get("byte_size", -1))
             media_type = str(item.get("media_type", ""))
@@ -5355,16 +6981,11 @@ class EcoProjectStore:
                 or not media_type
             ):
                 raise ValueError("export package file differs from its committed manifest")
-            if relative.name == "manifest.json":
-                if (
-                    relative != expected_root / "manifest.json"
-                    or json.loads(path.read_text(encoding="utf-8")) != payload
-                ):
+            if package_relative == PurePosixPath("manifest.json"):
+                if json.loads(path.read_text(encoding="utf-8")) != payload:
                     raise ValueError("export package manifest differs from committed metadata")
-            else:
-                manifest_relative = relative.relative_to(expected_root).as_posix()
-                if manifest_files.get(manifest_relative) != digest:
-                    raise ValueError("export evidence file differs from the package manifest")
+            elif manifest_files.get(package_relative.as_posix()) != digest:
+                raise ValueError("export evidence file differs from the package manifest")
             seen_paths.add(relative.as_posix())
             normalized_files.append(
                 {
@@ -5376,6 +6997,206 @@ class EcoProjectStore:
             )
         if {PurePosixPath(item) for item in seen_paths} != expected_paths:
             raise ValueError("export package files differ from the manifest inventory")
+        return sorted(normalized_files, key=lambda item: item["relative_path"])
+
+    def prepare_export_publication(
+        self,
+        export_id: str,
+        analysis_id: str,
+        payload: dict[str, Any],
+        *,
+        package_files: Sequence[dict[str, Any]],
+        staging_relative_path: str,
+    ) -> None:
+        """Persist an immutable intent before a staged package becomes visible.
+
+        Expensive file creation and hashing happen before this short transaction.
+        Once this method returns, either the staged directory or its atomically
+        renamed final directory can be recovered and finalized after a crash.
+        """
+
+        project_id = self.project()["project_id"]
+        expected_final = PurePosixPath("exports") / export_id
+        staging_relative = PurePosixPath(staging_relative_path)
+        if (
+            staging_relative.is_absolute()
+            or staging_relative.parent != PurePosixPath("exports")
+            or not staging_relative.name.startswith(f".{export_id}.")
+            or any(part in {"", ".", ".."} for part in staging_relative.parts)
+        ):
+            raise ValueError("export staging directory identity is unsafe")
+        staging = contained_path(self.root, staging_relative.as_posix())
+        normalized_files = self._validated_export_package(
+            export_id=export_id,
+            payload=payload,
+            package_files=package_files,
+            package_root=staging,
+        )
+        if payload.get("export_id") != export_id or payload.get("project_id") != project_id:
+            raise ValueError("export publication intent differs from project identity")
+        intent = {
+            "schema_version": "ecocorridor-export-publication-intent/v1.0",
+            "export_id": export_id,
+            "analysis_id": analysis_id,
+            "project_id": project_id,
+            "staging_relative_path": staging_relative.as_posix(),
+            "final_relative_path": expected_final.as_posix(),
+            "manifest": payload,
+            "package_files": normalized_files,
+        }
+        intent_json = canonical_json(intent)
+        now = _now()
+        with self.transaction() as connection:
+            analysis = connection.execute(
+                "SELECT project_id FROM eco_analyses WHERE analysis_id=?", (analysis_id,)
+            ).fetchone()
+            if analysis is None or str(analysis["project_id"]) != project_id:
+                raise ValueError("export publication requires a local authoritative analysis")
+            completed = connection.execute(
+                "SELECT project_id,analysis_id,payload_json FROM eco_exports WHERE export_id=?",
+                (export_id,),
+            ).fetchone()
+            if completed is not None:
+                if (
+                    str(completed["project_id"]) != project_id
+                    or str(completed["analysis_id"]) != analysis_id
+                    or str(completed["payload_json"]) != canonical_json(payload)
+                ):
+                    raise ValueError("export ID was reused for different evidence")
+                retained_intent = connection.execute(
+                    "SELECT 1 FROM eco_records WHERE project_id=? "
+                    "AND record_type='export_publication_intent' AND record_id=?",
+                    (project_id, export_id),
+                ).fetchone()
+                if retained_intent is not None:
+                    return
+            self._put_record_in_transaction(
+                connection,
+                project_id=project_id,
+                record_type="export_publication_intent",
+                record_id=export_id,
+                payload_json=intent_json,
+                allow_update=False,
+                now=now,
+            )
+
+    def finalize_export_publication(self, export_id: str) -> None:
+        """Atomically commit one published package and its telemetry envelope."""
+
+        project_id = self.project()["project_id"]
+        intent = self.get_record("export_publication_intent", export_id)
+        if (
+            intent.get("schema_version") != "ecocorridor-export-publication-intent/v1.0"
+            or intent.get("export_id") != export_id
+            or intent.get("project_id") != project_id
+        ):
+            raise ValueError("export publication intent is invalid")
+        analysis_id = str(intent.get("analysis_id", ""))
+        payload = intent.get("manifest")
+        package_files = intent.get("package_files")
+        if not isinstance(payload, dict) or not isinstance(package_files, list):
+            raise TypeError("export publication intent omits package evidence")
+        expected_final = PurePosixPath("exports") / export_id
+        if intent.get("final_relative_path") != expected_final.as_posix():
+            raise ValueError("export publication intent targets an unsafe final directory")
+        final_directory = contained_path(self.root, expected_final.as_posix())
+        normalized_files = self._validated_export_package(
+            export_id=export_id,
+            payload=payload,
+            package_files=package_files,
+            package_root=final_directory,
+        )
+        payload_json = canonical_json(payload)
+        with self.transaction() as connection:
+            retained_intent = connection.execute(
+                "SELECT payload_json FROM eco_records WHERE project_id=? "
+                "AND record_type='export_publication_intent' AND record_id=?",
+                (project_id, export_id),
+            ).fetchone()
+            if retained_intent is None or json.loads(retained_intent["payload_json"]) != intent:
+                raise ValueError("export publication intent changed before finalization")
+            existing = connection.execute(
+                "SELECT project_id,analysis_id,payload_json FROM eco_exports WHERE export_id=?",
+                (export_id,),
+            ).fetchone()
+            if existing is not None and (
+                str(existing["project_id"]) != project_id
+                or str(existing["analysis_id"]) != analysis_id
+                or str(existing["payload_json"]) != payload_json
+            ):
+                raise ValueError("export ID was reused for different evidence")
+            if existing is None:
+                connection.execute(
+                    "INSERT INTO eco_exports(export_id,project_id,analysis_id,payload_json,created_at) "
+                    "VALUES(?,?,?,?,?)",
+                    (export_id, project_id, analysis_id, payload_json, _now()),
+                )
+            self._enqueue_outbox(
+                connection,
+                project_id=project_id,
+                analysis_id=analysis_id,
+                event_type="evidence_export",
+                subject_id=export_id,
+                stream_id=f"evidence_export:{export_id}",
+                payload={"manifest": payload, "package_files": normalized_files},
+                idempotency_key=f"evidence_export:{export_id}",
+            )
+
+    def recover_export_publications(self) -> list[str]:
+        """Finish every durable publication intent lacking an export/outbox commit."""
+
+        project_id = self.project()["project_id"]
+        rows = self._connection.execute(
+            "SELECT record_id,payload_json FROM eco_records AS intent "
+            "WHERE project_id=? AND record_type='export_publication_intent' "
+            "AND NOT EXISTS (SELECT 1 FROM eco_exports AS exported "
+            "WHERE exported.export_id=intent.record_id) ORDER BY record_id",
+            (project_id,),
+        ).fetchall()
+        recovered: list[str] = []
+        for row in rows:
+            export_id = str(row["record_id"])
+            intent = json.loads(row["payload_json"])
+            if intent.get("export_id") != export_id:
+                raise RuntimeError("export publication intent identity is corrupt")
+            staging = contained_path(self.root, str(intent.get("staging_relative_path", "")))
+            final = contained_path(self.root, str(intent.get("final_relative_path", "")))
+            if final.exists():
+                if not final.is_dir() or final.is_symlink():
+                    raise RuntimeError("pending export final path is unsafe")
+            elif staging.is_dir() and not staging.is_symlink():
+                final.parent.mkdir(parents=True, exist_ok=True)
+                os.rename(staging, final)
+            else:
+                raise RuntimeError(
+                    f"pending export publication {export_id} has no recoverable package bytes"
+                )
+            self.finalize_export_publication(export_id)
+            recovered.append(export_id)
+        return recovered
+
+    def store_export(
+        self,
+        export_id: str,
+        analysis_id: str,
+        payload: dict[str, Any],
+        *,
+        package_files: Sequence[dict[str, Any]],
+    ) -> None:
+        """Commit export metadata and its upload envelope as one local transaction.
+
+        Export bytes are created beneath ``exports/<export_id>`` before this call.  The
+        producer records only project-relative, hash-verified files; a later native
+        "save a copy" operation may copy these bytes elsewhere but is never cloud input.
+        """
+
+        expected_root = PurePosixPath("exports") / export_id
+        normalized_files = self._validated_export_package(
+            export_id=export_id,
+            payload=payload,
+            package_files=package_files,
+            package_root=contained_path(self.root, expected_root.as_posix()),
+        )
         project_id = self.project()["project_id"]
         with self.transaction() as connection:
             payload_json = canonical_json(payload)

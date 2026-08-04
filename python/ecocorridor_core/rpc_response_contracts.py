@@ -32,12 +32,18 @@ from .contracts import (
     ModelRevision,
     PortfolioDecisionSummary,
     RasterGrid,
+    ReferenceComparisonPlan,
+    ReferenceComparisonResult,
+    ReferenceEvidenceClaimLink,
+    ReferencePairComparison,
+    ReferenceScenarioComparison,
     ResourcePolicy,
     SemanticModelDiff,
     Sha256Digest,
 )
 from .digitization import DigitizationPreview, DigitizationPublication
 from .export import ConnectivityExportManifest
+from .reference_matrix_parser import REFERENCE_MATRIX_PARSER_SHA256
 
 API_VERSION = "1.0"
 DataT = TypeVar("DataT", bound=ContractModel)
@@ -134,17 +140,36 @@ class ProjectIdentityData(ContractModel):
 
 class ProjectAnalysisStatusData(ContractModel):
     analysis_id: str
+    analysis_kind: Literal["ALTERNATIVES", "REFERENCE"]
+    plan_id: str | None = None
+    revision_id: str
+    engine_manifest_sha256: Sha256Digest
     state: str
     created_at: AwareDatetime
     updated_at: AwareDatetime
 
+    @model_validator(mode="after")
+    def reference_plan_identity_is_explicit(self) -> ProjectAnalysisStatusData:
+        if (self.analysis_kind == "REFERENCE") != (self.plan_id is not None):
+            raise ValueError("only reference analyses carry a reference plan ID")
+        return self
+
 
 class PendingRecoveryAnalysisData(ContractModel):
     analysis_id: str
+    analysis_kind: Literal["ALTERNATIVES", "REFERENCE"]
+    plan_id: str | None = None
+    revision_id: str
     analysis_state: Literal["RUNNING", "PAUSING"]
     executor_active: bool
     recovery_required: bool
     running_job_ids: list[str]
+
+    @model_validator(mode="after")
+    def reference_plan_identity_is_explicit(self) -> PendingRecoveryAnalysisData:
+        if (self.analysis_kind == "REFERENCE") != (self.plan_id is not None):
+            raise ValueError("only recovering reference analyses carry a reference plan ID")
+        return self
 
 
 class PendingRecoveryData(ContractModel):
@@ -350,6 +375,191 @@ class AnalysisStatusData(AnalysisStateData):
     error: dict[str, Any] | None
 
 
+class ReferencePlanData(ContractModel):
+    analysis_id: str
+    plan_id: str
+    state: Literal[
+        "READY",
+        "RUNNING",
+        "PAUSING",
+        "PAUSED",
+        "COMPLETED",
+        "FAILED",
+        "CANCELLED",
+    ]
+    plan: ReferenceComparisonPlan
+    plan_sha256: Sha256Digest
+    reference_matrix_parser_sha256: Sha256Digest
+    replayed: bool
+    arithmetic: str
+
+    @model_validator(mode="after")
+    def validate_reference_plan_projection(self) -> ReferencePlanData:
+        if self.analysis_id != self.plan.analysis_id or self.plan_id != self.plan.plan_id:
+            raise ValueError("reference-plan response identity differs from its nested plan")
+        expected_sha256 = hashlib.sha256(
+            canonical_json(self.plan.model_dump(mode="json")).encode("utf-8")
+        ).hexdigest()
+        if self.plan_sha256 != expected_sha256:
+            raise ValueError("reference-plan response hash differs from its nested plan")
+        if self.reference_matrix_parser_sha256 != REFERENCE_MATRIX_PARSER_SHA256:
+            raise ValueError("reference-plan response uses an unpinned matrix parser")
+        if not self.replayed and self.state != "READY":
+            raise ValueError("a newly created reference plan must begin in READY state")
+        expected_arithmetic = (
+            "1 No Action baseline × "
+            f"{len(self.plan.bound_scenario_ids)} bound scenarios = "
+            f"{self.plan.run_plan.direct_job_count} direct Circuitscape matrix jobs"
+        )
+        if self.arithmetic != expected_arithmetic:
+            raise ValueError("reference-plan response arithmetic is inconsistent")
+        return self
+
+
+class ReferenceStateData(ContractModel):
+    analysis_id: str
+    plan_id: str
+    state: str
+
+
+ReferenceEvidenceDisposition = Literal[
+    "PENDING",
+    "ACTIVE_PASSED",
+    "ACTIVE_FAILED",
+    "HISTORICAL_STALE",
+    "CONFLICT_NON_GATING",
+]
+
+
+class ReferenceStatusData(ReferenceStateData):
+    plan: ReferenceComparisonPlan
+    completed_run_count: int = Field(ge=0)
+    direct_job_counts: dict[str, int]
+    result_id: str | None = None
+    result_status: Literal["PASSED", "FAILED"] | None = None
+    active_for_current_model: bool
+    gates_model_fitness: bool
+    evidence_disposition: ReferenceEvidenceDisposition
+    stale_reasons: list[str]
+    error: dict[str, Any] | None
+
+    @model_validator(mode="after")
+    def validate_reference_status_projection(self) -> ReferenceStatusData:
+        if self.analysis_id != self.plan.analysis_id or self.plan_id != self.plan.plan_id:
+            raise ValueError("reference-status identity differs from its nested plan")
+        if (self.result_id is None) != (self.result_status is None):
+            raise ValueError("reference-status result identity and status must appear together")
+        if any(value < 0 for value in self.direct_job_counts.values()):
+            raise ValueError("reference-status job counts cannot be negative")
+        total_jobs = sum(self.direct_job_counts.values())
+        planned_jobs = self.plan.run_plan.direct_job_count
+        succeeded_jobs = self.direct_job_counts.get("SUCCEEDED", 0)
+        if total_jobs not in {0, planned_jobs} or self.completed_run_count > succeeded_jobs:
+            raise ValueError("reference-status durable job arithmetic is inconsistent")
+        if self.state == "COMPLETED" and (
+            total_jobs != planned_jobs
+            or succeeded_jobs != planned_jobs
+            or self.completed_run_count != planned_jobs
+        ):
+            raise ValueError("completed reference status requires exact successful run coverage")
+        self._validate_disposition(result_status=self.result_status)
+        return self
+
+    def _validate_disposition(self, *, result_status: str | None) -> None:
+        if len(self.stale_reasons) != len(set(self.stale_reasons)):
+            raise ValueError("reference disposition reasons must be unique")
+        if self.evidence_disposition == "PENDING":
+            if (
+                result_status is not None
+                or not self.active_for_current_model
+                or self.gates_model_fitness
+                or self.stale_reasons
+            ):
+                raise ValueError("pending reference disposition is inconsistent")
+            return
+        if self.evidence_disposition in {"ACTIVE_PASSED", "ACTIVE_FAILED"}:
+            expected_status = self.evidence_disposition.removeprefix("ACTIVE_")
+            if (
+                result_status != expected_status
+                or not self.active_for_current_model
+                or not self.gates_model_fitness
+                or self.stale_reasons
+            ):
+                raise ValueError("active reference disposition is inconsistent")
+            return
+        if (
+            (result_status is None and self.evidence_disposition == "CONFLICT_NON_GATING")
+            or self.active_for_current_model
+            or self.gates_model_fitness
+            or not self.stale_reasons
+        ):
+            raise ValueError("non-gating reference disposition is inconsistent")
+
+
+class ReferenceResultData(ContractModel):
+    analysis_id: str
+    plan_id: str
+    plan: ReferenceComparisonPlan
+    result: ReferenceComparisonResult
+    claim_ids: list[str] = Field(min_length=1)
+    plan_sha256: Sha256Digest
+    result_sha256: Sha256Digest
+    reference_matrix_parser_sha256: Sha256Digest
+    outbox_id: str
+    replayed: bool
+    active_for_current_model: bool
+    gates_model_fitness: bool
+    evidence_disposition: Literal[
+        "ACTIVE_PASSED",
+        "ACTIVE_FAILED",
+        "HISTORICAL_STALE",
+        "CONFLICT_NON_GATING",
+    ]
+    stale_reasons: list[str]
+
+    @model_validator(mode="after")
+    def validate_reference_result_projection(self) -> ReferenceResultData:
+        if (
+            self.analysis_id != self.result.analysis_id
+            or self.plan_id != self.result.plan_id
+            or self.analysis_id != self.plan.analysis_id
+            or self.plan_id != self.plan.plan_id
+            or self.result.revision_id != self.plan.revision_id
+            or self.result.model_sha256 != self.plan.model_sha256
+            or self.result.engine_manifest_sha256 != self.plan.engine_manifest_sha256
+        ):
+            raise ValueError("reference-result response identity differs from its nested result")
+        expected_plan_sha256 = hashlib.sha256(
+            canonical_json(self.plan.model_dump(mode="json")).encode("utf-8")
+        ).hexdigest()
+        if self.plan_sha256 != expected_plan_sha256:
+            raise ValueError("reference-result response hash differs from its nested plan")
+        expected_result_sha256 = hashlib.sha256(
+            canonical_json(self.result.model_dump(mode="json")).encode("utf-8")
+        ).hexdigest()
+        if self.result_sha256 != expected_result_sha256:
+            raise ValueError("reference-result response hash differs from its nested result")
+        if self.reference_matrix_parser_sha256 != REFERENCE_MATRIX_PARSER_SHA256:
+            raise ValueError("reference-result response uses an unpinned matrix parser")
+        expected_claim_ids = sorted(item.claim_id for item in self.result.evidence_claim_links)
+        if self.claim_ids != expected_claim_ids:
+            raise ValueError("reference-result response claim IDs differ from its exact links")
+        if len(self.stale_reasons) != len(set(self.stale_reasons)):
+            raise ValueError("reference-result disposition reasons must be unique")
+        expected_active = f"ACTIVE_{self.result.status}"
+        if self.evidence_disposition in {"ACTIVE_PASSED", "ACTIVE_FAILED"}:
+            if (
+                self.evidence_disposition != expected_active
+                or not self.active_for_current_model
+                or not self.gates_model_fitness
+                or self.stale_reasons
+            ):
+                raise ValueError("active reference-result disposition is inconsistent")
+        elif self.active_for_current_model or self.gates_model_fitness or not self.stale_reasons:
+            raise ValueError("non-gating reference-result disposition is inconsistent")
+        return self
+
+
 class DecisionBoardData(ContractModel):
     analysis_id: str
     summaries: list[PortfolioDecisionSummary] = Field(min_length=1)
@@ -553,6 +763,14 @@ class EvidenceResolveData(ContractModel):
     assumptions: list[str] | None = None
     cloud_references: dict[str, Any] | None = None
     limitations: list[str] | None = None
+    reference_plan: ReferenceComparisonPlan | None = None
+    reference_plan_sha256: Sha256Digest | None = None
+    reference_result: ReferenceComparisonResult | None = None
+    reference_result_sha256: Sha256Digest | None = None
+    reference_comparison: ReferenceScenarioComparison | None = None
+    reference_pair_comparison: ReferencePairComparison | None = None
+    reference_matrix_parser_sha256: Sha256Digest | None = None
+    reference_claim_link: ReferenceEvidenceClaimLink | None = None
 
 
 class ExportValidateData(ContractModel):
@@ -805,6 +1023,10 @@ RPC_RESPONSE_DATA_CONTRACTS: dict[str, type[ContractModel]] = {
     "connectivity.analysis.pause": AnalysisStateData,
     "connectivity.analysis.resume": AnalysisStateData,
     "connectivity.analysis.cancel": AnalysisStateData,
+    "connectivity.reference.plan": ReferencePlanData,
+    "connectivity.reference.start": ReferenceStateData,
+    "connectivity.reference.status": ReferenceStatusData,
+    "connectivity.reference.result": ReferenceResultData,
     "connectivity.results.decision_board": DecisionBoardData,
     "connectivity.results.scenario_detail": ScenarioDetailData,
     "connectivity.evidence.resolve": EvidenceResolveData,

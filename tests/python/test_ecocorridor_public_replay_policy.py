@@ -63,6 +63,24 @@ def _inputs(tmp_path: Path) -> tuple[Path, Path, Path, Path, Path]:
     return root, fixture, projection, trust, manifest
 
 
+def _interval_overlap(maximum: int) -> dict[str, object]:
+    return {
+        "schema_version": "ridgeway-retained-process-interval-overlap/v1.0",
+        "observation_method": "MAXIMUM_OVERLAPPING_RETAINED_PROCESS_INTERVALS",
+        "maximum_overlapping_retained_process_intervals": maximum,
+        "retained_interval_count": 1_596,
+        "coincident_endpoint_policy": ("COUNTED_AS_OVERLAPPING_AT_RETAINED_TIMESTAMP_RESOLUTION"),
+        "scientific_identity_role": "AUDIT_ONLY_EXCLUDED",
+        "limitation": (
+            "Derived only from retained post-spawn launched_at-to-confirmed_at measurement "
+            "intervals. It may understate true process concurrency because launched_at is "
+            "recorded after process creation, and coincident endpoints may overstate interval "
+            "overlap at retained timestamp resolution. It is not the configured worker count, "
+            "CPU utilization, or proof of simultaneous physical execution."
+        ),
+    }
+
+
 def _verified_inputs(tmp_path: Path) -> tuple[Path, Path, Path, Path, Path]:
     root, fixture, projection, trust, manifest = _inputs(tmp_path)
     baseline_id = f"portfolio_{'0' * 20}"
@@ -152,7 +170,7 @@ def _verified_inputs(tmp_path: Path) -> tuple[Path, Path, Path, Path, Path]:
     differential_path.write_text(
         json.dumps(
             {
-                "schema_version": "ridgeway-protected-rerun-differential/v1.0",
+                "schema_version": "ridgeway-protected-rerun-differential/v1.1",
                 "source_commit_sha": source_sha,
                 "status": "PASSED",
                 "reference_manifest_sha256": manifest_sha,
@@ -161,6 +179,11 @@ def _verified_inputs(tmp_path: Path) -> tuple[Path, Path, Path, Path, Path]:
                 "absolute_tolerance": 1e-8,
                 "relative_tolerance": 1e-7,
                 "teaching_selection_matched": True,
+                "reference_retained_process_interval_overlap": _interval_overlap(4),
+                "producer_retained_process_interval_overlap": _interval_overlap(8),
+                "retained_process_interval_overlap_comparison_policy": (
+                    "AUDIT_ONLY_EXCLUDED_FROM_SCIENTIFIC_EQUIVALENCE"
+                ),
             }
         ),
         encoding="utf-8",
@@ -237,6 +260,27 @@ def test_public_replay_inventory_is_static_and_source_bound(
     assert {item["path"] for item in payload["files"]} == {"index.html", "assets/app.js"}
 
 
+def test_public_replay_rejects_prohibited_copy_even_when_evidence_is_withheld(
+    checker: ModuleType, tmp_path: Path
+) -> None:
+    root, fixture, projection, trust, manifest = _inputs(tmp_path)
+    payload = json.loads(projection.read_text(encoding="utf-8"))
+    payload["portfolios"][0]["name"] = "Robust but over budget"
+    encoded = (json.dumps(payload, sort_keys=True) + "\n").encode()
+    fixture.write_bytes(encoded)
+    projection.write_bytes(encoded)
+
+    with pytest.raises(ValueError, match="violates ecological claim policy"):
+        checker.validate_and_inventory(
+            root,
+            source_sha="a" * 40,
+            fixture=fixture,
+            projection=projection,
+            trust_record=trust,
+            data_manifest=manifest,
+        )
+
+
 def test_public_replay_source_graph_excludes_desktop_application_and_host_bridge() -> None:
     repository = Path(__file__).resolve().parents[2]
     source_root = repository / "apps/ecocorridor-replay/src"
@@ -266,22 +310,34 @@ def test_public_replay_source_graph_excludes_desktop_application_and_host_bridge
         assert runtime_marker not in source
 
 
-def test_public_replay_source_copy_preserves_ecological_claim_boundaries() -> None:
+def test_public_replay_source_copy_passes_the_strict_ecological_claim_policy(
+    checker: ModuleType,
+) -> None:
     repository = Path(__file__).resolve().parents[2]
-    source = (repository / "apps/ecocorridor-replay/src/PublicReplayApp.tsx").read_text(
-        encoding="utf-8"
+    checker.validate_public_replay_source_copy(
+        repository / "apps/ecocorridor-replay/src/PublicReplayApp.tsx"
     )
 
-    assert "Direct Circuitscape result under documented assumptions." in source
-    for unsafe_positive_claim in (
-        "improves habitat connectivity",
-        "reconnects habitat",
-        "wildlife-friendly",
-        "recommended corridor",
-        "ecologically robust",
-        "collision reduction estimate",
-    ):
-        assert unsafe_positive_claim.casefold() not in source.casefold()
+
+@pytest.mark.parametrize(
+    "unsafe_copy",
+    [
+        "This is a robust candidate.",
+        "This portfolio is ecologically robust.",
+        "This is the recommended corridor.",
+        "This option reconnects habitat.",
+    ],
+)
+def test_public_replay_source_copy_rejects_prohibited_paraphrases(
+    checker: ModuleType,
+    tmp_path: Path,
+    unsafe_copy: str,
+) -> None:
+    source = tmp_path / "PublicReplayApp.tsx"
+    source.write_text(f"export const App = () => <p>{unsafe_copy}</p>;\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="source copy violates ecological claim policy"):
+        checker.validate_public_replay_source_copy(source)
 
 
 def test_public_replay_document_declares_no_cloud_csp_and_local_assets() -> None:
@@ -340,6 +396,14 @@ def test_public_replay_rejects_verified_fixture_without_protected_producer_recei
             data_manifest=manifest,
             require_verified_evidence=True,
         )
+
+
+def test_public_replay_rejects_impossible_retained_interval_overlap(
+    checker: ModuleType,
+) -> None:
+    impossible = _interval_overlap(1_597)
+
+    assert checker._valid_retained_process_interval_overlap(impossible) is False
 
 
 def test_public_replay_rejects_incomplete_v12_pair_evidence(

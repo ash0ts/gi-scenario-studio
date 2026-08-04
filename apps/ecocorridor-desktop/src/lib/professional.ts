@@ -1,4 +1,4 @@
-import { ConnectivityCostBasisSchema, ConnectivityExportEligibilitySchema, ConnectivityModelFitnessSchema, ConnectivityProjectBundleSchema, ConnectivityRunPlanSchema, ConnectivityScenarioSchema, EngineManifestSchema, GridAlignmentApprovalSchema, GridAlignmentPlanSchema, InterventionOptionSchema, InterventionSiteSchema, ModelRevisionSchema, PortfolioDecisionSummarySchema, ResourcePolicySchema, SemanticModelDiffSchema, SensitiveDataAuthorizationSchema } from "../generated/contracts";
+import { ConnectivityCostBasisSchema, ConnectivityExportEligibilitySchema, ConnectivityModelFitnessSchema, ConnectivityProjectBundleSchema, ConnectivityRunPlanSchema, ConnectivityScenarioSchema, EngineManifestSchema, GridAlignmentApprovalSchema, GridAlignmentPlanSchema, InterventionOptionSchema, InterventionSiteSchema, ModelRevisionSchema, PortfolioDecisionSummarySchema, ReferenceComparisonPlanSchema, ReferenceComparisonResultSchema, ResourcePolicySchema, SemanticModelDiffSchema, SensitiveDataAuthorizationSchema } from "../generated/contracts";
 import { z } from "zod";
 import type { AssetCloudDisposition, AssetDeployment, AssetSensitivity, ConnectivityAssetKind, OpaqueFileHandle, PlanningState, ProfessionalAssetRecord, ProfessionalGridApproval, ProfessionalModelRecords, ProfessionalProjectState, RasterFormat, RasterInspection, RasterValueKind } from "../types";
 
@@ -46,16 +46,32 @@ export const ProfessionalProjectStateSchema = z.object({
   fitness: ConnectivityModelFitnessSchema,
   resource_policy: ResourcePolicySchema,
   saved_records: z.record(z.string(), z.array(z.record(z.string(), z.unknown()))),
-  analyses: z.array(z.object({ analysis_id: z.string().min(1), state: z.string().min(1), created_at: z.string().min(1), updated_at: z.string().min(1) }).strict()),
+  analyses: z.array(z.object({
+    analysis_id: z.string().min(1),
+    analysis_kind: z.enum(["ALTERNATIVES", "REFERENCE"]),
+    plan_id: z.string().min(1).nullable(),
+    revision_id: z.string().min(1),
+    engine_manifest_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    state: z.string().min(1),
+    created_at: z.string().min(1),
+    updated_at: z.string().min(1),
+  }).strict().superRefine((analysis, context) => {
+    if ((analysis.analysis_kind === "REFERENCE") !== (analysis.plan_id !== null)) context.addIssue({ code: "custom", message: "Only reference analyses may carry a reference plan ID." });
+  })),
   pending_recovery: z.object({
     required: z.boolean(),
     analyses: z.array(z.object({
       analysis_id: z.string().min(1),
+      analysis_kind: z.enum(["ALTERNATIVES", "REFERENCE"]),
+      plan_id: z.string().min(1).nullable(),
+      revision_id: z.string().min(1),
       analysis_state: z.enum(["RUNNING", "PAUSING"]),
       executor_active: z.boolean(),
       recovery_required: z.boolean(),
       running_job_ids: z.array(z.string().min(1)),
-    }).strict()),
+    }).strict().superRefine((analysis, context) => {
+      if ((analysis.analysis_kind === "REFERENCE") !== (analysis.plan_id !== null)) context.addIssue({ code: "custom", message: "Only recovering reference analyses may carry a reference plan ID." });
+    })),
     next_action: z.string().min(1),
   }).strict(),
   sync_status: z.record(z.string(), z.unknown()),
@@ -71,6 +87,7 @@ export interface HydratedProfessionalProject {
   records: ProfessionalModelRecords;
   activeAnalysisId: string | null;
   recoveryAnalysisId: string | null;
+  referenceRecoveryAnalysisId: string | null;
 }
 
 function intendedUseFromAuthorization(notes: string | undefined, kind: ConnectivityAssetKind): string {
@@ -174,11 +191,14 @@ export function hydrateProfessionalProject(value: unknown): HydratedProfessional
     safeguardNotes: records.safeguards.flatMap((record) => record.concerns ?? []).join("\n"),
     budgetUsd: bundle.decision_brief.budget_amount == null ? "" : String(bundle.decision_brief.budget_amount),
   };
-  const recoveryAnalysisId = state.pending_recovery.analyses.find((analysis) => analysis.recovery_required)?.analysis_id ?? null;
-  const latestAnalysis = [...state.analyses]
+  const activeRevisionId = state.active_revision.revision_id;
+  const alternatives = state.analyses.filter((analysis) => analysis.analysis_kind === "ALTERNATIVES" && analysis.revision_id === activeRevisionId);
+  const recoveryAnalysisId = state.pending_recovery.analyses.find((analysis) => analysis.analysis_kind === "ALTERNATIVES" && analysis.revision_id === activeRevisionId && analysis.recovery_required)?.analysis_id ?? null;
+  const referenceRecoveryAnalysisId = state.pending_recovery.analyses.find((analysis) => analysis.analysis_kind === "REFERENCE" && analysis.revision_id === activeRevisionId && analysis.recovery_required)?.analysis_id ?? null;
+  const latestAnalysis = [...alternatives]
     .sort((left, right) => right.updated_at.localeCompare(left.updated_at) || right.analysis_id.localeCompare(left.analysis_id))[0];
   const activeAnalysisId = recoveryAnalysisId ?? latestAnalysis?.analysis_id ?? null;
-  return { state, planning, assets, gridApprovals, records, activeAnalysisId, recoveryAnalysisId };
+  return { state, planning, assets, gridApprovals, records, activeAnalysisId, recoveryAnalysisId, referenceRecoveryAnalysisId };
 }
 
 export const AnalysisPrepareResponseSchema = z.object({
@@ -218,6 +238,59 @@ export const AnalysisStatusResponseSchema = z.object({
 }).strict();
 
 export const AnalysisStateResponseSchema = z.object({ analysis_id: z.string().min(1), state: z.string().min(1) }).strict();
+
+const ReferenceAnalysisStateSchema = z.enum(["READY", "RUNNING", "PAUSING", "PAUSED", "COMPLETED", "FAILED", "CANCELLED"]);
+const ReferenceEvidenceDispositionSchema = z.enum(["PENDING", "ACTIVE_PASSED", "ACTIVE_FAILED", "HISTORICAL_STALE", "CONFLICT_NON_GATING"]);
+
+export const ReferencePlanResponseSchema = z.object({
+  analysis_id: z.string().min(1),
+  plan_id: z.string().min(1),
+  state: ReferenceAnalysisStateSchema,
+  plan: ReferenceComparisonPlanSchema,
+  plan_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  reference_matrix_parser_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  replayed: z.boolean(),
+  arithmetic: z.string().min(1),
+}).strict();
+
+export const ReferenceStateResponseSchema = z.object({
+  analysis_id: z.string().min(1),
+  plan_id: z.string().min(1),
+  state: ReferenceAnalysisStateSchema,
+}).strict();
+
+export const ReferenceStatusResponseSchema = z.object({
+  analysis_id: z.string().min(1),
+  plan_id: z.string().min(1),
+  state: ReferenceAnalysisStateSchema,
+  plan: ReferenceComparisonPlanSchema,
+  completed_run_count: z.number().int().nonnegative(),
+  direct_job_counts: z.record(z.string(), z.number().int().nonnegative()),
+  result_id: z.string().min(1).nullable(),
+  result_status: z.enum(["PASSED", "FAILED"]).nullable(),
+  active_for_current_model: z.boolean(),
+  gates_model_fitness: z.boolean(),
+  evidence_disposition: ReferenceEvidenceDispositionSchema,
+  stale_reasons: z.array(z.string().min(1)),
+  error: z.record(z.string(), z.unknown()).nullable(),
+}).strict();
+
+export const ReferenceResultResponseSchema = z.object({
+  analysis_id: z.string().min(1),
+  plan_id: z.string().min(1),
+  plan: ReferenceComparisonPlanSchema,
+  result: ReferenceComparisonResultSchema,
+  claim_ids: z.array(z.string().min(1)).min(1),
+  plan_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  result_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  reference_matrix_parser_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  outbox_id: z.string().min(1),
+  replayed: z.boolean(),
+  active_for_current_model: z.boolean(),
+  gates_model_fitness: z.boolean(),
+  evidence_disposition: ReferenceEvidenceDispositionSchema.exclude(["PENDING"]),
+  stale_reasons: z.array(z.string().min(1)),
+}).strict();
 
 export const GuidedRerunStatusSchema = z.object({
   session_id: z.string().min(1),

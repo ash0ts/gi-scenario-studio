@@ -28,7 +28,12 @@ from pydantic import Field, field_validator, model_validator
 from scenario_platform.observability import redact_sensitive
 
 from .claim_safety import assert_strict_ecological_claim
-from .contracts import ConnectivityEvidenceClaim, ContractModel
+from .contracts import (
+    CURRENT_RASTER_LIMITATION,
+    FITNESS_LIMITATION,
+    ConnectivityEvidenceClaim,
+    ContractModel,
+)
 from .metrics import (
     CONNECTIVITY_LIMITATION,
     CURRENT_MAP_LIMITATION,
@@ -518,15 +523,15 @@ class AssistantEvidenceAuthorization(ContractModel):
     selected_evidence_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     authorized_asset_count: int = Field(ge=0)
     generalized_derivative_count: int = Field(ge=0)
-    context_schema_version: Literal["ecocorridor-assistant-context/v2"] = (
-        "ecocorridor-assistant-context/v2"
+    context_schema_version: Literal["ecocorridor-assistant-context/v3"] = (
+        "ecocorridor-assistant-context/v3"
     )
 
     @classmethod
     def create(cls, **payload: Any) -> AssistantEvidenceAuthorization:
         identity = {
             **payload,
-            "context_schema_version": "ecocorridor-assistant-context/v2",
+            "context_schema_version": "ecocorridor-assistant-context/v3",
         }
         decision_id = (
             "evidence_auth_"
@@ -562,6 +567,7 @@ class AuthorizedEvidenceClaimContext(ContractModel):
     evidence_alias: str = Field(pattern=r"^E[1-9][0-9]{0,3}$")
     claim_kind: Literal[
         "DIRECT_PAIR_METRIC",
+        "DIRECT_REFERENCE_COMPARISON",
         "DIRECT_MAP_DIAGNOSTIC",
         "DIRECT_QA",
         "COST",
@@ -584,11 +590,24 @@ class AuthorizedEvidenceClaimContext(ContractModel):
             raise ValueError("provider context units are not in the safe token grammar")
         if len(self.limitations) != len(set(self.limitations)):
             raise ValueError("provider context limitations must be unique")
-        if any(
-            item not in {CONNECTIVITY_LIMITATION, CURRENT_MAP_LIMITATION}
-            for item in self.limitations
+        for limitation in self.limitations:
+            try:
+                validate_assistant_limitation(limitation, SensitiveContextPolicy())
+            except AssistantSafetyError as exc:
+                raise ValueError("provider context contains an unsafe limitation") from exc
+        if self.claim_kind == "DIRECT_REFERENCE_COMPARISON" and (
+            type(self.value) is not bool
+            or self.units != "within_tolerance"
+            or not {
+                CONNECTIVITY_LIMITATION,
+                CURRENT_RASTER_LIMITATION,
+                FITNESS_LIMITATION,
+            }.issubset(self.limitations)
         ):
-            raise ValueError("provider context may include only fixed product limitations")
+            raise ValueError(
+                "reference context requires only its Boolean tolerance disposition and "
+                "mandatory limitations"
+            )
         return self
 
 
@@ -647,10 +666,19 @@ class NumericEvidenceReference(ContractModel):
         return value
 
 
+class BooleanEvidenceReference(ContractModel):
+    """Exact Boolean disposition declared by the provider for one evidence alias."""
+
+    evidence_id: str
+    value: bool
+    units: Literal["within_tolerance"]
+
+
 class _ProviderEvidenceAnswer(ContractModel):
     answer: str
     evidence_ids: list[str] = Field(min_length=1)
     numeric_claims: list[NumericEvidenceReference] = Field(default_factory=list)
+    boolean_claims: list[BooleanEvidenceReference] = Field(default_factory=list)
     limitations: list[str] = Field(min_length=1)
 
     @model_validator(mode="after")
@@ -890,6 +918,35 @@ def validate_feedback_comment(
     active_policy = policy or SensitiveContextPolicy()
     if redact_sensitive(value) != value:
         raise AssistantSafetyError("ASSISTANT_FEEDBACK_SENSITIVE_CONTENT")
+    _assert_no_prompt_injection(value)
+    _assert_no_sensitive_location(value, active_policy)
+    return value
+
+
+def validate_assistant_limitation(
+    value: str,
+    policy: SensitiveContextPolicy | None = None,
+) -> str:
+    """Validate one reviewed caveat before provider or Weave replication.
+
+    Limitations are evidence, not free-form instructions. They must remain
+    byte-for-byte stable after whitespace validation and pass the same claim,
+    injection, personal-data, and sensitive-location boundaries as answers.
+    """
+
+    if (
+        value != value.strip()
+        or not value
+        or len(value) > 1_000
+        or any(ord(character) < 32 and character not in {"\t"} for character in value)
+        or redact_sensitive(value) != value
+    ):
+        raise AssistantSafetyError("ASSISTANT_LIMITATION_UNSAFE")
+    active_policy = policy or SensitiveContextPolicy()
+    try:
+        assert_strict_ecological_claim(value)
+    except ValueError as exc:
+        raise AssistantSafetyError("ASSISTANT_PROHIBITED_ECOLOGICAL_CLAIM") from exc
     _assert_no_prompt_injection(value)
     _assert_no_sensitive_location(value, active_policy)
     return value
@@ -1249,7 +1306,10 @@ class EvidenceAssistant(_TracedAssistant):
                 system_prompt=(
                     "Explain only the authorized direct Circuitscape evidence. Return strict JSON. "
                     "Every structured numeric claim must appear in the answer beside its declared "
-                    "units. Do not choose, approve, modify, or invent anything."
+                    "units. Every reference-comparison Boolean must be declared in boolean_claims "
+                    "and rendered exactly as '<evidence alias> within_tolerance=true' or "
+                    "'<evidence alias> within_tolerance=false'; do not restate that disposition "
+                    "in prose. Do not choose, approve, modify, or invent anything."
                 ),
                 user_prompt=intent.value,
                 context=minimized_context,
@@ -1283,7 +1343,10 @@ class EvidenceAssistant(_TracedAssistant):
                 output={
                     "numeric_claims": [
                         item.model_dump(mode="json") for item in proposed.numeric_claims
-                    ]
+                    ],
+                    "boolean_claims": [
+                        item.model_dump(mode="json") for item in proposed.boolean_claims
+                    ],
                 },
             )
             claims_by_alias = {
@@ -1393,6 +1456,10 @@ class EvidenceAssistant(_TracedAssistant):
             proposed.numeric_claims
         ):
             raise AssistantSafetyError("ASSISTANT_NUMERIC_EVIDENCE_DUPLICATED")
+        if len({item.evidence_id for item in proposed.boolean_claims}) != len(
+            proposed.boolean_claims
+        ):
+            raise AssistantSafetyError("ASSISTANT_BOOLEAN_EVIDENCE_DUPLICATED")
         _assert_safe_output(proposed.answer)
         _assert_no_prompt_injection(proposed.answer)
         _assert_no_sensitive_location(proposed.answer, policy)
@@ -1408,20 +1475,64 @@ class EvidenceAssistant(_TracedAssistant):
                 raise AssistantSafetyError("ASSISTANT_UNIT_MISMATCH")
             if not _answer_mentions_numeric_claim(proposed.answer, item):
                 raise AssistantSafetyError("ASSISTANT_NUMERIC_UNIT_RENDERING_MISMATCH")
+        boolean_by_id = {item.evidence_id: item for item in proposed.boolean_claims}
+        selected_reference_ids = {
+            evidence_id
+            for evidence_id in proposed.evidence_ids
+            if evidence[evidence_id].claim_kind == "DIRECT_REFERENCE_COMPARISON"
+        }
+        if set(boolean_by_id) != selected_reference_ids:
+            raise AssistantSafetyError("ASSISTANT_BOOLEAN_EVIDENCE_INCOMPLETE")
+        disposition_free_answer = proposed.answer
+        for evidence_id, item in boolean_by_id.items():
+            claim = evidence[evidence_id]
+            if (
+                claim.claim_kind != "DIRECT_REFERENCE_COMPARISON"
+                or type(claim.value) is not bool
+                or claim.units != item.units
+            ):
+                raise AssistantSafetyError("ASSISTANT_BOOLEAN_EVIDENCE_TYPE_MISMATCH")
+            if item.value is not claim.value:
+                raise AssistantSafetyError("ASSISTANT_BOOLEAN_VALUE_MISMATCH")
+            marker = f"{evidence_id} {item.units}={str(item.value).lower()}"
+            if marker not in proposed.answer:
+                raise AssistantSafetyError("ASSISTANT_BOOLEAN_RENDERING_MISMATCH")
+            disposition_free_answer = disposition_free_answer.replace(marker, "")
+        if boolean_by_id and re.search(
+            r"\b(?:within[_ ]tolerance|toleran\w*|pass(?:ed|es|ing)?|"
+            r"fail(?:ed|s|ing)?|outside)\b",
+            disposition_free_answer,
+            re.IGNORECASE,
+        ):
+            raise AssistantSafetyError("ASSISTANT_BOOLEAN_RENDERING_AMBIGUOUS")
         declared_values = {Decimal(str(item.value)) for item in proposed.numeric_claims}
         if any(
             token not in declared_values
             for token in _number_tokens(proposed.answer, evidence_ids=proposed.evidence_ids)
         ):
             raise AssistantSafetyError("ASSISTANT_UNDECLARED_NUMERIC_CLAIM")
-        required = {CONNECTIVITY_LIMITATION, CURRENT_MAP_LIMITATION}
-        if not required.issubset(proposed.limitations):
+        selected = [evidence[item] for item in proposed.evidence_ids]
+        required: list[str] = []
+        for item in selected:
+            limitations = (
+                item.limitations
+                if item.claim_kind == "DIRECT_REFERENCE_COMPARISON"
+                else [
+                    limitation
+                    for limitation in item.limitations
+                    if limitation in {CONNECTIVITY_LIMITATION, CURRENT_MAP_LIMITATION}
+                ]
+            )
+            for limitation in limitations:
+                if limitation not in required:
+                    required.append(limitation)
+        if proposed.limitations != required:
             raise AssistantSafetyError("ASSISTANT_REQUIRED_LIMITATION_MISSING")
         for limitation in proposed.limitations:
-            _assert_safe_output(limitation)
-            _assert_no_prompt_injection(limitation)
-            _assert_no_sensitive_location(limitation, policy)
-        if proposed.numeric_claims and DIRECT_RESULT_QUALIFICATION not in proposed.answer:
+            validate_assistant_limitation(limitation, policy)
+        if any(item.claim_kind.startswith("DIRECT_") for item in selected) and (
+            DIRECT_RESULT_QUALIFICATION not in proposed.answer
+        ):
             raise AssistantSafetyError("ASSISTANT_DIRECT_RESULT_QUALIFICATION_MISSING")
 
 

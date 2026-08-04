@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -38,8 +39,12 @@ from ecocorridor_core.engine import (
     engine_request_payload,
 )
 from ecocorridor_core.export import (
+    ConnectivityExportManifest,
     EvidenceArtifactSource,
     EvidenceProjectAssetSource,
+    ExcludedArtifactPolicy,
+    ReferenceEvidenceEntryManifest,
+    ReferenceEvidenceSectionManifest,
     compute_export_eligibility,
     create_evidence_export,
 )
@@ -57,6 +62,7 @@ from scenario_platform.cloud_sync import (
     CloudArtifactReference,
     CloudIntegrityError,
     CloudPolicyError,
+    CloudTransportError,
     CloudUploadReceipt,
     DurableOutboxConsumer,
     TelemetryProjection,
@@ -171,6 +177,222 @@ def test_projector_rejects_duplicate_source_projection(tmp_path: Path) -> None:
             },
             profile=ECOCORRIDOR_APP_PROFILE,
         )
+
+
+def test_cloud_artifact_projection_rejects_arbitrary_absolute_path_text(
+    tmp_path: Path,
+) -> None:
+    class RootOnlyStore:
+        root = tmp_path.resolve()
+
+    leaked = tmp_path / "evidence.json"
+    leaked.write_text('{"source":"/Volumes/ecology/private/model.tif"}\n', encoding="utf-8")
+    digest = hashlib.sha256(leaked.read_bytes()).hexdigest()
+    projector = EcoTelemetryProjector(
+        store=RootOnlyStore(),  # type: ignore[arg-type]
+        project_root=tmp_path,
+        sync_plan={"allowed": True, "blockers": [], "projections": []},
+        profile=ECOCORRIDOR_APP_PROFILE,
+    )
+    with pytest.raises(CloudIntegrityError, match="ECO_ARTIFACT_LOCAL_PATH_DISCLOSURE"):
+        projector._verified_artifact(
+            local_artifact_id="leaked-artifact",
+            artifact_type="decision_evidence",
+            logical_id="leaked-evidence",
+            logical_name="evidence/leaked.json",
+            source_relative_path="evidence.json",
+            expected_sha256=digest,
+            expected_bytes=leaked.stat().st_size,
+            media_type="application/json",
+        )
+
+
+def test_reference_backed_export_waits_for_reference_lineage_and_counts_it(
+    tmp_path: Path,
+) -> None:
+    bundle = build_ridgeway_fixture().bundle
+    export_id = "export-reference-lineage"
+    package_path = tmp_path / "exports" / export_id / "payload.json"
+    package_path.parent.mkdir(parents=True)
+    package_path.write_text('{"kind":"direct evidence"}\n', encoding="utf-8")
+    package_sha256 = hashlib.sha256(package_path.read_bytes()).hexdigest()
+    hash_a = "a" * 64
+    hash_b = "b" * 64
+    reference_entry = ReferenceEvidenceEntryManifest(
+        analysis_id="analysis-reference",
+        plan_id="reference-plan",
+        result_id="reference-result",
+        plan_file="reference-evidence/results/reference-result/comparison-plan.json",
+        plan_sha256=hash_a,
+        plan_file_sha256=hash_a,
+        result_file="reference-evidence/results/reference-result/comparison-result.json",
+        result_sha256=hash_b,
+        result_file_sha256=hash_b,
+        claims_file="reference-evidence/results/reference-result/evidence-claims.json",
+        claims_sha256=hash_a,
+        direct_runs_file="reference-evidence/results/reference-result/direct-runs.json",
+        direct_runs_sha256=hash_b,
+        binding_ids=["reference-binding"],
+        scenario_ids=["reference-scenario-1", "reference-scenario-2"],
+        comparison_ids=["comparison-1", "comparison-2"],
+        direct_run_ids=["reference-run-1", "reference-run-2"],
+        evidence_claim_ids=["reference-claim-1", "reference-claim-2"],
+        reference_asset_ids=["reference-matrix"],
+        scientific_fingerprints={"reference-binding": hash_a},
+        artifact_files={"reference-run-1": {"matrix": "reference/matrix.tsv"}},
+        engine_manifest_sha256=hash_b,
+        reference_matrix_parser_sha256=hash_a,
+    )
+    reference_section = ReferenceEvidenceSectionManifest(
+        excluded_artifacts=[
+            ExcludedArtifactPolicy(
+                role="stdout",
+                reason="Console output is not scientific evidence.",
+            )
+        ],
+        reference_assets_file="reference-evidence/assets-and-authorizations.json",
+        reference_assets_sha256=hash_a,
+        reference_asset_files={"reference-matrix": "source-assets/reference-matrix/asset.tsv"},
+        authorization_sha256_by_asset={"reference-matrix": hash_b},
+        engine_manifest_sha256=hash_b,
+        engine_manifest_file_sha256=hash_b,
+        reference_matrix_parser_file_sha256=hash_a,
+        reference_matrix_parser_sha256=hash_a,
+        entries=[reference_entry],
+    )
+    manifest = ConnectivityExportManifest(
+        schema_version="ecocorridor-export/v1.1",
+        export_id=export_id,
+        project_id=bundle.project_id,
+        revision_id=bundle.revision.revision_id,
+        baseline_portfolio_id="portfolio-baseline",
+        model_snapshot_sha256=hash_a,
+        engine_manifest_sha256=hash_b,
+        run_plan_sha256=hash_a,
+        cost_basis_sha256=hash_b,
+        conceptual=True,
+        notice="Conceptual connectivity screening.",
+        files={"payload.json": package_sha256},
+        direct_run_ids=["ordinary-run"],
+        evidence_claim_ids=["ordinary-claim"],
+        sync_state="CONNECTED",
+        reference_evidence=reference_section,
+    )
+    rows = [
+        {
+            "outbox_id": "outbox-analysis-complete",
+            "event_type": "analysis_completion",
+            "analysis_id": "analysis-main",
+            "subject_id": "analysis-main",
+            "state": "SYNCED",
+            "external_reference": {
+                "artifacts": [{"provider_artifact_ref": "team/project/analysis:v1"}]
+            },
+        },
+        {
+            "outbox_id": "outbox-reference",
+            "event_type": "reference_comparison",
+            "analysis_id": "analysis-reference",
+            "subject_id": "reference-result",
+            "state": "PENDING",
+            "external_reference": None,
+        },
+    ]
+
+    class ReferenceExportStore:
+        root = tmp_path.resolve()
+
+        @staticmethod
+        def analysis_bundle(analysis_id: str):  # type: ignore[no-untyped-def]
+            assert analysis_id == "analysis-main"
+            return bundle
+
+        @staticmethod
+        def effective_bundle():  # type: ignore[no-untyped-def]
+            return bundle
+
+        @staticmethod
+        def telemetry_rows(
+            *,
+            event_type: str | None = None,
+            analysis_id: str | None = None,
+            subject_id: str | None = None,
+        ) -> list[dict[str, Any]]:
+            return [
+                item
+                for item in rows
+                if (event_type is None or item["event_type"] == event_type)
+                and (analysis_id is None or item["analysis_id"] == analysis_id)
+                and (subject_id is None or item["subject_id"] == subject_id)
+            ]
+
+    sync_plan = {
+        "allowed": True,
+        "blockers": [],
+        "projections": [
+            {
+                "source_asset_id": asset.asset_id,
+                "uploaded_asset_id": asset.asset_id,
+                "representation": "RAW",
+                "bytes": asset.byte_size,
+            }
+            for asset in bundle.assets
+        ],
+    }
+    projector = EcoTelemetryProjector(
+        store=ReferenceExportStore(),  # type: ignore[arg-type]
+        project_root=tmp_path,
+        sync_plan=sync_plan,
+        profile=ECOCORRIDOR_APP_PROFILE,
+    )
+    row = {
+        "outbox_id": "outbox-export",
+        "project_id": bundle.project_id,
+        "analysis_id": "analysis-main",
+        "event_type": "evidence_export",
+        "subject_id": export_id,
+        "created_at": "2026-08-03T12:00:00+00:00",
+    }
+    payload = {
+        "manifest": manifest.model_dump(mode="json"),
+        "package_files": [
+            {
+                "relative_path": package_path.relative_to(tmp_path).as_posix(),
+                "sha256": package_sha256,
+                "byte_size": package_path.stat().st_size,
+                "media_type": "application/json",
+            }
+        ],
+    }
+    with pytest.raises(CloudTransportError, match="ECO_REQUIRED_ARTIFACT_LINEAGE_NOT_SYNCED"):
+        projector._evidence_export(row, payload)
+
+    rows[1]["state"] = "SYNCED"
+    rows[1]["external_reference"] = {
+        "artifacts": [{"provider_artifact_ref": "team/project/reference:v1"}]
+    }
+    projection = projector._evidence_export(row, payload)
+    assert projection.input_artifact_refs == [
+        "team/project/analysis:v1",
+        "team/project/reference:v1",
+    ]
+    assert projection.summary["ordinary_direct_run_count"] == 1
+    assert projection.summary["reference_direct_run_count"] == 2
+    assert projection.summary["direct_run_count"] == 3
+    assert projection.summary["ordinary_evidence_claim_count"] == 1
+    assert projection.summary["reference_evidence_claim_count"] == 2
+    assert projection.summary["evidence_claim_count"] == 3
+    dependency_table = next(
+        item for item in projection.tables if item.logical_name == "export_reference_dependencies"
+    )
+    assert dependency_table.rows[0][0:6] == [
+        "analysis-reference",
+        "reference-plan",
+        "reference-result",
+        2,
+        2,
+        2,
+    ]
 
 
 def test_cloud_bundle_projection_withholds_generalized_source_metadata(tmp_path: Path) -> None:
@@ -676,28 +898,51 @@ def _seed_authoritative_project(
         completed_at=datetime(2026, 8, 3, tzinfo=UTC),
     )
     evidence_nodes = [
-        {"node_id": "node-direct_run", "node_type": "DIRECT_RUN", "label": "DIRECT_RUN"},
-        {"node_id": "node-scenario", "node_type": "SCENARIO", "label": "SCENARIO"},
         {
-            "node_id": "node-raster_diff",
+            "node_id": f"run:{run.direct_run_id}",
+            "node_type": "DIRECT_RUN",
+            "sha256": run.result_sha256,
+        },
+        {"node_id": f"scenario:{run.scenario_id}", "node_type": "SCENARIO"},
+        {
+            "node_id": f"diff:{prepared.action_raster_sha256}",
             "node_type": "RASTER_DIFF",
-            "label": "RASTER_DIFF",
-            "sha256": by_role["action_raster_diff"]["sha256"],
+            "sha256": prepared.action_raster_sha256,
+            "footprint_proof_sha256": prepared.footprint_proof_sha256,
         },
-        {"node_id": "node-asset", "node_type": "ASSET", "label": "ASSET"},
         {
-            "node_id": "node-engine_manifest",
+            "node_id": f"asset:{hypothesis.resistance_asset_id}",
+            "node_type": "ASSET",
+            "sha256": next(
+                item.sha256
+                for item in bundle.assets
+                if item.asset_id == hypothesis.resistance_asset_id
+            ),
+        },
+        {
+            "node_id": f"engine:{run.engine_manifest_sha256}",
             "node_type": "ENGINE_MANIFEST",
-            "label": "ENGINE_MANIFEST",
+            "sha256": run.engine_manifest_sha256,
         },
-        {"node_id": "node-qa", "node_type": "QA", "label": "QA"},
-        {"node_id": "node-artifact", "node_type": "ARTIFACT", "label": "ARTIFACT"},
         {
-            "node_id": "node-footprint_proof",
+            "node_id": f"qa:{run.direct_run_id}",
+            "node_type": "QA",
+            "status": run.qa_status.value,
+        },
+        {
+            "node_id": f"footprint-proof:{by_role['footprint_proof_document']['sha256']}",
             "node_type": "FOOTPRINT_PROOF",
-            "label": "FOOTPRINT_PROOF",
             "sha256": by_role["footprint_proof_document"]["sha256"],
         },
+        *[
+            {
+                "node_id": f"artifact:{item['role']}:{item['sha256']}",
+                "node_type": "ARTIFACT",
+                "role": item["role"],
+                "sha256": item["sha256"],
+            }
+            for item in artifact_records
+        ],
     ]
     store.finalize_direct_job(
         run.direct_run_id,
@@ -844,6 +1089,122 @@ def _seed_authoritative_project(
         ],
     }
     return store, sync_plan
+
+
+def _prepare_minimal_export_intent(
+    store: EcoProjectStore,
+    *,
+    export_id: str,
+    analysis_id: str,
+) -> tuple[Path, Path]:
+    staging = store.root / "exports" / f".{export_id}.staging"
+    final = store.root / "exports" / export_id
+    staging.mkdir(parents=True)
+    evidence = staging / "evidence.json"
+    evidence.write_text('{"evidence":"direct"}\n', encoding="utf-8")
+    evidence_sha256 = hashlib.sha256(evidence.read_bytes()).hexdigest()
+    manifest = {
+        "schema_version": "ecocorridor-export/test",
+        "export_id": export_id,
+        "project_id": store.project()["project_id"],
+        "files": {"evidence.json": evidence_sha256},
+    }
+    manifest_path = staging / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8")
+    package_files = [
+        {
+            "relative_path": f"exports/{export_id}/{path.name}",
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "byte_size": path.stat().st_size,
+            "media_type": "application/json",
+        }
+        for path in (evidence, manifest_path)
+    ]
+    store.prepare_export_publication(
+        export_id,
+        analysis_id,
+        manifest,
+        package_files=package_files,
+        staging_relative_path=staging.relative_to(store.root).as_posix(),
+    )
+    return staging, final
+
+
+def test_export_publication_recovers_before_and_after_atomic_rename(tmp_path: Path) -> None:
+    store, _ = _seed_authoritative_project(tmp_path / "recoverable-export")
+    analysis_id = store.telemetry_rows(event_type="analysis_completion")[0]["analysis_id"]
+    try:
+        staging_before, final_before = _prepare_minimal_export_intent(
+            store,
+            export_id="export-before-rename",
+            analysis_id=analysis_id,
+        )
+        assert staging_before.is_dir()
+        assert store.recover_export_publications() == ["export-before-rename"]
+        assert final_before.is_dir()
+        assert not staging_before.exists()
+
+        staging_after, final_after = _prepare_minimal_export_intent(
+            store,
+            export_id="export-after-rename",
+            analysis_id=analysis_id,
+        )
+        os.rename(staging_after, final_after)
+        assert store.recover_export_publications() == ["export-after-rename"]
+        export_rows = store.telemetry_rows(event_type="evidence_export")
+        assert {item["subject_id"] for item in export_rows}.issuperset(
+            {"export-before-rename", "export-after-rename"}
+        )
+    finally:
+        store.close()
+
+
+def test_export_finalization_failure_retains_recoverable_intent_and_is_atomic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, _ = _seed_authoritative_project(tmp_path / "atomic-export")
+    analysis_id = store.telemetry_rows(event_type="analysis_completion")[0]["analysis_id"]
+    staging, final = _prepare_minimal_export_intent(
+        store,
+        export_id="export-atomic-failure",
+        analysis_id=analysis_id,
+    )
+    os.rename(staging, final)
+    original_enqueue = store._enqueue_outbox
+
+    def fail_outbox(*_args: Any, **_kwargs: Any) -> str:
+        raise RuntimeError("injected outbox failure")
+
+    try:
+        monkeypatch.setattr(store, "_enqueue_outbox", fail_outbox)
+        with pytest.raises(RuntimeError, match="injected outbox failure"):
+            store.finalize_export_publication("export-atomic-failure")
+        assert (
+            store._connection.execute(
+                "SELECT COUNT(*) FROM eco_exports WHERE export_id='export-atomic-failure'"
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            store.get_record("export_publication_intent", "export-atomic-failure")[
+                "final_relative_path"
+            ]
+            == "exports/export-atomic-failure"
+        )
+        monkeypatch.setattr(store, "_enqueue_outbox", original_enqueue)
+        assert store.recover_export_publications() == ["export-atomic-failure"]
+        assert (
+            store._connection.execute(
+                "SELECT COUNT(*) FROM eco_exports WHERE export_id='export-atomic-failure'"
+            ).fetchone()[0]
+            == 1
+        )
+        export_rows = store.telemetry_rows(
+            event_type="evidence_export", subject_id="export-atomic-failure"
+        )
+        assert len(export_rows) == 1
+    finally:
+        store.close()
 
 
 def test_all_authoritative_producers_project_and_sync_idempotently(tmp_path: Path) -> None:
@@ -1028,7 +1389,10 @@ def test_direct_artifact_sync_rechecks_current_deployment_authorization(
 def test_direct_job_finalization_rejects_detached_prepared_evidence(
     tmp_path: Path, detached: str
 ) -> None:
-    with pytest.raises(ValueError, match="prepared|semantic diff|footprint proof|input artifact"):
+    with pytest.raises(
+        ValueError,
+        match="prepared|semantic diff|footprint proof|input artifact|provenance",
+    ):
         _seed_authoritative_project(tmp_path / detached, detach_prepared=detached)
 
 

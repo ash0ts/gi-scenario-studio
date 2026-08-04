@@ -119,7 +119,7 @@ jobs:
         env:
           PYTHONPATH: python
         run: >-
-          uv run --no-sync python scripts/package_ridgeway_evidence.py
+          uv run --no-sync python scripts/publish_ridgeway_evidence.py
           --evidence-root "${RUNNER_TEMP}/ridgeway-evidence"
           --publish-directory "${RUNNER_TEMP}/producer/ridgeway"
           --desktop-fixture "${RUNNER_TEMP}/producer/desktop/ridgewayFixture.json"

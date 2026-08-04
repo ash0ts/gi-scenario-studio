@@ -598,13 +598,58 @@ describe("EcoCorridor desktop entry paths", () => {
 });
 
 describe("authoritative professional workspace", () => {
-  it("reopens a contained saved project from Home without repeating W&B onboarding", async () => {
-    const user = userEvent.setup();
-    const savedState = projectState("saved-project", "North Fork connectivity review", "IMPORTED", {
-      analyses: [{ analysis_id: "analysis_interrupted", state: "RUNNING", created_at: "2026-08-03T12:00:00Z", updated_at: "2026-08-03T12:05:00Z" }],
+  it("hydrates reference recovery separately from the alternatives-analysis workspace", () => {
+    const alternativesPlan = directAnalysisPlan("analysis_alternatives");
+    const base = projectState("mixed-analysis-project", "Mixed durable analysis project", "IMPORTED");
+    const state = projectState("mixed-analysis-project", "Mixed durable analysis project", "IMPORTED", {
+      analyses: [
+        { analysis_id: alternativesPlan.analysis_id, analysis_kind: "ALTERNATIVES", plan_id: null, revision_id: base.active_revision.revision_id, engine_manifest_sha256: alternativesPlan.engine_manifest_sha256, state: "COMPLETED", created_at: "2026-08-03T12:00:00Z", updated_at: "2026-08-03T12:10:00Z" },
+        { analysis_id: "analysis_reference", analysis_kind: "REFERENCE", plan_id: "plan_reference", revision_id: base.active_revision.revision_id, engine_manifest_sha256: alternativesPlan.engine_manifest_sha256, state: "RUNNING", created_at: "2026-08-03T12:20:00Z", updated_at: "2026-08-03T12:25:00Z" },
+      ],
       pending_recovery: {
         required: true,
-        analyses: [{ analysis_id: "analysis_interrupted", analysis_state: "RUNNING", executor_active: false, recovery_required: true, running_job_ids: ["job_17"] }],
+        analyses: [{ analysis_id: "analysis_reference", analysis_kind: "REFERENCE", plan_id: "plan_reference", revision_id: base.active_revision.revision_id, analysis_state: "RUNNING", executor_active: false, recovery_required: true, running_job_ids: ["reference_job_1"] }],
+        next_action: "Resume or cancel the interrupted analysis explicitly.",
+      },
+    });
+
+    const hydrated = hydrateProfessionalProject(state);
+
+    expect(hydrated.activeAnalysisId).toBe(alternativesPlan.analysis_id);
+    expect(hydrated.recoveryAnalysisId).toBeNull();
+    expect(hydrated.referenceRecoveryAnalysisId).toBe("analysis_reference");
+  });
+
+  it("never restores an alternatives analysis or recovery record from a stale semantic revision", () => {
+    const base = projectState("revision-safe-project", "Revision-safe project", "IMPORTED");
+    const currentRevision = base.active_revision.revision_id;
+    const state = projectState("revision-safe-project", "Revision-safe project", "IMPORTED", {
+      analyses: [
+        { analysis_id: "analysis_current", analysis_kind: "ALTERNATIVES", plan_id: null, revision_id: currentRevision, engine_manifest_sha256: "e".repeat(64), state: "COMPLETED", created_at: "2026-08-03T12:00:00Z", updated_at: "2026-08-03T12:10:00Z" },
+        { analysis_id: "analysis_stale_newer", analysis_kind: "ALTERNATIVES", plan_id: null, revision_id: "revision_stale", engine_manifest_sha256: "e".repeat(64), state: "RUNNING", created_at: "2026-08-03T13:00:00Z", updated_at: "2026-08-03T13:10:00Z" },
+      ],
+      pending_recovery: {
+        required: true,
+        analyses: [{ analysis_id: "analysis_stale_newer", analysis_kind: "ALTERNATIVES", plan_id: null, revision_id: "revision_stale", analysis_state: "RUNNING", executor_active: false, recovery_required: true, running_job_ids: ["job_stale"] }],
+        next_action: "A stale-revision process record remains in the repository.",
+      },
+    });
+
+    const hydrated = hydrateProfessionalProject(state);
+
+    expect(hydrated.activeAnalysisId).toBe("analysis_current");
+    expect(hydrated.recoveryAnalysisId).toBeNull();
+    expect(hydrated.referenceRecoveryAnalysisId).toBeNull();
+  });
+
+  it("reopens a contained saved project from Home without repeating W&B onboarding", async () => {
+    const user = userEvent.setup();
+    const base = projectState("saved-project", "North Fork connectivity review", "IMPORTED");
+    const savedState = projectState("saved-project", "North Fork connectivity review", "IMPORTED", {
+      analyses: [{ analysis_id: "analysis_interrupted", analysis_kind: "ALTERNATIVES", plan_id: null, revision_id: base.active_revision.revision_id, engine_manifest_sha256: "e".repeat(64), state: "RUNNING", created_at: "2026-08-03T12:00:00Z", updated_at: "2026-08-03T12:05:00Z" }],
+      pending_recovery: {
+        required: true,
+        analyses: [{ analysis_id: "analysis_interrupted", analysis_kind: "ALTERNATIVES", plan_id: null, revision_id: base.active_revision.revision_id, analysis_state: "RUNNING", executor_active: false, recovery_required: true, running_job_ids: ["job_17"] }],
         next_action: "Resume or cancel the interrupted analysis explicitly.",
       },
       sync_status: { state: "SYNC_QUEUED_OFFLINE", message: "Exact-scope binding retained; synchronization is queued offline." },
@@ -637,9 +682,10 @@ describe("authoritative professional workspace", () => {
 
   it("rehydrates a paused analysis with its immutable direct-job arithmetic", async () => {
     const analysisId = "analysis_paused_review";
-    const plan = directAnalysisPlan(analysisId);
+    const base = projectState("paused-project", "Paused mountain-pass review", "IMPORTED");
+    const plan = { ...directAnalysisPlan(analysisId), revision_id: base.active_revision.revision_id };
     const savedState = projectState("paused-project", "Paused mountain-pass review", "IMPORTED", {
-      analyses: [{ analysis_id: analysisId, state: "PAUSED", created_at: "2026-08-03T12:00:00Z", updated_at: "2026-08-03T12:20:00Z" }],
+      analyses: [{ analysis_id: analysisId, analysis_kind: "ALTERNATIVES", plan_id: null, revision_id: plan.revision_id, engine_manifest_sha256: plan.engine_manifest_sha256, state: "PAUSED", created_at: "2026-08-03T12:00:00Z", updated_at: "2026-08-03T12:20:00Z" }],
       sync_status: { state: "CONNECTED", deployment: "DEDICATED", message: "Exact-scope Restricted binding retained." },
     });
     const request = vi.fn(async (method: string, _params: Record<string, unknown>) => {
@@ -671,9 +717,10 @@ describe("authoritative professional workspace", () => {
   it("rehydrates a completed analysis and its worker-returned decision board", async () => {
     const user = userEvent.setup();
     const analysisId = "analysis_completed_review";
-    const plan = directAnalysisPlan(analysisId);
+    const base = projectState("completed-project", "Completed mountain-pass review", "IMPORTED");
+    const plan = { ...directAnalysisPlan(analysisId), revision_id: base.active_revision.revision_id };
     const savedState = projectState("completed-project", "Completed mountain-pass review", "IMPORTED", {
-      analyses: [{ analysis_id: analysisId, state: "COMPLETED", created_at: "2026-08-03T12:00:00Z", updated_at: "2026-08-03T12:30:00Z" }],
+      analyses: [{ analysis_id: analysisId, analysis_kind: "ALTERNATIVES", plan_id: null, revision_id: plan.revision_id, engine_manifest_sha256: plan.engine_manifest_sha256, state: "COMPLETED", created_at: "2026-08-03T12:00:00Z", updated_at: "2026-08-03T12:30:00Z" }],
       sync_status: { state: "CONNECTED", deployment: "SELF_MANAGED", message: "Exact-scope Restricted binding retained." },
     });
     const decisionBoard = {

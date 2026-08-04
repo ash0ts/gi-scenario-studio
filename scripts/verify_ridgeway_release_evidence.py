@@ -90,10 +90,10 @@ def verify(
             raise ValueError("Historical Ridgeway evidence cannot satisfy a release verification")
         return "HISTORICAL_BLOCKED"
     if (
-        direct.get("schema_version") != "ridgeway-direct-evidence/v1.1"
+        direct.get("schema_version") != "ridgeway-direct-evidence/v1.2"
         or direct.get("release_replay_eligible") is not True
     ):
-        raise ValueError("Ridgeway evidence is neither an explicit historical block nor v1.1")
+        raise ValueError("Ridgeway evidence is neither an explicit historical block nor v1.2")
     bundle = direct.get("evidence_bundle")
     if not isinstance(bundle, dict):
         raise TypeError("Ridgeway direct manifest omits its evidence archive")

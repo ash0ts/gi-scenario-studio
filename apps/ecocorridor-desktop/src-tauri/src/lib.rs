@@ -76,6 +76,10 @@ fn application_profile() -> AppProfile {
             "connectivity.analysis.resume".into(),
             "connectivity.analysis.start".into(),
             "connectivity.analysis.status".into(),
+            "connectivity.reference.plan".into(),
+            "connectivity.reference.start".into(),
+            "connectivity.reference.status".into(),
+            "connectivity.reference.result".into(),
             "connectivity.asset.add".into(),
             "connectivity.asset.download".into(),
             "connectivity.asset.download.preview".into(),
@@ -561,7 +565,11 @@ mod tests {
             "ecocorridor-installed-health-{}.json",
             uuid::Uuid::new_v4()
         ));
-        assert_eq!(validate_health_receipt_path(&accepted).unwrap(), accepted);
+        let canonical_parent = std::fs::canonicalize(accepted.parent().unwrap()).unwrap();
+        assert_eq!(
+            validate_health_receipt_path(&accepted).unwrap(),
+            canonical_parent.join(accepted.file_name().unwrap())
+        );
         assert!(
             validate_health_receipt_path(&std::env::temp_dir().join("untrusted-health.json"))
                 .is_err()

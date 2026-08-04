@@ -10,11 +10,11 @@ The repository retains two deliberately distinct packages:
 - `ridgeway-direct-evidence-4858c0a48841.tar.gz` is checksum-pinned historical
   v1.0 benchmark material. It predates the current model identity and v1.1
   semantic/resource evidence contract and is never loaded as the active replay.
-- `ridgeway-direct-evidence-80fb1af09b74.tar.gz` is the locally verified current
+- `ridgeway-direct-evidence-a0dc6b763347.tar.gz` is the locally verified current
   package. It contains 1,536 accepted matrix jobs and 60 accepted current-map
   jobs, 1,596 whole-process-tree exit confirmations, one resource observation
   per job, and the complete current v1.2 UI projection. Its archive SHA-256 is
-  `80fb1af09b744d19b83dffff69f8bb015a46d558e5887ced986c12ae934d6821`.
+  `a0dc6b7633475824d36cd9ab18ee38088208561ba680fed022fc7b6d65ac7168`.
 
 The active desktop and no-login replay now use the current, manifest-bound
 projection. This is local semantic evidence, not the protected GitHub Actions
@@ -41,7 +41,7 @@ PYTHONPATH=python .venv/bin/python \
 The resumable runner uses the committed Julia project and requires the pinned
 Julia 1.12.6 runtime, Circuitscape 5.17.1 depot, and an external evidence
 directory. The study is first written outside Git; after every required direct
-job and teaching-role check succeeds, `scripts/package_ridgeway_evidence.py`
+job and teaching-role check succeeds, `scripts/publish_ridgeway_evidence.py`
 validates and packages the accepted artifacts for local replay verification:
 
 ```text
@@ -68,11 +68,18 @@ deterministic archive, direct-evidence manifest, and identical benchmark and
 desktop projections:
 
 ```text
-PYTHONPATH=python .venv/bin/python scripts/package_ridgeway_evidence.py \
+PYTHONPATH=python .venv/bin/python scripts/publish_ridgeway_evidence.py \
   --evidence-root /path/outside/repository/ridgeway-evidence \
   --publish-directory benchmarks/ecocorridor/ridgeway \
   --desktop-fixture apps/ecocorridor-desktop/src/data/ridgewayFixture.json
 ```
+
+The public command stages the immutable report packager in an empty adjacent
+directory, verifies every staged output, installs the manifest last, and removes
+only the checksum-valid archive named by the previously active manifest. It
+never sweeps unrelated archives, so the pinned historical benchmark remains
+available. `package_ridgeway_evidence.py` is the archive-bound low-level report
+dependency and is not an operator-facing publication command.
 
 Release verification requires all of the following:
 

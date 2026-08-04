@@ -11,9 +11,9 @@ from types import ModuleType
 import pytest
 
 
-def _load_packager() -> ModuleType:
-    path = Path(__file__).resolve().parents[2] / "scripts" / "package_ridgeway_evidence.py"
-    spec = importlib.util.spec_from_file_location("ridgeway_evidence_packager", path)
+def _load_script(filename: str, module_name: str) -> ModuleType:
+    path = Path(__file__).resolve().parents[2] / "scripts" / filename
+    spec = importlib.util.spec_from_file_location(module_name, path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -21,24 +21,146 @@ def _load_packager() -> ModuleType:
     return module
 
 
-packager = _load_packager()
+packager = _load_script("package_ridgeway_evidence.py", "package_ridgeway_evidence")
+publisher = _load_script("publish_ridgeway_evidence.py", "ridgeway_evidence_publisher")
 
 
 def _canonical(value: object) -> bytes:
     return (json.dumps(value, sort_keys=True, indent=2) + "\n").encode("utf-8")
 
 
-def _process_exit(index: int) -> dict[str, object]:
+def test_packager_preserves_raw_v11_boundary_and_advances_published_contracts() -> None:
+    assert packager.RAW_DIRECT_EVIDENCE_SCHEMA == "ridgeway-direct-evidence/v1.1"
+    assert packager.PUBLISHED_DIRECT_EVIDENCE_SCHEMA == "ridgeway-direct-evidence/v1.2"
+    assert packager.BUNDLE_SCHEMA == "ridgeway-evidence-bundle/v1.2"
+
+
+def _published_archive(directory: Path, payload: bytes) -> tuple[Path, str]:
+    digest = hashlib.sha256(payload).hexdigest()
+    archive = directory / f"ridgeway-direct-evidence-{digest[:12]}.tar.gz"
+    archive.write_bytes(payload)
+    return archive, digest
+
+
+def _write_active_manifest(directory: Path, archive: Path, digest: str) -> None:
+    (directory / "direct-evidence-manifest.json").write_bytes(
+        _canonical(
+            {
+                # Exercise replacement of the currently deployed pre-v1.2 package.
+                "schema_version": "ridgeway-direct-evidence/v1.1",
+                "release_replay_eligible": True,
+                "evidence_bundle": {
+                    "format": "tar+gzip",
+                    "filename": archive.name,
+                    "sha256": digest,
+                    "byte_size": archive.stat().st_size,
+                },
+            }
+        )
+    )
+
+
+def test_publication_cleanup_removes_the_prior_active_archive(tmp_path: Path) -> None:
+    publish = tmp_path / "publish"
+    publish.mkdir()
+    previous, previous_digest = _published_archive(publish, b"previous active archive")
+    current, _current_digest = _published_archive(publish, b"new active archive")
+    _write_active_manifest(publish, previous, previous_digest)
+
+    prior = publisher.prior_active_archive(publish)
+    removed = publisher.remove_replaced_active_archive(prior, current_archive=current)
+
+    assert removed is True
+    assert not previous.exists()
+    assert current.is_file()
+
+
+def test_publication_cleanup_preserves_unrelated_historical_archives(tmp_path: Path) -> None:
+    publish = tmp_path / "publish"
+    publish.mkdir()
+    previous, previous_digest = _published_archive(publish, b"previous active archive")
+    historical_one, _ = _published_archive(publish, b"historical archive one")
+    historical_two, _ = _published_archive(publish, b"historical archive two")
+    current, _ = _published_archive(publish, b"new active archive")
+    _write_active_manifest(publish, previous, previous_digest)
+
+    prior = publisher.prior_active_archive(publish)
+    publisher.remove_replaced_active_archive(prior, current_archive=current)
+
+    assert not previous.exists()
+    assert current.is_file()
+    assert historical_one.read_bytes() == b"historical archive one"
+    assert historical_two.read_bytes() == b"historical archive two"
+
+
+def test_safe_publisher_stages_packaging_and_preserves_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    evidence = tmp_path / "evidence"
+    evidence.mkdir()
+    publish = tmp_path / "published"
+    publish.mkdir()
+    desktop = tmp_path / "desktop" / "ridgewayFixture.json"
+    previous, previous_digest = _published_archive(publish, b"previous active archive")
+    historical, _ = _published_archive(publish, b"historical archive")
+    _write_active_manifest(publish, previous, previous_digest)
+
+    def fake_package(
+        _evidence_root: Path,
+        staged_publish: Path,
+        staged_fixture: Path,
+    ) -> dict[str, object]:
+        staged_publish.mkdir(parents=True)
+        staged_fixture.parent.mkdir(parents=True)
+        current, current_digest = _published_archive(staged_publish, b"current archive")
+        (staged_publish / "direct-evidence-manifest.json").write_bytes(
+            _canonical(
+                {
+                    "release_replay_eligible": True,
+                    "evidence_bundle": {
+                        "format": "tar+gzip",
+                        "filename": current.name,
+                        "sha256": current_digest,
+                        "byte_size": current.stat().st_size,
+                    },
+                }
+            )
+        )
+        (staged_publish / "ui_projection.json").write_bytes(_canonical({"verified": True}))
+        staged_fixture.write_bytes(_canonical({"fixture": "verified"}))
+        staged_fixture.with_name("ridgewayReleaseTrust.json").write_bytes(
+            _canonical({"trusted": True})
+        )
+        return {"archive": current.name}
+
+    monkeypatch.setattr(publisher.packager, "package", fake_package)
+    result = publisher.publish(evidence, publish, desktop)
+
+    archive_name = Path(str(result["archive"])).name
+    assert archive_name.startswith("ridgeway-direct-evidence-")
+    assert not previous.exists()
+    assert historical.read_bytes() == b"historical archive"
+    active = publisher.prior_active_archive(publish)
+    assert active is not None and active.path.name == archive_name
+    assert json.loads(desktop.read_text(encoding="utf-8")) == {"fixture": "verified"}
+
+
+def _process_exit(
+    index: int,
+    *,
+    launched_at: str = "2026-08-03T12:00:00+00:00",
+    confirmed_at: str = "2026-08-03T12:00:01+00:00",
+) -> dict[str, object]:
     process_id = 30_000 + index
     return {
         "process_id": process_id,
         "process_group_id": process_id,
         "process_identity": hashlib.sha256(f"packager-process-{index}".encode()).hexdigest(),
-        "launched_at": "2026-08-03T12:00:00+00:00",
+        "launched_at": launched_at,
         "termination_reason": "natural_exit",
         "tree_exit_confirmed": True,
         "confirmation_method": "POSIX_PROCESS_GROUP_ABSENT_AFTER_NATURAL_EXIT",
-        "confirmed_at": "2026-08-03T12:00:01+00:00",
+        "confirmed_at": confirmed_at,
     }
 
 
@@ -313,3 +435,46 @@ def test_packager_independently_requires_confirmed_unique_process_tree_exits() -
                 {"direct_run_id": "run-5", "process_exit_evidence": duplicate},
             ]
         )
+
+
+def test_packager_derives_retained_interval_overlap_without_inventing_worker_count() -> None:
+    jobs = [
+        {
+            "direct_run_id": "run-1",
+            "process_exit_evidence": _process_exit(
+                1,
+                launched_at="2026-08-03T12:00:00+00:00",
+                confirmed_at="2026-08-03T12:00:04+00:00",
+            ),
+        },
+        {
+            "direct_run_id": "run-2",
+            "process_exit_evidence": _process_exit(
+                2,
+                launched_at="2026-08-03T12:00:01+00:00",
+                confirmed_at="2026-08-03T12:00:04+00:00",
+            ),
+        },
+        {
+            "direct_run_id": "run-3",
+            "process_exit_evidence": _process_exit(
+                3,
+                launched_at="2026-08-03T12:00:04+00:00",
+                confirmed_at="2026-08-03T12:00:05+00:00",
+            ),
+        },
+    ]
+
+    forward = packager.independently_measure_retained_process_interval_overlap(jobs)
+    completion_order_changed = packager.independently_measure_retained_process_interval_overlap(
+        [jobs[2], jobs[0], jobs[1]]
+    )
+
+    assert forward == completion_order_changed
+    assert forward["maximum_overlapping_retained_process_intervals"] == 3
+    assert forward["retained_interval_count"] == 3
+    assert forward["scientific_identity_role"] == "AUDIT_ONLY_EXCLUDED"
+    assert "configured_worker_count" not in forward
+    assert "may understate true process concurrency" in str(forward["limitation"])
+    assert "coincident endpoints may overstate" in str(forward["limitation"])
+    assert "configured worker count" in str(forward["limitation"])

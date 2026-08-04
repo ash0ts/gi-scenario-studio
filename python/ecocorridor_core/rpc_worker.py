@@ -63,9 +63,13 @@ from .assistants import (
     EvidenceAssistant,
     IntakeDraft,
     SensitiveContextPolicy,
+    validate_assistant_limitation,
     validate_feedback_comment,
 )
-from .claim_safety import assert_strict_ecological_claim
+from .claim_safety import (
+    assert_safe_rendered_ecological_copy,
+    assert_strict_ecological_claim,
+)
 from .contracts import (
     AssetKind,
     CloudDisposition,
@@ -91,6 +95,8 @@ from .contracts import (
     PortfolioDecisionSummary,
     RasterGrid,
     RasterValueKind,
+    ReferenceComparisonPlan,
+    ReferenceComparisonResult,
     ResamplingMethod,
     ResistanceHypothesis,
     ResourceObservationBoundary,
@@ -116,8 +122,10 @@ from .digitization import (
     publish_digitization,
 )
 from .export import (
+    ConnectivityExportManifest,
     EvidenceArtifactSource,
     EvidenceProjectAssetSource,
+    ReferenceEvidenceExportSource,
     compute_export_eligibility,
     create_evidence_export,
 )
@@ -168,6 +176,12 @@ from .raster_io import (
     inspect_reviewed_raster,
     load_raster,
     write_esri_ascii,
+)
+from .reference_workflow import (
+    ReferenceWorkflowError,
+    assemble_and_store_reference_result,
+    build_reference_comparison_plan,
+    recover_pending_reference_results,
 )
 from .resource_observability import ProcessResourceRecorder
 from .ridgeway import (
@@ -420,6 +434,14 @@ class ModelAttestParams(ProjectParams):
 
 class AnalysisPlanParams(ProjectParams):
     plan: ConnectivityRunPlan
+
+
+class ReferencePlanParams(ProjectParams):
+    analysis_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")
+
+
+class ReferenceAnalysisParams(ReferencePlanParams):
+    plan_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")
 
 
 class AnalysisExecutor(Protocol):
@@ -710,6 +732,55 @@ def _atomic_copy_file(source: Path, destination: Path) -> None:
         temporary.unlink(missing_ok=True)
 
 
+_SAFE_BLOCKED_RIDGEWAY_ROLE_COPY = {
+    "low-cost-caution": (
+        "Low-cost caution",
+        "Reserved for a current direct-run lower-cost option with an important review flag.",
+    ),
+    "carry-forward": (
+        "Carry-forward candidate",
+        "Reserved for a current direct-run candidate that satisfies every teaching rule.",
+    ),
+    "over-budget": (
+        "Modeled-rule pass, over budget",
+        "Reserved for a current direct-run result that fails the authored cost rule.",
+    ),
+    "single-hypothesis-collapse": (
+        "Hypothesis-sensitive option",
+        "Reserved for a current direct-run option whose rank changes materially across hypotheses.",
+    ),
+}
+
+
+def _presentation_safe_blocked_ridgeway_projection(
+    projection: dict[str, Any],
+) -> dict[str, Any]:
+    """Replace legacy blocked-state labels only after exact fixture integrity verification."""
+
+    rendered = json.loads(json.dumps(projection))
+    portfolios = rendered.get("portfolios")
+    if (
+        rendered.get("releaseReplayEligible") is not False
+        or rendered.get("evidenceState") != "ENGINE_RUN_REQUIRED"
+        or not isinstance(portfolios, list)
+        or len(portfolios) != len(_SAFE_BLOCKED_RIDGEWAY_ROLE_COPY)
+    ):
+        raise ValueError("blocked Ridgeway projection has an invalid presentation boundary")
+    seen: set[str] = set()
+    for portfolio in portfolios:
+        key = portfolio.get("projectionKey") if isinstance(portfolio, dict) else None
+        if not isinstance(key, str) or key in seen or key not in _SAFE_BLOCKED_RIDGEWAY_ROLE_COPY:
+            raise ValueError("blocked Ridgeway projection has an unknown teaching role")
+        seen.add(key)
+        name, option_summary = _SAFE_BLOCKED_RIDGEWAY_ROLE_COPY[key]
+        portfolio["name"] = name
+        portfolio["optionSummary"] = option_summary
+    if seen != set(_SAFE_BLOCKED_RIDGEWAY_ROLE_COPY):
+        raise ValueError("blocked Ridgeway projection omits a teaching role")
+    assert_safe_rendered_ecological_copy(rendered)
+    return rendered
+
+
 class RPCDispatcher:
     def __init__(
         self,
@@ -993,6 +1064,16 @@ class RPCDispatcher:
         self._register("connectivity.analysis.pause", ProjectAnalysisParams, self._analysis_pause)
         self._register("connectivity.analysis.resume", ProjectAnalysisParams, self._analysis_resume)
         self._register("connectivity.analysis.cancel", ProjectAnalysisParams, self._analysis_cancel)
+        self._register("connectivity.reference.plan", ReferencePlanParams, self._reference_plan)
+        self._register(
+            "connectivity.reference.start", ReferenceAnalysisParams, self._reference_start
+        )
+        self._register(
+            "connectivity.reference.status", ReferenceAnalysisParams, self._reference_status
+        )
+        self._register(
+            "connectivity.reference.result", ReferenceAnalysisParams, self._reference_result
+        )
         self._register(
             "connectivity.results.decision_board", DecisionBoardParams, self._decision_board
         )
@@ -1100,7 +1181,17 @@ class RPCDispatcher:
 
     def _store(self, project_directory: str) -> EcoProjectStore:
         path = self._allowed_path(project_directory, must_exist=False, purpose="project")
-        return EcoProjectStore(path)
+        store = EcoProjectStore(path)
+        try:
+            store.recover_export_publications()
+        except KeyError:
+            # A newly created database has no project identity or publication
+            # intents yet.  Initialization remains the owning RPC's concern.
+            pass
+        except BaseException:
+            store.close()
+            raise
+        return store
 
     @staticmethod
     def _project_resource_policy(store: EcoProjectStore) -> ResourcePolicy:
@@ -1642,6 +1733,17 @@ class RPCDispatcher:
 
         store = self._store(params.project_directory)
         try:
+            try:
+                recover_pending_reference_results(store=store)
+            except (OSError, ReferenceWorkflowError, ValueError) as exc:
+                raise _fault(
+                    "REFERENCE_RECOVERY_FAILED",
+                    "A completed reference analysis could not recover its canonical result.",
+                    category=ErrorCategory.SECURITY,
+                    severity=Severity.BLOCKING,
+                    remediation="Restore the retained direct evidence and reopen the project.",
+                    technical_message=type(exc).__name__,
+                ) from exc
             project = store.project()
             bundle = store.effective_bundle()
             record_types = (
@@ -1663,18 +1765,33 @@ class RPCDispatcher:
             saved_records = {
                 record_type: store.list_records(record_type) for record_type in record_types
             }
-            analyses = [
-                {
-                    "analysis_id": str(row["analysis_id"]),
-                    "state": str(row["state"]),
-                    "created_at": str(row["created_at"]),
-                    "updated_at": str(row["updated_at"]),
-                }
-                for row in store._connection.execute(
-                    "SELECT analysis_id,state,created_at,updated_at FROM eco_analyses "
-                    "ORDER BY created_at,analysis_id"
+            analyses = []
+            for row in store._connection.execute(
+                "SELECT analysis.analysis_id,analysis.analysis_kind,analysis.plan_json,"
+                "analysis.state,analysis.created_at,analysis.updated_at,"
+                "reference.plan_id AS reference_plan_id "
+                "FROM eco_analyses AS analysis "
+                "LEFT JOIN eco_reference_comparison_plans AS reference "
+                "ON reference.analysis_id=analysis.analysis_id "
+                "ORDER BY analysis.created_at,analysis.analysis_id"
+            ):
+                run_plan = ConnectivityRunPlan.model_validate_json(str(row["plan_json"]))
+                analyses.append(
+                    {
+                        "analysis_id": str(row["analysis_id"]),
+                        "analysis_kind": str(row["analysis_kind"]),
+                        "plan_id": (
+                            str(row["reference_plan_id"])
+                            if row["reference_plan_id"] is not None
+                            else None
+                        ),
+                        "revision_id": run_plan.revision_id,
+                        "engine_manifest_sha256": run_plan.engine_manifest_sha256,
+                        "state": str(row["state"]),
+                        "created_at": str(row["created_at"]),
+                        "updated_at": str(row["updated_at"]),
+                    }
                 )
-            ]
             binding = store.observability()
             latest_validation = store.latest_record("validation")
             validation = latest_validation or validation_projection(bundle)
@@ -2946,7 +3063,12 @@ class RPCDispatcher:
 
     @staticmethod
     def _model_fitness_evidence_findings(
-        store: EcoProjectStore, bundle: ConnectivityProjectBundle
+        store: EcoProjectStore,
+        bundle: ConnectivityProjectBundle,
+        *,
+        authoritative_reference_results: Sequence[
+            tuple[ReferenceComparisonResult, list[ConnectivityEvidenceClaim]]
+        ] = (),
     ) -> list[ModelFinding]:
         """Resolve every fitness evidence ID against active, retained evidence.
 
@@ -2958,6 +3080,45 @@ class RPCDispatcher:
 
         findings: list[ModelFinding] = []
         active_assets = {item.asset_id: item for item in bundle.assets}
+        passed_reference_evidence_ids: set[str] = set()
+        reference_result_findings = validate_professional_bundle(
+            bundle,
+            authoritative_reference_results=[item[0] for item in authoritative_reference_results],
+            expected_engine_manifest_sha256=(
+                authoritative_reference_results[0][0].engine_manifest_sha256
+                if authoritative_reference_results
+                else None
+            ),
+        )
+        reference_evidence_blocked = any(
+            item.code
+            in {
+                "REFERENCE_COMPARISON_REQUIRED",
+                "REFERENCE_COMPARISON_FAILED",
+                "REFERENCE_COMPARISON_CONFLICT",
+            }
+            for item in reference_result_findings
+        )
+        for result, claims in authoritative_reference_results:
+            if reference_evidence_blocked or result.status != "PASSED":
+                continue
+            individual_findings = validate_professional_bundle(
+                bundle,
+                authoritative_reference_results=[result],
+                expected_engine_manifest_sha256=result.engine_manifest_sha256,
+            )
+            if any(
+                item.code
+                in {
+                    "REFERENCE_COMPARISON_REQUIRED",
+                    "REFERENCE_COMPARISON_FAILED",
+                    "REFERENCE_COMPARISON_CONFLICT",
+                }
+                for item in individual_findings
+            ):
+                continue
+            passed_reference_evidence_ids.add(result.result_id)
+            passed_reference_evidence_ids.update(item.claim_id for item in claims)
 
         def asset_bytes_status(asset_id: str) -> str:
             cached = asset_statuses.get(asset_id)
@@ -3010,6 +3171,8 @@ class RPCDispatcher:
                                 ),
                             )
                         )
+                    continue
+                if evidence_id in passed_reference_evidence_ids:
                     continue
                 try:
                     retained = store.get_record("model_fitness_evidence", evidence_id)
@@ -3100,9 +3263,18 @@ class RPCDispatcher:
 
     @staticmethod
     def _storage_findings(
-        store: EcoProjectStore, bundle: ConnectivityProjectBundle
+        store: EcoProjectStore,
+        bundle: ConnectivityProjectBundle,
+        *,
+        authoritative_reference_results: Sequence[
+            tuple[ReferenceComparisonResult, list[ConnectivityEvidenceClaim]]
+        ] = (),
     ) -> list[ModelFinding]:
-        fitness_findings = RPCDispatcher._model_fitness_evidence_findings(store, bundle)
+        fitness_findings = RPCDispatcher._model_fitness_evidence_findings(
+            store,
+            bundle,
+            authoritative_reference_results=authoritative_reference_results,
+        )
         if store.project()["mode"] == "GUIDED":
             return fitness_findings
         findings: list[ModelFinding] = list(fitness_findings)
@@ -3288,12 +3460,53 @@ class RPCDispatcher:
 
     @classmethod
     def _validation_data(
-        cls, bundle: ConnectivityProjectBundle, *, store: EcoProjectStore | None = None
+        cls,
+        bundle: ConnectivityProjectBundle,
+        *,
+        store: EcoProjectStore | None = None,
+        expected_engine_manifest_sha256: str | None = None,
     ) -> dict[str, Any]:
-        data = validation_projection(bundle)
+        authoritative_results: list[
+            tuple[ReferenceComparisonResult, list[ConnectivityEvidenceClaim]]
+        ] = []
+        reference_integrity_error: str | None = None
+        if store is not None and expected_engine_manifest_sha256 is not None:
+            try:
+                authoritative_results = store.reference_comparison_results(
+                    revision_id=bundle.revision.revision_id,
+                    model_sha256=bundle.revision.model_sha256,
+                    engine_manifest_sha256=expected_engine_manifest_sha256,
+                )
+            except (KeyError, OSError, ValueError) as exc:
+                reference_integrity_error = type(exc).__name__
+        data = validation_projection(
+            bundle,
+            authoritative_reference_results=[item[0] for item in authoritative_results],
+            expected_engine_manifest_sha256=expected_engine_manifest_sha256,
+        )
         findings = [dict(item) for item in data["findings"]]
         if store is not None:
-            findings.extend(item.model_dump() for item in cls._storage_findings(store, bundle))
+            findings.extend(
+                item.model_dump()
+                for item in cls._storage_findings(
+                    store,
+                    bundle,
+                    authoritative_reference_results=authoritative_results,
+                )
+            )
+        if reference_integrity_error is not None:
+            findings.append(
+                ModelFinding(
+                    "REFERENCE_COMPARISON_EVIDENCE_INTEGRITY_FAILED",
+                    "BLOCKING",
+                    bundle.revision.revision_id,
+                    (
+                        "Restore or rerun the immutable reference comparison evidence. "
+                        "A checksum, direct-run, plan, model, engine, binding, or claim "
+                        "mismatch prevents this evidence from satisfying Model Fitness."
+                    ),
+                ).model_dump()
+            )
         findings.sort(
             key=lambda item: (
                 {"BLOCKING": 0, "REVIEW_REQUIRED": 1, "INFORMATION": 2}[str(item["severity"])],
@@ -3314,7 +3527,13 @@ class RPCDispatcher:
             bundle: ConnectivityProjectBundle | None = None
             try:
                 bundle = store.effective_bundle()
-                data = self._validation_data(bundle, store=store)
+                data = self._validation_data(
+                    bundle,
+                    store=store,
+                    expected_engine_manifest_sha256=(
+                        self.engine_manifest.sha256 if self.engine_manifest is not None else None
+                    ),
+                )
             except (ValidationError, ValueError) as exc:
                 data = {
                     "status": "BLOCKED",
@@ -3389,7 +3608,13 @@ class RPCDispatcher:
             candidate_payload = active_bundle.model_dump(mode="python")
             candidate_payload["fitness"] = attested_fitness
             candidate_bundle = ConnectivityProjectBundle.model_validate(candidate_payload)
-            candidate_validation = self._validation_data(candidate_bundle, store=store)
+            candidate_validation = self._validation_data(
+                candidate_bundle,
+                store=store,
+                expected_engine_manifest_sha256=(
+                    self.engine_manifest.sha256 if self.engine_manifest is not None else None
+                ),
+            )
             fitness_evidence_blockers = [
                 item
                 for item in candidate_validation["findings"]
@@ -3479,7 +3704,13 @@ class RPCDispatcher:
         try:
             self._authoritative_project_context(store)
             bundle = store.effective_bundle()
-            validation = self._validation_data(bundle, store=store)
+            validation = self._validation_data(
+                bundle,
+                store=store,
+                expected_engine_manifest_sha256=(
+                    self.engine_manifest.sha256 if self.engine_manifest is not None else None
+                ),
+            )
         finally:
             store.close()
         blockers = [
@@ -3659,7 +3890,13 @@ class RPCDispatcher:
         try:
             self._authoritative_project_context(store)
             bundle = store.effective_bundle()
-            validation = self._validation_data(bundle, store=store)
+            validation = self._validation_data(
+                bundle,
+                store=store,
+                expected_engine_manifest_sha256=(
+                    self.engine_manifest.sha256 if self.engine_manifest is not None else None
+                ),
+            )
             if validation["status"] != "READY":
                 raise _fault(
                     "ANALYSIS_MODEL_NOT_READY",
@@ -3725,8 +3962,16 @@ class RPCDispatcher:
         store = self._store(params.project_directory)
         try:
             self._authoritative_project_context(store)
-            engine, digest, executor = self._require_engine()
             analysis = store.analysis(params.analysis_id)
+            if analysis.get("analysis_kind") == "REFERENCE":
+                raise _fault(
+                    "REFERENCE_ANALYSIS_REQUIRES_REFERENCE_START",
+                    "Start this immutable reference analysis through the reference workflow.",
+                    category=ErrorCategory.SECURITY,
+                    severity=Severity.BLOCKING,
+                    object_reference=params.analysis_id,
+                )
+            engine, digest, executor = self._require_engine()
             plan = ConnectivityRunPlan.model_validate(analysis["plan"])
             self._require_plan_engine_manifest(plan)
             try:
@@ -3835,10 +4080,52 @@ class RPCDispatcher:
             },
         )
 
+    def _verify_reference_control_integrity(
+        self, store: EcoProjectStore, analysis_id: str
+    ) -> ReferenceComparisonPlan | None:
+        """Fail closed before a generic lifecycle command touches a reference run."""
+
+        analysis = store.analysis(analysis_id)
+        if analysis.get("analysis_kind") != "REFERENCE":
+            return None
+        try:
+            entry = store.reference_comparison_plan_for_analysis(analysis_id)
+        except ValueError as exc:
+            raise _fault(
+                "REFERENCE_CONTROL_INTEGRITY_FAILED",
+                "The immutable reference plan failed verification before the lifecycle command.",
+                category=ErrorCategory.SECURITY,
+                severity=Severity.BLOCKING,
+                object_reference=analysis_id,
+                technical_message=type(exc).__name__,
+            ) from exc
+        if entry is None:
+            raise _fault(
+                "REFERENCE_CONTROL_PLAN_MISSING",
+                "The reference analysis cannot be controlled without its immutable reference plan.",
+                category=ErrorCategory.SECURITY,
+                severity=Severity.BLOCKING,
+                object_reference=analysis_id,
+            )
+        reference_plan, _ = entry
+        try:
+            store.store_reference_comparison_plan(reference_plan)
+        except ValueError as exc:
+            raise _fault(
+                "REFERENCE_CONTROL_INTEGRITY_FAILED",
+                "The reference analysis no longer matches its immutable plan and model snapshot.",
+                category=ErrorCategory.SECURITY,
+                severity=Severity.BLOCKING,
+                object_reference=analysis_id,
+                technical_message=type(exc).__name__,
+            ) from exc
+        return reference_plan
+
     def _analysis_pause(self, params: ProjectAnalysisParams) -> PayloadResult:
-        _, _, executor = self._require_engine()
         store = self._store(params.project_directory)
         try:
+            self._verify_reference_control_integrity(store, params.analysis_id)
+            _, _, executor = self._require_engine()
             executor.pause(project_directory=store.root, analysis_id=params.analysis_id)
             if store.analysis(params.analysis_id)["state"] == AnalysisState.RUNNING.value:
                 # Compatibility for an explicitly injected synchronous executor.
@@ -3851,9 +4138,12 @@ class RPCDispatcher:
         )
 
     def _analysis_resume(self, params: ProjectAnalysisParams) -> PayloadResult:
-        _, _, executor = self._require_engine()
         store = self._store(params.project_directory)
         try:
+            reference_plan = self._verify_reference_control_integrity(store, params.analysis_id)
+            if reference_plan is not None:
+                self._require_plan_engine_manifest(reference_plan.run_plan)
+            _, _, executor = self._require_engine()
             executor.resume(project_directory=store.root, analysis_id=params.analysis_id)
             if store.analysis(params.analysis_id)["state"] == AnalysisState.PAUSED.value:
                 # Compatibility for an explicitly injected synchronous executor.
@@ -3868,6 +4158,7 @@ class RPCDispatcher:
     def _analysis_cancel(self, params: ProjectAnalysisParams) -> PayloadResult:
         store = self._store(params.project_directory)
         try:
+            self._verify_reference_control_integrity(store, params.analysis_id)
             state = AnalysisState(store.analysis(params.analysis_id)["state"])
             if state in {AnalysisState.RUNNING, AnalysisState.PAUSING, AnalysisState.PAUSED}:
                 _, _, executor = self._require_engine()
@@ -3879,6 +4170,465 @@ class RPCDispatcher:
         return self._result(
             "connectivity.analysis.cancel",
             {"analysis_id": params.analysis_id, "state": "CANCELLED"},
+        )
+
+    @staticmethod
+    def _stored_reference_plan(
+        store: EcoProjectStore,
+        params: ReferenceAnalysisParams,
+    ) -> tuple[ReferenceComparisonPlan, str]:
+        analysis = store.analysis(params.analysis_id)
+        if analysis.get("analysis_kind") != "REFERENCE":
+            raise _fault(
+                "REFERENCE_START_REQUIRES_REFERENCE_ANALYSIS",
+                "This analysis was not atomically created as a reference comparison.",
+                category=ErrorCategory.SECURITY,
+                severity=Severity.BLOCKING,
+                object_reference=params.analysis_id,
+            )
+        try:
+            entry = store.reference_comparison_plan_for_analysis(params.analysis_id)
+        except ValueError as exc:
+            raise _fault(
+                "REFERENCE_PLAN_INTEGRITY_FAILED",
+                "The immutable reference-comparison plan could not be verified.",
+                category=ErrorCategory.SECURITY,
+                severity=Severity.BLOCKING,
+                remediation="Restore the project evidence or create a new reference analysis.",
+                technical_message=type(exc).__name__,
+            ) from exc
+        if entry is None:
+            raise _fault(
+                "REFERENCE_PLAN_NOT_FOUND",
+                "Create and retain a baseline reference-comparison plan before continuing.",
+                category=ErrorCategory.MODEL_QUALITY,
+                severity=Severity.BLOCKING,
+                object_reference=params.analysis_id,
+            )
+        plan, plan_sha256 = entry
+        if plan.plan_id != params.plan_id:
+            raise _fault(
+                "REFERENCE_PLAN_ID_MISMATCH",
+                "The requested reference plan does not belong to this analysis.",
+                category=ErrorCategory.SECURITY,
+                severity=Severity.BLOCKING,
+                object_reference=params.plan_id,
+            )
+        return plan, plan_sha256
+
+    def _reference_plan(self, params: ReferencePlanParams) -> PayloadResult:
+        """Persist a baseline-only comparison plan before any direct work."""
+
+        _, _, _ = self._require_engine()
+        assert self.engine_manifest is not None
+        store = self._store(params.project_directory)
+        try:
+            self._authoritative_project_context(store)
+            bundle = store.effective_bundle()
+            validation = self._validation_data(
+                bundle,
+                store=store,
+                expected_engine_manifest_sha256=self.engine_manifest.sha256,
+            )
+            allowed_blockers = {
+                "REFERENCE_COMPARISON_REQUIRED",
+                "REFERENCE_COMPARISON_FAILED",
+                "MODEL_FITNESS_ATTESTATION_MISSING",
+                "FITNESS_BLOCKER",
+            }
+            blocking = [
+                item
+                for item in validation["findings"]
+                if item["severity"] == "BLOCKING"
+                and str(item["code"]) not in allowed_blockers
+                and not str(item["code"]).startswith("MODEL_FITNESS_EVIDENCE_")
+            ]
+            if blocking:
+                raise _fault(
+                    "REFERENCE_MODEL_NOT_READY",
+                    "Resolve the model, raster, scenario, binding, and source-evidence blockers before running a reference comparison.",
+                    category=ErrorCategory.MODEL_QUALITY,
+                    severity=Severity.BLOCKING,
+                    remediation=(
+                        "Use Model validation to open each blocking object. Model Fitness and "
+                        "reference-comparison findings may remain pending because this direct "
+                        "run supplies evidence; no fitness status is changed automatically."
+                    ),
+                    technical_message=canonical_json(blocking),
+                )
+            try:
+                candidate = build_reference_comparison_plan(
+                    bundle=bundle,
+                    analysis_id=params.analysis_id,
+                    engine_manifest_sha256=self.engine_manifest.sha256,
+                    created_at=datetime.now(UTC),
+                )
+            except ReferenceWorkflowError as exc:
+                raise _fault(
+                    "REFERENCE_PLAN_INVALID",
+                    str(exc),
+                    category=ErrorCategory.MODEL_QUALITY,
+                    severity=Severity.BLOCKING,
+                ) from exc
+            self._require_plan_engine_manifest(candidate.run_plan)
+            try:
+                plan, receipt = store.create_reference_analysis(candidate, bundle=bundle)
+            except ValueError as exc:
+                raise _fault(
+                    "REFERENCE_ANALYSIS_ID_REUSED",
+                    "The reference analysis ID belongs to different or incomplete immutable evidence.",
+                    category=ErrorCategory.SECURITY,
+                    severity=Severity.BLOCKING,
+                    remediation="Create a new analysis ID for the active model revision.",
+                    object_reference=params.analysis_id,
+                    technical_message=type(exc).__name__,
+                ) from exc
+        finally:
+            store.close()
+        return self._result(
+            "connectivity.reference.plan",
+            {
+                "analysis_id": plan.analysis_id,
+                "plan_id": plan.plan_id,
+                "state": receipt["state"],
+                "plan": plan.model_dump(mode="json"),
+                "plan_sha256": receipt["plan_sha256"],
+                "reference_matrix_parser_sha256": receipt["reference_matrix_parser_sha256"],
+                "replayed": bool(receipt["replayed"]),
+                "arithmetic": (
+                    "1 No Action baseline × "
+                    f"{len(plan.bound_scenario_ids)} bound scenarios = "
+                    f"{plan.run_plan.direct_job_count} direct Circuitscape matrix jobs"
+                ),
+            },
+        )
+
+    def _reference_start(self, params: ReferenceAnalysisParams) -> PayloadResult:
+        store = self._store(params.project_directory)
+        try:
+            self._authoritative_project_context(store)
+            plan, _ = self._stored_reference_plan(store, params)
+            engine, digest, executor = self._require_engine()
+            self._require_plan_engine_manifest(plan.run_plan)
+            active_bundle = store.effective_bundle()
+            snapshot = store.analysis_bundle(params.analysis_id)
+            if (
+                active_bundle.revision.revision_id != plan.revision_id
+                or active_bundle.revision.model_sha256 != plan.model_sha256
+                or snapshot.revision.revision_id != plan.revision_id
+                or snapshot.revision.model_sha256 != plan.model_sha256
+            ):
+                raise _fault(
+                    "REFERENCE_ANALYSIS_STALE",
+                    "The planned reference comparison is not for the active model revision.",
+                    category=ErrorCategory.MODEL_QUALITY,
+                    severity=Severity.BLOCKING,
+                    remediation="Create a new reference plan for the active semantic revision.",
+                )
+            state = str(store.analysis(params.analysis_id)["state"])
+            if state == AnalysisState.COMPLETED.value:
+                recover_pending_reference_results(
+                    store=store,
+                    analysis_id=params.analysis_id,
+                )
+                return self._result(
+                    "connectivity.reference.start",
+                    {
+                        "analysis_id": params.analysis_id,
+                        "plan_id": params.plan_id,
+                        "state": state,
+                    },
+                )
+            try:
+                execution = executor.start(
+                    project_directory=store.root,
+                    bundle=snapshot,
+                    plan=plan.run_plan,
+                    engine_executable=engine,
+                    engine_sha256=digest,
+                )
+            except (AnalysisOwnershipError, OrphanProcessAuditError) as exc:
+                raise _fault(
+                    "REFERENCE_EXECUTION_BUSY",
+                    "The reference comparison cannot start until the current direct-work owner releases this project.",
+                    category=ErrorCategory.RESOURCE_LIMIT,
+                    severity=Severity.BLOCKING,
+                    retryable=True,
+                    technical_message=type(exc).__name__,
+                ) from exc
+            if execution.get("state") != "RUNNING":
+                raise _fault(
+                    "REFERENCE_EXECUTOR_PROTOCOL_VIOLATION",
+                    "The durable executor returned an unsupported reference-analysis state.",
+                    category=ErrorCategory.SECURITY,
+                    severity=Severity.BLOCKING,
+                )
+            state = str(store.analysis(params.analysis_id)["state"])
+        finally:
+            store.close()
+        return self._result(
+            "connectivity.reference.start",
+            {
+                "analysis_id": params.analysis_id,
+                "plan_id": params.plan_id,
+                "state": state,
+            },
+        )
+
+    def _reference_evidence_disposition(
+        self,
+        *,
+        store: EcoProjectStore,
+        plan: ReferenceComparisonPlan,
+        result: ReferenceComparisonResult | None,
+    ) -> dict[str, Any]:
+        """Classify retained reference evidence against the active project state.
+
+        Historical evidence remains inspectable, but only an exact match for the
+        active revision, model, installed engine, and complete reviewed binding
+        set can participate in the Model Fitness gate. Conflicting exact results
+        fail closed instead of selecting the favorable result.
+        """
+
+        bundle = store.effective_bundle()
+        stale_reasons: list[str] = []
+        if (
+            plan.revision_id != bundle.revision.revision_id
+            or plan.model_sha256 != bundle.revision.model_sha256
+        ):
+            stale_reasons.append("ACTIVE_MODEL_REVISION_MISMATCH")
+        if self.engine_manifest is None:
+            stale_reasons.append("PINNED_ENGINE_UNAVAILABLE")
+            expected_engine_sha256 = None
+        else:
+            expected_engine_sha256 = self.engine_manifest.sha256
+            if plan.engine_manifest_sha256 != expected_engine_sha256:
+                stale_reasons.append("ACTIVE_ENGINE_MISMATCH")
+        try:
+            expected_plan = build_reference_comparison_plan(
+                bundle=bundle,
+                analysis_id=plan.analysis_id,
+                engine_manifest_sha256=plan.engine_manifest_sha256,
+                created_at=plan.created_at,
+            )
+        except (ReferenceWorkflowError, ValueError):
+            stale_reasons.append("ACTIVE_BINDING_SET_UNAVAILABLE")
+        else:
+            if expected_plan != plan:
+                stale_reasons.append("ACTIVE_BINDING_OR_PLAN_MISMATCH")
+
+        if result is None:
+            if stale_reasons:
+                return {
+                    "active_for_current_model": False,
+                    "gates_model_fitness": False,
+                    "evidence_disposition": "HISTORICAL_STALE",
+                    "stale_reasons": sorted(set(stale_reasons)),
+                }
+            return {
+                "active_for_current_model": True,
+                "gates_model_fitness": False,
+                "evidence_disposition": "PENDING",
+                "stale_reasons": [],
+            }
+
+        if (
+            result.plan_id != plan.plan_id
+            or result.revision_id != bundle.revision.revision_id
+            or result.model_sha256 != bundle.revision.model_sha256
+            or expected_engine_sha256 is None
+            or result.engine_manifest_sha256 != expected_engine_sha256
+        ):
+            stale_reasons.append("RESULT_IDENTITY_MISMATCH")
+        if stale_reasons:
+            return {
+                "active_for_current_model": False,
+                "gates_model_fitness": False,
+                "evidence_disposition": "HISTORICAL_STALE",
+                "stale_reasons": sorted(set(stale_reasons)),
+            }
+
+        assert expected_engine_sha256 is not None
+        individual_codes = {
+            item.code
+            for item in validate_professional_bundle(
+                bundle,
+                authoritative_reference_results=[result],
+                expected_engine_manifest_sha256=expected_engine_sha256,
+            )
+            if item.code.startswith("REFERENCE_COMPARISON_")
+        }
+        expected_individual_code = (
+            "REFERENCE_COMPARISON_PASSED"
+            if result.status == "PASSED"
+            else "REFERENCE_COMPARISON_FAILED"
+        )
+        if individual_codes != {expected_individual_code}:
+            return {
+                "active_for_current_model": False,
+                "gates_model_fitness": False,
+                "evidence_disposition": "HISTORICAL_STALE",
+                "stale_reasons": ["ACTIVE_BINDING_EVIDENCE_MISMATCH"],
+            }
+
+        other_current_results = store.reference_comparison_results(
+            revision_id=bundle.revision.revision_id,
+            model_sha256=bundle.revision.model_sha256,
+            engine_manifest_sha256=expected_engine_sha256,
+            exclude_result_ids=(result.result_id,),
+        )
+        current_result_values = [result, *(item[0] for item in other_current_results)]
+        current_codes = {
+            item.code
+            for item in validate_professional_bundle(
+                bundle,
+                authoritative_reference_results=current_result_values,
+                expected_engine_manifest_sha256=expected_engine_sha256,
+            )
+            if item.code.startswith("REFERENCE_COMPARISON_")
+        }
+        if "REFERENCE_COMPARISON_CONFLICT" in current_codes:
+            return {
+                "active_for_current_model": False,
+                "gates_model_fitness": False,
+                "evidence_disposition": "CONFLICT_NON_GATING",
+                "stale_reasons": ["CONFLICTING_CURRENT_RESULTS"],
+            }
+        return {
+            "active_for_current_model": True,
+            "gates_model_fitness": True,
+            "evidence_disposition": f"ACTIVE_{result.status}",
+            "stale_reasons": [],
+        }
+
+    def _reference_status(self, params: ReferenceAnalysisParams) -> PayloadResult:
+        store = self._store(params.project_directory)
+        try:
+            plan, _ = self._stored_reference_plan(store, params)
+            recover_pending_reference_results(
+                store=store,
+                analysis_id=params.analysis_id,
+            )
+            status = store.analysis(params.analysis_id)
+            runs, _, _ = store.analysis_results(params.analysis_id)
+            results = store.reference_comparison_results(analysis_id=params.analysis_id)
+            if len(results) > 1:
+                raise _fault(
+                    "REFERENCE_RESULT_AMBIGUOUS",
+                    "The reference analysis has more than one immutable result.",
+                    category=ErrorCategory.SECURITY,
+                    severity=Severity.BLOCKING,
+                )
+            result = results[0][0] if results else None
+            disposition = self._reference_evidence_disposition(
+                store=store,
+                plan=plan,
+                result=result,
+            )
+            counts = store.direct_job_counts(params.analysis_id)
+        except (OSError, ValueError) as exc:
+            if isinstance(exc, RPCFault):
+                raise
+            raise _fault(
+                "REFERENCE_STATUS_INTEGRITY_FAILED",
+                "Reference-analysis status could not be verified from local evidence.",
+                category=ErrorCategory.SECURITY,
+                severity=Severity.BLOCKING,
+                technical_message=type(exc).__name__,
+            ) from exc
+        finally:
+            store.close()
+        return self._result(
+            "connectivity.reference.status",
+            {
+                "analysis_id": params.analysis_id,
+                "plan_id": params.plan_id,
+                "state": status["state"],
+                "plan": plan.model_dump(mode="json"),
+                "completed_run_count": len(runs),
+                "direct_job_counts": counts,
+                "result_id": result.result_id if result is not None else None,
+                "result_status": result.status if result is not None else None,
+                **disposition,
+                "error": status["error"],
+            },
+        )
+
+    def _reference_result(self, params: ReferenceAnalysisParams) -> PayloadResult:
+        store = self._store(params.project_directory)
+        try:
+            plan, _ = self._stored_reference_plan(store, params)
+            recover_pending_reference_results(
+                store=store,
+                analysis_id=params.analysis_id,
+            )
+            existing = store.reference_comparison_results(analysis_id=params.analysis_id)
+            if len(existing) > 1:
+                raise _fault(
+                    "REFERENCE_RESULT_AMBIGUOUS",
+                    "The reference analysis has more than one immutable result.",
+                    category=ErrorCategory.SECURITY,
+                    severity=Severity.BLOCKING,
+                )
+            if existing:
+                result, claims = existing[0]
+                _, plan_sha256 = store.reference_comparison_plan(
+                    plan.plan_id,
+                    analysis_id=plan.analysis_id,
+                )
+                receipt = store.store_reference_comparison_result(result, claims=claims)
+            else:
+                self._require_engine()
+                self._require_plan_engine_manifest(plan.run_plan)
+                try:
+                    result, claims, receipt = assemble_and_store_reference_result(
+                        store=store,
+                        plan=plan,
+                    )
+                except ReferenceWorkflowError as exc:
+                    raise _fault(
+                        "REFERENCE_RESULT_NOT_READY",
+                        str(exc),
+                        category=ErrorCategory.MODEL_QUALITY,
+                        severity=Severity.BLOCKING,
+                        remediation=(
+                            "Wait for every bound baseline scenario to finish with accepted QA, "
+                            "then retry result creation."
+                        ),
+                    ) from exc
+                plan_sha256 = str(receipt["plan_sha256"])
+            disposition = self._reference_evidence_disposition(
+                store=store,
+                plan=plan,
+                result=result,
+            )
+        except (KeyError, OSError, ValueError) as exc:
+            if isinstance(exc, RPCFault):
+                raise
+            raise _fault(
+                "REFERENCE_RESULT_INTEGRITY_FAILED",
+                "The reference result could not be assembled from exact retained evidence.",
+                category=ErrorCategory.SECURITY,
+                severity=Severity.BLOCKING,
+                technical_message=type(exc).__name__,
+            ) from exc
+        finally:
+            store.close()
+        return self._result(
+            "connectivity.reference.result",
+            {
+                "analysis_id": result.analysis_id,
+                "plan_id": result.plan_id,
+                "plan": plan.model_dump(mode="json"),
+                "result": result.model_dump(mode="json"),
+                "claim_ids": sorted(item.claim_id for item in claims),
+                "plan_sha256": plan_sha256,
+                "result_sha256": receipt["result_sha256"],
+                "reference_matrix_parser_sha256": receipt["reference_matrix_parser_sha256"],
+                "outbox_id": receipt["outbox_id"],
+                "replayed": bool(receipt["replayed"]),
+                **disposition,
+            },
         )
 
     def _decision_board(self, params: DecisionBoardParams) -> PayloadResult:
@@ -4578,6 +5328,21 @@ class RPCDispatcher:
                 category=ErrorCategory.SECURITY,
                 severity=Severity.BLOCKING,
             ) from exc
+        except KeyError as exc:
+            raise _fault(
+                "EVIDENCE_CLAIM_NOT_FOUND",
+                "The requested evidence claim does not exist in this project.",
+                category=ErrorCategory.USER_FIXABLE,
+                object_reference=params.claim_id,
+            ) from exc
+        except (TypeError, ValueError) as exc:
+            raise _fault(
+                "EVIDENCE_CHAIN_INTEGRITY_FAILED",
+                "The requested evidence chain failed authoritative integrity verification.",
+                category=ErrorCategory.SECURITY,
+                severity=Severity.BLOCKING,
+                object_reference=params.claim_id,
+            ) from exc
         finally:
             store.close()
         return self._result("connectivity.evidence.resolve", resolved)
@@ -4663,8 +5428,182 @@ class RPCDispatcher:
             )
         return deployment, sync_state, True
 
+    @staticmethod
+    def _export_artifact_sources_from_verified(verified: Any) -> list[EvidenceArtifactSource]:
+        """Project verified artifacts into the path-private export boundary."""
+
+        evidence_roles = {
+            "request",
+            "result_protocol",
+            "matrix",
+            "current_map",
+            "input_resistance",
+            "input_focal",
+            "input_included_pairs",
+            "circuitscape_configuration",
+            "action_raster_diff",
+            "footprint_proof_document",
+        }
+        observed_roles: set[str] = set()
+        sources: list[EvidenceArtifactSource] = []
+        for record in verified.artifacts:
+            role = str(record.get("role", ""))
+            if role in {"stdout", "stderr"}:
+                # The authoritative verifier hashes these retained logs, but they are never
+                # exported because console output may disclose local filesystem paths.
+                continue
+            if (
+                role not in evidence_roles and not role.startswith("reviewed_footprint_source:")
+            ) or role in observed_roles:
+                raise _fault(
+                    "EXPORT_DIRECT_ARTIFACTS_INVALID",
+                    "Retained direct-run evidence contains an unsupported or duplicate role.",
+                    category=ErrorCategory.SECURITY,
+                    severity=Severity.BLOCKING,
+                    object_reference=f"{verified.run.direct_run_id}:{role or 'missing-role'}",
+                )
+            source_path = verified.artifact_paths_by_role.get(role)
+            if source_path is None:
+                raise _fault(
+                    "EXPORT_DIRECT_ARTIFACTS_UNSAFE",
+                    "A retained direct-run artifact has no verified local descriptor path.",
+                    category=ErrorCategory.SECURITY,
+                    severity=Severity.BLOCKING,
+                    object_reference=f"{verified.run.direct_run_id}:{role}",
+                )
+            digest = str(record.get("sha256", ""))
+            media_type = str(record.get("media_type", ""))
+            try:
+                byte_size = int(record.get("byte_size", -1))
+            except (TypeError, ValueError) as exc:
+                raise _fault(
+                    "EXPORT_DIRECT_ARTIFACTS_INTEGRITY_FAILED",
+                    "A retained direct-run artifact has invalid size metadata.",
+                    category=ErrorCategory.SECURITY,
+                    severity=Severity.BLOCKING,
+                    object_reference=f"{verified.run.direct_run_id}:{role}",
+                ) from exc
+            if (
+                not source_path.is_file()
+                or source_path.is_symlink()
+                or not re.fullmatch(r"[a-f0-9]{64}", digest)
+                or not media_type
+                or source_path.stat().st_size != byte_size
+                or _sha256_file(source_path) != digest
+            ):
+                raise _fault(
+                    "EXPORT_DIRECT_ARTIFACTS_INTEGRITY_FAILED",
+                    "A retained direct-run artifact failed hash and size verification.",
+                    category=ErrorCategory.SECURITY,
+                    severity=Severity.BLOCKING,
+                    object_reference=f"{verified.run.direct_run_id}:{role}",
+                )
+            observed_roles.add(role)
+            sources.append(
+                EvidenceArtifactSource(
+                    direct_run_id=verified.run.direct_run_id,
+                    role=role,
+                    source_path=source_path,
+                    sha256=digest,
+                    byte_size=byte_size,
+                    media_type=media_type,
+                )
+            )
+        return sources
+
+    def _reference_export_evidence_sources(
+        self,
+        *,
+        store: EcoProjectStore,
+        bundle: ConnectivityProjectBundle,
+    ) -> list[ReferenceEvidenceExportSource]:
+        """Collect every active result without choosing a favorable repeat."""
+
+        if not bundle.reference_bindings or self.engine_manifest is None:
+            return []
+        try:
+            recover_pending_reference_results(store=store)
+            authoritative = store.reference_comparison_results(
+                revision_id=bundle.revision.revision_id,
+                model_sha256=bundle.revision.model_sha256,
+                engine_manifest_sha256=self.engine_manifest.sha256,
+            )
+            sources: list[ReferenceEvidenceExportSource] = []
+            for result, claims in authoritative:
+                plan, plan_sha256 = store.reference_comparison_plan(
+                    result.plan_id,
+                    analysis_id=result.analysis_id,
+                )
+                disposition = self._reference_evidence_disposition(
+                    store=store,
+                    plan=plan,
+                    result=result,
+                )
+                if disposition["evidence_disposition"] == "HISTORICAL_STALE":
+                    raise ValueError("active result query returned stale reference evidence")
+                for claim in claims:
+                    resolved = store.resolve_evidence_claim(claim.claim_id)
+                    if resolved.get("claim") != claim.model_dump(mode="json") or resolved.get(
+                        "reference_result"
+                    ) != result.model_dump(mode="json"):
+                        raise ValueError("reference claim resolution differs from its result")
+                comparisons_by_run = {
+                    item.direct_run_id: item for item in result.scenario_comparisons
+                }
+                if len(comparisons_by_run) != len(result.scenario_comparisons):
+                    raise ValueError("reference result has duplicate direct-run identities")
+                verified_runs = []
+                artifacts: list[EvidenceArtifactSource] = []
+                for direct_run_id, comparison in sorted(comparisons_by_run.items()):
+                    verified = store.verify_authoritative_direct_run(
+                        direct_run_id,
+                        expected_analysis_id=result.analysis_id,
+                    )
+                    if (
+                        verified.run.scenario_id != comparison.scenario_id
+                        or verified.run.matrix_sha256 != comparison.observed_matrix_sha256
+                        or verified.run.engine_manifest_sha256 != result.engine_manifest_sha256
+                    ):
+                        raise ValueError(
+                            "reference direct run differs from its scenario comparison"
+                        )
+                    verified_runs.append(verified.run)
+                    artifacts.extend(self._export_artifact_sources_from_verified(verified))
+                sources.append(
+                    ReferenceEvidenceExportSource(
+                        plan=plan,
+                        plan_sha256=plan_sha256,
+                        result=result,
+                        result_sha256=canonical_sha256(result.model_dump(mode="json")),
+                        claims=tuple(sorted(claims, key=lambda item: item.claim_id)),
+                        runs=tuple(sorted(verified_runs, key=lambda item: item.direct_run_id)),
+                        artifact_sources=tuple(
+                            sorted(
+                                artifacts,
+                                key=lambda item: (item.direct_run_id, item.role),
+                            )
+                        ),
+                    )
+                )
+            return sorted(sources, key=lambda item: item.result.result_id)
+        except (KeyError, OSError, ReferenceWorkflowError, TypeError, ValueError) as exc:
+            if isinstance(exc, RPCFault):
+                raise
+            raise _fault(
+                "EXPORT_REFERENCE_EVIDENCE_INTEGRITY_FAILED",
+                "Active reference evidence could not be verified for export.",
+                category=ErrorCategory.SECURITY,
+                severity=Severity.BLOCKING,
+                remediation="Repair or rerun the complete reference comparison before exporting.",
+                technical_message=type(exc).__name__,
+            ) from exc
+
     def _eligibility(
-        self, store: EcoProjectStore, params: ExportValidateParams
+        self,
+        store: EcoProjectStore,
+        params: ExportValidateParams,
+        *,
+        reference_evidence_out: list[ReferenceEvidenceExportSource] | None = None,
     ) -> tuple[
         ConnectivityExportEligibility,
         ConnectivityProjectBundle,
@@ -4703,6 +5642,30 @@ class RPCDispatcher:
             )
         deployment, sync_state, professional = self._authoritative_project_context(store)
         current_authorization_bundle = store.effective_bundle() if professional else bundle
+        reference_evidence: list[ReferenceEvidenceExportSource] = []
+        if professional and (
+            bundle.reference_bindings or current_authorization_bundle.reference_bindings
+        ):
+            if (
+                current_authorization_bundle.revision.revision_id != bundle.revision.revision_id
+                or current_authorization_bundle.revision.model_sha256
+                != bundle.revision.model_sha256
+                or current_authorization_bundle.reference_bindings != bundle.reference_bindings
+            ):
+                raise _fault(
+                    "EXPORT_REFERENCE_MODEL_STALE",
+                    "The analysis reference evidence is not for the active model and binding set.",
+                    category=ErrorCategory.MODEL_QUALITY,
+                    severity=Severity.BLOCKING,
+                    remediation="Rerun the analysis and reference comparison for the active revision.",
+                )
+            if bundle.reference_bindings:
+                reference_evidence = self._reference_export_evidence_sources(
+                    store=store,
+                    bundle=bundle,
+                )
+        if reference_evidence_out is not None:
+            reference_evidence_out.extend(reference_evidence)
         eligibility = compute_export_eligibility(
             bundle=bundle,
             current_authorization_bundle=current_authorization_bundle,
@@ -4711,7 +5674,24 @@ class RPCDispatcher:
             deployment=deployment,
             sync_state=sync_state,
             professional=professional,
+            reference_evidence=reference_evidence,
+            expected_engine_manifest_sha256=(
+                self.engine_manifest.sha256 if self.engine_manifest is not None else None
+            ),
         )
+        if self.engine_manifest is None:
+            eligibility = ConnectivityExportEligibility.model_validate(
+                {
+                    **eligibility.model_dump(mode="json"),
+                    "eligible": False,
+                    "qa_blockers": sorted(
+                        set(
+                            eligibility.qa_blockers
+                            + ["Pinned EngineManifest is unavailable for export."]
+                        )
+                    ),
+                }
+            )
         binding = store.observability() or {}
         _, upload_plan = self._sync_plan(
             store,
@@ -4760,8 +5740,11 @@ class RPCDispatcher:
                             "Omit output_directory or select the project's exports directory."
                         ),
                     )
+            reference_evidence: list[ReferenceEvidenceExportSource] = []
             eligibility, bundle, summaries, runs, claims, run_plan = self._eligibility(
-                store, params
+                store,
+                params,
+                reference_evidence_out=reference_evidence,
             )
             if self.engine_manifest is None:
                 raise _fault(
@@ -4811,100 +5794,115 @@ class RPCDispatcher:
                     )
                 )
             artifact_sources: list[EvidenceArtifactSource] = []
-            evidence_roles = {
-                "request",
-                "result_protocol",
-                "matrix",
-                "current_map",
-                "input_resistance",
-                "input_focal",
-                "input_included_pairs",
-                "circuitscape_configuration",
-                "action_raster_diff",
-                "footprint_proof_document",
-            }
             for run in sorted(runs, key=lambda item: item.direct_run_id):
-                records = store.run_artifacts(run.direct_run_id)
-                if not records:
+                try:
+                    verified = store.verify_authoritative_direct_run(
+                        run.direct_run_id,
+                        expected_analysis_id=params.analysis_id,
+                    )
+                except (KeyError, TypeError, ValueError) as exc:
                     raise _fault(
-                        "EXPORT_DIRECT_ARTIFACTS_MISSING",
-                        "Every selected direct run requires retained immutable engine evidence.",
-                        category=ErrorCategory.MODEL_QUALITY,
+                        "EXPORT_DIRECT_EVIDENCE_INVALID",
+                        "A selected direct run failed full authoritative evidence verification.",
+                        category=ErrorCategory.SECURITY,
+                        severity=Severity.BLOCKING,
+                        object_reference=run.direct_run_id,
+                    ) from exc
+                if verified.run != run:
+                    raise _fault(
+                        "EXPORT_DIRECT_EVIDENCE_MISMATCH",
+                        "A selected direct run differs from its authoritative evidence chain.",
+                        category=ErrorCategory.SECURITY,
                         severity=Severity.BLOCKING,
                         object_reference=run.direct_run_id,
                     )
-                observed_roles: set[str] = set()
-                for record in records:
-                    role = str(record.get("role", ""))
-                    if role in {"stdout", "stderr"}:
-                        # Engine console logs can expose local paths and are not professional
-                        # evidence. Structured request/result artifacts remain authoritative.
-                        continue
-                    if (
-                        role not in evidence_roles
-                        and not role.startswith("reviewed_footprint_source:")
-                    ) or role in observed_roles:
-                        raise _fault(
-                            "EXPORT_DIRECT_ARTIFACTS_INVALID",
-                            "Retained direct-run evidence contains an unsupported or duplicate role.",
-                            category=ErrorCategory.SECURITY,
-                            severity=Severity.BLOCKING,
-                            object_reference=f"{run.direct_run_id}:{role or 'missing-role'}",
-                        )
-                    try:
-                        source_path = contained_path(store.root, str(record["cas_relative_path"]))
-                    except (KeyError, PathSecurityError, TypeError, ValueError) as exc:
-                        raise _fault(
-                            "EXPORT_DIRECT_ARTIFACTS_UNSAFE",
-                            "A retained direct-run artifact is outside authoritative project storage.",
-                            category=ErrorCategory.SECURITY,
-                            severity=Severity.BLOCKING,
-                            object_reference=f"{run.direct_run_id}:{role}",
-                        ) from exc
-                    digest = str(record.get("sha256", ""))
-                    media_type = str(record.get("media_type", ""))
-                    try:
-                        byte_size = int(record.get("byte_size", -1))
-                    except (TypeError, ValueError) as exc:
-                        raise _fault(
-                            "EXPORT_DIRECT_ARTIFACTS_INTEGRITY_FAILED",
-                            "A retained direct-run artifact has invalid size metadata.",
-                            category=ErrorCategory.SECURITY,
-                            severity=Severity.BLOCKING,
-                            object_reference=f"{run.direct_run_id}:{role}",
-                        ) from exc
-                    if (
-                        not source_path.is_file()
-                        or source_path.is_symlink()
-                        or not re.fullmatch(r"[a-f0-9]{64}", digest)
-                        or not media_type
-                        or source_path.stat().st_size != byte_size
-                        or _sha256_file(source_path) != digest
-                    ):
-                        raise _fault(
-                            "EXPORT_DIRECT_ARTIFACTS_INTEGRITY_FAILED",
-                            "A retained direct-run artifact failed hash and size verification.",
-                            category=ErrorCategory.SECURITY,
-                            severity=Severity.BLOCKING,
-                            object_reference=f"{run.direct_run_id}:{role}",
-                        )
-                    observed_roles.add(role)
-                    artifact_sources.append(
-                        EvidenceArtifactSource(
-                            direct_run_id=run.direct_run_id,
-                            role=role,
-                            source_path=source_path,
-                            sha256=digest,
-                            byte_size=byte_size,
-                            media_type=media_type,
-                        )
+                artifact_sources.extend(self._export_artifact_sources_from_verified(verified))
+
+            current_authorization_bundle = store.effective_bundle()
+            if eligibility.professional and (
+                bundle.reference_bindings or current_authorization_bundle.reference_bindings
+            ):
+                if (
+                    current_authorization_bundle.revision.revision_id != bundle.revision.revision_id
+                    or current_authorization_bundle.revision.model_sha256
+                    != bundle.revision.model_sha256
+                    or current_authorization_bundle.reference_bindings != bundle.reference_bindings
+                ):
+                    raise _fault(
+                        "EXPORT_REFERENCE_MODEL_CHANGED",
+                        "The active reference model changed during export preparation.",
+                        category=ErrorCategory.SECURITY,
+                        severity=Severity.BLOCKING,
+                        remediation="Validate and export the active revision again.",
                     )
+                latest_reference_evidence = (
+                    self._reference_export_evidence_sources(
+                        store=store,
+                        bundle=bundle,
+                    )
+                    if bundle.reference_bindings
+                    else []
+                )
+                if latest_reference_evidence != reference_evidence:
+                    raise _fault(
+                        "EXPORT_REFERENCE_EVIDENCE_CHANGED",
+                        "Reference evidence changed between validation and package creation.",
+                        category=ErrorCategory.SECURITY,
+                        severity=Severity.BLOCKING,
+                        remediation="Validate the complete reference evidence set again.",
+                    )
+            media_types = {
+                ".asc": "text/plain",
+                ".cfg": "text/plain",
+                ".csv": "text/csv",
+                ".html": "text/html",
+                ".ini": "text/plain",
+                ".json": "application/json",
+                ".md": "text/markdown",
+                ".rpt": "text/plain",
+                ".tsv": "text/tab-separated-values",
+                ".txt": "text/plain",
+                ".xml": "application/xml",
+                ".yaml": "application/x-yaml",
+                ".yml": "application/x-yaml",
+            }
+
+            def prepare_publication(
+                staging_directory: Path,
+                export_directory: Path,
+                export_manifest: ConnectivityExportManifest,
+            ) -> None:
+                package_files = [
+                    {
+                        "relative_path": (
+                            export_directory.relative_to(store.root)
+                            / path.relative_to(staging_directory)
+                        ).as_posix(),
+                        "sha256": _sha256_file(path),
+                        "byte_size": path.stat().st_size,
+                        "media_type": media_types.get(
+                            path.suffix.casefold(), "application/octet-stream"
+                        ),
+                    }
+                    for path in sorted(
+                        staging_directory.rglob("*"), key=lambda item: item.as_posix()
+                    )
+                    if path.is_file() and not path.is_symlink()
+                ]
+                store.prepare_export_publication(
+                    params.export_id,
+                    params.analysis_id,
+                    export_manifest.model_dump(mode="json"),
+                    package_files=package_files,
+                    staging_relative_path=staging_directory.relative_to(store.root).as_posix(),
+                )
+
             export_path = create_evidence_export(
                 output_root=output,
                 export_id=params.export_id,
                 baseline_portfolio_id=run_plan.baseline_portfolio_id,
                 bundle=bundle,
-                current_authorization_bundle=store.effective_bundle(),
+                current_authorization_bundle=current_authorization_bundle,
                 deployment=self._authoritative_project_context(store)[0],
                 engine_manifest=self.engine_manifest,
                 run_plan=run_plan,
@@ -4915,32 +5913,12 @@ class RPCDispatcher:
                 claims=claims,
                 artifact_sources=artifact_sources,
                 project_asset_sources=project_asset_sources,
+                reference_evidence=reference_evidence,
+                prepare_publication=prepare_publication,
             )
             manifest_path = export_path / "manifest.json"
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            media_types = {
-                ".csv": "text/csv",
-                ".html": "text/html",
-                ".json": "application/json",
-            }
-            package_files = [
-                {
-                    "relative_path": path.relative_to(store.root).as_posix(),
-                    "sha256": _sha256_file(path),
-                    "byte_size": path.stat().st_size,
-                    "media_type": media_types.get(
-                        path.suffix.casefold(), "application/octet-stream"
-                    ),
-                }
-                for path in sorted(export_path.rglob("*"), key=lambda item: item.as_posix())
-                if path.is_file() and not path.is_symlink()
-            ]
-            store.store_export(
-                params.export_id,
-                params.analysis_id,
-                manifest,
-                package_files=package_files,
-            )
+            store.finalize_export_publication(params.export_id)
         finally:
             store.close()
         return self._result(
@@ -4990,6 +5968,16 @@ class RPCDispatcher:
                     category=ErrorCategory.SECURITY,
                     severity=Severity.BLOCKING,
                 )
+            try:
+                projection = _presentation_safe_blocked_ridgeway_projection(projection)
+            except ValueError as exc:
+                raise _fault(
+                    "RIDGEWAY_PROJECTION_CLAIM_POLICY_FAILED",
+                    "The blocked Ridgeway teaching labels violate ecological claim policy.",
+                    category=ErrorCategory.SECURITY,
+                    severity=Severity.BLOCKING,
+                    technical_message=str(exc),
+                ) from exc
             initial_state = "ENGINE_REQUIRED"
         directory = self._guided_directory(params.project_directory)
         store = EcoProjectStore(directory)
@@ -5947,6 +6935,7 @@ class RPCDispatcher:
                 "PROHIBITED",
                 "UNAUTHORIZED",
                 "FABRICATED",
+                "UNSAFE",
             )
         )
         retryable = any(
@@ -6108,8 +7097,9 @@ class RPCDispatcher:
 
         for evidence_id in evidence_ids:
             try:
-                claim = store.evidence_claim(evidence_id)
-            except KeyError:
+                resolved = store.resolve_evidence_claim(evidence_id)
+                claim = ConnectivityEvidenceClaim.model_validate(resolved["claim"])
+            except (KeyError, TypeError, ValueError):
                 # The authoritative resolver will report the missing claim. Do
                 # not weaken redaction merely because resolution will fail.
                 continue
@@ -6125,6 +7115,13 @@ class RPCDispatcher:
                 and node.node_id.startswith("asset:")
                 and node.node_id.removeprefix("asset:") in sensitive_assets
             )
+            source_assets = resolved.get("source_assets")
+            if isinstance(source_assets, list):
+                source_asset_ids.update(
+                    str(item["asset_id"])
+                    for item in source_assets
+                    if isinstance(item, dict) and str(item.get("asset_id", "")) in sensitive_assets
+                )
             if source_asset_ids:
                 terms.update(source_asset_ids)
                 terms.update(
@@ -6160,6 +7157,7 @@ class RPCDispatcher:
         analysis_id: str,
         evidence_ids: Sequence[str],
         association: AssistantRunAssociation,
+        sensitive_policy: SensitiveContextPolicy,
     ) -> AuthorizedEvidenceSelection:
         """Authorize the immutable analysis snapshot before any Weave/provider operation."""
 
@@ -6219,11 +7217,15 @@ class RPCDispatcher:
             )
 
         try:
-            claims = [store.evidence_claim(item) for item in evidence_ids]
-        except KeyError as exc:
+            resolved_evidence = [store.resolve_evidence_claim(item) for item in evidence_ids]
+            claims = [
+                ConnectivityEvidenceClaim.model_validate(item["claim"])
+                for item in resolved_evidence
+            ]
+        except (KeyError, TypeError, ValueError) as exc:
             raise _fault(
                 "ASSISTANT_EVIDENCE_RESOLUTION_INCOMPLETE",
-                "One or more selected evidence claims are unavailable.",
+                "One or more selected evidence chains are unavailable or failed integrity checks.",
                 category=ErrorCategory.MODEL_QUALITY,
                 severity=Severity.BLOCKING,
             ) from exc
@@ -6247,6 +7249,25 @@ class RPCDispatcher:
                         object_reference=claim.claim_id,
                     )
                 referenced_asset_ids.update(candidates)
+        for resolved in resolved_evidence:
+            source_assets = resolved.get("source_assets")
+            if not isinstance(source_assets, list):
+                raise _fault(
+                    "ASSISTANT_EVIDENCE_SOURCE_CHAIN_MISSING",
+                    "Selected evidence has no authoritative source-asset chain.",
+                    category=ErrorCategory.MODEL_QUALITY,
+                    severity=Severity.BLOCKING,
+                )
+            for asset in source_assets:
+                asset_id = asset.get("asset_id") if isinstance(asset, dict) else None
+                if not isinstance(asset_id, str) or asset_id not in snapshot_assets:
+                    raise _fault(
+                        "ASSISTANT_EVIDENCE_ASSET_UNRESOLVED",
+                        "A selected evidence source is absent from its analysis snapshot.",
+                        category=ErrorCategory.MODEL_QUALITY,
+                        severity=Severity.BLOCKING,
+                    )
+                referenced_asset_ids.add(asset_id)
 
         scientific_ids = scientific_asset_ids(snapshot)
         try:
@@ -6379,19 +7400,24 @@ class RPCDispatcher:
                         value=claim.value,
                         units=claim.units,
                         direct_result=claim.claim_kind.startswith("DIRECT_"),
-                        limitations=[
-                            item
-                            for item in claim.limitations
-                            if item
-                            in {
-                                CONNECTIVITY_LIMITATION,
-                                CURRENT_MAP_LIMITATION,
-                            }
-                        ],
+                        limitations=(
+                            [
+                                validate_assistant_limitation(item, sensitive_policy)
+                                for item in claim.limitations
+                            ]
+                            if claim.claim_kind == "DIRECT_REFERENCE_COMPARISON"
+                            else [
+                                item
+                                for item in claim.limitations
+                                if item in {CONNECTIVITY_LIMITATION, CURRENT_MAP_LIMITATION}
+                            ]
+                        ),
                     ),
                 )
                 for index, claim in enumerate(claims, start=1)
             )
+        except AssistantSafetyError as exc:
+            raise self._assistant_failure(exc) from exc
         except ValidationError as exc:
             raise _fault(
                 "ASSISTANT_EVIDENCE_CONTEXT_UNSAFE",
@@ -6444,7 +7470,7 @@ class RPCDispatcher:
                     store.evidence_claim_analysis_id(evidence_id)
                     for evidence_id in params.evidence_ids
                 }
-            except KeyError as exc:
+            except (KeyError, TypeError, ValueError) as exc:
                 raise self._assistant_failure(
                     AssistantSafetyError("ASSISTANT_EVIDENCE_RESOLUTION_INCOMPLETE")
                 ) from exc
@@ -6459,17 +7485,18 @@ class RPCDispatcher:
                 run_subject_id=analysis_id,
                 analysis_id=analysis_id,
             )
+            sensitive_policy = self._validated_evidence_sensitive_policy(
+                store,
+                params.evidence_ids,
+                params.sensitive_policy,
+            )
             authorized_selection = self._authorize_evidence_selection(
                 store,
                 project_id=project_id,
                 analysis_id=analysis_id,
                 evidence_ids=params.evidence_ids,
                 association=association,
-            )
-            sensitive_policy = self._validated_evidence_sensitive_policy(
-                store,
-                params.evidence_ids,
-                params.sensitive_policy,
+                sensitive_policy=sensitive_policy,
             )
             assistant = self._project_evidence_assistant(store.root)
             try:

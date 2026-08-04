@@ -33,6 +33,19 @@ EXPECTED_ECO_IDENTIFIER = "org.ecocorridor.scenariostudio"
 EXPECTED_GI_KEYCHAIN_SERVICE = "com.gi-scenario-studio.wandb"
 EXPECTED_ECO_KEYCHAIN_SERVICE = "org.ecocorridor.scenariostudio.credentials"
 EXPECTED_ECO_APP_DATA_ROOT = "EcoCorridorScenarioStudio"
+SECURITY_MIGRATION_REMOVED_REQUIREMENTS = frozenset(
+    {
+        "presidio-anonymizer>=2.2.359,<3",
+    }
+)
+SECURITY_MIGRATION_REMOVED_LOCK_PACKAGES = frozenset({"presidio-anonymizer"})
+EXPECTED_RELEASE_SECURITY_DEPENDENCIES = ["PyNaCl==1.6.2", "pyinstaller==6.21.0"]
+EXPECTED_WEAVE_TRANSITIVE_CRYPTOGRAPHY = "48.0.1"
+EXPECTED_WEAVE_CRYPTOGRAPHY_CHAIN = (
+    ("weave", "polyfile-weave"),
+    ("polyfile-weave", "pdfminer-six"),
+    ("pdfminer-six", "cryptography"),
+)
 
 
 def git(*arguments: str) -> subprocess.CompletedProcess[str]:
@@ -96,6 +109,24 @@ def _normalize_pnpm_importer(block: str | None) -> str | None:
     return re.sub(r"^(\s+version: [^\s(]+)(?:\([^\n]+\))$", r"\1", block, flags=re.MULTILINE)
 
 
+def _lock_record_name(record: str) -> str:
+    return str(json.loads(record).get("name", "unknown"))
+
+
+def _missing_locked_base_names(
+    base_records: Counter[str], current_records: Counter[str]
+) -> list[str]:
+    """Return drift after allowing only the named shared security migration."""
+
+    return sorted(
+        {
+            _lock_record_name(record)
+            for record in (base_records - current_records).elements()
+            if _lock_record_name(record) not in SECURITY_MIGRATION_REMOVED_LOCK_PACKAGES
+        }
+    )
+
+
 def dependency_isolation_issues() -> list[str]:
     """Allow Eco additions while preserving every pre-existing GI dependency record."""
 
@@ -122,8 +153,17 @@ def dependency_isolation_issues() -> list[str]:
     base_optional = base_project["project"].get("optional-dependencies", {})
     current_optional = current_project["project"].get("optional-dependencies", {})
     for name, requirements in base_optional.items():
-        if current_optional.get(name) != requirements:
+        expected_requirements = requirements
+        if name == "observability":
+            expected_requirements = [
+                requirement
+                for requirement in requirements
+                if requirement not in SECURITY_MIGRATION_REMOVED_REQUIREMENTS
+            ]
+        if current_optional.get(name) != expected_requirements:
             issues.append(f"GI Python optional dependency group drifted: {name}")
+    if current_optional.get("release") != EXPECTED_RELEASE_SECURITY_DEPENDENCIES:
+        issues.append("shared release security dependency group drifted")
     base_scripts = base_project["project"].get("scripts", {})
     current_scripts = current_project["project"].get("scripts", {})
     for name, command in base_scripts.items():
@@ -167,15 +207,42 @@ def dependency_isolation_issues() -> list[str]:
 
     base_records = package_records(base_uv)
     current_records = package_records(current_uv)
-    missing_records = base_records - current_records
-    if missing_records:
-        names = sorted(
-            {
-                str(json.loads(record).get("name", "unknown"))
-                for record in missing_records.elements()
-            }
-        )
+    names = _missing_locked_base_names(base_records, current_records)
+    if names:
         issues.append("existing GI Python lock records drifted: " + ", ".join(names))
+    current_records_by_name: dict[str, list[dict[str, object]]] = {}
+    for record in current_records:
+        decoded = json.loads(record)
+        current_records_by_name.setdefault(str(decoded.get("name", "unknown")), []).append(decoded)
+    forbidden_present = sorted(
+        SECURITY_MIGRATION_REMOVED_LOCK_PACKAGES & current_records_by_name.keys()
+    )
+    if forbidden_present:
+        issues.append(
+            "removed shared security dependencies remain in the lock: "
+            + ", ".join(forbidden_present)
+        )
+    pynacl_records = current_records_by_name.get("pynacl", [])
+    if len(pynacl_records) != 1 or pynacl_records[0].get("version") != "1.6.2":
+        issues.append("shared release signing dependency must lock exactly PyNaCl 1.6.2")
+    cryptography_records = current_records_by_name.get("cryptography", [])
+    if (
+        len(cryptography_records) != 1
+        or cryptography_records[0].get("version") != EXPECTED_WEAVE_TRANSITIVE_CRYPTOGRAPHY
+    ):
+        issues.append(
+            "Weave's transitive cryptography record drifted and requires explicit security review"
+        )
+    for parent, child in EXPECTED_WEAVE_CRYPTOGRAPHY_CHAIN:
+        records = current_records_by_name.get(parent, [])
+        dependency_names = {
+            str(dependency.get("name", "unknown"))
+            for record in records
+            for dependency in record.get("dependencies", [])
+            if isinstance(dependency, dict)
+        }
+        if len(records) != 1 or child not in dependency_names:
+            issues.append(f"reviewed Weave transitive security chain drifted: {parent} -> {child}")
 
     base_desktop_importer = _mapping_block(base_pnpm, "importers", "apps/desktop")
     current_desktop_importer = _mapping_block(current_pnpm, "importers", "apps/desktop")

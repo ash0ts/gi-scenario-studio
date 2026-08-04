@@ -15,7 +15,7 @@ scores; they never contain predicted connectivity values or maps.
 
 ## Build the direct tables
 
-Use the independently packaged current Ridgeway direct-evidence v1.1 study;
+Use the independently packaged current Ridgeway direct-evidence v1.2 study;
 the retained v1.0 archive is benchmark-only and cannot serve as current model
 evidence. Derive a new, separately versioned four-hypothesis campaign from the
 current evidence index rather than relabelling the existing historical search

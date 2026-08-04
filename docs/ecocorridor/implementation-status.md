@@ -28,7 +28,7 @@ The earlier synthetic Ridgeway v1.0 evidence is retained and checksum-pinned:
 
 The repository gate verifies the archive bytes, members, safe paths, internal
 index, and explicit `SUPERSEDED_NON_RELEASE` disposition. The archive does not
-match the current model identity or v1.1 direct-evidence contract, cannot
+match the current model identity or v1.2 direct-evidence contract, cannot
 authenticate the active replay, and remains historical benchmark input only.
 Its earlier teaching outcomes are not promoted into the current projection.
 
@@ -45,9 +45,9 @@ package rather than an `ENGINE_RUN_REQUIRED` placeholder:
   still contains direct evidence and confirmed whole-process-tree exit records
   for all 1,596 jobs;
 - current archive SHA-256:
-  `80fb1af09b744d19b83dffff69f8bb015a46d558e5887ced986c12ae934d6821`;
+  `a0dc6b7633475824d36cd9ab18ee38088208561ba680fed022fc7b6d65ac7168`;
 - direct-evidence manifest SHA-256:
-  `4a6f7605625f873587449bfe387af7228cc7cf6a7fa7b1ffee3119badaae2076`;
+  `abf53dd7fa03956e8d076286e30d1ef3e5b35abf6a06952390b5366fdfef3c1e`;
 - engine manifest SHA-256:
   `4fdf058be0bb2e33bc014858e01decb808ecc7296e1fca78fce58f62331a7a86`;
 - workflow manifest SHA-256:
@@ -203,16 +203,21 @@ startup state before release.
    Release requires an upstream-compatible dependency/runtime resolution
    followed by complete engine, fixture, package, and evidence regeneration;
    no waiver is present.
-2. **Python release-signing dependency vulnerability.** The 2026-08-04 PR scan
-   found three newly published advisories in the pinned `cryptography 48.0.1`.
-   Two are fixed by 49.0.0, but
-   [GHSA-g6cj-pr64-35w5](https://github.com/advisories/GHSA-g6cj-pr64-35w5)
-   affects every release from 44.0.0 through 49.x and names 50.0.0 as the first
-   patched version. The latest release published on
-   [PyPI](https://pypi.org/project/cryptography/) is 49.0.0. The application
-   therefore retains the failing dependency gate until a patched upstream
-   release exists and passes the full release-signing and manifest suite; it
-   does not suppress the advisory or perform a still-vulnerable upgrade.
+2. **Python release-signing security migration verification.** Source signing
+   and verification now use pinned PyNaCl 1.6.2, while preserving the native
+   Rust boundary's raw 32-byte public key and raw 64-byte detached-signature
+   formats. The unused Presidio anonymizer is removed; Presidio Analyzer and
+   the existing deterministic redaction boundary remain. Required Weave still
+   resolves `polyfile-weave → pdfminer-six → cryptography 48.0.1`, however, so
+   this change does not claim that the vulnerable transitive package vanished.
+   Forcing `cryptography 50` does not satisfy the audited macOS x86_64 wheel
+   target, and removing Weave would weaken the traced-assistant contract. The
+   unwaived dependency scan therefore remains a release blocker. The release
+   script accepts only a canonical raw 32-byte Ed25519 seed encoded as 64
+   lowercase hexadecimal characters plus one line feed. Complete same-commit
+   dependency scanning, release-signing tests, target packaging, and
+   installed-application verification remain required; this source change is
+   not itself protected release evidence.
 3. **Protected Ridgeway producer execution.** The source now includes a manual,
    environment-protected full-study workflow that requires green same-commit
    Eco CI, starts from an empty evidence directory, executes all 1,596 direct

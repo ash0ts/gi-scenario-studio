@@ -33,8 +33,8 @@ MAX_INDEX_BYTES = 32 * 1024 * 1024
 MAX_EXTRACTED_BYTES = 2 * 1024 * 1024 * 1024
 MAX_MEMBERS = 100_000
 _MARKER = ".verified-guided-evidence.json"
-DIRECT_EVIDENCE_SCHEMA = "ridgeway-direct-evidence/v1.1"
-BUNDLE_EVIDENCE_SCHEMA = "ridgeway-evidence-bundle/v1.1"
+DIRECT_EVIDENCE_SCHEMA = "ridgeway-direct-evidence/v1.2"
+BUNDLE_EVIDENCE_SCHEMA = "ridgeway-evidence-bundle/v1.2"
 UI_PROJECTION_SCHEMA = "ecocorridor-replay/v1.2"
 HYPOTHESIS_RANKING_METRIC = (
     "Minimum required target-pair resistance reduction (%) within each resistance hypothesis; "
@@ -197,6 +197,8 @@ _PROCESS_TREE_EXIT_KEYS = {
     "confirmed_at",
 }
 
+_PROCESS_INTERVAL_OVERLAP_SCHEMA = "ridgeway-retained-process-interval-overlap/v1.0"
+
 
 def _aggregate_process_tree_exits(jobs: list[dict[str, Any]]) -> dict[str, object]:
     """Independently reject missing, copied, or unconfirmed process-tree evidence."""
@@ -243,6 +245,60 @@ def _aggregate_process_tree_exits(jobs: list[dict[str, Any]]) -> dict[str, objec
         "jobs_without_confirmed_tree_exit": 0,
         "unique_process_identities": len(identities),
         "confirmation_methods": dict(sorted(methods.items())),
+    }
+
+
+def _measure_retained_process_interval_overlap(
+    jobs: list[dict[str, Any]],
+) -> dict[str, object]:
+    """Recompute overlap among retained intervals without inferring concurrency."""
+
+    events: list[tuple[datetime, int, int]] = []
+    try:
+        for job in jobs:
+            evidence = job.get("process_exit_evidence")
+            if not isinstance(evidence, dict) or set(evidence) != _PROCESS_TREE_EXIT_KEYS:
+                raise ValueError("field coverage")
+            launched_at = datetime.fromisoformat(str(evidence["launched_at"]))
+            confirmed_at = datetime.fromisoformat(str(evidence["confirmed_at"]))
+            if (
+                launched_at.tzinfo is None
+                or launched_at.utcoffset() is None
+                or confirmed_at.tzinfo is None
+                or confirmed_at.utcoffset() is None
+                or confirmed_at < launched_at
+            ):
+                raise ValueError("invalid process interval")
+            # Conservatively count coincident endpoints as overlapping because
+            # the retained timestamp cannot establish their event order.
+            events.append((launched_at, 0, 1))
+            events.append((confirmed_at, 1, -1))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise GuidedEvidenceError("GUIDED_EVIDENCE_PROCESS_INTERVAL_OVERLAP_INVALID") from exc
+
+    active = 0
+    observed_maximum = 0
+    for _timestamp, _event_order, delta in sorted(events):
+        active += delta
+        if active < 0:
+            raise GuidedEvidenceError("GUIDED_EVIDENCE_PROCESS_INTERVAL_OVERLAP_INVALID")
+        observed_maximum = max(observed_maximum, active)
+    if active != 0 or observed_maximum < (1 if jobs else 0):
+        raise GuidedEvidenceError("GUIDED_EVIDENCE_PROCESS_INTERVAL_OVERLAP_INVALID")
+    return {
+        "schema_version": _PROCESS_INTERVAL_OVERLAP_SCHEMA,
+        "observation_method": "MAXIMUM_OVERLAPPING_RETAINED_PROCESS_INTERVALS",
+        "maximum_overlapping_retained_process_intervals": observed_maximum,
+        "retained_interval_count": len(jobs),
+        "coincident_endpoint_policy": "COUNTED_AS_OVERLAPPING_AT_RETAINED_TIMESTAMP_RESOLUTION",
+        "scientific_identity_role": "AUDIT_ONLY_EXCLUDED",
+        "limitation": (
+            "Derived only from retained post-spawn launched_at-to-confirmed_at measurement "
+            "intervals. It may understate true process concurrency because launched_at is "
+            "recorded after process creation, and coincident endpoints may overstate interval "
+            "overlap at retained timestamp resolution. It is not the configured worker count, "
+            "CPU utilization, or proof of simultaneous physical execution."
+        ),
     }
 
 
@@ -785,6 +841,13 @@ class GuidedEvidenceResource:
                     != evidence_index.get("process_tree_exit_evidence")
                 ):
                     raise GuidedEvidenceError("GUIDED_EVIDENCE_PROCESS_TREE_EXIT_SUMMARY_MISMATCH")
+                process_interval_overlap = _measure_retained_process_interval_overlap(
+                    [*matrix_jobs, *map_jobs]
+                )
+                if process_interval_overlap != manifest.get(
+                    "retained_process_interval_overlap"
+                ) or process_interval_overlap != index.get("retained_process_interval_overlap"):
+                    raise GuidedEvidenceError("GUIDED_EVIDENCE_PROCESS_INTERVAL_OVERLAP_MISMATCH")
                 engine_records = [
                     (name, record)
                     for name, record in indexed.items()

@@ -800,6 +800,8 @@ jobs:
           JULIA_DEPOT_PATH: ${{ runner.temp }}/julia-depot
           JULIA_NUM_THREADS: "1"
           JULIA_NUM_PRECOMPILE_TASKS: "1"
+          JULIA_IMAGE_THREADS: "2"
+          JULIA_IMAGE_TIMINGS: "1"
           OPENBLAS_NUM_THREADS: "1"
           OMP_NUM_THREADS: "1"
         run: |
@@ -856,23 +858,29 @@ jobs:
         env:
           ECO_TARGET: ${{ matrix.target }}
           EXECUTABLE_SUFFIX: ${{ matrix.executable_suffix }}
-          RESOURCE_SIGNING_KEY_PEM: ${{ secrets.ECOCORRIDOR_RESOURCE_SIGNING_KEY_PEM }}
+          RESOURCE_SIGNING_SEED_HEX: ${{ secrets.ECOCORRIDOR_RESOURCE_SIGNING_SEED_HEX }}
           RELEASE_VERSION: ${{ inputs.release_tag }}
         run: |
-          test -n "${RESOURCE_SIGNING_KEY_PEM:-}" || {
-            echo "::error::Missing protected Ed25519 resource signing key."
+          if [[ ! "${RESOURCE_SIGNING_SEED_HEX:-}" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Protected Ed25519 resource signing seed must be exactly 64 lowercase hex characters."
             exit 1
+          fi
+          seed_path="${RUNNER_TEMP}/ecocorridor-resource-signing-key.seed.hex"
+          cleanup_resource_seed() {
+            rm -f -- "${seed_path}"
           }
+          trap cleanup_resource_seed EXIT HUP INT TERM
           umask 077
           application_version="${RELEASE_VERSION#v}"
-          printf '%s' "${RESOURCE_SIGNING_KEY_PEM}" \
-            > "${RUNNER_TEMP}/ecocorridor-resource-signing-key.pem"
+          printf '%s\n' "${RESOURCE_SIGNING_SEED_HEX}" \
+            > "${seed_path}"
+          unset RESOURCE_SIGNING_SEED_HEX
           uv run --no-sync python scripts/create_ecocorridor_release_manifest.py \
             --root apps/ecocorridor-desktop/src-tauri/release-generated \
             --output apps/ecocorridor-desktop/src-tauri/release-generated/release-manifest.json \
             --signature-output apps/ecocorridor-desktop/src-tauri/release-generated/release-manifest.sig \
             --public-key-output "${RUNNER_TEMP}/ecocorridor-resource-public-key.hex" \
-            --signing-key "${RUNNER_TEMP}/ecocorridor-resource-signing-key.pem" \
+            --signing-key "${seed_path}" \
             --application-version "${application_version}" \
             --source-commit "${GITHUB_SHA}" \
             --target "${ECO_TARGET}" \
@@ -883,6 +891,8 @@ jobs:
             >> "${GITHUB_ENV}"
           printf 'ECOCORRIDOR_RELEASE_SOURCE_SHA=%s\n' "${GITHUB_SHA}" \
             >> "${GITHUB_ENV}"
+          cleanup_resource_seed
+          trap - EXIT HUP INT TERM
 
       - name: Exercise packaged worker and direct engine offline
         shell: bash
@@ -899,6 +909,28 @@ jobs:
             --expected-target "${ECO_TARGET}" \
             | tee "${RUNNER_TEMP}/ecocorridor-offline-smoke.txt"
 
+      - name: Capture Apple default keychain
+        id: capture_apple_default_keychain
+        if: startsWith(matrix.target, 'macos')
+        shell: bash
+        run: |
+          original_default_keychain_output="$(security default-keychain -d user)"
+          if [[ ! "${original_default_keychain_output}" =~ ^[[:space:]]*\"([^\"]+)\"[[:space:]]*$ ]]; then
+            echo "::error::The original user default keychain path has an unexpected format."
+            exit 1
+          fi
+          original_default_keychain="${BASH_REMATCH[1]}"
+          user_keychain_root="$(python3 -c 'from pathlib import Path; print(Path.home() / "Library" / "Keychains")')"
+          original_keychain_name="${original_default_keychain##*/}"
+          if [[ "${original_default_keychain}" != "${user_keychain_root}/${original_keychain_name}" \
+            || ! "${original_keychain_name}" =~ ^[A-Za-z0-9._-]+\.keychain(-db)?$ \
+            || ! -f "${original_default_keychain}" \
+            || -L "${original_default_keychain}" ]]; then
+            echo "::error::The original user default keychain is not an exact regular keychain file."
+            exit 1
+          fi
+          printf 'path=%s\n' "${original_default_keychain}" >> "${GITHUB_OUTPUT}"
+
       - name: Import Apple signing identity
         if: startsWith(matrix.target, 'macos')
         shell: bash
@@ -913,19 +945,29 @@ jobs:
               echo "::error::Apple signing secrets are incomplete."
               exit 1
             }
-          python3 -c 'import base64,os,pathlib; pathlib.Path(os.environ["RUNNER_TEMP"],"ecocorridor-signing.p12").write_bytes(base64.b64decode(os.environ["APPLE_CERTIFICATE_BASE64"], validate=True))'
-          security create-keychain -p "${KEYCHAIN_PASSWORD}" ecocorridor-build.keychain
-          security default-keychain -s ecocorridor-build.keychain
-          security unlock-keychain -p "${KEYCHAIN_PASSWORD}" ecocorridor-build.keychain
-          security import "${RUNNER_TEMP}/ecocorridor-signing.p12" \
-            -k ecocorridor-build.keychain \
+          p12_path="${RUNNER_TEMP}/ecocorridor-signing.p12"
+          keychain_path="${RUNNER_TEMP}/ecocorridor-build.keychain-db"
+          cleanup_apple_certificate_file() {
+            rm -f -- "${p12_path}"
+          }
+          trap cleanup_apple_certificate_file EXIT HUP INT TERM
+          umask 077
+          ECOCORRIDOR_P12_PATH="${p12_path}" python3 -c 'import base64,os,pathlib; pathlib.Path(os.environ["ECOCORRIDOR_P12_PATH"]).write_bytes(base64.b64decode(os.environ["APPLE_CERTIFICATE_BASE64"], validate=True))'
+          security create-keychain -p "${KEYCHAIN_PASSWORD}" "${keychain_path}"
+          security default-keychain -d user -s "${keychain_path}"
+          security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${keychain_path}"
+          security import "${p12_path}" \
+            -k "${keychain_path}" \
             -P "${APPLE_CERTIFICATE_PASSWORD}" \
             -T /usr/bin/codesign
           security set-key-partition-list \
             -S apple-tool:,apple: \
             -s \
             -k "${KEYCHAIN_PASSWORD}" \
-            ecocorridor-build.keychain
+            "${keychain_path}"
+          unset APPLE_CERTIFICATE_BASE64 APPLE_CERTIFICATE_PASSWORD KEYCHAIN_PASSWORD
+          cleanup_apple_certificate_file
+          trap - EXIT HUP INT TERM
 
       - name: Import Windows signing identity
         if: matrix.target == 'windows-x64'
@@ -938,21 +980,49 @@ jobs:
             throw "Windows signing secrets are incomplete."
           }
           $certificatePath = Join-Path $env:RUNNER_TEMP "ecocorridor-signing.pfx"
-          [IO.File]::WriteAllBytes(
-            $certificatePath,
-            [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64)
-          )
-          $password = ConvertTo-SecureString `
-            -String $env:WINDOWS_CERTIFICATE_PASSWORD `
-            -Force `
-            -AsPlainText
-          $certificate = Import-PfxCertificate `
-            -FilePath $certificatePath `
-            -CertStoreLocation Cert:\CurrentUser\My `
-            -Password $password
-          if (-not $certificate.Thumbprint) { throw "Windows signing certificate import failed." }
-          "ECOCORRIDOR_WINDOWS_CERTIFICATE_THUMBPRINT=$($certificate.Thumbprint)" | `
-            Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $thumbprint = $null
+          $importedThumbprints = @()
+          try {
+            [IO.File]::WriteAllBytes(
+              $certificatePath,
+              [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64)
+            )
+            $password = ConvertTo-SecureString `
+              -String $env:WINDOWS_CERTIFICATE_PASSWORD `
+              -Force `
+              -AsPlainText
+            $certificates = @(Import-PfxCertificate `
+              -FilePath $certificatePath `
+              -CertStoreLocation Cert:\CurrentUser\My `
+              -Password $password)
+            foreach ($certificate in $certificates) {
+              $candidateThumbprint = ([string]$certificate.Thumbprint).ToUpperInvariant()
+              if ($candidateThumbprint -cnotmatch '^[0-9A-F]{40}$') {
+                throw "Windows signing certificate returned an invalid thumbprint."
+              }
+              $importedThumbprints += $candidateThumbprint
+            }
+            if ($importedThumbprints.Count -ne 1) {
+              throw "Windows signing PFX must contain exactly one imported certificate."
+            }
+            $thumbprint = $importedThumbprints[0]
+            "ECOCORRIDOR_WINDOWS_CERTIFICATE_THUMBPRINT=$thumbprint" | `
+              Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          }
+          catch {
+            foreach ($importedThumbprint in $importedThumbprints) {
+              Remove-Item -LiteralPath "Cert:\CurrentUser\My\$importedThumbprint" `
+                -Force `
+                -ErrorAction SilentlyContinue
+            }
+            throw
+          }
+          finally {
+            Remove-Item -LiteralPath $certificatePath -Force -ErrorAction SilentlyContinue
+            $password = $null
+            Remove-Item Env:WINDOWS_CERTIFICATE_BASE64 -ErrorAction SilentlyContinue
+            Remove-Item Env:WINDOWS_CERTIFICATE_PASSWORD -ErrorAction SilentlyContinue
+          }
 
       - name: Write Apple notarization key
         if: startsWith(matrix.target, 'macos')
@@ -966,6 +1036,7 @@ jobs:
           }
           umask 077
           printf '%s' "${APPLE_API_PRIVATE_KEY}" > "${RUNNER_TEMP}/AuthKey.p8"
+          unset APPLE_API_PRIVATE_KEY
 
       - name: Generate macOS Tauri release configuration
         if: startsWith(matrix.target, 'macos')
@@ -1021,6 +1092,61 @@ jobs:
           pnpm --dir apps/ecocorridor-desktop tauri build `
             --config "$env:GITHUB_WORKSPACE/apps/ecocorridor-desktop/src-tauri/tauri.release.generated.conf.json" `
             --bundles "$env:TAURI_BUNDLES"
+
+      - name: Remove Apple signing material
+        if: always() && startsWith(matrix.target, 'macos')
+        shell: bash
+        env:
+          ECOCORRIDOR_ORIGINAL_DEFAULT_KEYCHAIN: ${{ steps.capture_apple_default_keychain.outputs.path }}
+        run: |
+          auth_key_path="${RUNNER_TEMP}/AuthKey.p8"
+          keychain_path="${RUNNER_TEMP}/ecocorridor-build.keychain-db"
+          rm -f -- "${auth_key_path}"
+          original_default_keychain="${ECOCORRIDOR_ORIGINAL_DEFAULT_KEYCHAIN:-}"
+          user_keychain_root="$(python3 -c 'from pathlib import Path; print(Path.home() / "Library" / "Keychains")')"
+          original_keychain_name="${original_default_keychain##*/}"
+          if [[ "${original_default_keychain}" != "${user_keychain_root}/${original_keychain_name}" \
+            || ! "${original_keychain_name}" =~ ^[A-Za-z0-9._-]+\.keychain(-db)?$ \
+            || ! -f "${original_default_keychain}" \
+            || -L "${original_default_keychain}" ]]; then
+            echo "::error::Refusing to restore an invalid original user default keychain path."
+            exit 1
+          fi
+          security default-keychain -d user -s "${original_default_keychain}"
+          restored_default_keychain_output="$(security default-keychain -d user)"
+          if [[ ! "${restored_default_keychain_output}" =~ ^[[:space:]]*\"([^\"]+)\"[[:space:]]*$ \
+            || "${BASH_REMATCH[1]}" != "${original_default_keychain}" ]]; then
+            echo "::error::The original user default keychain was not restored exactly."
+            exit 1
+          fi
+          if [[ -e "${keychain_path}" ]]; then
+            security delete-keychain "${keychain_path}"
+          fi
+          test ! -e "${auth_key_path}"
+          test ! -e "${keychain_path}"
+
+      - name: Remove Windows signing material
+        if: always() && matrix.target == 'windows-x64'
+        shell: pwsh
+        run: |
+          $thumbprint = $env:ECOCORRIDOR_WINDOWS_CERTIFICATE_THUMBPRINT
+          if ($thumbprint) {
+            if ($thumbprint -cnotmatch '^[0-9A-F]{40}$') {
+              throw "Refusing to remove a certificate with an invalid thumbprint."
+            }
+            $certificatePath = "Cert:\CurrentUser\My\$thumbprint"
+            if (Test-Path -LiteralPath $certificatePath) {
+              Remove-Item -LiteralPath $certificatePath -Force
+            }
+            if (Test-Path -LiteralPath $certificatePath) {
+              throw "Windows signing certificate cleanup did not complete."
+            }
+          }
+          $pfxPath = Join-Path $env:RUNNER_TEMP "ecocorridor-signing.pfx"
+          Remove-Item -LiteralPath $pfxPath -Force -ErrorAction SilentlyContinue
+          if (Test-Path -LiteralPath $pfxPath) {
+            throw "Windows signing PFX cleanup did not complete."
+          }
 
       - name: Verify Apple signatures and notarization
         if: startsWith(matrix.target, 'macos')

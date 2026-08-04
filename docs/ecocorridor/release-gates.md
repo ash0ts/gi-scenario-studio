@@ -19,12 +19,12 @@ satisfied.
 
 | Evidence area | Current state |
 |---|---|
-| Ridgeway 1,536 matrix + 60 map jobs | Local reference verified: 1,596 accepted jobs, complete pair/current-raster evidence, archive `80fb1af09b74…`; not protected execution attestation |
+| Ridgeway 1,536 matrix + 60 map jobs | Local reference verified: 1,596 accepted jobs, complete pair/current-raster evidence, archive `a0dc6b763347…`; not protected execution attestation |
 | Ridgeway execution provenance | Gate implemented, evidence blocked: the manual protected producer workflow must execute a clean same-commit 1,596-job study after green Eco CI, publish its immutable Actions artifact, and pass the complete metric/current-raster differential; no successful producer run exists yet |
 | Ecological asset classification | Synthetic CC0 assets, including the manifest-bound local-reference trust record, are checksum- and relationship-checked; protected producer trust remains a separate unsatisfied gate |
 | Adaptive search | Historical campaign failed its scientific gate and is independently `HISTORICAL_BENCHMARK_ONLY` / production `PROHIBITED`; production remains scrambled Sobol |
 | Julia dependency vulnerability policy | Blocked: the PR #13 scan with database timestamp 2026-08-04T01:17:42Z found 73 unwaived records (3 critical, 32 high, 29 medium, 9 low), including critical findings in `LibSSH2_jll` and `OpenSSL_jll`; the current Julia 1.12.6 dependency graph has not resolved them |
-| Python release dependency policy | Blocked: `cryptography 48.0.1` has three current advisories; the high-severity GHSA-g6cj-pr64-35w5 requires 50.0.0, which is not yet published, so no advisory waiver or still-vulnerable 49.0.0 update is accepted |
+| Python release dependency policy | Release Ed25519 signing and verification now use pinned PyNaCl 1.6.2, the unused Presidio anonymizer is removed, and raw public/signature compatibility with the Rust host is regression-tested. Release remains blocked because required Weave still resolves `polyfile-weave → pdfminer-six → cryptography 48.0.1`; the advisory remains visible to the unwaived dependency scan |
 | Branch CI and target packaging | Source workflows exist; green draft-PR and installed-target evidence still required |
 | W&B Restricted integration | Blocked pending a supported authoritative scope resolver and invited service account |
 | Provider-backed Weave assistant evaluation | Blocked pending approved provider credential and real evaluation evidence |
@@ -82,11 +82,18 @@ satisfied.
 
 ## External gates
 
-- Publication of a `cryptography` release at or above the first patched 50.0.0
-  boundary for GHSA-g6cj-pr64-35w5, followed by a locked dependency update and
-  complete signature, manifest, packaging, OSV, and installed-application
-  verification. A waiver or upgrade to the still-affected 49.0.0 is not a
-  release path.
+- An upstream-compatible resolution of the remaining transitive
+  `weave → polyfile-weave → pdfminer-six → cryptography` advisory. Removing
+  Weave would violate the traced-assistant boundary, while forcing
+  `cryptography 50` does not satisfy the audited macOS x86_64 wheel target.
+  Neither dependency substitution nor a source build may silently remove that
+  target. The locked dependency scan remains unwaived and fail closed.
+- Complete PyNaCl signature, manifest, packaging, and installed-application
+  verification. The protected secret
+  `ECOCORRIDOR_RESOURCE_SIGNING_SEED_HEX` must contain exactly 64 lowercase
+  hexadecimal characters encoding one 32-byte Ed25519 seed. The workflow
+  materializes one trailing line feed without logging the value; PEM, base64,
+  uppercase, expanded private-key, and whitespace variants fail closed.
 - An upstream-compatible Julia/JLL dependency resolution, followed by a genuine
   package resolution and regeneration of the engine manifest, packaged engine,
   Ridgeway fixtures, direct evidence, hashes, and differential acceptance
@@ -100,7 +107,7 @@ satisfied.
   retained current-raster cell within the declared absolute/relative
   tolerances. The artifact embeds the independently resolvable run attempt,
   workflow ref/SHA, complete producer package, differential, and an attestation
-  binding the committed and producer archive hashes. The local v1.1 packager proves
+  binding the committed and producer archive hashes. The local v1.2 packager proves
   artifact completeness, hashes, reviewed source identity, model semantics,
   focal-pair values, map/matrix coherence, and QA; by itself it is not a
   cryptographic attestation that a particular operating-system process emitted

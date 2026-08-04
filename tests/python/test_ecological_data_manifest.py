@@ -193,6 +193,22 @@ def test_ridgeway_assets_form_one_fail_closed_historical_chain(checker: ModuleTy
     assert checker.validate_ridgeway_relationships() == []
 
 
+def test_manifest_gate_rejects_impossible_retained_interval_overlap(
+    checker: ModuleType,
+) -> None:
+    impossible = {
+        "schema_version": "ridgeway-retained-process-interval-overlap/v1.0",
+        "observation_method": "MAXIMUM_OVERLAPPING_RETAINED_PROCESS_INTERVALS",
+        "maximum_overlapping_retained_process_intervals": 1_597,
+        "retained_interval_count": 1_596,
+        "coincident_endpoint_policy": ("COUNTED_AS_OVERLAPPING_AT_RETAINED_TIMESTAMP_RESOLUTION"),
+        "scientific_identity_role": "AUDIT_ONLY_EXCLUDED",
+        "limitation": checker.PROCESS_INTERVAL_OVERLAP_LIMITATION,
+    }
+
+    assert checker._valid_retained_process_interval_overlap(impossible) is False
+
+
 def test_search_assets_pin_direct_evidence_and_fail_closed_ml_gate(
     checker: ModuleType,
 ) -> None:

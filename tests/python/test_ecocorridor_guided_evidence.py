@@ -14,6 +14,7 @@ from ecocorridor_core.guided_evidence import (
     GuidedEvidenceResource,
     _aggregate_process_tree_exits,
     _aggregate_resource_observability,
+    _measure_retained_process_interval_overlap,
     _safe_member_name,
 )
 from ecocorridor_core.ridgeway import build_ridgeway_fixture
@@ -150,6 +151,9 @@ def _packaged_v11_resource(
         for index in range(60)
     ]
     process_exit_summary = guided_evidence._aggregate_process_tree_exits([*matrix_jobs, *map_jobs])
+    process_interval_overlap = guided_evidence._measure_retained_process_interval_overlap(
+        [*matrix_jobs, *map_jobs]
+    )
     evidence = {
         "engine_manifest": engine.model_dump(mode="json"),
         "engine_manifest_sha256": engine.sha256,
@@ -184,7 +188,7 @@ def _packaged_v11_resource(
         for scenario_id in scenario_order
     ]
     bundle_index = {
-        "schema_version": "ridgeway-evidence-bundle/v1.1",
+        "schema_version": "ridgeway-evidence-bundle/v1.2",
         "fixture_version": fixture.fixture_version,
         "model_sha256": fixture.bundle.revision.model_sha256,
         "physics_model_sha256": fixture.physics_model_sha256,
@@ -200,6 +204,7 @@ def _packaged_v11_resource(
         "map_job_count": 60,
         "resource_observability": resource_summary,
         "process_tree_exit_evidence": process_exit_summary,
+        "retained_process_interval_overlap": process_interval_overlap,
         "required_coverage": {
             **guided_evidence._FIXED_REQUIRED_COVERAGE,
             "workflow_snapshots": 1,
@@ -231,7 +236,7 @@ def _packaged_v11_resource(
 
     archive_sha = _sha256(archive_path)
     manifest = {
-        "schema_version": "ridgeway-direct-evidence/v1.1",
+        "schema_version": "ridgeway-direct-evidence/v1.2",
         "fixture_version": fixture.fixture_version,
         "model_sha256": fixture.bundle.revision.model_sha256,
         "physics_model_sha256": fixture.physics_model_sha256,
@@ -247,6 +252,7 @@ def _packaged_v11_resource(
         "map_job_count": 60,
         "resource_observability": resource_summary,
         "process_tree_exit_evidence": process_exit_summary,
+        "retained_process_interval_overlap": process_interval_overlap,
         "release_replay_eligible": True,
         "teaching_selection": {},
         "evidence_bundle": {
@@ -387,7 +393,7 @@ def test_packaged_v11_environment_envelope_opens_as_guided_evidence(
         archive_sha256=_sha256(archive),
     )
     assert resource.manifest["release_replay_eligible"] is True
-    assert resource.bundle_index["schema_version"] == "ridgeway-evidence-bundle/v1.1"
+    assert resource.bundle_index["schema_version"] == "ridgeway-evidence-bundle/v1.2"
 
 
 def test_archive_member_validation_rejects_parent_traversal() -> None:
@@ -448,3 +454,29 @@ def test_guided_evidence_requires_unique_confirmed_process_tree_exits() -> None:
                 {"process_exit_evidence": duplicate},
             ]
         )
+
+
+def test_guided_evidence_measures_retained_interval_overlap_independent_of_order() -> None:
+    intervals = []
+    for index, (launched_at, confirmed_at) in enumerate(
+        (
+            ("2026-08-03T12:00:00+00:00", "2026-08-03T12:00:04+00:00"),
+            ("2026-08-03T12:00:01+00:00", "2026-08-03T12:00:04+00:00"),
+            ("2026-08-03T12:00:04+00:00", "2026-08-03T12:00:05+00:00"),
+        ),
+        start=1,
+    ):
+        evidence = _process_exit(index)
+        evidence["launched_at"] = launched_at
+        evidence["confirmed_at"] = confirmed_at
+        intervals.append({"process_exit_evidence": evidence})
+
+    forward = _measure_retained_process_interval_overlap(intervals)
+    reverse = _measure_retained_process_interval_overlap(list(reversed(intervals)))
+
+    assert forward == reverse
+    assert forward["maximum_overlapping_retained_process_intervals"] == 3
+    assert forward["scientific_identity_role"] == "AUDIT_ONLY_EXCLUDED"
+    assert "may understate true process concurrency" in str(forward["limitation"])
+    assert "coincident endpoints may overstate" in str(forward["limitation"])
+    assert "configured worker count" in str(forward["limitation"])

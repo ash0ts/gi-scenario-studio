@@ -1,10 +1,128 @@
 import { expect, test } from "@playwright/test";
 import axe from "axe-core";
 
-async function installProfessionalVisualHost(page: import("@playwright/test").Page) {
-  await page.addInitScript(() => {
+interface ProfessionalVisualHostOptions {
+  /** Browser-only RPC data for layout, keyboard, and axe checks; never engineering evidence. */
+  referenceComparisonLayoutMock?: boolean;
+}
+
+async function installProfessionalVisualHost(
+  page: import("@playwright/test").Page,
+  { referenceComparisonLayoutMock = false }: ProfessionalVisualHostOptions = {},
+) {
+  await page.addInitScript(({ referenceComparisonLayoutMock }) => {
     let credentialStored = false;
     const response = (method: string, data: unknown) => ({ api_version: "1.0", method, data, data_sha256: "a".repeat(64) });
+    const sha = (character: string) => character.repeat(64);
+    const referencePlanId = "reference-plan-professional-visual";
+    const referenceScenario = {
+      scenario_id: "scenario-reviewed-present",
+      title: "Forest guild · present-day reviewed hypothesis",
+      guild_id: "guild-forest",
+      life_stage: "adult",
+      resistance_hypothesis_id: "hypothesis-reviewed",
+      focal_set_id: "focal-set-reviewed",
+      future_condition: "present",
+      maturity_horizon: "current",
+      included_pair_ids: ["pair-1-2"],
+      safeguard: false,
+      grid_id: "grid-reviewed",
+      engine_mode: "RASTER_PAIRWISE",
+      raster_semantics: "RESISTANCE",
+      neighbor_rule: "EIGHT",
+      resistance_average: "ARITHMETIC",
+      precision: "double",
+      julia_threads: 1,
+      blas_threads: 1,
+    };
+    const referenceTolerance = {
+      metric: "EFFECTIVE_RESISTANCE",
+      units: "effective_resistance",
+      absolute_tolerance: 0.1,
+      relative_tolerance: 0.01,
+      comparison_formula: "ABS_OBSERVED_MINUS_REFERENCE_LE_ABSOLUTE_PLUS_RELATIVE_TIMES_ABS_REFERENCE",
+    };
+    const referenceBinding = {
+      binding_id: "binding-reviewed-present",
+      scenario_id: referenceScenario.scenario_id,
+      reference_matrix_asset_id: "asset-reference-matrix",
+      matrix_format: "CIRCUITSCAPE_THREE_COLUMN_MATRIX",
+      tolerance: referenceTolerance,
+      reference_current_asset_id: null,
+      current_raster_disposition: "NOT_PROVIDED",
+      current_raster_numeric_comparison_allowed: false,
+      reference_basis: "Agency-approved baseline matrix retained with the project bundle.",
+      reviewed_by: "Agency connectivity reviewer",
+      reviewed_at: "2026-08-03T12:00:00Z",
+      limitations: ["Reference reproduction does not establish ecological validity."],
+    };
+    let activeReferenceAnalysisId = "";
+    const referenceCalls: string[] = [];
+    if (referenceComparisonLayoutMock) {
+      (window as typeof window & { __REFERENCE_LAYOUT_MOCK_CALLS__?: string[] }).__REFERENCE_LAYOUT_MOCK_CALLS__ = referenceCalls;
+    }
+    const referencePlan = (analysisId: string) => ({
+      plan_id: referencePlanId,
+      analysis_id: analysisId,
+      revision_id: "revision_professional_visual",
+      model_sha256: sha("1"),
+      engine_manifest_sha256: sha("e"),
+      binding_ids: [referenceBinding.binding_id],
+      bound_scenario_ids: [referenceScenario.scenario_id],
+      run_plan: {
+        analysis_id: analysisId,
+        revision_id: "revision_professional_visual",
+        scenario_ids: [referenceScenario.scenario_id],
+        portfolios: [{
+          portfolio_id: "portfolio-no-action",
+          selections: { "site-reviewed": "option-no-action" },
+          canonical_option_ids: ["option-no-action"],
+          contains_survey_first: false,
+        }],
+        baseline_portfolio_id: "portfolio-no-action",
+        direct_job_count: 1,
+        solver_job_cap: 1,
+        search_method: "ENUMERATION",
+        seed: 17,
+        current_maps_for_portfolio_ids: [],
+        engine_manifest_sha256: sha("e"),
+        search_resource_observation: null,
+      },
+      exact_direct_evidence_only: true,
+      created_at: "2026-08-03T12:05:00Z",
+    });
+    const referenceComparison = (analysisId: string) => ({
+      comparison_id: "comparison-reviewed-present",
+      analysis_id: analysisId,
+      revision_id: "revision_professional_visual",
+      model_sha256: sha("1"),
+      binding_id: referenceBinding.binding_id,
+      scenario_id: referenceScenario.scenario_id,
+      direct_run_id: "direct-run-reference-present",
+      reference_matrix_asset_id: referenceBinding.reference_matrix_asset_id,
+      reference_matrix_sha256: sha("2"),
+      observed_matrix_sha256: sha("3"),
+      engine_manifest_sha256: sha("e"),
+      tolerance: referenceTolerance,
+      pair_comparisons: [{
+        pair_id: "pair-1-2",
+        reference_effective_resistance: 100,
+        observed_effective_resistance: 100.5,
+        tolerance: referenceTolerance,
+        absolute_difference: 0.5,
+        relative_difference: 0.005,
+        allowed_difference: 1.1,
+        within_tolerance: true,
+      }],
+      qa_status: "ACCEPTED",
+      status: "PASSED",
+      reference_current_asset_id: null,
+      current_raster_disposition: "NOT_PROVIDED",
+      current_raster_numeric_comparison_performed: false,
+      exact_direct_evidence_only: true,
+      completed_at: "2026-08-03T12:06:00Z",
+      limitations: ["This comparison evaluates numerical reproduction only."],
+    });
     (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {
       invoke: async (command: string) => {
         if (command === "credential_status") return credentialStored;
@@ -17,7 +135,7 @@ async function installProfessionalVisualHost(page: import("@playwright/test").Pa
     };
     (window as typeof window & { __ECOCORRIDOR_HOST__?: unknown }).__ECOCORRIDOR_HOST__ = {
       createProjectWorkspace: async () => ({ handle: "professional_visual_project" }),
-      request: async (method: string) => {
+      request: async (method: string, params: Record<string, unknown> = {}) => {
         if (method === "observability.preflight") return response(method, {
           preflight_id: "preflight_professional_visual",
           scope: "RESTRICTED",
@@ -35,7 +153,9 @@ async function installProfessionalVisualHost(page: import("@playwright/test").Pa
             project_id: projectId,
             created_at: "2026-08-03T12:00:00Z",
             created_by: "Agency ecologist",
-            reason: "Create authoritative visual-test project.",
+            reason: referenceComparisonLayoutMock
+              ? "Browser-only reference-comparison layout fixture; not engineering evidence."
+              : "Create authoritative visual-test project.",
             model_sha256: "1".repeat(64),
           };
           const decisionBrief = {
@@ -72,7 +192,7 @@ async function installProfessionalVisualHost(page: import("@playwright/test").Pa
             require_explicit_oversize_approval: true,
           };
           return response(method, {
-            project: { project_id: projectId, title: decisionBrief.title, mode: "PLANNING_DRAFT" },
+            project: { project_id: projectId, title: decisionBrief.title, mode: referenceComparisonLayoutMock ? "IMPORTED" : "PLANNING_DRAFT" },
             active_revision: revision,
             effective_bundle: {
               schema_version: "1.0",
@@ -80,9 +200,10 @@ async function installProfessionalVisualHost(page: import("@playwright/test").Pa
               title: decisionBrief.title,
               revision,
               decision_brief: decisionBrief,
-              assets: [], resistance_hypotheses: [], focal_area_sets: [], scenarios: [],
+              assets: [], resistance_hypotheses: [], focal_area_sets: [], scenarios: referenceComparisonLayoutMock ? [referenceScenario] : [],
               intervention_sites: [], intervention_options: [], cost_basis: null,
               safeguards: [], review_masks: [], decision_rules: [], fitness,
+              reference_bindings: referenceComparisonLayoutMock ? [referenceBinding] : [],
               resource_policy: resourcePolicy,
             },
             fitness,
@@ -103,10 +224,90 @@ async function installProfessionalVisualHost(page: import("@playwright/test").Pa
           binding: { state: "CONNECTED" },
           upload_preview: { allowed: true, blockers: [] },
         });
+        if (referenceComparisonLayoutMock && method === "connectivity.reference.plan") {
+          activeReferenceAnalysisId = String(params.analysis_id ?? "");
+          referenceCalls.push(method);
+          return response(method, {
+            analysis_id: activeReferenceAnalysisId,
+            plan_id: referencePlanId,
+            state: "READY",
+            plan: referencePlan(activeReferenceAnalysisId),
+            plan_sha256: sha("4"),
+            reference_matrix_parser_sha256: sha("5"),
+            replayed: false,
+            arithmetic: "1 No Action baseline × 1 bound scenarios = 1 direct Circuitscape matrix jobs",
+          });
+        }
+        if (referenceComparisonLayoutMock && method === "connectivity.reference.start") {
+          referenceCalls.push(method);
+          return response(method, {
+            analysis_id: activeReferenceAnalysisId,
+            plan_id: referencePlanId,
+            state: "RUNNING",
+          });
+        }
+        if (referenceComparisonLayoutMock && method === "connectivity.reference.status") {
+          referenceCalls.push(method);
+          return response(method, {
+            analysis_id: activeReferenceAnalysisId,
+            plan_id: referencePlanId,
+            state: "COMPLETED",
+            plan: referencePlan(activeReferenceAnalysisId),
+            completed_run_count: 1,
+            direct_job_counts: { SUCCEEDED: 1 },
+            result_id: "reference-result-reviewed",
+            result_status: "PASSED",
+            active_for_current_model: true,
+            gates_model_fitness: true,
+            evidence_disposition: "ACTIVE_PASSED",
+            stale_reasons: [],
+            error: null,
+          });
+        }
+        if (referenceComparisonLayoutMock && method === "connectivity.reference.result") {
+          referenceCalls.push(method);
+          const comparison = referenceComparison(activeReferenceAnalysisId);
+          return response(method, {
+            analysis_id: activeReferenceAnalysisId,
+            plan_id: referencePlanId,
+            plan: referencePlan(activeReferenceAnalysisId),
+            result: {
+              result_id: "reference-result-reviewed",
+              plan_id: referencePlanId,
+              analysis_id: activeReferenceAnalysisId,
+              revision_id: "revision_professional_visual",
+              model_sha256: sha("1"),
+              engine_manifest_sha256: sha("e"),
+              scenario_comparisons: [comparison],
+              status: "PASSED",
+              exact_direct_evidence_only: true,
+              current_raster_numeric_comparison_performed: false,
+              evidence_claim_links: [{
+                claim_id: "claim-reference-pair-1-2",
+                comparison_id: comparison.comparison_id,
+                scenario_id: referenceScenario.scenario_id,
+                pair_id: "pair-1-2",
+                direct_run_id: comparison.direct_run_id,
+              }],
+              completed_at: "2026-08-03T12:06:00Z",
+              limitations: ["Reference reproduction does not validate ecological assumptions."],
+            },
+            claim_ids: ["claim-reference-pair-1-2"],
+            plan_sha256: sha("4"),
+            result_sha256: sha("6"),
+            reference_matrix_parser_sha256: sha("5"),
+            outbox_id: "outbox-reference-result",
+            replayed: false,
+            active_for_current_model: true,
+            gates_model_fitness: true,
+            evidence_disposition: "ACTIVE_PASSED",
+            stale_reasons: [],
+          });
+        }
         throw new Error(`Unexpected professional visual-test RPC ${method}`);
       },
     };
-  });
+  }, { referenceComparisonLayoutMock });
 }
 
 async function assertNoBlockingAxeFindings(page: import("@playwright/test").Page) {
@@ -122,8 +323,11 @@ async function assertNoBlockingAxeFindings(page: import("@playwright/test").Page
   expect(blocking).toEqual([]);
 }
 
-async function openProfessionalPlanning(page: import("@playwright/test").Page) {
-  await installProfessionalVisualHost(page);
+async function openProfessionalPlanning(
+  page: import("@playwright/test").Page,
+  options: ProfessionalVisualHostOptions = {},
+) {
+  await installProfessionalVisualHost(page, options);
   await page.goto("/");
   await page.getByRole("button", { name: "Assemble planning model" }).click();
   await page.getByLabel("API base URL").fill("https://api.wandb.example.org");
@@ -149,6 +353,16 @@ async function createProfessionalPlanningRecord(page: import("@playwright/test")
   await expect(page.locator(".cloud-state.connected")).toHaveCount(1);
 }
 
+async function openBrowserMockedReferenceComparison(page: import("@playwright/test").Page) {
+  // This deliberately exercises only browser rendering, accessibility, and
+  // keyboard mechanics. Its reviewed-reference values are not solver output,
+  // authoritative engineering evidence, or a substitute for worker tests.
+  await openProfessionalPlanning(page, { referenceComparisonLayoutMock: true });
+  await createProfessionalPlanningRecord(page);
+  await page.getByRole("navigation", { name: "Project workflow" }).getByRole("button", { name: "Model fitness" }).click();
+  await expect(page.getByRole("heading", { name: "Model Fitness Passport" })).toBeVisible();
+}
+
 test("Home preserves the three distinct entry paths", async ({ page }, testInfo) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   if (testInfo.project.name === "zoom-200") await page.setViewportSize({ width: 360, height: 450 });
@@ -169,6 +383,12 @@ test("Ridgeway robustness board presents the complete verified direct ensemble",
   await expect(page.getByRole("columnheader", { name: "Safeguard pairs" })).toBeVisible();
   await expect(page.getByRole("cell", { name: "4/4 scenarios pass" })).toHaveCount(4);
   await expect(page.getByRole("heading", { name: "Carry-forward candidate" })).toBeVisible();
+  const tableHint = page.getByText(/Scroll horizontally to inspect safeguard/i);
+  if (testInfo.project.name === "compact-760" || testInfo.project.name === "zoom-200") {
+    await expect(tableHint).toBeVisible();
+  } else {
+    await expect(tableHint).toBeHidden();
+  }
   await expect(page.locator(".replay-verdict").getByText("4/4 scenarios pass", { exact: true })).toBeVisible();
   await expect(page.locator(".replay-verdict").getByText("Review before carry-forward", { exact: true })).toBeVisible();
   await expect(page.getByText(/consider this candidate for ecological, field, and engineering feasibility review/i)).toBeVisible();
@@ -243,6 +463,72 @@ test("professional evidence package makes W&B synchronization consequences expli
   await expect(syncPanel.getByText(/Cloud failure cannot change direct results/i)).toBeVisible();
   await assertNoBlockingAxeFindings(page);
   await expect(syncPanel).toHaveScreenshot(`professional-sync-${testInfo.project.name}.png`, { animations: "disabled" });
+});
+
+test("browser-mocked reference comparison checks layout, axe, and keyboard only — not engineering evidence", async ({ page }, testInfo) => {
+  test.skip(!["desktop-1440", "compact-760"].includes(testInfo.project.name), "The browser-only reference layout fixture is pinned at primary desktop and compact widths.");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await openBrowserMockedReferenceComparison(page);
+
+  const panel = page.locator(".reference-comparison-panel");
+  await expect(panel.getByRole("heading", { name: "Compare the active model with reviewed reference matrices" })).toBeVisible();
+  await expect(panel.getByText("What this check answers", { exact: true })).toBeVisible();
+  await expect(panel.getByText(/reproduce each reviewed focal-pair matrix within its recorded tolerance/i)).toBeVisible();
+  await expect(panel.getByText("What it cannot answer", { exact: true })).toBeVisible();
+  await expect(panel.getByText(/does not validate resistance choices, focal areas, animal movement/i)).toBeVisible();
+
+  const planButton = panel.getByRole("button", { name: "Plan exact reference check" });
+  await expect(planButton).toBeEnabled();
+  await planButton.click();
+  const runButton = panel.getByRole("button", { name: "Run 1 direct matrix job" });
+  await expect(runButton).toBeEnabled();
+  await expect(panel.getByText("1 No Action baseline × 1 bound scenarios = 1 direct Circuitscape matrix jobs", { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => (window as typeof window & { __REFERENCE_LAYOUT_MOCK_CALLS__?: string[] }).__REFERENCE_LAYOUT_MOCK_CALLS__)).toEqual([
+    "connectivity.reference.plan",
+  ]);
+
+  await runButton.click();
+  await expect(panel.getByText("Active reference match passed", { exact: true }).first()).toBeVisible();
+  await expect(panel.getByText(/Ecological assumptions and fitness dimensions still require independent review/i)).toBeVisible();
+  await expect(panel.getByText("All reviewed tolerances passed.", { exact: true })).toBeVisible();
+  await expect(panel.getByText(/No fitness status, attestation, shortlist, or approval was changed automatically/i)).toBeVisible();
+  await expect(panel.getByText("100.000000", { exact: true })).toBeVisible();
+  await expect(panel.getByText("100.500000", { exact: true })).toBeVisible();
+  await expect(panel.getByText("Within tolerance", { exact: true })).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Trace exact claim" })).toBeEnabled();
+  await expect(panel.getByRole("button", { name: "Plan exact reference check" })).toHaveCount(0);
+  await expect(panel.getByRole("button", { name: "Run 1 direct matrix job" })).toHaveCount(0);
+  expect(await page.evaluate(() => (window as typeof window & { __REFERENCE_LAYOUT_MOCK_CALLS__?: string[] }).__REFERENCE_LAYOUT_MOCK_CALLS__)).toEqual([
+    "connectivity.reference.plan",
+    "connectivity.reference.start",
+    "connectivity.reference.status",
+    "connectivity.reference.result",
+  ]);
+
+  const lineage = panel.locator("details.pair-lineage");
+  const lineageSummary = lineage.locator("summary");
+  await lineageSummary.focus();
+  await expect(lineageSummary).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(lineage).toHaveAttribute("open", "");
+  await expect(lineage.getByText("Agency-approved baseline matrix retained with the project bundle.", { exact: true })).toBeVisible();
+  await page.keyboard.press("Enter");
+  await expect(lineage).not.toHaveAttribute("open", "");
+
+  const table = panel.getByRole("region", { name: "Exact baseline versus reviewed reference comparisons" });
+  await table.focus();
+  await expect(table).toBeFocused();
+  const scrollHint = panel.getByText(/Scroll horizontally to inspect every tolerance/i);
+  await expect(scrollHint).toBeVisible();
+  expect(await table.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+  await page.keyboard.press("ArrowRight");
+  await expect.poll(() => table.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
+  await table.evaluate((element) => { element.scrollLeft = 0; });
+
+  await assertNoBlockingAxeFindings(page);
+  await panel.evaluate((element) => element.scrollIntoView({ block: "start" }));
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await expect(page).toHaveScreenshot(`professional-reference-comparison-${testInfo.project.name}.png`, { fullPage: false, animations: "disabled" });
 });
 
 test("planning assembly keeps the decision boundary and first real action visible", async ({ page }, testInfo) => {

@@ -13,11 +13,8 @@ from types import ModuleType
 import pytest
 from ecocorridor_core.contracts import EngineManifest
 
-pytest.importorskip("cryptography")
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import (
-    Ed25519PrivateKey,
-)
+pytest.importorskip("nacl")
+from nacl.signing import SigningKey
 
 
 def _load_script(name: str) -> ModuleType:
@@ -30,21 +27,18 @@ def _load_script(name: str) -> ModuleType:
 
 
 def _tauri_updater_signature(
-    private_key: Ed25519PrivateKey, *, artifact: bytes, filename: str
+    private_key: SigningKey, *, artifact: bytes, filename: str
 ) -> tuple[str, str]:
-    public_bytes = private_key.public_key().public_bytes(
-        encoding=serialization.Encoding.Raw,
-        format=serialization.PublicFormat.Raw,
-    )
+    public_bytes = private_key.verify_key.encode()
     key_id = hashlib.sha256(public_bytes).digest()[:8]
     public_inner = (
         f"untrusted comment: minisign public key {key_id[::-1].hex().upper()}\n"
         + base64.b64encode(b"Ed" + key_id + public_bytes).decode("ascii")
         + "\n"
     )
-    primary = private_key.sign(hashlib.blake2b(artifact, digest_size=64).digest())
+    primary = private_key.sign(hashlib.blake2b(artifact, digest_size=64).digest()).signature
     trusted = f"timestamp:1785790492\tfile:{filename}"
-    global_signature = private_key.sign(primary + trusted.encode("utf-8"))
+    global_signature = private_key.sign(primary + trusted.encode("utf-8")).signature
     signature_inner = (
         "untrusted comment: signature from tauri secret key\n"
         + base64.b64encode(b"ED" + key_id + primary).decode("ascii")
@@ -367,15 +361,10 @@ def test_release_manifest_is_complete_and_ed25519_signed(tmp_path: Path) -> None
     worker.write_bytes(b"worker")
     engine.write_bytes(b"engine")
 
-    signing_key = Ed25519PrivateKey.generate()
-    key_path = tmp_path / "release-key.pem"
-    key_path.write_bytes(
-        signing_key.private_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PrivateFormat.PKCS8,
-            encryption_algorithm=serialization.NoEncryption(),
-        )
-    )
+    signing_key = SigningKey.generate()
+    key_path = tmp_path / "release-key.seed.hex"
+    key_path.write_text(signing_key.encode().hex() + "\n", encoding="ascii")
+    key_path.chmod(0o600)
     manifest_path = resources / "release-manifest.json"
     signature_path = resources / "release-manifest.sig"
     public_key_path = tmp_path / "release-public-key.hex"
@@ -406,15 +395,9 @@ def test_release_manifest_is_complete_and_ed25519_signed(tmp_path: Path) -> None
     subprocess.run(command, check=True)
 
     manifest_bytes = manifest_path.read_bytes()
-    public_key = signing_key.public_key()
-    public_key.verify(signature_path.read_bytes(), manifest_bytes)
-    assert (
-        public_key_path.read_text(encoding="ascii").strip()
-        == public_key.public_bytes(
-            encoding=serialization.Encoding.Raw,
-            format=serialization.PublicFormat.Raw,
-        ).hex()
-    )
+    public_key = signing_key.verify_key
+    public_key.verify(manifest_bytes, signature_path.read_bytes())
+    assert public_key_path.read_text(encoding="ascii").strip() == public_key.encode().hex()
 
     manifest = json.loads(manifest_bytes)
     paths = {item["path"] for item in manifest["resources"]}
@@ -447,23 +430,26 @@ def test_release_manifest_is_complete_and_ed25519_signed(tmp_path: Path) -> None
         )
 
 
-def test_release_manifest_rejects_non_ed25519_key(tmp_path: Path) -> None:
-    pytest.importorskip("cryptography.hazmat.primitives.asymmetric.rsa")
-    from cryptography.hazmat.primitives.asymmetric import rsa
-
+@pytest.mark.parametrize(
+    "seed_file",
+    [
+        b"a" * 64,
+        b"A" * 64 + b"\n",
+        b"a" * 62 + b"\n",
+        b"a" * 64 + b"\r\n",
+        b"-----BEGIN PRIVATE KEY-----\nnot-a-seed\n-----END PRIVATE KEY-----\n",
+    ],
+)
+def test_release_manifest_rejects_noncanonical_signing_seed(
+    tmp_path: Path, seed_file: bytes
+) -> None:
     resources = tmp_path / "release"
     resources.mkdir()
     executable = resources / "worker"
     executable.write_bytes(b"worker")
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    key_path = tmp_path / "rsa.pem"
-    key_path.write_bytes(
-        key.private_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PrivateFormat.PKCS8,
-            encryption_algorithm=serialization.NoEncryption(),
-        )
-    )
+    key_path = tmp_path / "invalid.seed.hex"
+    key_path.write_bytes(seed_file)
+    key_path.chmod(0o600)
     completed = subprocess.run(
         [
             sys.executable,
@@ -492,7 +478,24 @@ def test_release_manifest_rejects_non_ed25519_key(tmp_path: Path) -> None:
         text=True,
     )
     assert completed.returncode != 0
-    assert "Ed25519" in completed.stderr
+    assert "canonical 32-byte Ed25519 seed" in completed.stderr
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX private-key permission policy")
+def test_release_manifest_rejects_group_or_world_accessible_signing_seed(
+    tmp_path: Path,
+) -> None:
+    release_manifest = _load_script("create_ecocorridor_release_manifest.py")
+    signing_key = SigningKey.generate()
+    key_path = tmp_path / "release-key.seed.hex"
+    key_path.write_text(signing_key.encode().hex() + "\n", encoding="ascii")
+    key_path.chmod(0o640)
+
+    with pytest.raises(SystemExit, match="owner-only POSIX permissions"):
+        release_manifest.load_signing_key(key_path)
+
+    key_path.chmod(0o600)
+    assert release_manifest.load_signing_key(key_path).encode() == signing_key.encode()
 
 
 def test_engine_manifest_helper_emits_worker_contract(tmp_path: Path) -> None:
@@ -559,7 +562,7 @@ def test_engine_manifest_helper_emits_worker_contract(tmp_path: Path) -> None:
 def test_tauri_release_overlay_is_fail_closed_and_target_specific() -> None:
     output = Path("apps/ecocorridor-desktop/src-tauri") / "test-release.generated.conf.json"
     public_key, _ = _tauri_updater_signature(
-        Ed25519PrivateKey.generate(), artifact=b"probe", filename="probe.bin"
+        SigningKey.generate(), artifact=b"probe", filename="probe.bin"
     )
     try:
         subprocess.run(
@@ -619,7 +622,7 @@ def test_update_manifest_requires_all_signed_targets(tmp_path: Path) -> None:
         "EcoCorridor_v0.1.0_macos-x64.app.tar.gz",
         "EcoCorridor_v0.1.0_windows-x64-setup.exe",
     )
-    private_key = Ed25519PrivateKey.generate()
+    private_key = SigningKey.generate()
     public_key = ""
     for name in targets:
         artifact = b"installer"
@@ -663,7 +666,7 @@ def test_update_manifest_rejects_tampered_artifact_and_mismatched_public_key(
     updater = _load_script("create_ecocorridor_update_manifest.py")
     artifact = tmp_path / "update.bin"
     artifact.write_bytes(b"signed installer")
-    private_key = Ed25519PrivateKey.generate()
+    private_key = SigningKey.generate()
     public_key, signature = _tauri_updater_signature(
         private_key, artifact=artifact.read_bytes(), filename=artifact.name
     )
@@ -682,7 +685,7 @@ def test_update_manifest_rejects_tampered_artifact_and_mismatched_public_key(
         )
 
     other_public_key, _ = _tauri_updater_signature(
-        Ed25519PrivateKey.generate(), artifact=b"tampered installer", filename=artifact.name
+        SigningKey.generate(), artifact=b"tampered installer", filename=artifact.name
     )
     with pytest.raises(ValueError, match="key ID"):
         updater.verify_tauri_minisign_signature(
@@ -702,7 +705,7 @@ def test_update_manifest_rejects_version_drift_and_symlinked_signature(
         "EcoCorridor_v0.1.0_macos-x64.app.tar.gz",
         "EcoCorridor_v0.1.0_windows-x64-setup.exe",
     )
-    private_key = Ed25519PrivateKey.generate()
+    private_key = SigningKey.generate()
     public_key = ""
     for name in targets:
         artifact = b"installer"

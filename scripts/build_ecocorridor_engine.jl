@@ -11,5 +11,7 @@ create_app(
     executables = ["ecocorridor-engine" => "julia_main"],
     force = false,
     include_lazy_artifacts = true,
-    filter_stdlibs = false,
+    # Keep the relocatable runtime bounded to declared standard-library needs.
+    # The packaged scientific smoke exercises the resulting app before release.
+    filter_stdlibs = true,
 )

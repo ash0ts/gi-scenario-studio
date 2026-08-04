@@ -172,7 +172,7 @@ export interface RidgewayFixture {
 export interface EvidenceSelection {
   claimId: string;
   title: string;
-  value: string;
+  value: string | boolean;
   units: string;
   status: "verified" | "projection" | "review";
   portfolioId: string;
@@ -198,10 +198,19 @@ export interface ProfessionalProjectState {
   resource_policy: ResourcePolicy;
   fitness: ConnectivityProjectBundle["fitness"];
   saved_records: Record<string, Record<string, unknown>[]>;
-  analyses: Array<{ analysis_id: string; state: string; created_at: string; updated_at: string }>;
+  analyses: Array<{
+    analysis_id: string;
+    analysis_kind: "ALTERNATIVES" | "REFERENCE";
+    plan_id: string | null;
+    revision_id: string;
+    engine_manifest_sha256: string;
+    state: string;
+    created_at: string;
+    updated_at: string;
+  }>;
   pending_recovery: {
     required: boolean;
-    analyses: Array<{ analysis_id: string; analysis_state: "RUNNING" | "PAUSING"; executor_active: boolean; recovery_required: boolean; running_job_ids: string[] }>;
+    analyses: Array<{ analysis_id: string; analysis_kind: "ALTERNATIVES" | "REFERENCE"; plan_id: string | null; revision_id: string; analysis_state: "RUNNING" | "PAUSING"; executor_active: boolean; recovery_required: boolean; running_job_ids: string[] }>;
     next_action: string;
   };
   sync_status: Record<string, unknown>;

@@ -455,7 +455,7 @@ def test_schema_109_migration_backfills_deterministic_stream_sequences(tmp_path:
         ]
         guided_rows = [row for row in rows if row["stream_id"] == "guided_session:guided-session"]
         assert [row["stream_sequence"] for row in guided_rows] == [1, 2]
-        assert migrated._connection.execute("PRAGMA user_version").fetchone()[0] == 111
+        assert migrated._connection.execute("PRAGMA user_version").fetchone()[0] == 112
     finally:
         migrated.close()
 
@@ -552,6 +552,6 @@ def test_schema_110_migration_recreates_pre_reference_event_allowlist(tmp_path: 
                 idempotency_key="reference-comparison:migration",
             )
         assert migrated.telemetry_rows()[0]["outbox_id"] == outbox_id
-        assert migrated._connection.execute("PRAGMA user_version").fetchone()[0] == 111
+        assert migrated._connection.execute("PRAGMA user_version").fetchone()[0] == 112
     finally:
         migrated.close()

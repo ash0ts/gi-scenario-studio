@@ -33,6 +33,10 @@ from .contracts import (
     PortfolioDecisionSummary,
     canonical_sha256,
 )
+from .export import (
+    ConnectivityExportManifest,
+    assert_textual_evidence_has_no_local_path,
+)
 from .governance import (
     SnapshotAssetAuthorizationError,
     reconcile_snapshot_assets,
@@ -572,6 +576,10 @@ class EcoTelemetryProjector:
             or _sha256_file(path) != expected_sha256
         ):
             raise CloudIntegrityError("ECO_ARTIFACT_SOURCE_HASH_MISMATCH")
+        try:
+            assert_textual_evidence_has_no_local_path(path, media_type=media_type)
+        except PermissionError as exc:
+            raise CloudIntegrityError("ECO_ARTIFACT_LOCAL_PATH_DISCLOSURE") from exc
         return ArtifactProjection(
             local_artifact_id=local_artifact_id,
             artifact_type=artifact_type,
@@ -1385,11 +1393,17 @@ class EcoTelemetryProjector:
         metric_rows: list[list[Any]] = []
         run = None
         if job["state"] == "SUCCEEDED":
-            runs, _, _ = self.store.analysis_results(analysis_id)
-            run = next((item for item in runs if item.direct_run_id == direct_run_id), None)
-            if run is None or run.result_sha256 != payload.get("result_sha256"):
+            try:
+                verified = self.store.verify_authoritative_direct_run(
+                    direct_run_id,
+                    expected_analysis_id=analysis_id,
+                )
+            except (KeyError, TypeError, ValueError) as exc:
+                raise CloudIntegrityError("ECO_DIRECT_RUN_EVIDENCE_INVALID") from exc
+            run = verified.run
+            if run.result_sha256 != payload.get("result_sha256"):
                 raise CloudIntegrityError("ECO_DIRECT_RUN_EVIDENCE_MISSING")
-            for item in self.store.run_artifacts(direct_run_id):
+            for item in verified.artifacts:
                 role = str(item["role"])
                 if role in {"stdout", "stderr"}:
                     continue
@@ -1583,9 +1597,110 @@ class EcoTelemetryProjector:
             artifacts=artifacts,
         )
 
+    def _reference_analysis_completion(
+        self,
+        row: dict[str, Any],
+        payload: dict[str, Any],
+    ) -> TelemetryProjection:
+        analysis_id = str(payload.get("analysis_id", ""))
+        analysis = self.store.analysis(analysis_id)
+        intent = self.store.reference_completion_intent(analysis_id)
+        if (
+            analysis.get("analysis_kind") != "REFERENCE"
+            or analysis["state"] != "COMPLETED"
+            or analysis_id != row.get("analysis_id")
+            or intent is None
+        ):
+            raise CloudIntegrityError("ECO_REFERENCE_COMPLETION_OUTBOX_MISMATCH")
+        completion_id, completion_payload, completion_sha256 = intent
+        expected_direct_run_ids = sorted(
+            str(item["direct_run_id"]) for item in completion_payload["direct_runs"]
+        )
+        if payload != {
+            "analysis_id": analysis_id,
+            "completion_kind": "REFERENCE_RESULT_PENDING",
+            "completion_id": completion_id,
+            "plan_id": completion_payload["plan_id"],
+            "reference_completion_sha256": completion_sha256,
+            "direct_run_ids": expected_direct_run_ids,
+        }:
+            raise CloudIntegrityError("ECO_REFERENCE_COMPLETION_EVIDENCE_MISMATCH")
+        try:
+            verified = [
+                self.store.verify_authoritative_direct_run(
+                    direct_run_id,
+                    expected_analysis_id=analysis_id,
+                )
+                for direct_run_id in expected_direct_run_ids
+            ]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise CloudIntegrityError("ECO_REFERENCE_COMPLETION_DIRECT_EVIDENCE_INVALID") from exc
+        completion_artifact = self._stage_json(
+            category="reference-completion",
+            logical_id=completion_id,
+            value=completion_payload,
+            artifact_type="decision_evidence",
+            logical_name="reference/reference-completion-intent.json",
+        )
+        run_plan = ConnectivityRunPlan.model_validate(analysis["plan"])
+        return self._base(
+            row,
+            run_kind="connectivity_analysis",
+            run_subject_id=analysis_id,
+            event_sequence=self._stream_sequence(
+                row,
+                run_kind="connectivity_analysis",
+                run_subject_id=analysis_id,
+            ),
+            history={"reference_direct_runs": len(verified)},
+            summary={
+                "analysis_state": "COMPLETED",
+                "analysis_kind": "REFERENCE",
+                "reference_result_state": "PENDING_MATERIALIZATION",
+                "exact_direct_runs": len(verified),
+                "reference_completion_sha256": completion_sha256,
+            },
+            tables=[
+                TableProjection(
+                    logical_name="solver_jobs",
+                    columns=[
+                        "direct_run_id",
+                        "portfolio_id",
+                        "scenario_id",
+                        "result_sha256",
+                        "terminal_sha256",
+                    ],
+                    rows=[
+                        [
+                            item.run.direct_run_id,
+                            item.run.portfolio_id,
+                            item.run.scenario_id,
+                            item.run.result_sha256,
+                            item.terminal_sha256,
+                        ]
+                        for item in verified
+                    ],
+                ),
+                self._search_batches_table(
+                    run_plan,
+                    state="COMPLETED",
+                    complete_portfolio_count=1,
+                ),
+            ],
+            input_artifact_refs=self._receipt_refs(
+                event_type="direct_job_terminal",
+                analysis_id=analysis_id,
+                required=True,
+                require_each=True,
+            ),
+            artifacts=[completion_artifact],
+        )
+
     def _analysis_completion(
         self, row: dict[str, Any], payload: dict[str, Any]
     ) -> TelemetryProjection:
+        if payload.get("completion_kind") == "REFERENCE_RESULT_PENDING":
+            return self._reference_analysis_completion(row, payload)
         analysis_id = str(payload.get("analysis_id", ""))
         self._require_current_analysis_asset_authorization(analysis_id)
         analysis = self.store.analysis(analysis_id)
@@ -1599,6 +1714,18 @@ class EcoTelemetryProjector:
             or sorted(item.claim_id for item in claims) != payload.get("evidence_claim_ids")
         ):
             raise CloudIntegrityError("ECO_ANALYSIS_COMPLETION_EVIDENCE_MISMATCH")
+        try:
+            verified_runs = {
+                run.direct_run_id: self.store.verify_authoritative_direct_run(
+                    run.direct_run_id,
+                    expected_analysis_id=analysis_id,
+                )
+                for run in runs
+            }
+        except (KeyError, TypeError, ValueError) as exc:
+            raise CloudIntegrityError("ECO_ANALYSIS_COMPLETION_DIRECT_EVIDENCE_INVALID") from exc
+        if any(verified_runs[run.direct_run_id].run != run for run in runs):
+            raise CloudIntegrityError("ECO_ANALYSIS_COMPLETION_DIRECT_EVIDENCE_MISMATCH")
         snapshot_value = {
             "schema_version": "ecocorridor-decision-evidence/v1.0",
             "analysis_id": analysis_id,
@@ -2146,13 +2273,63 @@ class EcoTelemetryProjector:
         package_files = payload.get("package_files")
         if not isinstance(manifest, dict) or not isinstance(package_files, list):
             raise CloudIntegrityError("ECO_EXPORT_OUTBOX_INVALID")
-        export_id = str(manifest.get("export_id", ""))
+        try:
+            export_manifest = ConnectivityExportManifest.model_validate(manifest)
+        except (TypeError, ValueError) as exc:
+            raise CloudIntegrityError("ECO_EXPORT_MANIFEST_INVALID") from exc
+        export_id = export_manifest.export_id
         analysis_id = str(row.get("analysis_id", ""))
         self._require_current_analysis_asset_authorization(analysis_id)
-        if export_id != row.get("subject_id") or manifest.get("project_id") != row.get(
+        if export_id != row.get("subject_id") or export_manifest.project_id != row.get(
             "project_id"
         ):
             raise CloudIntegrityError("ECO_EXPORT_OUTBOX_MISMATCH")
+
+        ordinary_run_ids = set(export_manifest.direct_run_ids)
+        ordinary_claim_ids = set(export_manifest.evidence_claim_ids)
+        reference_run_ids: set[str] = set()
+        reference_claim_ids: set[str] = set()
+        reference_rows: list[list[Any]] = []
+        input_artifact_refs = self._receipt_refs(
+            event_type="analysis_completion",
+            analysis_id=analysis_id,
+            required=True,
+            require_each=True,
+        )
+        if export_manifest.reference_evidence is not None:
+            for entry in export_manifest.reference_evidence.entries:
+                new_run_ids = set(entry.direct_run_ids)
+                new_claim_ids = set(entry.evidence_claim_ids)
+                if reference_run_ids.intersection(new_run_ids) or reference_claim_ids.intersection(
+                    new_claim_ids
+                ):
+                    raise CloudIntegrityError("ECO_EXPORT_REFERENCE_IDENTITY_CONFLICT")
+                reference_run_ids.update(new_run_ids)
+                reference_claim_ids.update(new_claim_ids)
+                input_artifact_refs.extend(
+                    self._receipt_refs(
+                        event_type="reference_comparison",
+                        analysis_id=entry.analysis_id,
+                        subject_id=entry.result_id,
+                        required=True,
+                        require_each=True,
+                    )
+                )
+                reference_rows.append(
+                    [
+                        entry.analysis_id,
+                        entry.plan_id,
+                        entry.result_id,
+                        len(entry.scenario_ids),
+                        len(entry.direct_run_ids),
+                        len(entry.evidence_claim_ids),
+                        entry.engine_manifest_sha256,
+                    ]
+                )
+        if ordinary_run_ids.intersection(reference_run_ids) or ordinary_claim_ids.intersection(
+            reference_claim_ids
+        ):
+            raise CloudIntegrityError("ECO_EXPORT_REFERENCE_IDENTITY_CONFLICT")
         artifacts = []
         file_rows = []
         expected_root = PurePosixPath("exports") / export_id
@@ -2193,33 +2370,50 @@ class EcoTelemetryProjector:
                     item.get("media_type"),
                 ]
             )
+        tables = [
+            TableProjection(
+                logical_name="export_files",
+                columns=["relative_path", "sha256", "bytes", "media_type"],
+                rows=file_rows,
+            )
+        ]
+        if reference_rows:
+            tables.append(
+                TableProjection(
+                    logical_name="export_reference_dependencies",
+                    columns=[
+                        "analysis_id",
+                        "plan_id",
+                        "result_id",
+                        "scenario_count",
+                        "direct_run_count",
+                        "evidence_claim_count",
+                        "engine_manifest_sha256",
+                    ],
+                    rows=reference_rows,
+                )
+            )
         return self._base(
             row,
             run_kind="evidence_export",
             run_subject_id=export_id,
             event_sequence=1,
-            config={"analysis_id": analysis_id, "revision_id": manifest.get("revision_id")},
+            config={"analysis_id": analysis_id, "revision_id": export_manifest.revision_id},
             history={"package_file_count": len(artifacts)},
             summary={
                 "export_id": export_id,
                 "package_file_count": len(artifacts),
-                "direct_run_count": len(manifest.get("direct_run_ids", [])),
-                "evidence_claim_count": len(manifest.get("evidence_claim_ids", [])),
-                "sync_state_at_creation": manifest.get("sync_state"),
+                "direct_run_count": len(ordinary_run_ids) + len(reference_run_ids),
+                "ordinary_direct_run_count": len(ordinary_run_ids),
+                "reference_direct_run_count": len(reference_run_ids),
+                "evidence_claim_count": len(ordinary_claim_ids) + len(reference_claim_ids),
+                "ordinary_evidence_claim_count": len(ordinary_claim_ids),
+                "reference_evidence_claim_count": len(reference_claim_ids),
+                "reference_result_count": len(reference_rows),
+                "sync_state_at_creation": export_manifest.sync_state,
             },
-            tables=[
-                TableProjection(
-                    logical_name="export_files",
-                    columns=["relative_path", "sha256", "bytes", "media_type"],
-                    rows=file_rows,
-                )
-            ],
-            input_artifact_refs=self._receipt_refs(
-                event_type="analysis_completion",
-                analysis_id=analysis_id,
-                required=True,
-                require_each=True,
-            ),
+            tables=tables,
+            input_artifact_refs=sorted(set(input_artifact_refs)),
             artifacts=artifacts,
         )
 

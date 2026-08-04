@@ -15,6 +15,17 @@ SECRET_EXPRESSION = re.compile(
     r"\$\{\{(?:(?!\}\}).)*\bsecrets\b",
     re.IGNORECASE | re.DOTALL,
 )
+EXPRESSION = re.compile(r"\$\{\{(?P<body>.*?)\}\}", re.DOTALL)
+CONTEXT_REFERENCE = re.compile(
+    r"(?<![A-Za-z0-9_])"
+    r"(?P<context>github|needs|strategy|matrix|job|runner|env|vars|secrets|steps|inputs)"
+    r"\s*(?:\.|\[)",
+    re.IGNORECASE,
+)
+RUNTIME_ONLY_GITHUB_TOKEN = re.compile(
+    r"(?<![A-Za-z0-9_])github\s*(?:\.\s*token|\[\s*['\"]token['\"]\s*\])",
+    re.IGNORECASE,
+)
 SHELL_EXPRESSION = re.compile(r"\$\{\{")
 WRITE_PERMISSION = re.compile(r"^\s+[a-z-]+:\s*write\s*$", re.MULTILINE)
 UNTRUSTED_EVENTS = ("pull_request", "pull_request_target", "push", "merge_group", "schedule")
@@ -37,6 +48,28 @@ LOCKED_UV_SYNC = re.compile(r"(?<!\S)uv\s+sync\s+--locked(?=(?:\s|\\|['\";]|$))"
 PACKAGECOMPILER_BUILD_SCRIPT = "scripts/build_ecocorridor_engine.jl"
 PACKAGECOMPILER_HEARTBEAT_HELPER = "scripts/run_with_progress_heartbeat.sh"
 PACKAGECOMPILER_HEARTBEAT_LABEL = "PackageCompiler application build"
+UPLOAD_ACTION = re.compile(
+    r"^\s*-?\s*uses:\s*actions/upload(?:-pages)?-artifact@",
+    re.MULTILINE,
+)
+BROAD_RUNNER_TEMP_UPLOAD = re.compile(
+    r"^(?:"
+    r"\$\{\{\s*runner\.temp\s*\}\}|"
+    r"\$\{RUNNER_TEMP\}|"
+    r"\$RUNNER_TEMP|"
+    r"\$env:RUNNER_TEMP|"
+    r"%RUNNER_TEMP%"
+    r")(?:[/\\*?]+)?$",
+    re.IGNORECASE,
+)
+CREDENTIAL_PATH_TOKENS = (
+    "authkey.p8",
+    "ci-resource-key.seed.hex",
+    "ecocorridor-build.keychain",
+    "ecocorridor-resource-signing-key.seed.hex",
+    "ecocorridor-signing.p12",
+    "ecocorridor-signing.pfx",
+)
 
 
 def _declares_event(text: str, event: str) -> bool:
@@ -114,6 +147,183 @@ def _run_source(block_lines: list[str], start: int, end: int) -> str:
     return ""
 
 
+def _yaml_value_block(lines: list[str], start: int, indent: int) -> list[str]:
+    """Return one YAML key/value and its indented continuation lines."""
+
+    value_lines = [lines[start]]
+    for candidate in lines[start + 1 :]:
+        candidate_indent = len(candidate) - len(candidate.lstrip())
+        if candidate.strip() and candidate_indent <= indent:
+            break
+        value_lines.append(candidate)
+    return value_lines
+
+
+def _expression_contexts(source: str) -> set[str]:
+    contexts: set[str] = set()
+    for expression in EXPRESSION.finditer(source):
+        contexts.update(
+            match.group("context").lower()
+            for match in CONTEXT_REFERENCE.finditer(expression.group("body"))
+        )
+    return contexts
+
+
+def _pre_job_context_findings(path: Path, lines: list[str]) -> list[str]:
+    """Reject runtime-only contexts where GitHub evaluates before a step starts."""
+
+    findings: list[str] = []
+
+    def inspect(
+        *,
+        source_lines: list[str],
+        line_number: int,
+        location: str,
+        allowed: set[str],
+    ) -> None:
+        source = "\n".join(source_lines)
+        for context in sorted(_expression_contexts(source) - allowed):
+            if context == "runner":
+                findings.append(f"{path.name}:{line_number}: runner context used before step scope")
+            else:
+                findings.append(
+                    f"{path.name}:{line_number}: {context} context is unavailable in {location}"
+                )
+        if any(
+            RUNTIME_ONLY_GITHUB_TOKEN.search(expression.group("body"))
+            for expression in EXPRESSION.finditer(source)
+        ):
+            findings.append(
+                f"{path.name}:{line_number}: github.token is unavailable before step scope"
+            )
+
+    for index, line in enumerate(lines):
+        indent = len(line) - len(line.lstrip())
+        if re.match(r"^env\s*:", line):
+            inspect(
+                source_lines=_yaml_value_block(lines, index, indent),
+                line_number=index + 1,
+                location="workflow env",
+                allowed={"github", "inputs", "secrets", "vars"},
+            )
+        elif re.match(r"^concurrency\s*:", line):
+            inspect(
+                source_lines=_yaml_value_block(lines, index, indent),
+                line_number=index + 1,
+                location="workflow concurrency",
+                allowed={"github", "inputs", "vars"},
+            )
+
+    job_allowed = {"github", "inputs", "matrix", "needs", "strategy", "vars"}
+    for number, name, block_lines in _job_blocks(lines):
+        for index, line in enumerate(block_lines):
+            match = re.match(
+                r"^    (?P<key>name|runs-on|timeout-minutes|continue-on-error|if|strategy|concurrency)\s*:",
+                line,
+            )
+            if match is None:
+                continue
+            key = match.group("key")
+            allowed = job_allowed
+            if key in {"if", "strategy"}:
+                allowed = {"github", "inputs", "needs", "vars"}
+            inspect(
+                source_lines=_yaml_value_block(block_lines, index, 4),
+                line_number=number + index,
+                location=f"jobs.{name}.{key}",
+                allowed=allowed,
+            )
+
+        for index, line in enumerate(block_lines):
+            if not re.match(r"^    env\s*:", line):
+                continue
+            inspect(
+                source_lines=_yaml_value_block(block_lines, index, 4),
+                line_number=number + index,
+                location=f"jobs.{name}.env",
+                allowed={"github", "inputs", "matrix", "needs", "secrets", "strategy", "vars"},
+            )
+    return findings
+
+
+def _upload_path_values(step_lines: list[str]) -> list[str]:
+    values: list[str] = []
+    for with_index, with_line in enumerate(step_lines):
+        with_match = re.match(r"^(?P<indent>\s+)with\s*:\s*(?:#.*)?$", with_line)
+        if with_match is None:
+            continue
+        with_indent = len(with_match.group("indent"))
+        path_match: re.Match[str] | None = None
+        path_index = -1
+        path_indent = -1
+        for index in range(with_index + 1, len(step_lines)):
+            line = step_lines[index]
+            line_indent = len(line) - len(line.lstrip())
+            if line.strip() and line_indent <= with_indent:
+                break
+            candidate_match = re.match(r"^\s+path\s*:\s*(?P<value>.*)$", line)
+            if candidate_match is None or line_indent != with_indent + 2:
+                continue
+            path_match = candidate_match
+            path_index = index
+            path_indent = line_indent
+            break
+        if path_match is None:
+            continue
+        value = path_match.group("value").strip()
+        if value not in {"|", "|-", "|+", ">", ">-", ">+"}:
+            values.append(value.strip("'\""))
+            continue
+        for candidate in step_lines[path_index + 1 :]:
+            candidate_indent = len(candidate) - len(candidate.lstrip())
+            if candidate.strip() and candidate_indent <= path_indent:
+                break
+            normalized = candidate.strip().removeprefix("- ").strip().strip("'\"")
+            if normalized and not normalized.startswith("#"):
+                values.append(normalized)
+    return values
+
+
+def _artifact_upload_findings(
+    path: Path,
+    *,
+    job_line: int,
+    step_start: int,
+    step_lines: list[str],
+) -> list[str]:
+    step = "\n".join(step_lines)
+    if UPLOAD_ACTION.search(step) is None:
+        return []
+    findings: list[str] = []
+    for value in _upload_path_values(step_lines):
+        line_number = job_line + step_start
+        if BROAD_RUNNER_TEMP_UPLOAD.fullmatch(value):
+            findings.append(
+                f"{path.name}:{line_number}: artifact upload may not use the broad RUNNER_TEMP root"
+            )
+        lowered = value.lower()
+        for token in CREDENTIAL_PATH_TOKENS:
+            if token in lowered:
+                findings.append(
+                    f"{path.name}:{line_number}: artifact upload includes credential path {token}"
+                )
+    return findings
+
+
+def _named_steps(text: str, step_name: str) -> list[str]:
+    matches: list[str] = []
+    for _, _, block_lines in _job_blocks(text.splitlines()):
+        for start, end in _step_ranges(block_lines):
+            step = "\n".join(block_lines[start:end])
+            if re.search(
+                rf"^(?:      -\s+|        )name:\s*{re.escape(step_name)}\s*$",
+                step,
+                re.MULTILINE,
+            ):
+                matches.append(step)
+    return matches
+
+
 def evaluate_workflow(path: Path, text: str) -> list[str]:
     """Return fail-closed policy findings for one workflow document."""
 
@@ -150,27 +360,13 @@ def evaluate_workflow(path: Path, text: str) -> list[str]:
                 f"{path.name}:{index + 1}: checkout must set persist-credentials: false"
             )
 
+    findings.extend(_pre_job_context_findings(path, lines))
     for number, line in enumerate(lines, 1):
-        # Neither workflow-level nor job-level env can use the runner context.
-        # That context is available only after a job has started.
         match = re.match(r"^(?P<indent>\s*)env\s*:", line)
-        if not match or len(match.group("indent")) not in {0, 4}:
+        if match is None or len(match.group("indent")) != 0:
             continue
-        block_indent = len(match.group("indent"))
-        if "${{ runner." in line:
-            findings.append(f"{path.name}:{number}: runner context used before step scope")
-        env_lines = [line]
-        index = number
-        while index < len(lines):
-            candidate = lines[index]
-            candidate_indent = len(candidate) - len(candidate.lstrip())
-            if candidate and candidate_indent <= block_indent:
-                break
-            env_lines.append(candidate)
-            if "${{ runner." in candidate:
-                findings.append(f"{path.name}:{index + 1}: runner context used before step scope")
-            index += 1
-        if block_indent == 0 and SECRET_EXPRESSION.search("\n".join(env_lines)):
+        env_lines = _yaml_value_block(lines, number - 1, 0)
+        if SECRET_EXPRESSION.search("\n".join(env_lines)):
             findings.append(f"{path.name}:{number}: workflow-level env may not contain secrets")
 
     if _declares_event(text, "pull_request_target"):
@@ -234,8 +430,17 @@ def evaluate_workflow(path: Path, text: str) -> list[str]:
         # not receive credentials, followed by an explicit terminal gate.
         step_ranges = _step_ranges(block_lines)
         for step_index, (start, end) in enumerate(step_ranges):
-            step = "\n".join(block_lines[start:end])
+            step_lines = block_lines[start:end]
+            step = "\n".join(step_lines)
             shell_source = _run_source(block_lines, start, end)
+            findings.extend(
+                _artifact_upload_findings(
+                    path,
+                    job_line=number,
+                    step_start=start,
+                    step_lines=step_lines,
+                )
+            )
             if SHELL_EXPRESSION.search(shell_source):
                 findings.append(
                     f"{path.name}:{number + start}: GitHub expression in a shell command in "
@@ -512,7 +717,7 @@ def evaluate_ridgeway_release_topology(
         "ecocorridor-release-evidence",
         ".github/workflows/ecocorridor-ci.yml",
         "benchmarks/ecocorridor/ridgeway/run_direct_study.py",
-        "scripts/package_ridgeway_evidence.py",
+        "scripts/publish_ridgeway_evidence.py",
         "scripts/verify_ridgeway_release_evidence.py",
         "scripts/compare_ridgeway_protected_rerun.py",
         "scripts/validate_ridgeway_producer_attestation.py create",
@@ -753,6 +958,246 @@ def evaluate_packagecompiler_heartbeat_topology(
     return findings
 
 
+def evaluate_release_signing_security_topology(
+    workflows: dict[str, str],
+) -> list[str]:
+    """Pin reviewed key materialization, use, and exact-target cleanup boundaries."""
+
+    findings: list[str] = []
+    required_workflows = {ECOCORRIDOR_CI_WORKFLOW, ECOCORRIDOR_RELEASE_WORKFLOW}
+    missing = sorted(required_workflows - set(workflows))
+    if missing:
+        findings.append("release signing security topology is incomplete: " + ", ".join(missing))
+        return findings
+
+    for workflow_name, text in sorted(workflows.items()):
+        for forbidden in (
+            "cryptography",
+            "RESOURCE_SIGNING_KEY_PEM",
+            "ECOCORRIDOR_RESOURCE_SIGNING_KEY_PEM",
+            "ci-resource-key.pem",
+        ):
+            if forbidden in text:
+                findings.append(
+                    f"{workflow_name}: release signing contains forbidden legacy token {forbidden}"
+                )
+
+    ci = workflows[ECOCORRIDOR_CI_WORKFLOW]
+    for token in (
+        "from nacl.signing import SigningKey",
+        'key.encode().hex() + "\\n"',
+        "ci-resource-key.seed.hex",
+        "umask 077",
+    ):
+        if token not in ci:
+            findings.append(f"EcoCorridor CI release signing is missing {token}")
+    ci_signing_steps = _named_steps(ci, "Sign resource manifest with an ephemeral CI key")
+    if len(ci_signing_steps) != 1:
+        findings.append(
+            "EcoCorridor CI must contain exactly one ephemeral resource-signing step; "
+            f"observed {len(ci_signing_steps)}"
+        )
+    else:
+        ci_signing_step = ci_signing_steps[0]
+        for token in (
+            'seed_path="${RUNNER_TEMP}/ci-resource-key.seed.hex"',
+            "cleanup_ci_resource_seed()",
+            "trap cleanup_ci_resource_seed EXIT HUP INT TERM",
+            '[[ -e "${seed_path}" || -L "${seed_path}" ]]',
+            'rm -f -- "${seed_path}"',
+            "Path(sys.argv[1]).write_text",
+            '--signing-key "${seed_path}"',
+            "cleanup_ci_resource_seed\n",
+            "trap - EXIT HUP INT TERM",
+        ):
+            if token not in ci_signing_step:
+                findings.append(
+                    "EcoCorridor CI ephemeral resource-signing step is missing " + token
+                )
+    if ci.count("ci-resource-key.seed.hex") != 1:
+        findings.append("ephemeral CI signing seed must be scoped to its canonical exact path")
+
+    release = workflows[ECOCORRIDOR_RELEASE_WORKFLOW]
+    for token in (
+        "RESOURCE_SIGNING_SEED_HEX: ${{ secrets.ECOCORRIDOR_RESOURCE_SIGNING_SEED_HEX }}",
+        '[[ ! "${RESOURCE_SIGNING_SEED_HEX:-}" =~ ^[0-9a-f]{64}$ ]]',
+        "ecocorridor-resource-signing-key.seed.hex",
+        "unset RESOURCE_SIGNING_SEED_HEX",
+    ):
+        if token not in release:
+            findings.append(f"protected release signing is missing {token}")
+    if release.count("secrets.ECOCORRIDOR_RESOURCE_SIGNING_SEED_HEX") != 1:
+        findings.append("protected release signing seed must be scoped to exactly one step")
+    if re.search(r"(?:echo|printf)[^\n]*\$\{RESOURCE_SIGNING_SEED_HEX", release):
+        allowed_materialization = re.compile(
+            r"printf '%s\\n' \"\$\{RESOURCE_SIGNING_SEED_HEX\}\"\s*\\\n"
+            r"\s*> \"\$\{seed_path\}\""
+        )
+        if not allowed_materialization.search(release):
+            findings.append("protected release signing seed may only enter its canonical seed file")
+
+    def require_step(step_name: str, required_tokens: tuple[str, ...]) -> str:
+        steps = _named_steps(release, step_name)
+        if len(steps) != 1:
+            findings.append(
+                f"protected release must contain exactly one {step_name!r} step; observed {len(steps)}"
+            )
+            return ""
+        step = steps[0]
+        for token in required_tokens:
+            if token not in step:
+                findings.append(f"protected release step {step_name!r} is missing {token}")
+        return step
+
+    require_step(
+        "Sign the exact native-resource inventory",
+        (
+            'seed_path="${RUNNER_TEMP}/ecocorridor-resource-signing-key.seed.hex"',
+            "cleanup_resource_seed()",
+            "trap cleanup_resource_seed EXIT HUP INT TERM",
+            '> "${seed_path}"',
+            '--signing-key "${seed_path}"',
+            "cleanup_resource_seed\n",
+            "trap - EXIT HUP INT TERM",
+        ),
+    )
+    capture_apple_default_keychain = require_step(
+        "Capture Apple default keychain",
+        (
+            "id: capture_apple_default_keychain",
+            "security default-keychain -d user",
+            'original_default_keychain="${BASH_REMATCH[1]}"',
+            'user_keychain_root="$(python3 -c',
+            ('"${original_default_keychain}" != "${user_keychain_root}/${original_keychain_name}"'),
+            "^[A-Za-z0-9._-]+\\.keychain(-db)?$",
+            '! -f "${original_default_keychain}"',
+            '-L "${original_default_keychain}"',
+            'printf \'path=%s\\n\' "${original_default_keychain}" >> "${GITHUB_OUTPUT}"',
+        ),
+    )
+    if "${GITHUB_ENV}" in capture_apple_default_keychain:
+        findings.append(
+            "protected release must carry the original default keychain as a scoped step output"
+        )
+    if release.count("steps.capture_apple_default_keychain.outputs.path") != 1:
+        findings.append(
+            "protected release must consume the captured original default keychain path exactly once"
+        )
+    if (
+        len(
+            re.findall(
+                r"^\s+ECOCORRIDOR_ORIGINAL_DEFAULT_KEYCHAIN:\s+",
+                release,
+                re.MULTILINE,
+            )
+        )
+        != 1
+    ):
+        findings.append(
+            "protected release must scope the original default keychain path to cleanup only"
+        )
+    require_step(
+        "Import Apple signing identity",
+        (
+            'p12_path="${RUNNER_TEMP}/ecocorridor-signing.p12"',
+            'keychain_path="${RUNNER_TEMP}/ecocorridor-build.keychain-db"',
+            "cleanup_apple_certificate_file()",
+            "trap cleanup_apple_certificate_file EXIT HUP INT TERM",
+            "umask 077",
+            'security default-keychain -d user -s "${keychain_path}"',
+            'security import "${p12_path}"',
+            '-k "${keychain_path}"',
+            "cleanup_apple_certificate_file\n",
+            "trap - EXIT HUP INT TERM",
+        ),
+    )
+    require_step(
+        "Import Windows signing identity",
+        (
+            '$certificatePath = Join-Path $env:RUNNER_TEMP "ecocorridor-signing.pfx"',
+            "try {",
+            "catch {",
+            "finally {",
+            "^[0-9A-F]{40}$",
+            "Windows signing PFX must contain exactly one imported certificate.",
+            'Remove-Item -LiteralPath "Cert:\\CurrentUser\\My\\$importedThumbprint"',
+            "Remove-Item -LiteralPath $certificatePath -Force -ErrorAction SilentlyContinue",
+            "Remove-Item Env:WINDOWS_CERTIFICATE_BASE64 -ErrorAction SilentlyContinue",
+            "Remove-Item Env:WINDOWS_CERTIFICATE_PASSWORD -ErrorAction SilentlyContinue",
+        ),
+    )
+    require_step(
+        "Write Apple notarization key",
+        (
+            "umask 077",
+            '> "${RUNNER_TEMP}/AuthKey.p8"',
+            "unset APPLE_API_PRIVATE_KEY",
+        ),
+    )
+    apple_cleanup = require_step(
+        "Remove Apple signing material",
+        (
+            "if: always() && startsWith(matrix.target, 'macos')",
+            (
+                "ECOCORRIDOR_ORIGINAL_DEFAULT_KEYCHAIN: "
+                "${{ steps.capture_apple_default_keychain.outputs.path }}"
+            ),
+            'auth_key_path="${RUNNER_TEMP}/AuthKey.p8"',
+            'keychain_path="${RUNNER_TEMP}/ecocorridor-build.keychain-db"',
+            'rm -f -- "${auth_key_path}"',
+            'original_default_keychain="${ECOCORRIDOR_ORIGINAL_DEFAULT_KEYCHAIN:-}"',
+            ('"${original_default_keychain}" != "${user_keychain_root}/${original_keychain_name}"'),
+            "^[A-Za-z0-9._-]+\\.keychain(-db)?$",
+            '! -f "${original_default_keychain}"',
+            '-L "${original_default_keychain}"',
+            'security default-keychain -d user -s "${original_default_keychain}"',
+            '"${BASH_REMATCH[1]}" != "${original_default_keychain}"',
+            'security delete-keychain "${keychain_path}"',
+            'test ! -e "${auth_key_path}"',
+            'test ! -e "${keychain_path}"',
+        ),
+    )
+    restore_position = apple_cleanup.find(
+        'security default-keychain -d user -s "${original_default_keychain}"'
+    )
+    delete_position = apple_cleanup.find('security delete-keychain "${keychain_path}"')
+    if restore_position < 0 or delete_position < 0 or restore_position >= delete_position:
+        findings.append(
+            "protected release must restore the exact original default keychain before deleting "
+            "the temporary Apple keychain"
+        )
+    require_step(
+        "Remove Windows signing material",
+        (
+            "if: always() && matrix.target == 'windows-x64'",
+            "^[0-9A-F]{40}$",
+            '$certificatePath = "Cert:\\CurrentUser\\My\\$thumbprint"',
+            "Remove-Item -LiteralPath $certificatePath -Force",
+            '$pfxPath = Join-Path $env:RUNNER_TEMP "ecocorridor-signing.pfx"',
+            "Remove-Item -LiteralPath $pfxPath -Force -ErrorAction SilentlyContinue",
+        ),
+    )
+
+    ordered_steps = (
+        "Capture Apple default keychain",
+        "Import Apple signing identity",
+        "Build signed and notarized macOS installer",
+        "Build signed Windows installers",
+        "Remove Apple signing material",
+        "Remove Windows signing material",
+        "Verify Apple signatures and notarization",
+        "Verify Windows Authenticode signatures",
+    )
+    if all(f"- name: {name}" in release for name in ordered_steps):
+        positions = [release.index(f"- name: {name}") for name in ordered_steps]
+        if positions != sorted(positions):
+            findings.append(
+                "protected release signing cleanup must follow installer builds and precede "
+                "signature verification"
+            )
+    return findings
+
+
 def main() -> int:
     findings: list[str] = []
     paths = sorted({*WORKFLOWS.glob("*.yml"), *WORKFLOWS.glob("*.yaml")})
@@ -791,6 +1236,7 @@ def main() -> int:
     }
     findings.extend(evaluate_ecocorridor_geospatial_dependency_topology(eco_workflows))
     findings.extend(evaluate_packagecompiler_heartbeat_topology(eco_workflows))
+    findings.extend(evaluate_release_signing_security_topology(eco_workflows))
     if findings:
         for finding in findings:
             print(finding)

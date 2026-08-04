@@ -418,6 +418,7 @@ label > small { display: block; margin-top: 7px; color: var(--muted); font-size:
 .import-panel > .control-requirement { grid-column: 2 / -1; }
 .operation-message { margin-top: 9px; padding: 7px 9px; display: block; font-size: 12px; line-height: 1.4; border: 1px solid; }
 .operation-message.success { color: #385223; background: var(--lichen-wash); border-color: #b4c9a1; }
+.operation-message.review { color: #6e4017; background: var(--amber-wash); border-color: #dfbd95; }
 .operation-message.error { color: #7b2d45; background: var(--berry-wash); border-color: #d6a0b1; }
 .checklist-panel, .caution-panel { padding: 20px; }
 .checklist-panel h2, .caution-panel h2 { font-size: 23px; }
@@ -632,6 +633,51 @@ tbody tr:hover { background: rgba(224,239,241,.3); }
 .fitness-attest-action { min-height: 74px; padding: 13px 18px; display: flex; justify-content: space-between; align-items: center; gap: 16px; border-top: 1px solid var(--line); background: var(--mist); }
 .fitness-attest-action p { margin: 0; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
 .fitness-attest-action svg { width: 18px; color: var(--amber); }
+.reference-comparison-panel { margin-bottom: 16px; overflow: hidden; border-top: 4px solid var(--cyan); }
+.reference-comparison-heading { min-height: 84px; padding: 15px 18px; display: flex; align-items: center; justify-content: space-between; gap: 18px; border-bottom: 1px solid var(--line); }
+.reference-comparison-heading h2 { max-width: 760px; margin: 2px 0 0; font-size: 26px; }
+.reference-comparison-heading > .status-pill { flex: 0 0 auto; }
+.reference-comparison-boundary { display: grid; grid-template-columns: 28px repeat(2, minmax(0, 1fr)); gap: 13px; padding: 15px 18px; background: var(--mist); border-bottom: 1px solid var(--line); }
+.reference-comparison-boundary > svg { width: 22px; margin-top: 2px; color: var(--cyan); }
+.reference-comparison-boundary p { margin: 0; font-size: 12px; }
+.reference-comparison-boundary strong, .reference-comparison-boundary span { display: block; }
+.reference-comparison-boundary span { margin-top: 3px; color: var(--muted); line-height: 1.45; }
+.reference-comparison-command { min-height: 80px; padding: 13px 18px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.reference-comparison-command strong, .reference-comparison-command span { display: block; }
+.reference-comparison-command strong { font: 700 13px var(--mono); }
+.reference-comparison-command span { max-width: 760px; margin-top: 4px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.reference-comparison-command .primary-button { flex: 0 0 auto; }
+.reference-comparison-actions { display: flex; flex: 0 0 auto; align-items: stretch; gap: 8px; }
+.reference-comparison-actions button { max-width: 260px; }
+.reference-comparison-panel > .operation-message { margin: 0 18px 14px; }
+.reference-comparison-panel > .table-scroll-hint { margin: 0; padding: 8px 14px; display: block; color: var(--cyan-deep); background: var(--cyan-wash); border-bottom: 1px solid #a7cdd1; font: 700 12px var(--body); }
+.reference-progress { margin: 0 18px 14px; padding: 12px 14px; display: grid; grid-template-columns: minmax(180px, .65fr) minmax(220px, 1fr) auto; gap: 14px; align-items: center; background: var(--cyan-wash); border: 1px solid #9cc9ce; }
+.reference-progress strong, .reference-progress div > span { display: block; }
+.reference-progress strong { font-size: 13px; }
+.reference-progress div > span { margin-top: 2px; color: var(--muted); font-size: 12px; }
+.reference-progress progress { width: 100%; height: 12px; accent-color: var(--cyan); }
+.reference-progress > span { color: var(--cyan-deep); font-size: 12px; }
+.reference-terminal { margin: 0 18px 14px; padding: 12px 14px; display: flex; gap: 10px; color: #7b2d45; background: var(--berry-wash); border: 1px solid #d6a0b1; }
+.reference-terminal svg { width: 20px; flex: 0 0 auto; }
+.reference-terminal p { margin: 0; font-size: 12px; }
+.reference-terminal strong, .reference-terminal span { display: block; }
+.reference-terminal span { margin-top: 3px; }
+.reference-recovery { color: #6e4017; background: var(--amber-wash); border-color: #dfbd95; }
+.reference-disposition { margin: 0 18px 16px; padding: 11px 13px; border-left: 4px solid; font-size: 12px; }
+.reference-disposition strong, .reference-disposition span { display: block; }
+.reference-disposition span { margin-top: 3px; color: var(--muted); line-height: 1.45; }
+.reference-disposition ul { margin: 7px 0 0; padding-left: 19px; }
+.reference-disposition-pass { background: var(--lichen-wash); border-color: var(--lichen-deep); }
+.reference-disposition-review { background: var(--amber-wash); border-color: var(--amber); }
+.reference-disposition-fail { background: var(--berry-wash); border-color: var(--berry); }
+.reference-comparison-table { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.reference-comparison-table table { min-width: 1040px; }
+.reference-comparison-table td { vertical-align: top; }
+.reference-comparison-table td > .status-pill { white-space: nowrap; }
+.reference-comparison-table .pair-lineage { margin-top: 5px; }
+.reference-comparison-table .pair-lineage dl { min-width: 280px; }
+.reference-result-note { margin: 0; padding: 13px 18px; color: var(--muted); background: var(--mist); font-size: 12px; }
+.reference-result-note strong { margin-right: 5px; color: var(--basalt); }
 .inline-editor { margin-bottom: 16px; display: grid; grid-template-columns: .75fr 1.25fr; gap: 24px; }
 .inline-editor h2 { margin: 0 0 5px; font-size: 23px; }
 .inline-editor p { margin: 0; color: var(--muted); font-size: 12px; }
@@ -1147,6 +1193,15 @@ tbody tr:hover { background: rgba(224,239,241,.3); }
   .focal-placeholder { min-width: 620px; }
   .focal-sketch { overflow-x: auto; }
   .fitness-passport { grid-template-columns: 1fr; }
+  .reference-comparison-heading { align-items: flex-start; flex-direction: column; }
+  .reference-comparison-heading > .status-pill { align-self: flex-start; }
+  .reference-comparison-boundary { grid-template-columns: 24px minmax(0, 1fr); }
+  .reference-comparison-boundary p { grid-column: 2; }
+  .reference-comparison-command { align-items: stretch; flex-direction: column; }
+  .reference-comparison-actions { width: 100%; flex-direction: column; }
+  .reference-comparison-actions button, .reference-comparison-command .primary-button { width: 100%; max-width: none; }
+  .reference-progress { grid-template-columns: 1fr auto; }
+  .reference-progress progress { grid-column: 1 / -1; grid-row: 2; }
   .fitness-attest-action { align-items: stretch; flex-direction: column; }
   .fitness-attest-action .primary-button { width: 100%; }
   .intervention-preview-ledger { grid-template-columns: 1fr; }

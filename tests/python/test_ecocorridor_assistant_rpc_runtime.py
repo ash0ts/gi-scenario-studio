@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
+from ecocorridor_core.analysis_executor import DurableAnalysisExecutor
 from ecocorridor_core.assistant_runtime import ProviderBackedAssistantRuntime
 from ecocorridor_core.assistants import (
     APPROVED_TRACE_STEPS,
@@ -20,13 +22,14 @@ from ecocorridor_core.contracts import (
     ConnectivityAsset,
     ConnectivityEvidenceClaim,
     ConnectivityRunPlan,
-    EvidenceEdge,
-    EvidenceNode,
+    EngineManifest,
     SensitiveDataAuthorization,
     SensitivityClass,
 )
+from ecocorridor_core.interventions import canonicalize_portfolio
 from ecocorridor_core.metrics import CONNECTIVITY_LIMITATION, CURRENT_MAP_LIMITATION
 from ecocorridor_core.project_store import EcoProjectStore
+from ecocorridor_core.raster_io import render_esri_ascii
 from ecocorridor_core.ridgeway import build_ridgeway_fixture
 from ecocorridor_core.rpc_worker import RPCDispatcher, RPCFault
 from scenario_platform.cloud_sync import InMemoryCredentialSession
@@ -148,10 +151,10 @@ class _Provider:
             payload = {
                 "answer": (
                     "Direct Circuitscape result under documented assumptions. "
-                    "The cited within-scenario change is 6.42%."
+                    "The cited within-scenario change is 0%."
                 ),
                 "evidence_ids": ["E1"],
-                "numeric_claims": [{"evidence_id": "E1", "value": 6.42, "units": "percent"}],
+                "numeric_claims": [{"evidence_id": "E1", "value": 0.0, "units": "percent"}],
                 "limitations": [CONNECTIVITY_LIMITATION, CURRENT_MAP_LIMITATION],
             }
         else:
@@ -181,120 +184,241 @@ class _Provider:
         )
 
 
-def _claim(asset_source_id: str = "resistance-source-1") -> ConnectivityEvidenceClaim:
-    claim_id = "claim-1"
-    run_id = "run:run-1"
-    rule_id = "rule:rule-1"
-    metric_id = "metric:run-1:CORE-A--CORE-B"
-    scenario_id = "scenario:scenario-1"
-    diff_id = f"diff:{'d' * 64}"
-    asset_id = f"asset:{asset_source_id}"
-    engine_id = f"engine:{'e' * 64}"
-    qa_id = "qa:run-1"
-    artifact_id = f"artifact:matrix:run-1:{'a' * 64}"
-    assumption_id = "assumption:assumption-1"
-    authorization_id = "authorization:authorization-1"
-    nodes = [
-        EvidenceNode(node_id=claim_id, node_type="CLAIM", label="Audited claim"),
-        EvidenceNode(node_id=rule_id, node_type="RULE", label="Rule 1"),
-        EvidenceNode(node_id=metric_id, node_type="METRIC", label="Resistance change"),
-        EvidenceNode(
-            node_id=run_id,
-            node_type="DIRECT_RUN",
-            label="run-1",
-            sha256="f" * 64,
-        ),
-        EvidenceNode(node_id=scenario_id, node_type="SCENARIO", label="scenario-1"),
-        EvidenceNode(
-            node_id=diff_id,
-            node_type="RASTER_DIFF",
-            label="Prepared resistance raster",
-            sha256="d" * 64,
-        ),
-        EvidenceNode(node_id=asset_id, node_type="ASSET", label=asset_source_id),
-        EvidenceNode(
-            node_id=engine_id,
-            node_type="ENGINE_MANIFEST",
-            label="Pinned engine manifest",
-            sha256="e" * 64,
-        ),
-        EvidenceNode(node_id=qa_id, node_type="QA", label="ACCEPTED"),
-        EvidenceNode(
-            node_id=artifact_id,
-            node_type="ARTIFACT",
-            label="Retained direct effective-resistance matrix",
-            sha256="a" * 64,
-            attributes={"role": "matrix", "direct_run_id": "run-1"},
-        ),
-        EvidenceNode(node_id=assumption_id, node_type="ASSUMPTION", label="Assumption 1"),
-        EvidenceNode(
-            node_id=authorization_id,
-            node_type="AUTHORIZATION",
-            label="Authorization 1",
-        ),
-    ]
-    return ConnectivityEvidenceClaim(
-        claim_id=claim_id,
-        text=(
-            "Direct Circuitscape result under documented assumptions. "
-            "The within-scenario resistance change is 6.42%."
-        ),
-        value=6.42,
-        units="percent",
-        portfolio_id="portfolio-1",
-        scenario_id="scenario-1",
-        pair_id="CORE-A--CORE-B",
-        rule_id="rule-1",
-        direct_run_ids=["run-1"],
-        root_node_id=claim_id,
-        nodes=nodes,
-        edges=[
-            EvidenceEdge(from_node_id=claim_id, to_node_id=rule_id, relation="evaluates"),
-            EvidenceEdge(from_node_id=claim_id, to_node_id=metric_id, relation="reports"),
-            EvidenceEdge(
-                from_node_id=metric_id,
-                to_node_id=run_id,
-                relation="derived_from_portfolio_run",
-            ),
-            EvidenceEdge(from_node_id=run_id, to_node_id=scenario_id, relation="executes"),
-            EvidenceEdge(from_node_id=run_id, to_node_id=diff_id, relation="uses"),
-            EvidenceEdge(from_node_id=run_id, to_node_id=engine_id, relation="executed_by"),
-            EvidenceEdge(from_node_id=run_id, to_node_id=qa_id, relation="checked_by"),
-            EvidenceEdge(from_node_id=run_id, to_node_id=artifact_id, relation="retained_as"),
-            EvidenceEdge(from_node_id=diff_id, to_node_id=asset_id, relation="derived_from"),
-            EvidenceEdge(from_node_id=scenario_id, to_node_id=assumption_id, relation="assumes"),
-            EvidenceEdge(
-                from_node_id=asset_id,
-                to_node_id=authorization_id,
-                relation="authorized_by",
-            ),
-        ],
-        limitations=[CONNECTIVITY_LIMITATION, CURRENT_MAP_LIMITATION],
+def _engine_manifest(executable_sha256: str) -> EngineManifest:
+    return EngineManifest(
+        manifest_id="assistant-runtime-test-engine",
+        executable_sha256=executable_sha256,
+        julia_runtime_sha256="1" * 64,
+        julia_manifest_sha256="2" * 64,
+        native_artifacts_sha256="3" * 64,
+        wrapper_sha256="4" * 64,
+        parser_sha256="5" * 64,
+        metric_definitions_sha256="6" * 64,
+        neighbor_rule="EIGHT",
+        resistance_average="ARITHMETIC",
+        platform="test",
+        created_at=datetime(2026, 8, 3, tzinfo=UTC),
     )
+
+
+def _write_fake_engine(path: Path) -> tuple[Path, str]:
+    script = """#!/usr/bin/python3
+import argparse
+import json
+import pathlib
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--request', required=True)
+parser.add_argument('--result', required=True)
+args = parser.parse_args()
+request = json.loads(pathlib.Path(args.request).read_text(encoding='utf-8'))
+outputs = pathlib.Path(request['output_directory'])
+outputs.mkdir(parents=True, exist_ok=True)
+matrix = outputs / 'resistance-matrix.txt'
+matrix.write_text(''.join(
+    f"{pair['from_focal_id']} {pair['to_focal_id']} {10.0 + index}\\n"
+    for index, pair in enumerate(request['pairs'])
+), encoding='utf-8')
+settings = request['settings']
+resources = request['resources']
+current = 'True' if settings['emit_current_map'] else 'False'
+four = 'True' if settings['neighbor_rule'] == 'FOUR' else 'False'
+arithmetic = 'True' if settings['resistance_average'] == 'ARITHMETIC' else 'False'
+configuration = [
+    '[Options for advanced mode]',
+    'ground_file_is_resistances = True',
+    'source_file = (Browse for a valid file)',
+    'ground_file = (Browse for a valid file)',
+    'use_unit_currents = False',
+    'use_direct_grounds = False',
+    'remove_src_or_gnd = keepall',
+    '[Mask file]',
+    'use_mask = False',
+    'mask_file = (Browse for a valid file)',
+    '[Calculation options]',
+    'low_memory_mode = False',
+    'parallelize = False',
+    'max_parallel = 1',
+    'solver = cg+amg',
+    'print_timings = False',
+    'preemptive_memory_release = True',
+    'print_rusages = False',
+    'scenario = pairwise',
+    '[Short circuit regions (aka polygons)]',
+    'use_polygons = False',
+    'polygon_file = (Browse for a valid file)',
+    '[Options for one-to-all and all-to-one modes]',
+    'use_variable_source_strengths = False',
+    'variable_source_file = (Browse for a valid file)',
+    '[Output options]',
+    'set_null_currents_to_nodata = False',
+    'set_null_voltages_to_nodata = False',
+    'compress_grids = True',
+    f'write_cur_maps = {current}',
+    f'write_cum_cur_map_only = {current}',
+    'log_transform_maps = False',
+    'write_volt_maps = False',
+    f"output_file = {request['output_directory'].rstrip('/')}/connectivity",
+    '[Options for pairwise and one-to-all and all-to-one modes]',
+    f"included_pairs_file = {resources['included_pairs']}",
+    'use_included_pairs = True',
+    f"point_file = {resources['focal']}",
+    '[Connection scheme for raster habitat data]',
+    f'connect_four_neighbors_only = {four}',
+    f'connect_using_avg_resistances = {arithmetic}',
+    '[Habitat raster or graph]',
+    'habitat_map_is_resistances = True',
+    f"habitat_file = {resources['resistance']}",
+]
+pathlib.Path('circuitscape.ini').write_text('\\n'.join(configuration) + '\\n', encoding='utf-8')
+pathlib.Path(args.result).write_text(json.dumps({
+    'protocol_version': '1.0',
+    'status': 'SUCCEEDED',
+    'engine_name': 'Circuitscape',
+    'circuitscape_version': '5.17.1',
+    'pair_metrics': [
+        {
+            'pair_id': pair['pair_id'],
+            'from_focal_id': pair['from_focal_id'],
+            'to_focal_id': pair['to_focal_id'],
+            'effective_resistance': 10.0 + index,
+        }
+        for index, pair in enumerate(request['pairs'])
+    ],
+    'matrix_path': matrix.as_posix(),
+    'current_map_path': None,
+    'review_mask_summaries': [],
+    'warnings': [],
+    'failure_message': None,
+}, sort_keys=True), encoding='utf-8')
+"""
+    path.write_text(script, encoding="utf-8")
+    path.chmod(0o700)
+    return path, hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _alias_claim(source: ConnectivityEvidenceClaim, claim_id: str) -> ConnectivityEvidenceClaim:
+    payload = source.model_dump(mode="json")
+    old_id = source.claim_id
+    payload["claim_id"] = claim_id
+    payload["root_node_id"] = claim_id
+    for node in payload["nodes"]:
+        if node["node_id"] == old_id:
+            node["node_id"] = claim_id
+    for edge in payload["edges"]:
+        if edge["from_node_id"] == old_id:
+            edge["from_node_id"] = claim_id
+        if edge["to_node_id"] == old_id:
+            edge["to_node_id"] = claim_id
+    return ConnectivityEvidenceClaim.model_validate(payload)
 
 
 def _seed_project(root: Path, scope: ProjectScopeEvidence) -> None:
     fixture = build_ridgeway_fixture()
+    scenario = fixture.bundle.scenarios[0]
+    hypothesis = next(
+        item
+        for item in fixture.bundle.resistance_hypotheses
+        if item.hypothesis_id == scenario.resistance_hypothesis_id
+    )
+    focal_set = next(
+        item
+        for item in fixture.bundle.focal_area_sets
+        if item.focal_set_id == scenario.focal_set_id
+    )
+    site = fixture.bundle.intervention_sites[0]
+    no_action = next(
+        item
+        for item in fixture.bundle.intervention_options
+        if item.site_id == site.site_id and item.kind.value == "NO_ACTION"
+    )
+    required_asset_ids = {
+        hypothesis.resistance_asset_id,
+        focal_set.asset_id,
+        site.footprint_asset_id,
+    }
+    assets: list[ConnectivityAsset] = []
+    for asset in fixture.bundle.assets:
+        if asset.asset_id not in required_asset_ids:
+            continue
+        payload = render_esri_ascii(fixture.rasters[asset.asset_id])
+        relative_path = Path("data_assets") / f"{asset.asset_id}.asc"
+        retained = root / relative_path
+        retained.parent.mkdir(parents=True, exist_ok=True)
+        retained.write_bytes(payload)
+        assets.append(
+            asset.model_copy(
+                update={
+                    "relative_path": relative_path.as_posix(),
+                    "sha256": hashlib.sha256(payload).hexdigest(),
+                    "byte_size": len(payload),
+                    "media_type": "application/x-esri-ascii-grid",
+                }
+            )
+        )
     revision = fixture.bundle.revision.model_copy(update={"project_id": "project-1"})
+    evidence_rule = fixture.bundle.decision_rules[0].model_copy(
+        update={
+            "scenario_ids": [scenario.scenario_id],
+            "pair_ids": [scenario.included_pair_ids[0]],
+            "required": False,
+        }
+    )
     bundle = fixture.bundle.model_copy(
-        update={"project_id": "project-1", "revision": revision, "title": "Assistant boundary test"}
+        update={
+            "project_id": "project-1",
+            "revision": revision,
+            "title": "Assistant boundary test",
+            "decision_brief": fixture.bundle.decision_brief.model_copy(
+                update={"target_guilds": [scenario.guild_id], "safeguard_guilds": []}
+            ),
+            "assets": assets,
+            "resistance_hypotheses": [hypothesis],
+            "focal_area_sets": [focal_set],
+            "scenarios": [scenario],
+            "intervention_sites": [site.model_copy(update={"option_ids": [no_action.option_id]})],
+            "intervention_options": [no_action],
+            "safeguards": [],
+            "review_masks": [],
+            "decision_rules": [evidence_rule],
+            "cost_basis": fixture.bundle.cost_basis.model_copy(
+                update={
+                    "option_costs": {no_action.option_id: no_action.cost},
+                    "assumptions": [
+                        "Analysis horizon years: 30",
+                        "Real discount rate percent: 3.0",
+                        "CAPEX basis: Synthetic assistant-runtime fixture costs.",
+                        "O&M assumptions: Included in the retained synthetic option cost.",
+                        "Replacement assumptions: No replacement is modeled in this test.",
+                        (
+                            "Reviewer confirmation: I reviewed this synthetic test cost basis "
+                            "and its declared assumptions."
+                        ),
+                    ],
+                }
+            ),
+        }
     )
     bundle = type(fixture.bundle).model_validate(bundle.model_dump(mode="json"))
-    baseline = next(
-        item for item in fixture.portfolios if item.portfolio_id == fixture.baseline_portfolio_id
+    baseline = canonicalize_portfolio(
+        bundle.intervention_sites,
+        bundle.intervention_options,
+        {site.site_id: no_action.option_id},
     )
+    engine, engine_sha256 = _write_fake_engine(root / "test-engine")
+    manifest = _engine_manifest(engine_sha256)
     plan = ConnectivityRunPlan(
         analysis_id="analysis-1",
         revision_id=bundle.revision.revision_id,
-        scenario_ids=[item.scenario_id for item in bundle.scenarios],
+        scenario_ids=[scenario.scenario_id],
         portfolios=[baseline],
         baseline_portfolio_id=baseline.portfolio_id,
-        direct_job_count=len(bundle.scenarios),
-        solver_job_cap=len(bundle.scenarios),
+        direct_job_count=1,
+        solver_job_cap=1,
         search_method="ENUMERATION",
         seed=0,
         current_maps_for_portfolio_ids=[],
-        engine_manifest_sha256="a" * 64,
+        engine_manifest_sha256=manifest.sha256,
     )
     store = EcoProjectStore(root)
     try:
@@ -304,27 +428,58 @@ def _seed_project(root: Path, scope: ProjectScopeEvidence) -> None:
             mode="IMPORTED",
             skeleton={"test": True},
         )
-        for asset in bundle.assets:
-            retained = root / asset.relative_path
-            retained.parent.mkdir(parents=True, exist_ok=True)
-            retained.write_bytes(
-                json.dumps(
-                    fixture.rasters[asset.asset_id].values,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ).encode()
-            )
-            assert hashlib.sha256(retained.read_bytes()).hexdigest() == asset.sha256
         store.store_bundle(bundle)
         store.create_analysis(plan, bundle=bundle)
-        source_asset_id = bundle.resistance_hypotheses[0].resistance_asset_id
+    finally:
+        store.close()
+
+    executor = DurableAnalysisExecutor(
+        manifest,
+        lock_root=root / ".test-analysis-locks",
+        engine_executable=engine,
+        engine_sha256=engine_sha256,
+    )
+    executor.start(
+        project_directory=root,
+        bundle=bundle,
+        plan=plan,
+        engine_executable=engine,
+        engine_sha256=engine_sha256,
+    )
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        store = EcoProjectStore(root)
+        try:
+            analysis = store.analysis(plan.analysis_id)
+        finally:
+            store.close()
+        if analysis["state"] == "COMPLETED":
+            break
+        if analysis["state"] == "FAILED":
+            raise AssertionError(f"assistant direct-evidence fixture failed: {analysis['error']}")
+        time.sleep(0.02)
+    else:
+        raise AssertionError("assistant direct-evidence fixture did not complete")
+    assert executor.shutdown(timeout_seconds=5)
+
+    store = EcoProjectStore(root)
+    try:
+        _, _, claims = store.analysis_results(plan.analysis_id)
+        source_claim = next(
+            item
+            for item in claims
+            if item.claim_kind == "DIRECT_PAIR_METRIC"
+            and item.pair_id == scenario.included_pair_ids[0]
+        )
+        claim = _alias_claim(source_claim, "claim-1")
+        assert claim.value == 0.0
         with store.transaction() as connection:
             connection.execute(
                 "INSERT INTO eco_evidence_claims(claim_id,analysis_id,payload_json) VALUES(?,?,?)",
                 (
                     "claim-1",
                     "analysis-1",
-                    canonical_json(_claim(source_asset_id).model_dump(mode="json")),
+                    canonical_json(claim.model_dump(mode="json")),
                 ),
             )
         store.set_observability(

@@ -185,13 +185,17 @@ export function Workspace({ mode, path, localPreview, preflight, reopenedProject
           decisionBoard,
           selectedPortfolioId: decisionBoard?.summaries[0]?.portfolio_id ?? null,
         });
-        if (reopenedProject && hydrated.activeAnalysisId) {
-          const restoredStep = analysisStatus?.state === "COMPLETED" && decisionBoard ? "robustness" : "direct-runs";
+        if (reopenedProject && (hydrated.activeAnalysisId || hydrated.referenceRecoveryAnalysisId)) {
+          const restoredStep = hydrated.referenceRecoveryAnalysisId
+            ? "model-fitness"
+            : analysisStatus?.state === "COMPLETED" && decisionBoard ? "robustness" : "direct-runs";
           setVisitedSteps((current) => new Set(current).add(restoredStep));
           setStep(restoredStep);
         }
         setHydrationState("ready");
-        setHydrationMessage(hydrated.recoveryAnalysisId
+        setHydrationMessage(hydrated.referenceRecoveryAnalysisId
+          ? "Authoritative records restored. An interrupted exact reference comparison is ready for explicit recovery in Model Fitness."
+          : hydrated.recoveryAnalysisId
           ? `Authoritative records restored. An interrupted analysis is ready for explicit resume or cancellation.${analysisRestoreMessage ? ` ${analysisRestoreMessage}` : ""}`
           : analysisStatus?.state === "COMPLETED" && decisionBoard
             ? `Authoritative records and completed decision board restored for ${analysisStatus.analysis_id}.`

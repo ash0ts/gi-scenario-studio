@@ -12,6 +12,7 @@ import { CurrentRasterScrubber } from "./CurrentRasterScrubber";
 import { Icon } from "./Icon";
 import { IntakeAssistantPanel } from "./IntakeAssistantPanel";
 import { ProfessionalScenarioEvidence } from "./ProfessionalScenarioEvidence";
+import { ReferenceComparisonPanel } from "./ReferenceComparisonPanel";
 import { useWorkspaceDraft } from "./WorkspaceDrafts";
 
 interface ScreensProps {
@@ -1022,7 +1023,7 @@ interface ValidationFinding {
   remediation: string;
 }
 
-function ModelFitnessScreen({ path, projectSession, professionalAnalysis, fixture, fixtureVerified, guidedProjectionError }: Pick<ScreensProps, "path" | "projectSession" | "professionalAnalysis" | "fixture" | "fixtureVerified" | "guidedProjectionError">) {
+function ModelFitnessScreen({ path, projectSession, professionalAnalysis, onEvidence, fixture, fixtureVerified, guidedProjectionError }: Pick<ScreensProps, "path" | "projectSession" | "professionalAnalysis" | "onEvidence" | "fixture" | "fixtureVerified" | "guidedProjectionError">) {
   const guided = path === "guided";
   const retainedValidation = ModelValidationResponseSchema.safeParse(professionalAnalysis.projectState?.validation);
   const [validation, setValidation] = useState<{ status: "READY" | "BLOCKED"; findings: ValidationFinding[] } | null>(() => retainedValidation.success ? retainedValidation.data : null);
@@ -1149,6 +1150,7 @@ function ModelFitnessScreen({ path, projectSession, professionalAnalysis, fixtur
       <PageIntro kicker="Independent review" title="Model Fitness Passport" description="Fitness is reported by dimension. There is no score that can hide a weak ecological basis behind strong numerical QA." badge={<StatusPill state="review">Limitations remain visible</StatusPill>} />
       {guided && <ProjectionNotice fixture={fixture} verified={fixtureVerified} error={guidedProjectionError} />}
       {!guided && <section className="paper-panel validation-action"><div><span className="section-kicker">Repository check</span><h2>{validation ? `Worker disposition: ${validation.status}` : "Run the authoritative readiness check"}</h2><p>{projectSession ? "The worker validates retained bytes, the active semantic revision, scenario completeness, authorizations, model objects, and numerical configuration." : "Import a verified bundle or create a planning record before running model validation."}</p>{validationMessage && <span className={`operation-message ${validationState === "error" ? "error" : "success"}`} role={validationState === "error" ? "alert" : "status"}>{validationMessage}</span>}</div><button className="primary-button" type="button" disabled={!projectSession || validationState === "checking" || validationState === "attesting"} onClick={() => void validate()}>{validationState === "checking" ? "Checking retained evidence…" : validation ? "Run check again" : "Run model check"}</button></section>}
+      {!guided && projectSession && professionalAnalysis.projectState && (professionalAnalysis.projectState.effective_bundle.reference_bindings?.length ?? 0) > 0 && <ReferenceComparisonPanel projectHandle={projectSession.projectHandle} projectState={professionalAnalysis.projectState} onEvidence={onEvidence} />}
       <section className="paper-panel fitness-passport"><div className="passport-spine"><span>MODEL</span><strong>FITNESS</strong><small>{guided ? "RIDGEWAY · SYNTHETIC" : "PLANNING PROJECT · DRAFT"}</small></div><div className="passport-rows">{rows.map(([label, status, detail]) => <div className="fitness-row" key={label}><StatusPill state={status}>{status === "pass" ? "Supported" : status === "fail" ? "Blocking" : "Review"}</StatusPill><strong>{label}</strong><p>{detail}</p><span className="row-chevron" aria-hidden="true"><Icon name="chevron" /></span></div>)}</div></section>
       {!guided && fitness && <section className="paper-panel fitness-review" aria-labelledby="fitness-review-heading">
         <div className="panel-heading"><div><span className="section-kicker">Human review · active revision</span><h2 id="fitness-review-heading">Review every fitness dimension</h2></div><span className="mono">{fitness.revision_id}</span></div>
@@ -2239,7 +2241,7 @@ export function ScreenContent(props: ScreensProps) {
     case "grid-alignment": return <GridAlignmentScreen planning={props.planning} onPlanning={props.onPlanning} projectSession={props.projectSession} professionalAssets={props.professionalAssets} professionalGridApprovals={props.professionalGridApprovals} onGridApproved={props.onGridApproved} />;
     case "hypotheses": return <HypothesesScreen planning={props.planning} onPlanning={props.onPlanning} projectSession={props.projectSession} professionalAssets={props.professionalAssets} professionalRecords={props.professionalRecords} onProfessionalRecords={props.onProfessionalRecords} />;
     case "focal-areas": return <FocalAreasScreen planning={props.planning} onPlanning={props.onPlanning} projectSession={props.projectSession} professionalAssets={props.professionalAssets} professionalRecords={props.professionalRecords} onProfessionalRecords={props.onProfessionalRecords} />;
-    case "model-fitness": return <ModelFitnessScreen path={props.path} projectSession={props.projectSession} professionalAnalysis={props.professionalAnalysis} fixture={props.fixture} fixtureVerified={props.fixtureVerified} guidedProjectionError={props.guidedProjectionError} />;
+    case "model-fitness": return <ModelFitnessScreen path={props.path} projectSession={props.projectSession} professionalAnalysis={props.professionalAnalysis} onEvidence={props.onEvidence} fixture={props.fixture} fixtureVerified={props.fixtureVerified} guidedProjectionError={props.guidedProjectionError} />;
     case "scenarios": return <ScenariosScreen path={props.path} onEvidence={props.onEvidence} fixture={props.fixture} fixtureVerified={props.fixtureVerified} guidedProjectionError={props.guidedProjectionError} projectSession={props.projectSession} professionalRecords={props.professionalRecords} onProfessionalRecords={props.onProfessionalRecords} />;
     case "interventions": return <InterventionsScreen path={props.path} planning={props.planning} onPlanning={props.onPlanning} projectSession={props.projectSession} professionalAssets={props.professionalAssets} professionalRecords={props.professionalRecords} onProfessionalRecords={props.onProfessionalRecords} />;
     case "safeguards": return <SafeguardsScreen path={props.path} planning={props.planning} onPlanning={props.onPlanning} projectSession={props.projectSession} professionalAssets={props.professionalAssets} professionalRecords={props.professionalRecords} onProfessionalRecords={props.onProfessionalRecords} />;

@@ -10,7 +10,7 @@ from types import ModuleType
 import pytest
 
 pytest.importorskip(
-    "cryptography",
+    "nacl",
     reason="release-evidence signatures require the optional release dependency group",
 )
 
@@ -73,8 +73,6 @@ def _acceptance() -> dict[str, object]:
 
 
 def _assistant_evaluation(assistant: ModuleType) -> dict[str, object]:
-    from cryptography.hazmat.primitives import serialization
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
     from ecocorridor_core.assistant_evaluation import (
         AssistantEvaluationCaseRecord,
         load_dataset,
@@ -86,6 +84,7 @@ def _assistant_evaluation(assistant: ModuleType) -> dict[str, object]:
         AssistantRunAssociation,
     )
     from ecocorridor_core.metrics import CONNECTIVITY_LIMITATION, CURRENT_MAP_LIMITATION
+    from nacl.signing import SigningKey
 
     dataset, dataset_sha256 = load_dataset()
     records: list[AssistantEvaluationCaseRecord] = []
@@ -253,12 +252,9 @@ def _assistant_evaluation(assistant: ModuleType) -> dict[str, object]:
         ],
     }
     ratings_bytes = (json.dumps(ratings_payload, indent=2, sort_keys=True) + "\n").encode()
-    private_key = Ed25519PrivateKey.generate()
-    public_key = private_key.public_key().public_bytes(
-        encoding=serialization.Encoding.Raw,
-        format=serialization.PublicFormat.Raw,
-    )
-    ratings_signature = private_key.sign(ratings_bytes)
+    private_key = SigningKey.generate()
+    public_key = private_key.verify_key.encode()
+    ratings_signature = private_key.sign(ratings_bytes).signature
     public_key_b64 = base64.b64encode(public_key).decode()
     public_key_sha256 = hashlib.sha256(public_key).hexdigest()
     report: dict[str, object] = {
@@ -416,20 +412,16 @@ def test_assistant_evaluation_rejects_unsigned_or_wrong_signing_key() -> None:
 
 
 def test_assistant_usefulness_rating_is_bound_to_exact_answer_and_trace() -> None:
-    from cryptography.hazmat.primitives import serialization
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from nacl.signing import SigningKey
 
     assistant = _load("validate_ecocorridor_assistant_evaluation.py")
     evaluation = _assistant_evaluation(assistant)
     payload = json.loads(evaluation["ratings"])
     payload["ratings"][0]["trace_id"] = "trace-from-an-unrelated-answer"
     ratings_bytes = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode()
-    private_key = Ed25519PrivateKey.generate()
-    public_key = private_key.public_key().public_bytes(
-        encoding=serialization.Encoding.Raw,
-        format=serialization.PublicFormat.Raw,
-    )
-    signature = private_key.sign(ratings_bytes)
+    private_key = SigningKey.generate()
+    public_key = private_key.verify_key.encode()
+    signature = private_key.sign(ratings_bytes).signature
     evaluation["ratings"] = ratings_bytes
     evaluation["ratings_signature"] = signature
     evaluation["public_key_b64"] = base64.b64encode(public_key).decode()

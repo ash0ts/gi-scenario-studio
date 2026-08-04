@@ -17,6 +17,7 @@ from ecocorridor_core.analysis_executor import (
     DurableAnalysisExecutor,
     OrphanProcessAuditError,
 )
+from ecocorridor_core.claim_safety import assert_safe_rendered_ecological_copy
 from ecocorridor_core.contracts import (
     AssetKind,
     ConnectivityAsset,
@@ -35,7 +36,7 @@ from ecocorridor_core.contracts import (
 from ecocorridor_core.metrics import build_pair_metric_claim
 from ecocorridor_core.observability import EcoRpcObservabilityAdapter
 from ecocorridor_core.project_store import EcoProjectStore
-from ecocorridor_core.ridgeway import build_ridgeway_fixture
+from ecocorridor_core.ridgeway import build_public_ui_projection, build_ridgeway_fixture
 from ecocorridor_core.rpc_worker import (
     ExportValidateParams,
     RPCDispatcher,
@@ -803,6 +804,33 @@ def test_guided_projection_replays_verified_evidence_without_a_packaged_rerun_en
             },
         )
     assert raised.value.error.code == "PACKAGED_CIRCUITSCAPE_ENGINE_UNAVAILABLE"
+
+
+def test_guided_blocked_projection_replaces_legacy_labels_at_presentation_boundary(
+    tmp_path: Path,
+) -> None:
+    projection_path = tmp_path / "blocked-ridgeway.json"
+    projection_path.write_text(
+        json.dumps(build_public_ui_projection(build_ridgeway_fixture()), sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    dispatcher = RPCDispatcher(
+        data_root=tmp_path / "app-data",
+        guided_projection_path=projection_path,
+    )
+
+    opened = dispatcher.dispatch("connectivity.guided.open", {})["data"]
+    projection = opened["projection"]
+
+    assert opened["state"] == "ENGINE_REQUIRED"
+    assert projection["releaseReplayEligible"] is False
+    assert {item["projectionKey"]: item["name"] for item in projection["portfolios"]}[
+        "over-budget"
+    ] == "Modeled-rule pass, over budget"
+    rendered = json.dumps(projection, sort_keys=True).casefold()
+    assert "robust candidate" not in rendered
+    assert "robust but" not in rendered
+    assert_safe_rendered_ecological_copy(projection)
 
 
 def test_guided_open_verifies_current_evidence_without_materializing_archive(
@@ -1599,7 +1627,7 @@ def test_synchronous_completed_executor_payload_is_rejected(tmp_path: Path) -> N
     # This boundary test uses compact JSON fixture placeholders rather than
     # raster files; bypass storage validation only to exercise the real search
     # planning/timing hook. Raster validation is covered by dedicated suites.
-    dispatcher._validation_data = lambda _bundle, *, store: {  # type: ignore[method-assign]
+    dispatcher._validation_data = lambda _bundle, **_kwargs: {  # type: ignore[method-assign]
         "findings": []
     }
     prepared_response = dispatcher.dispatch(

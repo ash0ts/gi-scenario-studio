@@ -292,6 +292,11 @@ jobs:
           JULIA_DEPOT_PATH: ${{ runner.temp }}/julia-depot
           JULIA_NUM_THREADS: "1"
           JULIA_NUM_PRECOMPILE_TASKS: "1"
+          # Image compilation is a packaging concern, not a scientific-run
+          # setting. Use both hosted-runner cores while retaining one-thread
+          # execution in the staged worker smoke and every direct run.
+          JULIA_IMAGE_THREADS: "2"
+          JULIA_IMAGE_TIMINGS: "1"
           OPENBLAS_NUM_THREADS: "1"
           OMP_NUM_THREADS: "1"
         run: |
@@ -334,18 +339,34 @@ jobs:
 
       - name: Sign resource manifest with an ephemeral CI key
         run: |
-          uv run --no-sync python -c 'import os; from cryptography.hazmat.primitives import serialization; from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey; from pathlib import Path; key=Ed25519PrivateKey.generate(); Path(os.environ["RUNNER_TEMP"], "ci-resource-key.pem").write_bytes(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))'
+          seed_path="${RUNNER_TEMP}/ci-resource-key.seed.hex"
+          cleanup_ci_resource_seed() {
+            rm -f -- "${seed_path}"
+          }
+          trap cleanup_ci_resource_seed EXIT HUP INT TERM
+          if [[ -e "${seed_path}" || -L "${seed_path}" ]]; then
+            echo "::error::Refusing to replace an existing ephemeral CI signing seed."
+            exit 1
+          fi
+          umask 077
+          uv run --no-sync python -c 'import sys; from pathlib import Path; from nacl.signing import SigningKey; key=SigningKey.generate(); Path(sys.argv[1]).write_text(key.encode().hex() + "\n", encoding="ascii")' "${seed_path}"
           uv run --no-sync python scripts/create_ecocorridor_release_manifest.py \
             --root apps/ecocorridor-desktop/src-tauri/release-generated \
             --output apps/ecocorridor-desktop/src-tauri/release-generated/release-manifest.json \
             --signature-output apps/ecocorridor-desktop/src-tauri/release-generated/release-manifest.sig \
             --public-key-output "${RUNNER_TEMP}/ci-resource-public-key.hex" \
-            --signing-key "${RUNNER_TEMP}/ci-resource-key.pem" \
+            --signing-key "${seed_path}" \
             --application-version 0.1.0 \
             --source-commit "${GITHUB_SHA}" \
             --target linux-x64 \
             --executable bin/ecocorridor-worker \
             --executable engine/bin/ecocorridor-engine
+          cleanup_ci_resource_seed
+          if [[ -e "${seed_path}" || -L "${seed_path}" ]]; then
+            echo "::error::Ephemeral CI signing seed cleanup did not complete."
+            exit 1
+          fi
+          trap - EXIT HUP INT TERM
 
       - name: Execute staged scientific boundary offline
         run: >-

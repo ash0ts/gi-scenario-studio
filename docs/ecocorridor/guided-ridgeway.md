@@ -20,7 +20,7 @@ exist are four teaching roles selected:
 
 Baseline plus the four selected portfolios are then rerun across all scenarios
 with current-map output enabled: 60 retained map jobs. Teaching IDs and numbers
-are selected only after current direct evidence passes the v1.1 package
+are selected only after current direct evidence passes the v1.2 package
 contract; they are never pre-authored to fit the story.
 
 The earlier 2,339,712-byte archive remains pinned at SHA-256
@@ -36,9 +36,9 @@ projection. Its locally packaged reference contains 1,536 accepted matrix jobs,
 60 accepted current-map jobs, a complete focal-pair matrix for every teaching
 scenario, and one resource/process-tree observation per job. The committed
 archive SHA-256 is
-`80fb1af09b744d19b83dffff69f8bb015a46d558e5887ced986c12ae934d6821`;
+`a0dc6b7633475824d36cd9ab18ee38088208561ba680fed022fc7b6d65ac7168`;
 the direct-evidence manifest SHA-256 is
-`4a6f7605625f873587449bfe387af7228cc7cf6a7fa7b1ffee3119badaae2076`.
+`abf53dd7fa03956e8d076286e30d1ef3e5b35abf6a06952390b5366fdfef3c1e`.
 This reference is semantically verified local evidence, not protected
 execution attestation. A local rerun uses the packaged engine with real progress,
 pause/resume/cancel, cache status, QA, and a tolerance-based differential

@@ -27,6 +27,7 @@ from ecocorridor_core.cost_basis import with_reviewer_confirmation
 from ecocorridor_core.export import (
     EvidenceArtifactSource,
     EvidenceProjectAssetSource,
+    assert_safe_export_narratives,
     compute_export_eligibility,
     create_evidence_export,
 )
@@ -454,6 +455,87 @@ def test_evidence_claim_resolves_full_chain_and_forbids_overclaiming() -> None:
         assert_safe_ecological_claim("This is the optimal corridor with collision reduction.")
 
 
+@pytest.mark.parametrize(
+    ("field", "unsafe_text", "expected_path"),
+    [
+        (
+            "rule_explanation",
+            "This is a robust candidate under the reviewed rule.",
+            r"summaries\[0\]\.rule_dispositions\[0\]\.explanation",
+        ),
+        (
+            "unresolved_feasibility",
+            "The recommended corridor still needs a site visit.",
+            r"summaries\[0\]\.unresolved_feasibility\[0\]",
+        ),
+        (
+            "claim_text",
+            "This portfolio is ecologically robust.",
+            r"evidence_claims\[0\]\.text",
+        ),
+    ],
+)
+def test_export_strictly_validates_every_user_visible_decision_narrative(
+    field: str,
+    unsafe_text: str,
+    expected_path: str,
+) -> None:
+    fixture = build_ridgeway_fixture()
+    scenario = fixture.bundle.scenarios[0]
+    run = _run_for_scenario(
+        fixture.portfolios[1].portfolio_id, scenario, resistance=90, baseline=100
+    )
+    baseline_run = _run_for_scenario(
+        fixture.baseline_portfolio_id, scenario, resistance=100, baseline=100
+    )
+    claim = build_pair_metric_claim(
+        claim_id="claim_export_copy_policy",
+        run=run,
+        baseline_run=baseline_run,
+        metric=run.pair_metrics[0],
+        rule=fixture.bundle.decision_rules[0],
+        raster_diff_sha256="d" * 64,
+        source_asset_ids=["resistance", "focal"],
+        assumption_ids=["resistance_basis"],
+        authorization_ids=["auth_resistance", "auth_focal"],
+    )
+    summary = PortfolioDecisionSummary(
+        portfolio_id=run.portfolio_id,
+        disposition=PortfolioDisposition.PASSES,
+        cost=0,
+        currency="USD",
+        rule_dispositions=[
+            RuleDisposition(
+                rule_id="rule_target_improvement",
+                scenario_id=scenario.scenario_id,
+                pair_id=scenario.included_pair_ids[0],
+                observed_value=10.0,
+                passed=True,
+                explanation="Within-scenario direct modeled result.",
+            )
+        ],
+        unresolved_feasibility=["Field verification remains unresolved."],
+        next_action=(
+            "Candidate to carry forward for ecological, field, and engineering feasibility review."
+        ),
+    )
+    if field == "rule_explanation":
+        summary = summary.model_copy(
+            update={
+                "rule_dispositions": [
+                    summary.rule_dispositions[0].model_copy(update={"explanation": unsafe_text})
+                ]
+            }
+        )
+    elif field == "unresolved_feasibility":
+        summary = summary.model_copy(update={"unresolved_feasibility": [unsafe_text]})
+    else:
+        claim = claim.model_copy(update={"text": unsafe_text})
+
+    with pytest.raises(ValueError, match=expected_path):
+        assert_safe_export_narratives(summaries=[summary], claims=[claim])
+
+
 def test_search_enumerates_small_space_and_sobol_samples_large_space() -> None:
     fixture = build_ridgeway_fixture()
     first_site = fixture.bundle.intervention_sites[0]
@@ -581,6 +663,20 @@ def test_export_eligibility_is_derived_from_complete_exact_evidence(tmp_path: Pa
         professional=True,
     )
     assert eligibility.eligible is True
+    mismatched_engine = compute_export_eligibility(
+        bundle=professional_bundle,
+        current_authorization_bundle=professional_bundle,
+        summaries=[summary],
+        runs=evidence_runs,
+        deployment="WANDB_CLOUD",
+        sync_state="CONNECTED",
+        professional=True,
+        expected_engine_manifest_sha256="f" * 64,
+    )
+    assert mismatched_engine.eligible is False
+    assert any(
+        "differs from the pinned EngineManifest" in item for item in mismatched_engine.qa_blockers
+    )
     first_asset = fixture.bundle.assets[0]
     revoked_asset = first_asset.model_copy(
         update={

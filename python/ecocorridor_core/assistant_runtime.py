@@ -72,7 +72,12 @@ class StoreEvidenceResolver(EvidenceResolver):
         try:
             if store.project()["project_id"] != self.project_id:
                 raise PermissionError("ASSISTANT_PROJECT_IDENTITY_MISMATCH")
-            return [store.evidence_claim(evidence_id) for evidence_id in evidence_ids]
+            return [
+                ConnectivityEvidenceClaim.model_validate(
+                    store.resolve_evidence_claim(evidence_id)["claim"]
+                )
+                for evidence_id in evidence_ids
+            ]
         finally:
             store.close()
 

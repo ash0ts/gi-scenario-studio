@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import subprocess
+from collections import Counter
 from pathlib import Path
 from types import ModuleType
 
@@ -55,6 +57,41 @@ def test_lock_covers_gi_ci_generators_and_installer_identity(checker: ModuleType
     assert "apps/desktop" in checker.LOCKED_PATHS
     assert "scripts/generate_schemas.py" in checker.LOCKED_PATHS
     assert "scripts/generate_guided_ui_fixture.py" in checker.LOCKED_PATHS
+
+
+def test_shared_security_migration_is_exact_and_does_not_broaden_lock_drift(
+    checker: ModuleType,
+) -> None:
+    assert checker.SECURITY_MIGRATION_REMOVED_REQUIREMENTS == {"presidio-anonymizer>=2.2.359,<3"}
+    assert checker.SECURITY_MIGRATION_REMOVED_LOCK_PACKAGES == {
+        "presidio-anonymizer",
+    }
+    assert checker.EXPECTED_RELEASE_SECURITY_DEPENDENCIES == [
+        "PyNaCl==1.6.2",
+        "pyinstaller==6.21.0",
+    ]
+    assert checker.EXPECTED_WEAVE_TRANSITIVE_CRYPTOGRAPHY == "48.0.1"
+    assert checker.EXPECTED_WEAVE_CRYPTOGRAPHY_CHAIN == (
+        ("weave", "polyfile-weave"),
+        ("polyfile-weave", "pdfminer-six"),
+        ("pdfminer-six", "cryptography"),
+    )
+    removed = json.dumps(
+        {"name": "cryptography", "version": "48.0.1"},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    unrelated = json.dumps(
+        {"name": "unrelated-gi-package", "version": "1.0.0"},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    base = Counter({removed: 1, unrelated: 1})
+
+    assert checker._missing_locked_base_names(base, Counter()) == [
+        "cryptography",
+        "unrelated-gi-package",
+    ]
 
 
 def test_gi_and_ecocorridor_release_identities_are_isolated(checker: ModuleType) -> None:

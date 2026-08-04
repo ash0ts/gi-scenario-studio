@@ -17,10 +17,12 @@ import os
 import re
 import tarfile
 import tempfile
+from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-SCHEMA_VERSION = "ridgeway-protected-rerun-differential/v1.0"
+SCHEMA_VERSION = "ridgeway-protected-rerun-differential/v1.1"
+PUBLISHED_DIRECT_EVIDENCE_SCHEMA = "ridgeway-direct-evidence/v1.2"
 ABSOLUTE_TOLERANCE = 1e-8
 RELATIVE_TOLERANCE = 1e-7
 SOURCE_SHA = re.compile(r"[0-9a-f]{40}\Z")
@@ -32,6 +34,25 @@ PLATFORM_SPECIFIC_WORKFLOW_COMPONENTS = frozenset(
         "engine_manifest_contract",
         "python_runtime",
     }
+)
+PROCESS_INTERVAL_OVERLAP_SCHEMA = "ridgeway-retained-process-interval-overlap/v1.0"
+PROCESS_INTERVAL_OVERLAP_KEYS = frozenset(
+    {
+        "schema_version",
+        "observation_method",
+        "maximum_overlapping_retained_process_intervals",
+        "retained_interval_count",
+        "coincident_endpoint_policy",
+        "scientific_identity_role",
+        "limitation",
+    }
+)
+PROCESS_INTERVAL_OVERLAP_LIMITATION = (
+    "Derived only from retained post-spawn launched_at-to-confirmed_at measurement "
+    "intervals. It may understate true process concurrency because launched_at is "
+    "recorded after process creation, and coincident endpoints may overstate interval "
+    "overlap at retained timestamp resolution. It is not the configured worker count, "
+    "CPU utilization, or proof of simultaneous physical execution."
 )
 
 
@@ -73,24 +94,109 @@ def _archive_path(directory: Path, manifest: dict[str, Any]) -> Path:
     return path
 
 
-def _evidence_index(archive_path: Path) -> dict[str, Any]:
+def _archive_json_member(
+    archive_path: Path,
+    member_name: str,
+    *,
+    label: str,
+) -> dict[str, Any]:
     matches: list[tarfile.TarInfo] = []
     with tarfile.open(archive_path, mode="r:gz") as archive:
         for member in archive:
             path = PurePosixPath(member.name)
             if not member.name or "\\" in member.name or path.is_absolute() or ".." in path.parts:
                 raise ValueError("Ridgeway archive contains an unsafe path")
-            if path.as_posix() == "evidence-index.json":
+            if path.as_posix() == member_name:
                 matches.append(member)
         if len(matches) != 1 or not matches[0].isfile() or matches[0].size > 64 * 1024 * 1024:
-            raise ValueError("Ridgeway archive has no unique bounded evidence index")
+            raise ValueError(f"Ridgeway archive has no unique bounded {label}")
         stream = archive.extractfile(matches[0])
         if stream is None:
-            raise ValueError("Ridgeway evidence index cannot be read")
+            raise ValueError(f"Ridgeway {label} cannot be read")
         payload = json.loads(stream.read())
     if not isinstance(payload, dict):
-        raise TypeError("Ridgeway evidence index must contain an object")
+        raise TypeError(f"Ridgeway {label} must contain an object")
     return payload
+
+
+def _evidence_index(archive_path: Path) -> dict[str, Any]:
+    return _archive_json_member(
+        archive_path,
+        "evidence-index.json",
+        label="evidence index",
+    )
+
+
+def _bundle_index(archive_path: Path) -> dict[str, Any]:
+    return _archive_json_member(
+        archive_path,
+        "bundle-index.json",
+        label="bundle index",
+    )
+
+
+def _process_timestamp(value: object, *, label: str) -> datetime:
+    if not isinstance(value, str):
+        raise TypeError(f"Ridgeway {label} is not an ISO timestamp")
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(f"Ridgeway {label} is not an ISO timestamp") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError(f"Ridgeway {label} is not timezone-aware")
+    return parsed
+
+
+def _validated_retained_process_interval_overlap(
+    jobs: dict[str, dict[str, Any]],
+    *,
+    manifest: dict[str, Any],
+    bundle_index: dict[str, Any],
+    label: str,
+) -> dict[str, object]:
+    events: list[tuple[datetime, int, int]] = []
+    for run_id, job in jobs.items():
+        evidence = job.get("process_exit_evidence")
+        if not isinstance(evidence, dict):
+            raise TypeError(f"{label} Ridgeway direct job omits process evidence: {run_id}")
+        launched_at = _process_timestamp(
+            evidence.get("launched_at"), label=f"{label} process launch"
+        )
+        confirmed_at = _process_timestamp(
+            evidence.get("confirmed_at"), label=f"{label} process confirmation"
+        )
+        if confirmed_at < launched_at:
+            raise ValueError(f"{label} Ridgeway process confirmation predates launch: {run_id}")
+        events.append((launched_at, 0, 1))
+        events.append((confirmed_at, 1, -1))
+
+    active = 0
+    maximum = 0
+    for _timestamp, _event_order, delta in sorted(events):
+        active += delta
+        if active < 0:
+            raise ValueError(f"{label} Ridgeway process intervals are invalid")
+        maximum = max(maximum, active)
+    if active != 0 or maximum < 1:
+        raise ValueError(f"{label} Ridgeway process intervals are incomplete")
+    expected: dict[str, object] = {
+        "schema_version": PROCESS_INTERVAL_OVERLAP_SCHEMA,
+        "observation_method": "MAXIMUM_OVERLAPPING_RETAINED_PROCESS_INTERVALS",
+        "maximum_overlapping_retained_process_intervals": maximum,
+        "retained_interval_count": len(jobs),
+        "coincident_endpoint_policy": "COUNTED_AS_OVERLAPPING_AT_RETAINED_TIMESTAMP_RESOLUTION",
+        "scientific_identity_role": "AUDIT_ONLY_EXCLUDED",
+        "limitation": PROCESS_INTERVAL_OVERLAP_LIMITATION,
+    }
+    declared = manifest.get("retained_process_interval_overlap")
+    if (
+        not isinstance(declared, dict)
+        or set(declared) != PROCESS_INTERVAL_OVERLAP_KEYS
+        or declared != expected
+        or bundle_index.get("retained_process_interval_overlap") != expected
+    ):
+        raise ValueError(f"{label} Ridgeway retained process-interval overlap is invalid")
+    return expected
 
 
 def _jobs(index: dict[str, Any], key: str, *, expected_count: int) -> dict[str, dict[str, Any]]:
@@ -283,7 +389,7 @@ def compare(
     producer_manifest = _object(producer_manifest_path, label="producer direct manifest")
     for label, manifest in (("reference", reference_manifest), ("producer", producer_manifest)):
         if (
-            manifest.get("schema_version") != "ridgeway-direct-evidence/v1.1"
+            manifest.get("schema_version") != PUBLISHED_DIRECT_EVIDENCE_SCHEMA
             or manifest.get("release_replay_eligible") is not True
             or manifest.get("matrix_job_count") != 1_536
             or manifest.get("map_job_count") != 60
@@ -294,8 +400,12 @@ def compare(
     if _teaching_identity(reference_manifest) != _teaching_identity(producer_manifest):
         raise ValueError("Ridgeway protected rerun teaching selection differs")
 
-    reference_index = _evidence_index(_archive_path(reference_directory, reference_manifest))
-    producer_index = _evidence_index(_archive_path(producer_directory, producer_manifest))
+    reference_archive = _archive_path(reference_directory, reference_manifest)
+    producer_archive = _archive_path(producer_directory, producer_manifest)
+    reference_index = _evidence_index(reference_archive)
+    producer_index = _evidence_index(producer_archive)
+    reference_bundle_index = _bundle_index(reference_archive)
+    producer_bundle_index = _bundle_index(producer_archive)
     if reference_index.get("model_sha256") != producer_index.get("model_sha256"):
         raise ValueError("Ridgeway protected rerun evidence-index model differs")
     reference_components = reference_index.get("workflow_components")
@@ -315,14 +425,28 @@ def compare(
     if portable_reference != portable_producer:
         raise ValueError("Ridgeway protected rerun scientific source components differ")
 
-    matrix = _compare_job_sets(
-        _jobs(reference_index, "matrix_jobs", expected_count=1_536),
-        _jobs(producer_index, "matrix_jobs", expected_count=1_536),
+    reference_matrix_jobs = _jobs(reference_index, "matrix_jobs", expected_count=1_536)
+    producer_matrix_jobs = _jobs(producer_index, "matrix_jobs", expected_count=1_536)
+    reference_map_jobs = _jobs(reference_index, "map_jobs", expected_count=60)
+    producer_map_jobs = _jobs(producer_index, "map_jobs", expected_count=60)
+    reference_all_jobs = {**reference_matrix_jobs, **reference_map_jobs}
+    producer_all_jobs = {**producer_matrix_jobs, **producer_map_jobs}
+    if len(reference_all_jobs) != 1_596 or len(producer_all_jobs) != 1_596:
+        raise ValueError("Ridgeway matrix and map direct-job identities overlap")
+    reference_interval_overlap = _validated_retained_process_interval_overlap(
+        reference_all_jobs,
+        manifest=reference_manifest,
+        bundle_index=reference_bundle_index,
+        label="reference",
     )
-    maps = _compare_job_sets(
-        _jobs(reference_index, "map_jobs", expected_count=60),
-        _jobs(producer_index, "map_jobs", expected_count=60),
+    producer_interval_overlap = _validated_retained_process_interval_overlap(
+        producer_all_jobs,
+        manifest=producer_manifest,
+        bundle_index=producer_bundle_index,
+        label="producer",
     )
+    matrix = _compare_job_sets(reference_matrix_jobs, producer_matrix_jobs)
+    maps = _compare_job_sets(reference_map_jobs, producer_map_jobs)
     reference_projection = _object(
         reference_directory / "ui_projection.json", label="reference UI projection"
     )
@@ -337,8 +461,8 @@ def compare(
         "status": "PASSED",
         "reference_manifest_sha256": _digest(reference_manifest_path),
         "producer_manifest_sha256": _digest(producer_manifest_path),
-        "reference_archive_sha256": _digest(_archive_path(reference_directory, reference_manifest)),
-        "producer_archive_sha256": _digest(_archive_path(producer_directory, producer_manifest)),
+        "reference_archive_sha256": _digest(reference_archive),
+        "producer_archive_sha256": _digest(producer_archive),
         "model_sha256": reference_manifest["model_sha256"],
         "reference_workflow_manifest_sha256": reference_manifest["workflow_manifest_sha256"],
         "producer_workflow_manifest_sha256": producer_manifest["workflow_manifest_sha256"],
@@ -352,6 +476,11 @@ def compare(
         "maximum_absolute_difference": max(maxima[0], maxima[2], maxima[4]),
         "maximum_relative_difference": max(maxima[1], maxima[3], maxima[5]),
         "teaching_selection_matched": True,
+        "reference_retained_process_interval_overlap": reference_interval_overlap,
+        "producer_retained_process_interval_overlap": producer_interval_overlap,
+        "retained_process_interval_overlap_comparison_policy": (
+            "AUDIT_ONLY_EXCLUDED_FROM_SCIENTIFIC_EQUIVALENCE"
+        ),
     }
 
 

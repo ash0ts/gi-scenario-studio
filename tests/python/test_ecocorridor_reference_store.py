@@ -4,6 +4,7 @@ import hashlib
 import inspect
 import json
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
@@ -12,20 +13,19 @@ from typing import Any
 import ecocorridor_core.project_store as project_store_module
 import ecocorridor_core.reference_matrix_parser as reference_parser_module
 import pytest
+from ecocorridor_core.assistant_runtime import StoreEvidenceResolver
 from ecocorridor_core.contracts import (
     AssetKind,
     CloudDisposition,
     ConnectivityAsset,
     ConnectivityEvidenceClaim,
     ConnectivityProjectBundle,
-    ConnectivityRunPlan,
     DirectConnectivityRun,
     DirectRunState,
     EvidenceEdge,
     EvidenceNode,
     PairResistanceMetric,
     QAStatus,
-    ReferenceComparisonPlan,
     ReferenceEvidenceClaimLink,
     ReferenceMetricTolerance,
     ReferencePairComparison,
@@ -63,7 +63,16 @@ from ecocorridor_core.reference_matrix_parser import (
     REFERENCE_MATRIX_PARSER_SHA256,
     parse_reference_matrix_bytes,
 )
+from ecocorridor_core.reference_workflow import (
+    build_reference_comparison_plan,
+    recover_pending_reference_results,
+    reference_evidence_claim_links,
+    reference_result_id,
+    reference_scenario_comparison_id,
+)
 from ecocorridor_core.ridgeway import build_ridgeway_fixture
+from ecocorridor_core.rpc_response_contracts import EvidenceResolveData
+from ecocorridor_core.rpc_worker import RPCDispatcher, RPCFault
 from ecocorridor_core.telemetry import EcoTelemetryProjector
 from scenario_platform.cloud_sync import CloudIntegrityError, CloudTransportError
 from scenario_platform.contracts import canonical_json
@@ -120,7 +129,7 @@ def test_schema_110_empty_reference_tables_gain_parser_provenance_atomically(
 
     migrated = EcoProjectStore(root)
     try:
-        assert migrated._connection.execute("PRAGMA user_version").fetchone()[0] == 111
+        assert migrated._connection.execute("PRAGMA user_version").fetchone()[0] == 112
         for table in (
             "eco_reference_comparison_plans",
             "eco_reference_comparison_results",
@@ -134,6 +143,80 @@ def test_schema_110_empty_reference_tables_gain_parser_provenance_atomically(
             assert str(parser_column["dflt_value"]).strip("'") == (REFERENCE_MATRIX_PARSER_SHA256)
     finally:
         migrated.close()
+
+
+def test_schema_111_appends_reference_completion_without_rewriting_legacy_outbox(
+    tmp_path: Path,
+) -> None:
+    case = _build_authoritative_reference_case(
+        tmp_path / "schema-111-reference-completion",
+        complete_reference=False,
+    )
+    store = case["store"]
+    analysis_id = case["reference_plan"].analysis_id
+    try:
+        # Reproduce the committed pre-v112 producer boundary. Reference-shaped
+        # analyses were finalized through the generic completion producer, so
+        # this immutable key and payload already existed before migration.
+        store._connection.execute("DROP TRIGGER eco_analysis_plan_immutable")
+        with store.transaction() as connection:
+            connection.execute(
+                "UPDATE eco_analyses SET analysis_kind='ALTERNATIVES',state='COMPLETED' "
+                "WHERE analysis_id=?",
+                (analysis_id,),
+            )
+            EcoProjectStore._enqueue_outbox(
+                connection,
+                project_id=store.project()["project_id"],
+                analysis_id=analysis_id,
+                event_type="analysis_completion",
+                subject_id=analysis_id,
+                stream_id=f"connectivity_analysis:{analysis_id}",
+                payload={
+                    "analysis_id": analysis_id,
+                    "direct_run_ids": [case["run"].direct_run_id],
+                    "portfolio_ids": [case["run"].portfolio_id],
+                    "evidence_claim_ids": ["legacy-generic-claim"],
+                },
+                idempotency_key=f"analysis_completion:{analysis_id}",
+            )
+        store._connection.execute("PRAGMA user_version=111")
+    finally:
+        store.close()
+
+    migrated = EcoProjectStore(case["store"].root)
+    try:
+        assert migrated._connection.execute("PRAGMA user_version").fetchone()[0] == 112
+        assert migrated.analysis(analysis_id)["analysis_kind"] == "REFERENCE"
+        intent = migrated.reference_completion_intent(analysis_id)
+        assert intent is not None
+        assert intent[1]["analysis_id"] == analysis_id
+        assert intent[1]["plan_id"] == case["reference_plan"].plan_id
+        assert migrated.pending_reference_completions() == [analysis_id]
+        completion_rows = migrated.telemetry_rows(
+            event_type="analysis_completion",
+            analysis_id=analysis_id,
+        )
+        assert len(completion_rows) == 2
+        legacy, corrective = completion_rows
+        assert legacy["idempotency_key"] == f"analysis_completion:{analysis_id}"
+        assert legacy["payload"]["evidence_claim_ids"] == ["legacy-generic-claim"]
+        assert corrective["payload"]["completion_kind"] == "REFERENCE_RESULT_PENDING"
+        assert corrective["payload"]["reference_completion_sha256"] == intent[2]
+        assert corrective["idempotency_key"] == (
+            f"reference_analysis_completion:{analysis_id}:{intent[2]}"
+        )
+    finally:
+        migrated.close()
+
+    reopened = EcoProjectStore(case["store"].root)
+    try:
+        assert (
+            len(reopened.telemetry_rows(event_type="analysis_completion", analysis_id=analysis_id))
+            == 2
+        )
+    finally:
+        reopened.close()
 
 
 @pytest.mark.parametrize(
@@ -518,6 +601,7 @@ def _build_authoritative_reference_case(
     root: Path,
     *,
     persist_reference_plan: bool = True,
+    complete_reference: bool = True,
 ) -> dict[str, Any]:
     fixture = build_ridgeway_fixture()
     scenario = fixture.bundle.scenarios[0]
@@ -606,35 +690,18 @@ def _build_authoritative_reference_case(
         skeleton=bundle.model_dump(mode="json"),
     )
     store.store_bundle(bundle)
-    baseline = next(
-        item for item in fixture.portfolios if item.portfolio_id == fixture.baseline_portfolio_id
-    )
-    run_plan = ConnectivityRunPlan(
+    reference_plan = build_reference_comparison_plan(
+        bundle=bundle,
         analysis_id="analysis_reference_fixture",
-        revision_id=bundle.revision.revision_id,
-        scenario_ids=[scenario.scenario_id],
-        portfolios=[baseline],
-        baseline_portfolio_id=baseline.portfolio_id,
-        direct_job_count=1,
-        solver_job_cap=1,
-        search_method="ENUMERATION",
-        seed=0,
         engine_manifest_sha256=ENGINE_SHA,
-    )
-    reference_plan = ReferenceComparisonPlan(
-        plan_id="reference_plan_fixture",
-        analysis_id=run_plan.analysis_id,
-        revision_id=run_plan.revision_id,
-        model_sha256=bundle.revision.model_sha256,
-        engine_manifest_sha256=ENGINE_SHA,
-        binding_ids=[binding.binding_id],
-        bound_scenario_ids=[scenario.scenario_id],
-        run_plan=run_plan,
         created_at=NOW,
     )
-    store.create_analysis(run_plan, bundle=bundle)
+    run_plan = reference_plan.run_plan
+    baseline = run_plan.portfolios[0]
     if persist_reference_plan:
-        store.store_reference_comparison_plan(reference_plan)
+        store.create_reference_analysis(reference_plan, bundle=bundle)
+    else:
+        store.create_analysis(run_plan, bundle=bundle)
 
     hypothesis = next(
         item
@@ -644,6 +711,16 @@ def _build_authoritative_reference_case(
     resistance_asset = next(
         item for item in bundle.assets if item.asset_id == hypothesis.resistance_asset_id
     )
+    retained_resistance = root / resistance_asset.relative_path
+    retained_resistance.parent.mkdir(parents=True, exist_ok=True)
+    retained_resistance.write_bytes(
+        json.dumps(
+            fixture.rasters[resistance_asset.asset_id].values,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    )
+    assert _sha256(retained_resistance) == resistance_asset.sha256
     direct_run_id = "direct_reference_fixture"
     store.start_analysis_with_direct_jobs(
         run_plan.analysis_id,
@@ -825,33 +902,65 @@ def _build_authoritative_reference_case(
         run=run,
         artifacts=artifact_records,
         evidence_nodes=[
-            {"node_id": "node-direct-run", "node_type": "DIRECT_RUN", "label": direct_run_id},
-            {"node_id": "node-scenario", "node_type": "SCENARIO", "label": scenario.scenario_id},
             {
-                "node_id": "node-raster-diff",
-                "node_type": "RASTER_DIFF",
-                "label": "Reviewed action raster diff",
-                "sha256": artifacts_by_role["action_raster_diff"]["sha256"],
+                "node_id": f"run:{direct_run_id}",
+                "node_type": "DIRECT_RUN",
+                "sha256": run.result_sha256,
             },
-            {"node_id": "node-asset", "node_type": "ASSET", "label": resistance_asset.asset_id},
             {
-                "node_id": "node-engine",
+                "node_id": f"scenario:{scenario.scenario_id}",
+                "node_type": "SCENARIO",
+            },
+            {
+                "node_id": f"diff:{prepared.action_raster_sha256}",
+                "node_type": "RASTER_DIFF",
+                "sha256": prepared.action_raster_sha256,
+                "footprint_proof_sha256": prepared.footprint_proof_sha256,
+            },
+            {
+                "node_id": f"asset:{resistance_asset.asset_id}",
+                "node_type": "ASSET",
+                "sha256": resistance_asset.sha256,
+            },
+            {
+                "node_id": f"engine:{run_plan.engine_manifest_sha256}",
                 "node_type": "ENGINE_MANIFEST",
-                "label": "Pinned Circuitscape engine manifest",
                 "sha256": run_plan.engine_manifest_sha256,
             },
-            {"node_id": "node-qa", "node_type": "QA", "label": QAStatus.ACCEPTED.value},
-            {"node_id": "node-artifact", "node_type": "ARTIFACT", "label": "Matrix"},
             {
-                "node_id": "node-footprint-proof",
+                "node_id": f"qa:{direct_run_id}",
+                "node_type": "QA",
+                "status": QAStatus.ACCEPTED.value,
+            },
+            {
+                "node_id": (
+                    f"footprint-proof:{artifacts_by_role['footprint_proof_document']['sha256']}"
+                ),
                 "node_type": "FOOTPRINT_PROOF",
-                "label": "Reviewed footprint proof",
                 "sha256": artifacts_by_role["footprint_proof_document"]["sha256"],
             },
+            *[
+                {
+                    "node_id": f"artifact:{item['role']}:{item['sha256']}",
+                    "node_type": "ARTIFACT",
+                    "role": item["role"],
+                    "sha256": item["sha256"],
+                }
+                for item in artifact_records
+            ],
         ],
     )
+    if persist_reference_plan and complete_reference:
+        store.complete_reference_direct_analysis(run_plan.analysis_id)
     comparison = compare_reference_matrix(
-        comparison_id="comparison_reference_fixture",
+        comparison_id=reference_scenario_comparison_id(
+            plan_id=reference_plan.plan_id,
+            binding_id=binding.binding_id,
+            scenario_id=scenario.scenario_id,
+            direct_run_id=run.direct_run_id,
+            result_sha256=run.result_sha256,
+            reference_matrix_sha256=matrix_asset.sha256,
+        ),
         plan=reference_plan,
         binding=binding,
         scenario=scenario,
@@ -864,22 +973,18 @@ def _build_authoritative_reference_case(
         reference_current_asset=None,
         completed_at=NOW,
     )
-    links = [
-        ReferenceEvidenceClaimLink(
-            claim_id=f"claim_reference_{pair.pair_id}",
-            comparison_id=comparison.comparison_id,
-            scenario_id=scenario.scenario_id,
-            pair_id=pair.pair_id,
-            direct_run_id=run.direct_run_id,
-        )
-        for pair in comparison.pair_comparisons
-    ]
+    links = reference_evidence_claim_links([comparison])
     result = assemble_reference_comparison_result(
-        result_id="reference_result_fixture",
+        result_id=reference_result_id(
+            plan_id=reference_plan.plan_id,
+            comparisons=[comparison],
+            claim_links=links,
+        ),
         plan=reference_plan,
         scenario_comparisons=[comparison],
         evidence_claim_links=links,
         completed_at=NOW,
+        limitations=comparison.limitations,
     )
     comparison_pairs = {item.pair_id: item for item in comparison.pair_comparisons}
     claims = [
@@ -964,7 +1069,7 @@ def test_reference_result_roundtrip_and_byte_identical_replay(reference_case) ->
     assert {item.claim_id: item for item in loaded_claims} == {
         item.claim_id: item for item in claims
     }
-    assert store._connection.execute("PRAGMA user_version").fetchone()[0] == 111
+    assert store._connection.execute("PRAGMA user_version").fetchone()[0] == 112
     assert first["reference_matrix_parser_sha256"] == REFERENCE_MATRIX_PARSER_SHA256
     assert (
         store._connection.execute(
@@ -1001,6 +1106,241 @@ def test_reference_result_roundtrip_and_byte_identical_replay(reference_case) ->
     )
 
 
+def test_reference_result_requires_completed_analysis_at_persistence_boundary(
+    reference_case,
+) -> None:
+    store = reference_case["store"]
+    store._connection.execute(
+        "UPDATE eco_analyses SET state='RUNNING' WHERE analysis_id=?",
+        (reference_case["result"].analysis_id,),
+    )
+
+    with pytest.raises(ValueError, match="completed baseline direct ensemble"):
+        store.store_reference_comparison_result(
+            reference_case["result"],
+            claims=reference_case["claims"],
+        )
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    ["result_id", "result_time", "comparison_id", "comparison_time", "claim_link", "limits"],
+)
+def test_reference_persistence_reconstructs_all_caller_owned_result_fields(
+    reference_case,
+    tamper: str,
+) -> None:
+    store = reference_case["store"]
+    result = reference_case["result"]
+    payload = result.model_dump(mode="json")
+    if tamper == "result_id":
+        payload["result_id"] = "reference_result_caller_selected"
+    elif tamper == "result_time":
+        payload["completed_at"] = "2026-08-04T13:00:00Z"
+    elif tamper == "comparison_id":
+        payload["scenario_comparisons"][0]["comparison_id"] = "comparison_caller_selected"
+        for link in payload["evidence_claim_links"]:
+            link["comparison_id"] = "comparison_caller_selected"
+    elif tamper == "comparison_time":
+        payload["scenario_comparisons"][0]["completed_at"] = "2026-08-04T13:00:00Z"
+    elif tamper == "claim_link":
+        payload["evidence_claim_links"][0]["claim_id"] = "claim_reference_caller_selected"
+    else:
+        payload["limitations"].append("Caller-added top-level caveat.")
+    forged = type(result).model_validate(payload)
+
+    with pytest.raises(ValueError, match="canonical (?:direct evidence|result)"):
+        store.store_reference_comparison_result(
+            forged,
+            claims=reference_case["claims"],
+        )
+
+
+def test_reference_claim_resolves_complete_renderer_safe_evidence_chain(reference_case) -> None:
+    store = reference_case["store"]
+    result = reference_case["result"]
+    claims = reference_case["claims"]
+    store.store_reference_comparison_result(result, claims=claims)
+
+    claim = claims[0]
+    resolved = store.resolve_evidence_claim(claim.claim_id)
+    validated = EvidenceResolveData.model_validate(resolved)
+    link = next(item for item in result.evidence_claim_links if item.claim_id == claim.claim_id)
+    comparison = next(
+        item for item in result.scenario_comparisons if item.comparison_id == link.comparison_id
+    )
+    pair = next(item for item in comparison.pair_comparisons if item.pair_id == link.pair_id)
+
+    assert resolved["claim"] == claim.model_dump(mode="json")
+    assert validated.claim == claim
+    assert resolved["reference_plan"] == reference_case["reference_plan"].model_dump(mode="json")
+    assert resolved["reference_result"] == result.model_dump(mode="json")
+    assert resolved["reference_comparison"] == comparison.model_dump(mode="json")
+    assert resolved["reference_pair_comparison"] == pair.model_dump(mode="json")
+    assert resolved["reference_claim_link"] == link.model_dump(mode="json")
+    assert resolved["reference_matrix_parser_sha256"] == REFERENCE_MATRIX_PARSER_SHA256
+    assert resolved["direct_runs"][0]["role"] == "REFERENCE_BASELINE"
+    assert {item["role"] for item in resolved["artifact_records"]} == {
+        str(row[0])
+        for row in store._connection.execute(
+            "SELECT role FROM eco_run_artifacts WHERE direct_run_id=?",
+            (reference_case["run"].direct_run_id,),
+        )
+    }
+    assert reference_case["result"].model_sha256 == resolved["model_revision"]["model_sha256"]
+    assert {item["asset_id"] for item in resolved["source_assets"]}.issuperset(
+        {
+            comparison.reference_matrix_asset_id,
+            next(
+                node["node_id"].removeprefix("asset:")
+                for node in store.verify_authoritative_direct_run(
+                    comparison.direct_run_id
+                ).evidence_nodes
+                if node["node_type"] == "ASSET"
+            ),
+        }
+    )
+    encoded = canonical_json(resolved)
+    assert str(store.root) not in encoded
+    assert "cas_relative_path" not in encoded
+    assert '"relative_path"' not in encoded
+    assert '"source_path"' not in encoded
+    assistant_claims = StoreEvidenceResolver(
+        store.root,
+        store.project()["project_id"],
+    ).resolve(
+        project_id=store.project()["project_id"],
+        evidence_ids=[claim.claim_id],
+    )
+    assert assistant_claims == [claim]
+
+
+def test_reference_claim_resolves_through_runtime_contract_and_unknown_id_is_not_found(
+    reference_case,
+) -> None:
+    store = reference_case["store"]
+    claim = reference_case["claims"][0]
+    store.store_reference_comparison_result(
+        reference_case["result"],
+        claims=reference_case["claims"],
+    )
+    dispatcher = RPCDispatcher(data_root=store.root.parent)
+    dispatcher.guided_evidence = None
+
+    resolved = dispatcher.dispatch(
+        "connectivity.evidence.resolve",
+        {"project_directory": str(store.root), "claim_id": claim.claim_id},
+    )["data"]
+    assert resolved["claim"] == claim.model_dump(mode="json")
+    assert resolved["reference_result"]["result_id"] == reference_case["result"].result_id
+
+    with pytest.raises(RPCFault) as missing:
+        dispatcher.dispatch(
+            "connectivity.evidence.resolve",
+            {"project_directory": str(store.root), "claim_id": "claim-does-not-exist"},
+        )
+    assert missing.value.error.code == "EVIDENCE_CLAIM_NOT_FOUND"
+
+
+@pytest.mark.parametrize(
+    "role",
+    [
+        "request",
+        "result_protocol",
+        "matrix",
+        "circuitscape_configuration",
+        "action_raster_diff",
+        "footprint_proof_document",
+        "input_resistance",
+        "input_focal",
+        "input_included_pairs",
+    ],
+)
+def test_full_direct_chain_verifier_rehashes_every_retained_artifact(
+    reference_case,
+    role: str,
+) -> None:
+    store = reference_case["store"]
+    run = reference_case["run"]
+    artifact = store._connection.execute(
+        "SELECT cas_relative_path FROM eco_run_artifacts WHERE direct_run_id=? AND role=?",
+        (run.direct_run_id, role),
+    ).fetchone()
+    assert artifact is not None
+    path = store.root / str(artifact["cas_relative_path"])
+    path.chmod(0o600)
+    path.write_bytes(path.read_bytes() + b"tampered")
+
+    with pytest.raises(ValueError, match="checksum"):
+        store.verify_authoritative_direct_run(run.direct_run_id)
+    with pytest.raises(ValueError, match="checksum"):
+        store.store_reference_comparison_result(
+            reference_case["result"],
+            claims=reference_case["claims"],
+        )
+
+
+@pytest.mark.parametrize("target", ["terminal_hash", "evidence", "resource"])
+def test_full_direct_chain_verifier_rejects_detached_terminal_state(
+    reference_case,
+    target: str,
+) -> None:
+    store = reference_case["store"]
+    run = reference_case["run"]
+    if target == "terminal_hash":
+        store._connection.execute("DROP TRIGGER eco_terminal_job_immutable")
+        store._connection.execute(
+            "UPDATE eco_direct_jobs SET terminal_sha256=? WHERE direct_job_id=?",
+            ("0" * 64, run.direct_run_id),
+        )
+    elif target == "evidence":
+        store._connection.execute("DROP TRIGGER eco_run_evidence_immutable_update")
+        node_id = f"qa:{run.direct_run_id}"
+        row = store._connection.execute(
+            "SELECT payload_json FROM eco_run_evidence WHERE direct_run_id=? AND node_id=?",
+            (run.direct_run_id, node_id),
+        ).fetchone()
+        assert row is not None
+        payload = json.loads(str(row["payload_json"]))
+        payload["status"] = "WARNING_ACCEPTED"
+        store._connection.execute(
+            "UPDATE eco_run_evidence SET payload_json=? WHERE direct_run_id=? AND node_id=?",
+            (canonical_json(payload), run.direct_run_id, node_id),
+        )
+    else:
+        store._connection.execute("DROP TRIGGER eco_terminal_job_immutable")
+        store._connection.execute(
+            "UPDATE eco_direct_jobs SET resource_observation_json='{}' WHERE direct_job_id=?",
+            (run.direct_run_id,),
+        )
+
+    with pytest.raises((TypeError, ValueError)):
+        store.verify_authoritative_direct_run(run.direct_run_id)
+
+
+def test_claim_lookup_fails_closed_on_cross_store_identity_collision(reference_case) -> None:
+    store = reference_case["store"]
+    result = reference_case["result"]
+    claim = reference_case["claims"][0]
+    store.store_reference_comparison_result(result, claims=reference_case["claims"])
+    store._connection.execute("DROP TRIGGER eco_analysis_claim_excludes_reference_claim")
+    store._connection.execute(
+        "INSERT INTO eco_evidence_claims(claim_id,analysis_id,payload_json) VALUES(?,?,?)",
+        (
+            claim.claim_id,
+            result.analysis_id,
+            canonical_json(claim.model_dump(mode="json")),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="ambiguous"):
+        store.evidence_claim(claim.claim_id)
+    with pytest.raises(ValueError, match="ambiguous"):
+        store.evidence_claim_analysis_id(claim.claim_id)
+    with pytest.raises(ValueError, match="ambiguous"):
+        store.resolve_evidence_claim(claim.claim_id)
+
+
 def test_reference_plan_is_checksummed_idempotent_and_run_plan_bound(reference_case) -> None:
     store = reference_case["store"]
     plan = reference_case["reference_plan"]
@@ -1030,7 +1370,7 @@ def test_reference_plan_is_checksummed_idempotent_and_run_plan_bound(reference_c
         store.store_reference_comparison_plan(drifted)
 
     detached_binding = plan.model_copy(update={"binding_ids": ["unknown-binding"]})
-    with pytest.raises(ValueError, match="binding scope differs"):
+    with pytest.raises(ValueError, match="canonical complete No Action binding ensemble"):
         store.store_reference_comparison_plan(detached_binding)
 
     changed_payload = plan.model_copy(
@@ -1038,6 +1378,178 @@ def test_reference_plan_is_checksummed_idempotent_and_run_plan_bound(reference_c
     )
     with pytest.raises(ValueError, match="identity was reused for different evidence"):
         store.store_reference_comparison_plan(changed_payload)
+
+
+def test_atomic_reference_analysis_creation_is_concurrently_idempotent(reference_case) -> None:
+    store = reference_case["store"]
+    source_plan = reference_case["reference_plan"]
+    bundle = store.analysis_bundle(source_plan.analysis_id)
+    plan = build_reference_comparison_plan(
+        bundle=bundle,
+        analysis_id="reference-analysis-concurrent",
+        engine_manifest_sha256=source_plan.engine_manifest_sha256,
+        created_at=source_plan.created_at,
+    )
+    root = store.root
+
+    def replay(offset: int) -> tuple[str, bool]:
+        contender = EcoProjectStore(root)
+        try:
+            candidate = plan.model_copy(
+                update={"created_at": plan.created_at.replace(hour=plan.created_at.hour + offset)}
+            )
+            persisted, receipt = contender.create_reference_analysis(candidate, bundle=bundle)
+            return persisted.plan_id, bool(receipt["replayed"])
+        finally:
+            contender.close()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(replay, (1, 2)))
+
+    assert {item[0] for item in responses} == {plan.plan_id}
+    assert sorted(item[1] for item in responses) == [False, True]
+    assert store.analysis(plan.analysis_id)["analysis_kind"] == "REFERENCE"
+    assert (
+        store._connection.execute(
+            "SELECT COUNT(*) FROM eco_reference_comparison_plans WHERE analysis_id=?",
+            (plan.analysis_id,),
+        ).fetchone()[0]
+        == 1
+    )
+
+
+def test_reference_plan_replay_returns_the_authoritative_terminal_state(reference_case) -> None:
+    store = reference_case["store"]
+    plan = reference_case["reference_plan"]
+
+    persisted, receipt = store.create_reference_analysis(
+        plan.model_copy(update={"created_at": datetime(2026, 8, 4, 13, 0, tzinfo=UTC)}),
+        bundle=store.analysis_bundle(plan.analysis_id),
+    )
+
+    assert persisted == plan
+    assert receipt["replayed"] is True
+    assert receipt["state"] == "COMPLETED"
+
+
+def test_fresh_reference_attempt_preserves_terminal_analysis_and_exact_evidence(
+    reference_case,
+) -> None:
+    store = reference_case["store"]
+    terminal_plan = reference_case["reference_plan"]
+    terminal_result = reference_case["result"]
+    terminal_claims = reference_case["claims"]
+    store.store_reference_comparison_result(terminal_result, claims=terminal_claims)
+
+    fresh_plan = build_reference_comparison_plan(
+        bundle=store.analysis_bundle(terminal_plan.analysis_id),
+        analysis_id=f"{terminal_plan.analysis_id}_attempt_123e4567e89b12d3a456426614174000",
+        engine_manifest_sha256=terminal_plan.engine_manifest_sha256,
+        created_at=datetime(2026, 8, 4, 13, 0, tzinfo=UTC),
+    )
+    persisted, receipt = store.create_reference_analysis(
+        fresh_plan,
+        bundle=store.analysis_bundle(terminal_plan.analysis_id),
+    )
+    loaded_result, loaded_claims = store.reference_comparison_result(terminal_result.result_id)
+
+    assert persisted.analysis_id != terminal_plan.analysis_id
+    assert receipt["replayed"] is False
+    assert receipt["state"] == "READY"
+    assert store.analysis(terminal_plan.analysis_id)["state"] == "COMPLETED"
+    assert store.analysis(fresh_plan.analysis_id)["state"] == "READY"
+    assert loaded_result == terminal_result
+    assert {item.claim_id: item for item in loaded_claims} == {
+        item.claim_id: item for item in terminal_claims
+    }
+    assert (
+        store._connection.execute("SELECT COUNT(*) FROM eco_reference_comparison_plans").fetchone()[
+            0
+        ]
+        == 2
+    )
+    assert (
+        store._connection.execute(
+            "SELECT COUNT(*) FROM eco_reference_comparison_results"
+        ).fetchone()[0]
+        == 1
+    )
+
+
+def test_reference_completion_rolls_back_state_intent_and_outbox_together(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _build_authoritative_reference_case(
+        tmp_path / "completion-rollback",
+        complete_reference=False,
+    )
+    store = case["store"]
+    original_enqueue = EcoProjectStore._enqueue_outbox
+
+    def fail_completion_outbox(*args, **kwargs):
+        if kwargs.get("event_type") == "analysis_completion":
+            raise RuntimeError("injected completion-outbox failure")
+        return original_enqueue(*args, **kwargs)
+
+    monkeypatch.setattr(EcoProjectStore, "_enqueue_outbox", staticmethod(fail_completion_outbox))
+    try:
+        with pytest.raises(RuntimeError, match="injected completion-outbox failure"):
+            store.complete_reference_direct_analysis(case["reference_plan"].analysis_id)
+        assert store.analysis(case["reference_plan"].analysis_id)["state"] == "RUNNING"
+        assert store.reference_completion_intent(case["reference_plan"].analysis_id) is None
+        assert not store.telemetry_rows(
+            event_type="analysis_completion",
+            analysis_id=case["reference_plan"].analysis_id,
+        )
+    finally:
+        store.close()
+
+
+def test_reference_completion_and_result_recover_exactly_once_after_crash(reference_case) -> None:
+    store = reference_case["store"]
+    analysis_id = reference_case["reference_plan"].analysis_id
+    result_id = reference_case["result"].result_id
+
+    assert store.pending_reference_completions() == [analysis_id]
+    assert recover_pending_reference_results(store=store, analysis_id=analysis_id) == [result_id]
+    assert recover_pending_reference_results(store=store, analysis_id=analysis_id) == []
+    assert store.pending_reference_completions() == []
+    assert len(store.reference_comparison_results(analysis_id=analysis_id)) == 1
+    assert len(store.telemetry_rows(event_type="analysis_completion", analysis_id=analysis_id)) == 1
+    assert (
+        len(store.telemetry_rows(event_type="reference_comparison", analysis_id=analysis_id)) == 1
+    )
+
+
+def test_reference_validation_hashes_each_direct_run_once_outside_write_transaction(
+    reference_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = reference_case["store"]
+    result = reference_case["result"]
+    claims = reference_case["claims"]
+    calls = 0
+    original_verify = store.verify_authoritative_direct_run
+    original_read = project_store_module._read_verified_regular_file
+    transaction_states: list[bool] = []
+
+    def count_verify(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original_verify(*args, **kwargs)
+
+    def observe_read(*args, **kwargs):
+        transaction_states.append(store._connection.in_transaction)
+        return original_read(*args, **kwargs)
+
+    monkeypatch.setattr(store, "verify_authoritative_direct_run", count_verify)
+    monkeypatch.setattr(project_store_module, "_read_verified_regular_file", observe_read)
+    store.store_reference_comparison_result(result, claims=claims)
+
+    assert calls == len(result.scenario_comparisons)
+    assert transaction_states
+    assert not any(transaction_states)
 
 
 def test_reference_result_requires_plan_persisted_before_direct_work(tmp_path: Path) -> None:
@@ -1049,7 +1561,7 @@ def test_reference_result_requires_plan_persisted_before_direct_work(tmp_path: P
     try:
         with pytest.raises(ValueError, match="immutable stored plan"):
             store.store_reference_comparison_result(case["result"], claims=case["claims"])
-        with pytest.raises(ValueError, match="after direct work exists"):
+        with pytest.raises(ValueError, match="atomically created reference analysis"):
             store.store_reference_comparison_plan(case["reference_plan"])
         assert (
             store._connection.execute(
@@ -1121,14 +1633,14 @@ def test_reference_result_requires_matching_successful_durable_job(
             "DELETE FROM eco_direct_jobs WHERE direct_job_id=?",
             (run.direct_run_id,),
         )
-        expected = "no successful durable direct job"
+        expected = "exact successful durable coverage"
     else:
         store._connection.execute("DROP TRIGGER eco_terminal_job_immutable")
         store._connection.execute(
             "UPDATE eco_direct_jobs SET state='FAILED' WHERE direct_job_id=?",
             (run.direct_run_id,),
         )
-        expected = "differs from its terminal durable job"
+        expected = "exact successful durable coverage"
 
     with pytest.raises(ValueError, match=expected):
         store.store_reference_comparison_result(
@@ -1158,14 +1670,14 @@ def test_reference_result_readback_rechecks_successful_durable_job(
             "DELETE FROM eco_direct_jobs WHERE direct_job_id=?",
             (run.direct_run_id,),
         )
-        expected = "no successful durable direct job"
+        expected = "exact successful durable coverage"
     else:
         store._connection.execute("DROP TRIGGER eco_terminal_job_immutable")
         store._connection.execute(
             "UPDATE eco_direct_jobs SET state='FAILED' WHERE direct_job_id=?",
             (run.direct_run_id,),
         )
-        expected = "differs from its terminal durable job"
+        expected = "exact successful durable coverage"
 
     with pytest.raises(ValueError, match=expected):
         store.reference_comparison_result(result.result_id)
@@ -1260,13 +1772,13 @@ def test_reference_result_replay_rejects_changed_claim_payload(reference_case) -
     ] = changed_payload["text"]
     changed = ConnectivityEvidenceClaim.model_validate(changed_payload)
 
-    with pytest.raises(ValueError, match="replay differs from stored claim evidence"):
+    with pytest.raises(ValueError, match="claim subject or value differs"):
         store.store_reference_comparison_result(result, claims=[changed, *claims[1:]])
 
     changed_result = result.model_copy(
         update={"limitations": [*result.limitations, "Additional replay-only limitation."]}
     )
-    with pytest.raises(ValueError, match="identity was reused for different evidence"):
+    with pytest.raises(ValueError, match="differs from canonical direct evidence"):
         store.store_reference_comparison_result(changed_result, claims=claims)
 
 
@@ -1607,29 +2119,13 @@ def _reference_sync_plan(store: EcoProjectStore, analysis_id: str) -> dict[str, 
 def _store_reference_with_synced_inputs(reference_case) -> tuple[dict[str, Any], dict[str, Any]]:
     store = reference_case["store"]
     result = reference_case["result"]
-    run = reference_case["run"]
-    with store.transaction() as connection:
-        store._enqueue_outbox(
-            connection,
-            project_id=store.project()["project_id"],
-            analysis_id=result.analysis_id,
-            event_type="direct_job_terminal",
-            subject_id=run.direct_run_id,
-            stream_id=f"connectivity_analysis:{result.analysis_id}",
-            payload={
-                "direct_job_id": run.direct_run_id,
-                "state": "SUCCEEDED",
-                "cached": False,
-                "result_sha256": run.result_sha256,
-            },
-            idempotency_key=f"test-direct-job:{run.direct_run_id}",
-        )
     claimed = store.claim_outbox(limit=20)
     for item in claimed:
         artifact_name = {
             "bundle_import": "connectivity-project",
             "analysis_plan": "analysis-project",
             "direct_job_terminal": "direct-matrix",
+            "analysis_completion": "reference-completion",
         }[item["event_type"]]
         store.mark_outbox_synced(
             item["outbox_id"],

@@ -1056,6 +1056,67 @@ def test_pause_waits_for_active_job_and_resume_finishes(tmp_path: Path) -> None:
     assert _wait_for_state(project, plan.analysis_id, {"COMPLETED"}) == "COMPLETED"
 
 
+@pytest.mark.parametrize("operation", ["resume", "recover"])
+def test_engine_manifest_drift_blocks_restart_before_durable_state_changes(
+    tmp_path: Path,
+    operation: str,
+) -> None:
+    project = tmp_path / "project"
+    bundle, _ = _materialized_project(project)
+    first_engine, first_digest = _fake_engine(
+        tmp_path / "first-engine",
+        tmp_path / "first-calls.txt",
+    )
+    first_manifest = _engine_manifest(first_digest)
+    plan = _plan(bundle, first_manifest, f"analysis-engine-drift-{operation}")
+    _create_ready_analysis(project, plan)
+    producer = DurableAnalysisExecutor(
+        first_manifest,
+        lock_root=tmp_path / "producer-locks",
+        engine_executable=first_engine,
+        engine_sha256=first_digest,
+    )
+    store = EcoProjectStore(project)
+    try:
+        store.start_analysis_with_direct_jobs(plan.analysis_id, producer._job_specs(plan))
+        if operation == "resume":
+            store.request_pause(plan.analysis_id)
+            store.mark_paused(plan.analysis_id)
+        before_analysis = store.analysis(plan.analysis_id)
+        before_jobs = store.direct_job_state_snapshot(plan.analysis_id)
+    finally:
+        store.close()
+
+    second_engine, second_digest = _fake_engine(
+        tmp_path / "second-engine",
+        tmp_path / "second-calls.txt",
+    )
+    second_manifest = _engine_manifest(second_digest)
+    consumer = DurableAnalysisExecutor(
+        second_manifest,
+        lock_root=tmp_path / "consumer-locks",
+        engine_executable=second_engine,
+        engine_sha256=second_digest,
+    )
+    with pytest.raises(DurableAnalysisError, match="another EngineManifest"):
+        if operation == "resume":
+            consumer.resume(project_directory=project, analysis_id=plan.analysis_id)
+        else:
+            consumer.recover(
+                project_directory=project,
+                analysis_id=plan.analysis_id,
+                engine_executable=second_engine,
+                engine_sha256=second_digest,
+            )
+
+    store = EcoProjectStore(project)
+    try:
+        assert store.analysis(plan.analysis_id) == before_analysis
+        assert store.direct_job_state_snapshot(plan.analysis_id) == before_jobs
+    finally:
+        store.close()
+
+
 def test_abandoned_running_job_is_requeued_and_cancel_is_durable(tmp_path: Path) -> None:
     project = tmp_path / "project"
     bundle, _ = _materialized_project(project)
@@ -1236,14 +1297,13 @@ def test_shutdown_receipt_identity_mismatch_blocks_without_mutating_state(
         engine_executable=engine,
         engine_sha256=digest,
     )
-    with pytest.raises(OrphanProcessAuditError) as captured:
+    with pytest.raises(DurableAnalysisError, match="another EngineManifest"):
         consumer.recover(
             project_directory=project,
             analysis_id=plan.analysis_id,
             engine_executable=engine,
             engine_sha256=digest,
         )
-    assert captured.value.reason_code == "ORPHAN_RECEIPT_IDENTITY_MISMATCH"
     store = EcoProjectStore(project)
     try:
         assert store.analysis(plan.analysis_id) == before_analysis

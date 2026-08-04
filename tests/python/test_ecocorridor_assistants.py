@@ -19,13 +19,21 @@ from ecocorridor_core.assistants import (
     DocumentPage,
     EvidenceAssistant,
     EvidenceIntakeAssistant,
+    EvidenceQuestionIntent,
     OpenAICompatibleProvider,
     ProviderCredentialSession,
     ProviderResponse,
     SensitiveContextPolicy,
     TraceReadback,
+    _ProviderEvidenceAnswer,
 )
-from ecocorridor_core.contracts import ConnectivityEvidenceClaim, EvidenceEdge, EvidenceNode
+from ecocorridor_core.contracts import (
+    CURRENT_RASTER_LIMITATION,
+    FITNESS_LIMITATION,
+    ConnectivityEvidenceClaim,
+    EvidenceEdge,
+    EvidenceNode,
+)
 from ecocorridor_core.metrics import (
     CONNECTIVITY_LIMITATION,
     CURRENT_MAP_LIMITATION,
@@ -299,6 +307,212 @@ def _authorized_selection() -> AuthorizedEvidenceSelection:
         generalized_derivative_count=0,
     )
     return AuthorizedEvidenceSelection(authorization=authorization, items=(item,))
+
+
+def test_reference_assistant_context_exposes_only_boolean_disposition_and_limitations() -> None:
+    limitations = [
+        CONNECTIVITY_LIMITATION,
+        CURRENT_RASTER_LIMITATION,
+        FITNESS_LIMITATION,
+    ]
+    context = AuthorizedEvidenceClaimContext(
+        evidence_alias="E1",
+        claim_kind="DIRECT_REFERENCE_COMPARISON",
+        value=True,
+        units="within_tolerance",
+        direct_result=True,
+        limitations=limitations,
+    )
+    item = AuthorizedEvidenceItem(
+        evidence_id="local-reference-claim-with-sensitive-identities",
+        claim_sha256="a" * 64,
+        context=context,
+    )
+    selected_sha256 = hashlib.sha256(
+        json.dumps(
+            [item.model_dump(mode="json")],
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    selection = AuthorizedEvidenceSelection(
+        authorization=AssistantEvidenceAuthorization.create(
+            project_id_sha256="1" * 64,
+            analysis_id_sha256="2" * 64,
+            model_revision_id_sha256="3" * 64,
+            destination="SELF_MANAGED",
+            external_project_id_sha256="4" * 64,
+            scope_evidence_sha256="5" * 64,
+            snapshot_bundle_sha256="6" * 64,
+            current_authorizations_sha256="7" * 64,
+            selected_evidence_sha256=selected_sha256,
+            authorized_asset_count=2,
+            generalized_derivative_count=0,
+        ),
+        items=(item,),
+    )
+
+    provider_context = selection.provider_context(EvidenceQuestionIntent.TRACE_EVIDENCE)
+    encoded = json.dumps(provider_context, sort_keys=True)
+    assert provider_context["context_schema_version"] == "ecocorridor-assistant-context/v3"
+    assert provider_context["claims"] == [context.model_dump(mode="json")]
+    assert "local-reference-claim" not in encoded
+    assert "absolute_tolerance" not in encoded
+    assert "relative_tolerance" not in encoded
+    assert "observed_effective_resistance" not in encoded
+
+    with pytest.raises(ValueError, match="Boolean tolerance"):
+        AuthorizedEvidenceClaimContext(
+            evidence_alias="E1",
+            claim_kind="DIRECT_REFERENCE_COMPARISON",
+            value=1.0,
+            units="effective_resistance",
+            direct_result=True,
+            limitations=limitations,
+        )
+
+
+def test_reference_assistant_requires_every_reviewed_binding_caveat() -> None:
+    reviewed_caveat = "Seasonal snow conditions were not represented in this reviewed hypothesis."
+    limitations = [
+        CONNECTIVITY_LIMITATION,
+        reviewed_caveat,
+        CURRENT_RASTER_LIMITATION,
+        FITNESS_LIMITATION,
+    ]
+    context = AuthorizedEvidenceClaimContext(
+        evidence_alias="E1",
+        claim_kind="DIRECT_REFERENCE_COMPARISON",
+        value=True,
+        units="within_tolerance",
+        direct_result=True,
+        limitations=limitations,
+    )
+    assert context.limitations == limitations
+    reference_claim = _claim().model_copy(
+        update={
+            "claim_kind": "DIRECT_REFERENCE_COMPARISON",
+            "value": True,
+            "units": "within_tolerance",
+            "limitations": limitations,
+        }
+    )
+    complete = _ProviderEvidenceAnswer(
+        answer=(
+            "Direct Circuitscape result under documented assumptions. E1 within_tolerance=true"
+        ),
+        evidence_ids=["E1"],
+        boolean_claims=[{"evidence_id": "E1", "value": True, "units": "within_tolerance"}],
+        limitations=limitations,
+    )
+    EvidenceAssistant._validate_evidence_answer(
+        complete,
+        {"E1": reference_claim},
+        SensitiveContextPolicy(),
+    )
+
+    omitted = complete.model_copy(
+        update={"limitations": [item for item in limitations if item != reviewed_caveat]}
+    )
+    with pytest.raises(AssistantSafetyError, match="ASSISTANT_REQUIRED_LIMITATION_MISSING"):
+        EvidenceAssistant._validate_evidence_answer(
+            omitted,
+            {"E1": reference_claim},
+            SensitiveContextPolicy(),
+        )
+
+
+@pytest.mark.parametrize(
+    ("claim_value", "provider_value", "answer", "expected_error"),
+    [
+        (
+            False,
+            True,
+            ("Direct Circuitscape result under documented assumptions. E1 within_tolerance=true"),
+            "ASSISTANT_BOOLEAN_VALUE_MISMATCH",
+        ),
+        (
+            False,
+            False,
+            (
+                "Direct Circuitscape result under documented assumptions. "
+                "The comparison passed within tolerance. E1 within_tolerance=false"
+            ),
+            "ASSISTANT_BOOLEAN_RENDERING_AMBIGUOUS",
+        ),
+        (
+            False,
+            None,
+            "Direct Circuitscape result under documented assumptions.",
+            "ASSISTANT_BOOLEAN_EVIDENCE_INCOMPLETE",
+        ),
+    ],
+)
+def test_reference_assistant_rejects_boolean_inversion_or_omission(
+    claim_value: bool,
+    provider_value: bool | None,
+    answer: str,
+    expected_error: str,
+) -> None:
+    limitations = [CONNECTIVITY_LIMITATION, CURRENT_RASTER_LIMITATION, FITNESS_LIMITATION]
+    reference_claim = _claim().model_copy(
+        update={
+            "claim_kind": "DIRECT_REFERENCE_COMPARISON",
+            "value": claim_value,
+            "units": "within_tolerance",
+            "limitations": limitations,
+        }
+    )
+    boolean_claims = (
+        []
+        if provider_value is None
+        else [
+            {
+                "evidence_id": "E1",
+                "value": provider_value,
+                "units": "within_tolerance",
+            }
+        ]
+    )
+    proposed = _ProviderEvidenceAnswer(
+        answer=answer,
+        evidence_ids=["E1"],
+        boolean_claims=boolean_claims,
+        limitations=limitations,
+    )
+
+    with pytest.raises(AssistantSafetyError, match=expected_error):
+        EvidenceAssistant._validate_evidence_answer(
+            proposed,
+            {"E1": reference_claim},
+            SensitiveContextPolicy(),
+        )
+
+
+def test_reference_assistant_accepts_exact_false_boolean_disposition() -> None:
+    limitations = [CONNECTIVITY_LIMITATION, CURRENT_RASTER_LIMITATION, FITNESS_LIMITATION]
+    reference_claim = _claim().model_copy(
+        update={
+            "claim_kind": "DIRECT_REFERENCE_COMPARISON",
+            "value": False,
+            "units": "within_tolerance",
+            "limitations": limitations,
+        }
+    )
+    proposed = _ProviderEvidenceAnswer(
+        answer=(
+            "Direct Circuitscape result under documented assumptions. E1 within_tolerance=false"
+        ),
+        evidence_ids=["E1"],
+        boolean_claims=[{"evidence_id": "E1", "value": False, "units": "within_tolerance"}],
+        limitations=limitations,
+    )
+
+    EvidenceAssistant._validate_evidence_answer(
+        proposed,
+        {"E1": reference_claim},
+        SensitiveContextPolicy(),
+    )
 
 
 class _AuthorizedAssistant:

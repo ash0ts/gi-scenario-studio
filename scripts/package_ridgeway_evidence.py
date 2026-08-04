@@ -69,7 +69,9 @@ from ecocorridor_core.ridgeway import (
 from ecocorridor_core.semantic_diff import verify_semantic_raster_diff
 
 ARCHIVE_LIMIT_BYTES = 100_000_000
-BUNDLE_SCHEMA = "ridgeway-evidence-bundle/v1.1"
+RAW_DIRECT_EVIDENCE_SCHEMA = "ridgeway-direct-evidence/v1.1"
+PUBLISHED_DIRECT_EVIDENCE_SCHEMA = "ridgeway-direct-evidence/v1.2"
+BUNDLE_SCHEMA = "ridgeway-evidence-bundle/v1.2"
 RAW_UI_SCHEMA = "ecocorridor-replay/v1.1"
 UI_SCHEMA = "ecocorridor-replay/v1.2"
 MATRIX_ABSOLUTE_TOLERANCE = 1e-8
@@ -1379,6 +1381,8 @@ _PROCESS_TREE_EXIT_KEYS = {
     "confirmed_at",
 }
 
+_PROCESS_INTERVAL_OVERLAP_SCHEMA = "ridgeway-retained-process-interval-overlap/v1.0"
+
 
 def _aware_process_timestamp(value: object, *, label: str) -> datetime:
     if not isinstance(value, str):
@@ -1440,6 +1444,62 @@ def independently_validate_process_tree_exits(
         "jobs_without_confirmed_tree_exit": 0,
         "unique_process_identities": len(identities),
         "confirmation_methods": dict(sorted(methods.items())),
+    }
+
+
+def independently_measure_retained_process_interval_overlap(
+    jobs: list[dict[str, Any]],
+) -> dict[str, object]:
+    """Derive audit-only overlap among retained process measurement intervals.
+
+    This measurement deliberately does not infer the configured worker count or
+    true process concurrency. ``launched_at`` is retained after process creation,
+    so the interval can miss early execution. Coincident launch and confirmation
+    timestamps are counted as overlapping because their retained values cannot
+    establish event order, which can overstate overlap at timestamp resolution.
+    """
+
+    events: list[tuple[datetime, int, int]] = []
+    for job in jobs:
+        direct_run_id = str(job.get("direct_run_id", "unknown"))
+        evidence = job.get("process_exit_evidence")
+        if not isinstance(evidence, dict) or set(evidence) != _PROCESS_TREE_EXIT_KEYS:
+            raise PackagingError(
+                f"direct job has incomplete process-tree exit evidence: {direct_run_id}"
+            )
+        launched_at = _aware_process_timestamp(evidence["launched_at"], label="launch time")
+        confirmed_at = _aware_process_timestamp(evidence["confirmed_at"], label="confirmation time")
+        if confirmed_at < launched_at:
+            raise PackagingError(f"direct job process-tree exit predates launch: {direct_run_id}")
+        # Start events sort before end events at a shared timestamp. This counts
+        # coincident retained endpoints as overlapping without claiming that the
+        # truncated measurement intervals bound true process concurrency.
+        events.append((launched_at, 0, 1))
+        events.append((confirmed_at, 1, -1))
+
+    active = 0
+    observed_maximum = 0
+    for _timestamp, _event_order, delta in sorted(events):
+        active += delta
+        if active < 0:
+            raise PackagingError("retained process intervals produce invalid overlap state")
+        observed_maximum = max(observed_maximum, active)
+    if active != 0 or observed_maximum < (1 if jobs else 0):
+        raise PackagingError("retained process intervals produce invalid overlap evidence")
+    return {
+        "schema_version": _PROCESS_INTERVAL_OVERLAP_SCHEMA,
+        "observation_method": "MAXIMUM_OVERLAPPING_RETAINED_PROCESS_INTERVALS",
+        "maximum_overlapping_retained_process_intervals": observed_maximum,
+        "retained_interval_count": len(jobs),
+        "coincident_endpoint_policy": "COUNTED_AS_OVERLAPPING_AT_RETAINED_TIMESTAMP_RESOLUTION",
+        "scientific_identity_role": "AUDIT_ONLY_EXCLUDED",
+        "limitation": (
+            "Derived only from retained post-spawn launched_at-to-confirmed_at measurement "
+            "intervals. It may understate true process concurrency because launched_at is "
+            "recorded after process creation, and coincident endpoints may overstate interval "
+            "overlap at retained timestamp resolution. It is not the configured worker count, "
+            "CPU utilization, or proof of simultaneous physical execution."
+        ),
     }
 
 
@@ -1955,7 +2015,7 @@ def package(evidence_root: Path, publish_directory: Path, desktop_fixture: Path)
     if raw_projection_sha != direct_manifest.get("ui_projection_sha256"):
         raise PackagingError("raw projection is not bound by the direct-study manifest")
     if (
-        direct_manifest.get("schema_version") != "ridgeway-direct-evidence/v1.1"
+        direct_manifest.get("schema_version") != RAW_DIRECT_EVIDENCE_SCHEMA
         or evidence_index.get("schema_version") != "ridgeway-evidence-index/v1.1"
         or raw_projection.get("schemaVersion") != RAW_UI_SCHEMA
         or direct_manifest.get("release_replay_eligible") is not False
@@ -1992,6 +2052,9 @@ def package(evidence_root: Path, publish_directory: Path, desktop_fixture: Path)
         [*matrix_jobs, *map_jobs]
     )
     package_process_tree_exits = independently_validate_process_tree_exits(
+        [*matrix_jobs, *map_jobs]
+    )
+    package_process_interval_overlap = independently_measure_retained_process_interval_overlap(
         [*matrix_jobs, *map_jobs]
     )
     if (
@@ -2339,6 +2402,7 @@ def package(evidence_root: Path, publish_directory: Path, desktop_fixture: Path)
         "map_job_count": len(map_jobs),
         "resource_observability": package_resource_observability,
         "process_tree_exit_evidence": package_process_tree_exits,
+        "retained_process_interval_overlap": package_process_interval_overlap,
         "map_matrix_coherence": map_matrix_coherence,
         "required_coverage": {
             "reviewed_raw_asset_sources": 16,
@@ -2434,6 +2498,9 @@ def package(evidence_root: Path, publish_directory: Path, desktop_fixture: Path)
     except ValueError as exc:
         raise PackagingError("public teaching-selection copy violates claim policy") from exc
     direct_manifest["projection_contract"] = "RidgewayFixture/ecocorridor-replay/v1.2"
+    # The immutable runner output remains v1.1 inside the archive. Publishing adds
+    # required interval-overlap audit metadata, so the outer manifest advances.
+    direct_manifest["schema_version"] = PUBLISHED_DIRECT_EVIDENCE_SCHEMA
     # The ledgers are already retained in the hash-indexed evidence archive.
     # Pin the same reviewed identities at the public-manifest boundary so a
     # replay can resolve its assumptions and costs before unpacking the bundle.
@@ -2445,6 +2512,7 @@ def package(evidence_root: Path, publish_directory: Path, desktop_fixture: Path)
     direct_manifest["claim_safety_sha256"] = claim_safety_sha
     direct_manifest["resource_observability"] = package_resource_observability
     direct_manifest["process_tree_exit_evidence"] = package_process_tree_exits
+    direct_manifest["retained_process_interval_overlap"] = package_process_interval_overlap
     direct_manifest["map_matrix_coherence"] = map_matrix_coherence
     direct_manifest["evidence_bundle"] = {
         "filename": archive.name,

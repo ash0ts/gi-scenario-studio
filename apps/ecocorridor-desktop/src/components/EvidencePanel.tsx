@@ -104,6 +104,12 @@ export function EvidencePanel({ open, selection, fixture, verified, publicMode, 
         || !Number.isFinite(numericSelection)
         || Math.abs(parsed.claim.value - numericSelection) > 0.051
       );
+      const referenceToleranceMismatch = professional && typeof selection.value === "boolean" && (
+        parsed.claim.scenario_id !== selection.scenarioId
+        || !parsed.claim.direct_run_ids.includes(selection.runId)
+        || parsed.claim.units !== selection.units
+        || parsed.claim.value !== selection.value
+      );
       const professionalGraphMissing = professional
         && (!parsed.claim.nodes?.length || !parsed.claim.edges?.length || !(parsed.claim.limitations?.length || parsed.limitations?.length));
       const guidedPackageMissing = !professional && (
@@ -115,7 +121,7 @@ export function EvidencePanel({ open, selection, fixture, verified, publicMode, 
         || parsed.qa !== "ACCEPTED_DIRECT_CIRCUITSCAPE"
         || !parsed.limitations?.length
       );
-      if (parsed.claim.claim_id !== selection.claimId || parsed.claim.portfolio_id !== selection.portfolioId || projectionMismatch || professionalGraphMissing || guidedPackageMissing) {
+      if (parsed.claim.claim_id !== selection.claimId || parsed.claim.portfolio_id !== selection.portfolioId || projectionMismatch || referenceToleranceMismatch || professionalGraphMissing || guidedPackageMissing) {
         throw new Error("The resolved claim does not match the selected projection value and direct-run identity.");
       }
       setResolved(parsed);
@@ -130,10 +136,15 @@ export function EvidencePanel({ open, selection, fixture, verified, publicMode, 
   }, [open, projectHandle, publicMode, selection, verified]);
 
   const claimReady = publicMode ? verified : resolutionState === "resolved";
-  const claimValue = resolved
-    ? typeof resolved.claim.value === "number" ? resolved.claim.value.toFixed(1) : String(resolved.claim.value)
-    : selection.value;
-  const claimUnits = resolved?.claim.units ?? selection.units;
+  const toleranceDisposition = (resolved?.claim.units ?? selection.units) === "within_tolerance"
+    && typeof (resolved?.claim.value ?? selection.value) === "boolean";
+  const toleranceValue = resolved?.claim.value ?? selection.value;
+  const claimValue = toleranceDisposition
+    ? toleranceValue ? "Within tolerance" : "Outside tolerance"
+    : resolved
+      ? typeof resolved.claim.value === "number" ? resolved.claim.value.toFixed(1) : String(resolved.claim.value)
+      : String(selection.value);
+  const claimUnits = toleranceDisposition ? "reviewed Boolean tolerance disposition" : resolved?.claim.units ?? selection.units;
   const directRunIds = useMemo(
     () => resolved?.claim.direct_run_ids ?? [selection.runId, selection.baselineRunId].filter((item): item is string => Boolean(item)),
     [resolved, selection.baselineRunId, selection.runId],

@@ -85,6 +85,7 @@ code, .mono { font-family: "IBM Plex Mono", monospace; overflow-wrap: anywhere; 
 .replay-pill.fail { background: #f4dce2; color: #7a243d; }
 .replay-pill.info { background: #dcebed; color: #155865; }
 .replay-caption { color: var(--graphite); font-size: .88rem; line-height: 1.45; }
+.replay-scroll-hint { display: none; }
 .replay-info { margin-bottom: 1rem; }
 .replay-table-panel, .replay-raster, .replay-package, .replay-lineage { margin-top: 1rem; padding: 1.1rem; background: var(--paper); border: 1px solid var(--line); }
 .replay-panel-heading { display: flex; justify-content: space-between; align-items: end; gap: 1rem; margin-bottom: .8rem; }
@@ -159,6 +160,7 @@ code, .mono { font-family: "IBM Plex Mono", monospace; overflow-wrap: anywhere; 
   .replay-rule-grid { grid-template-columns: 1fr; }
   .replay-raster-layout { grid-template-columns: 1fr; }
   .replay-verdict dl { grid-template-columns: repeat(2, 1fr); }
+  .replay-scroll-hint { display: block; margin: 0 0 .75rem; padding: .55rem .7rem; color: var(--cyan-ink); background: #e1eef0; border-left: 3px solid var(--cyan); font-size: .8rem; font-weight: 700; }
 }
 
 @media (max-width: 560px) {

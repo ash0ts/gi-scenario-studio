@@ -98,6 +98,24 @@ MAX_ARCHIVE_FILES = 50_000
 MAX_ARCHIVE_MEMBER_BYTES = 512 * 1024 * 1024
 MAX_ARCHIVE_TOTAL_BYTES = 4 * 1024 * 1024 * 1024
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+PROCESS_INTERVAL_OVERLAP_KEYS = frozenset(
+    {
+        "schema_version",
+        "observation_method",
+        "maximum_overlapping_retained_process_intervals",
+        "retained_interval_count",
+        "coincident_endpoint_policy",
+        "scientific_identity_role",
+        "limitation",
+    }
+)
+PROCESS_INTERVAL_OVERLAP_LIMITATION = (
+    "Derived only from retained post-spawn launched_at-to-confirmed_at measurement "
+    "intervals. It may understate true process concurrency because launched_at is "
+    "recorded after process creation, and coincident endpoints may overstate interval "
+    "overlap at retained timestamp resolution. It is not the configured worker count, "
+    "CPU utilization, or proof of simultaneous physical execution."
+)
 
 RIDGEWAY_FIXED_ROLE_COUNTS = {
     "reviewed_asset_source": 16,
@@ -397,12 +415,36 @@ def _safe_archive_member(name: str) -> bool:
     return bool(name) and "\\" not in name and not path.is_absolute() and ".." not in path.parts
 
 
+def _valid_retained_process_interval_overlap(value: object) -> bool:
+    maximum = (
+        value.get("maximum_overlapping_retained_process_intervals")
+        if isinstance(value, dict)
+        else None
+    )
+    interval_count = value.get("retained_interval_count") if isinstance(value, dict) else None
+    return bool(
+        isinstance(value, dict)
+        and set(value) == PROCESS_INTERVAL_OVERLAP_KEYS
+        and value.get("schema_version") == "ridgeway-retained-process-interval-overlap/v1.0"
+        and value.get("observation_method") == "MAXIMUM_OVERLAPPING_RETAINED_PROCESS_INTERVALS"
+        and not isinstance(maximum, bool)
+        and isinstance(maximum, int)
+        and not isinstance(interval_count, bool)
+        and interval_count == 1_596
+        and 1 <= maximum <= interval_count
+        and value.get("coincident_endpoint_policy")
+        == "COUNTED_AS_OVERLAPPING_AT_RETAINED_TIMESTAMP_RESOLUTION"
+        and value.get("scientific_identity_role") == "AUDIT_ONLY_EXCLUDED"
+        and value.get("limitation") == PROCESS_INTERVAL_OVERLAP_LIMITATION
+    )
+
+
 def validate_ridgeway_relationships() -> list[str]:
     """Audit either current release evidence or the explicit non-release fallback.
 
     A superseded archive remains checksum-verifiable benchmark material, but it
     must not authenticate a replay, populate an outcome, or leave a trusted
-    manifest digest behind.  The current v1.1 package takes the stricter branch
+    manifest digest behind.  The current v1.2 package takes the stricter branch
     below and must satisfy the complete semantic evidence contract.
     """
 
@@ -474,7 +516,7 @@ def validate_ridgeway_relationships() -> list[str]:
             errors.append("Ridgeway non-release trust record is not fail closed.")
     else:
         if (
-            direct.get("schema_version") != "ridgeway-direct-evidence/v1.1"
+            direct.get("schema_version") != "ridgeway-direct-evidence/v1.2"
             or direct.get("release_replay_eligible") is not True
             or projection.get("schemaVersion") != "ecocorridor-replay/v1.2"
             or projection.get("evidenceState") != "VERIFIED_DIRECT_EVIDENCE"
@@ -761,6 +803,13 @@ def validate_ridgeway_relationships() -> list[str]:
                     ):
                         errors.append(
                             "Ridgeway archive lacks complete confirmed process-tree exits."
+                        )
+                    process_interval_overlap = bundle_index.get("retained_process_interval_overlap")
+                    if process_interval_overlap != direct.get(
+                        "retained_process_interval_overlap"
+                    ) or not _valid_retained_process_interval_overlap(process_interval_overlap):
+                        errors.append(
+                            "Ridgeway archive lacks valid retained process-interval overlap metadata."
                         )
                     if bundle_index.get("map_matrix_coherence") != direct.get(
                         "map_matrix_coherence"

@@ -27,7 +27,25 @@ def _sha(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def _release_package(root: Path) -> tuple[Path, Path]:
+def _interval_overlap(maximum: int) -> dict[str, object]:
+    return {
+        "schema_version": "ridgeway-retained-process-interval-overlap/v1.0",
+        "observation_method": "MAXIMUM_OVERLAPPING_RETAINED_PROCESS_INTERVALS",
+        "maximum_overlapping_retained_process_intervals": maximum,
+        "retained_interval_count": 1_596,
+        "coincident_endpoint_policy": ("COUNTED_AS_OVERLAPPING_AT_RETAINED_TIMESTAMP_RESOLUTION"),
+        "scientific_identity_role": "AUDIT_ONLY_EXCLUDED",
+        "limitation": (
+            "Derived only from retained post-spawn launched_at-to-confirmed_at measurement "
+            "intervals. It may understate true process concurrency because launched_at is "
+            "recorded after process creation, and coincident endpoints may overstate interval "
+            "overlap at retained timestamp resolution. It is not the configured worker count, "
+            "CPU utilization, or proof of simultaneous physical execution."
+        ),
+    }
+
+
+def _release_package(root: Path, *, concurrency: int = 4) -> tuple[Path, Path]:
     publish = root / "publish"
     desktop = root / "desktop" / "ridgewayFixture.json"
     publish.mkdir(parents=True)
@@ -35,13 +53,14 @@ def _release_package(root: Path) -> tuple[Path, Path]:
     archive = publish / "ridgeway-direct-evidence-deadbeef.tar.gz"
     archive.write_bytes(b"authenticated only by an external producer artifact")
     direct = {
-        "schema_version": "ridgeway-direct-evidence/v1.1",
+        "schema_version": "ridgeway-direct-evidence/v1.2",
         "release_replay_eligible": True,
         "matrix_job_count": 1_536,
         "map_job_count": 60,
         "engine_manifest_sha256": "1" * 64,
         "workflow_manifest_sha256": "2" * 64,
         "evidence_index_sha256": "3" * 64,
+        "retained_process_interval_overlap": _interval_overlap(concurrency),
         "evidence_bundle": {
             "format": "tar+gzip",
             "filename": archive.name,
@@ -86,7 +105,7 @@ def _differential(root: Path, *, source: str, reference: Path, producer: Path) -
     path.write_text(
         json.dumps(
             {
-                "schema_version": "ridgeway-protected-rerun-differential/v1.0",
+                "schema_version": "ridgeway-protected-rerun-differential/v1.1",
                 "source_commit_sha": source,
                 "status": "PASSED",
                 "reference_manifest_sha256": _sha(reference_manifest.read_bytes()),
@@ -96,6 +115,15 @@ def _differential(root: Path, *, source: str, reference: Path, producer: Path) -
                 "matrix_job_count": 1_536,
                 "map_job_count": 60,
                 "teaching_selection_matched": True,
+                "reference_retained_process_interval_overlap": reference_direct[
+                    "retained_process_interval_overlap"
+                ],
+                "producer_retained_process_interval_overlap": producer_direct[
+                    "retained_process_interval_overlap"
+                ],
+                "retained_process_interval_overlap_comparison_policy": (
+                    "AUDIT_ONLY_EXCLUDED_FROM_SCIENTIFIC_EQUIVALENCE"
+                ),
             }
         ),
         encoding="utf-8",
@@ -107,7 +135,7 @@ def test_attestation_binds_every_promoted_evidence_asset(
     validator: ModuleType, tmp_path: Path
 ) -> None:
     publish, desktop = _release_package(tmp_path)
-    producer, _ = _release_package(tmp_path / "producer")
+    producer, _ = _release_package(tmp_path / "producer", concurrency=8)
     source = "a" * 40
     differential = _differential(tmp_path, source=source, reference=publish, producer=producer)
     attestation = validator.derive_attestation(
@@ -192,3 +220,12 @@ def test_historical_or_self_declared_evidence_cannot_receive_attestation(
             producer_publish_directory=producer,
             differential_report=differential,
         )
+
+
+def test_attestation_rejects_impossible_retained_interval_overlap(
+    validator: ModuleType,
+) -> None:
+    impossible = _interval_overlap(1_597)
+
+    with pytest.raises(ValueError, match="retained process-interval overlap is invalid"):
+        validator._retained_process_interval_overlap(impossible, label="test")
