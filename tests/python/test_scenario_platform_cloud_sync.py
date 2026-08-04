@@ -4,6 +4,7 @@ import hashlib
 import os
 import sqlite3
 import types
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,7 @@ from ecocorridor_core.observability import (
     ECOCORRIDOR_APP_PROFILE,
     EcoRpcObservabilityAdapter,
     WeaveNestedTraceSink,
+    derive_cloud_sync_state,
 )
 from ecocorridor_core.project_store import EcoProjectStore
 from ecocorridor_core.ridgeway import build_ridgeway_fixture
@@ -75,6 +77,44 @@ def _target() -> WandbTarget:
         api_base_url="https://api.wandb.example",
         web_base_url="https://wandb.example",
         scope_evidence=evidence,
+    )
+
+
+def test_cloud_sync_state_is_derived_from_authoritative_outbox_rows() -> None:
+    assert (
+        derive_cloud_sync_state(
+            binding_state="SYNC_QUEUED_OFFLINE",
+            telemetry_rows=[{"state": "SYNCED"}],
+        )[0]
+        == "CONNECTED"
+    )
+    assert (
+        derive_cloud_sync_state(
+            binding_state="CONNECTED",
+            telemetry_rows=[{"state": "PENDING"}],
+        )[0]
+        == "SYNC_QUEUED_OFFLINE"
+    )
+    assert (
+        derive_cloud_sync_state(
+            binding_state="CONNECTED",
+            telemetry_rows=[{"state": "UPLOADING"}],
+        )[0]
+        == "SYNCING"
+    )
+    assert (
+        derive_cloud_sync_state(
+            binding_state="CONNECTED",
+            telemetry_rows=[{"state": "FAILED"}],
+        )[0]
+        == "FAILED_RETRYING"
+    )
+    assert (
+        derive_cloud_sync_state(
+            binding_state="CONNECTED",
+            telemetry_rows=[{"state": "BLOCKED"}],
+        )[0]
+        == "BLOCKED"
     )
 
 
@@ -184,6 +224,44 @@ def _outbox_state(repository: ScenarioRepository, outbox_id: str) -> dict[str, A
     return dict(row)
 
 
+def test_locked_wandb_sdk_exposes_exact_run_lookup_contract() -> None:
+    import wandb
+    from scenario_platform import cloud_sync
+    from wandb.apis.normalize import normalize_exceptions
+    from wandb.errors import CommError
+
+    assert wandb.__version__ == "0.28.1"
+    assert callable(wandb.Api.runs)
+    assert callable(wandb.Api.artifact)
+
+    reference = "wildlife-team/ridgeway/evidence:outbox-projection-abc"
+
+    @normalize_exceptions
+    def missing_membership() -> None:
+        raise ValueError(
+            "artifact membership 'evidence:outbox-projection-abc' not found in "
+            "'wildlife-team/ridgeway'"
+        )
+
+    with pytest.raises(CommError) as missing:
+        missing_membership()
+    assert cloud_sync._is_exact_wandb_artifact_not_found(
+        missing.value,
+        reference=reference,
+    )
+
+    @normalize_exceptions
+    def missing_project() -> None:
+        raise ValueError("project 'ridgeway' not found under entity 'wildlife-team'")
+
+    with pytest.raises(CommError) as ambiguous:
+        missing_project()
+    assert not cloud_sync._is_exact_wandb_artifact_not_found(
+        ambiguous.value,
+        reference=reference,
+    )
+
+
 def test_outbox_stays_durable_offline_and_upload_is_idempotent(tmp_path: Path) -> None:
     repository, outbox_id = _queued_repository(tmp_path)
     uploader = _RecordingUploader()
@@ -271,6 +349,20 @@ def test_project_cloud_directories_reject_symlink_escape_before_writing(
     assert not (outside / ECOCORRIDOR_APP_PROFILE.namespace).exists()
 
 
+def test_project_cloud_directories_reject_symlinked_projection_receipt_parent(
+    tmp_path: Path,
+) -> None:
+    directories = ProjectCloudDirectories.create(tmp_path, ECOCORRIDOR_APP_PROFILE)
+    outside = tmp_path / "outside-projections"
+    outside.mkdir()
+    directories.telemetry_projections.rmdir()
+    directories.telemetry_projections.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symlink"):
+        ProjectCloudDirectories.create(tmp_path, ECOCORRIDOR_APP_PROFILE)
+    assert list(outside.iterdir()) == []
+
+
 class _FakeTable:
     def __init__(self, *, columns: list[str], data: list[list[Any]]) -> None:
         self.columns = columns
@@ -320,6 +412,25 @@ class _LoggedArtifact:
         return str(destination)
 
 
+class _FakeHttpSummary:
+    """Dict-like SDK shape that intentionally is not a Mapping."""
+
+    def __init__(self, values: dict[str, Any]) -> None:
+        self.values = values
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self.values.get(key, default)
+
+    def items(self):
+        return self.values.items()
+
+
+class _FakeCommError(RuntimeError):
+    def __init__(self, message: str, exc: BaseException) -> None:
+        super().__init__(message)
+        self.exc = exc
+
+
 class _FakeRun:
     def __init__(
         self,
@@ -333,7 +444,7 @@ class _FakeRun:
         self.values = values
         self.id = values["id"]
         self.url = run_url or f"https://wandb.example/run/{self.id}"
-        self.summary: dict[str, Any] = {}
+        self.summary = sdk.run_summaries.setdefault(self.id, {})
         self.logged: list[tuple[dict[str, Any], int]] = []
         self.used: list[str] = []
         self.linked: list[tuple[str, str]] = []
@@ -366,6 +477,17 @@ class _FakeRun:
 
     def finish(self) -> None:
         self.finished = True
+        self.sdk.remote_runs[self.id] = types.SimpleNamespace(
+            id=self.id,
+            name=self.id,
+            url=self.url,
+            summary=_FakeHttpSummary(self.summary),
+            summary_metrics=self.summary,
+        )
+        self.sdk.visibility_delays[self.id] = self.sdk.visibility_delay_after_finish
+        self.sdk.finish_count += 1
+        if self.sdk.finish_count in self.sdk.fail_finish_calls:
+            raise RuntimeError("simulated finish acknowledgement loss")
 
 
 class _FakeWandb:
@@ -380,17 +502,38 @@ class _FakeWandb:
         run_url: str | None = None,
         artifact_url: str = "",
         lookup_error: bool = False,
+        run_lookup_error: bool = False,
+        mismatched_run_lookup: bool = False,
+        missing_run_id: bool = False,
+        ambiguous_run_lookup: bool = False,
+        visibility_delay_after_finish: int = 0,
+        artifact_lookup_error: BaseException | None = None,
+        fail_finish_calls: set[int] | None = None,
     ) -> None:
         self.corrupt = corrupt
         self.run_url = run_url
         self.artifact_url = artifact_url
         self.lookup_error = lookup_error
+        self.run_lookup_error = run_lookup_error
+        self.mismatched_run_lookup = mismatched_run_lookup
+        self.missing_run_id = missing_run_id
+        self.ambiguous_run_lookup = ambiguous_run_lookup
+        self.visibility_delay_after_finish = visibility_delay_after_finish
+        self.artifact_lookup_error = artifact_lookup_error
+        self.fail_finish_calls = set(fail_finish_calls or ())
+        self.finish_count = 0
         self.runs: list[_FakeRun] = []
         self.artifacts: dict[str, _LoggedArtifact] = {}
+        self.run_summaries: dict[str, dict[str, Any]] = {}
+        self.remote_runs: dict[str, Any] = {}
+        self.visibility_delays: dict[str, int] = {}
+        self.api_instances: list[_FakePublicApi] = []
 
     def Api(self, **values: Any) -> _FakePublicApi:
         assert values["overrides"]["base_url"] == "https://api.wandb.example"
-        return _FakePublicApi(self)
+        api = _FakePublicApi(self)
+        self.api_instances.append(api)
+        return api
 
     def init(self, **values: Any) -> _FakeRun:
         run = _FakeRun(
@@ -407,6 +550,9 @@ class _FakeWandb:
 class _FakePublicApi:
     def __init__(self, sdk: _FakeWandb) -> None:
         self.sdk = sdk
+        # Match the real SDK's per-Public-API-instance read cache. A checker
+        # that reuses this instance cannot observe a later summary write.
+        self.run_snapshot = dict(sdk.remote_runs)
 
     def artifact_exists(self, reference: str, *, type: str) -> bool:
         if self.sdk.lookup_error:
@@ -415,9 +561,48 @@ class _FakePublicApi:
         return artifact is not None and artifact.type == type
 
     def artifact(self, reference: str, *, type: str) -> _LoggedArtifact:
-        artifact = self.sdk.artifacts[reference]
+        if self.sdk.artifact_lookup_error is not None:
+            raise self.sdk.artifact_lookup_error
+        artifact = self.sdk.artifacts.get(reference)
+        if artifact is None:
+            entity, project, membership = reference.split("/", 2)
+            nested = ValueError(
+                f"artifact membership {membership!r} not found in {f'{entity}/{project}'!r}"
+            )
+            raise _FakeCommError(str(nested), nested)
         assert artifact.type == type
         return artifact
+
+    def runs(
+        self,
+        path: str,
+        *,
+        filters: dict[str, Any],
+        per_page: int,
+        lazy: bool,
+    ) -> list[Any]:
+        assert path == "wildlife-team/ridgeway"
+        assert per_page == 2
+        assert lazy is False
+        if self.sdk.run_lookup_error:
+            raise RuntimeError("provider run lookup failed")
+        run_id = filters["name"]
+        found = self.run_snapshot.get(run_id)
+        if found is None:
+            return []
+        remaining = self.sdk.visibility_delays.get(run_id, 0)
+        if remaining > 0:
+            self.sdk.visibility_delays[run_id] = remaining - 1
+            return []
+        if self.sdk.mismatched_run_lookup:
+            return [types.SimpleNamespace(**{**vars(found), "id": "different-run"})]
+        if self.sdk.missing_run_id:
+            values = {**vars(found), "name": run_id}
+            values.pop("id", None)
+            return [types.SimpleNamespace(**values)]
+        if self.sdk.ambiguous_run_lookup:
+            return [found, found]
+        return [found]
 
 
 def _artifact(tmp_path: Path) -> ArtifactProjection:
@@ -456,8 +641,15 @@ def test_real_sdk_boundary_logs_tables_lineage_and_hash_verified_artifact(
         directories=ProjectCloudDirectories.create(tmp_path, ECOCORRIDOR_APP_PROFILE),
     )
 
-    assert len(sdk.runs) == 1
-    run = sdk.runs[0]
+    assert len(sdk.runs) == 2
+    assert len(sdk.api_instances) >= 5
+    assert len({id(api) for api in sdk.api_instances}) == len(sdk.api_instances)
+    run = sdk.runs[1]
+    remote = sdk.remote_runs[run.id]
+    assert not isinstance(remote.summary, Mapping)
+    assert isinstance(remote.summary_metrics, dict)
+    assert sdk.runs[0].logged == []
+    assert sdk.runs[0].used == []
     assert run.values["resume"] == "allow"
     assert run.values["mode"] == "online"
     assert run.used == ["wildlife-team/ridgeway/source-model:v2"]
@@ -503,13 +695,18 @@ def test_sdk_boundary_reuses_exact_committed_artifact_after_receipt_crash(
     first = uploader.upload(**values)
     second = uploader.upload(**values)
 
-    assert len(sdk.runs[0].logged_artifacts) == 1
-    assert sdk.runs[1].logged_artifacts == []
+    assert len(sdk.runs) == 2
+    assert sum(len(run.logged) for run in sdk.runs) == 1
+    assert sum(run.used.count("wildlife-team/ridgeway/source-model:v2") for run in sdk.runs) == 1
+    assert sum(len(run.logged_artifacts) for run in sdk.runs) == 2
+    assert sum(len(run.linked) for run in sdk.runs) == 1
     assert second.artifacts == first.artifacts
 
 
-def test_sdk_boundary_fails_closed_on_ambiguous_or_mismatched_idempotency_lookup(
+@pytest.mark.parametrize("mismatch_field", ["projection_sha256", "target_sha256"])
+def test_sdk_boundary_does_not_trust_mutated_summary_acknowledgement(
     tmp_path: Path,
+    mismatch_field: str,
 ) -> None:
     manifest = _artifact(tmp_path)
     sdk = _FakeWandb()
@@ -527,22 +724,292 @@ def test_sdk_boundary_fails_closed_on_ambiguous_or_mismatched_idempotency_lookup
         "directories": ProjectCloudDirectories.create(tmp_path, ECOCORRIDOR_APP_PROFILE),
     }
     uploader.upload(**values)
-    committed = next(iter(sdk.artifacts.values()))
-    committed.metadata["sha256"] = "f" * 64
-    with pytest.raises(CloudIntegrityError, match="IDEMPOTENCY_METADATA_MISMATCH"):
-        uploader.upload(**values)
-    assert sdk.runs[-1].logged_artifacts == []
+    run = sdk.runs[-1]
+    acknowledgement_key = next(key for key in run.summary if "_outbox_ack_" in key)
+    run.summary[acknowledgement_key]["intent"][mismatch_field] = "f" * 64
+    recovered = uploader.upload(**values)
+    assert recovered.projection_artifact is not None
+    assert len(sdk.runs) == 2
 
-    sdk.lookup_error = True
+
+def test_sdk_boundary_treats_acknowledgement_lookup_error_as_ambiguous_before_writes(
+    tmp_path: Path,
+) -> None:
+    manifest = _artifact(tmp_path)
+    sdk = _FakeWandb(run_lookup_error=True)
+    uploader = WandbSdkLineageUploader(
+        profile=ECOCORRIDOR_APP_PROFILE,
+        scope_resolver=_resolver(),
+        sdk=sdk,
+    )
+
+    with pytest.raises(CloudTransportError, match="ACKNOWLEDGEMENT_LOOKUP_AMBIGUOUS"):
+        uploader.upload(
+            envelope_id="outbox-lookup-error",
+            idempotency_key="analysis:other",
+            projection=_projection(artifact=manifest),
+            target=_target(),
+            project_root=tmp_path,
+            directories=ProjectCloudDirectories.create(tmp_path, ECOCORRIDOR_APP_PROFILE),
+        )
+    assert sdk.runs == []
+    assert sdk.artifacts == {}
+
+
+def test_sdk_boundary_recovers_after_intent_only_transport_failure(
+    tmp_path: Path,
+) -> None:
+    manifest = _artifact(tmp_path)
+    sdk = _FakeWandb(fail_finish_calls={1})
+    uploader = WandbSdkLineageUploader(
+        profile=ECOCORRIDOR_APP_PROFILE,
+        scope_resolver=_resolver(),
+        sdk=sdk,
+    )
+    values = {
+        "envelope_id": "outbox-partial-write",
+        "idempotency_key": "analysis:partial-write",
+        "projection": _projection(artifact=manifest),
+        "target": _target(),
+        "project_root": tmp_path,
+        "directories": ProjectCloudDirectories.create(tmp_path, ECOCORRIDOR_APP_PROFILE),
+    }
+
+    with pytest.raises(CloudTransportError, match="WRITE_INTENT_FINISH_FAILED"):
+        uploader.upload(**values)
+    sdk.fail_finish_calls.clear()
+    receipt = uploader.upload(**values)
+
+    assert receipt.projection_artifact is not None
+    assert len(sdk.runs) == 3
+    assert sdk.runs[0].logged == []
+    assert sdk.runs[0].used == []
+    assert sdk.runs[0].logged_artifacts == []
+    assert sdk.runs[0].linked == []
+
+
+def test_sdk_boundary_recovers_completed_acknowledgement_after_local_receipt_crash(
+    tmp_path: Path,
+) -> None:
+    manifest = _artifact(tmp_path)
+    sdk = _FakeWandb(fail_finish_calls={2})
+    uploader = WandbSdkLineageUploader(
+        profile=ECOCORRIDOR_APP_PROFILE,
+        scope_resolver=_resolver(),
+        sdk=sdk,
+    )
+    values = {
+        "envelope_id": "outbox-acknowledged-crash",
+        "idempotency_key": "analysis:acknowledged-crash",
+        "projection": _projection(artifact=manifest),
+        "target": _target(),
+        "project_root": tmp_path,
+        "directories": ProjectCloudDirectories.create(tmp_path, ECOCORRIDOR_APP_PROFILE),
+    }
+
+    with pytest.raises(CloudTransportError, match="WANDB_RUN_FINISH_FAILED"):
+        uploader.upload(**values)
+    sdk.fail_finish_calls.clear()
+    receipt = uploader.upload(**values)
+
+    assert receipt.envelope_id == "outbox-acknowledged-crash"
+    assert len(sdk.runs) == 2
+    assert sum(len(run.logged) for run in sdk.runs) == 1
+    assert sum(run.used.count("wildlife-team/ridgeway/source-model:v2") for run in sdk.runs) == 1
+    assert sum(len(run.logged_artifacts) for run in sdk.runs) == 2
+    assert sum(len(run.linked) for run in sdk.runs) == 1
+
+
+def test_sdk_boundary_uses_projection_receipt_before_delayed_run_summary_replay(
+    tmp_path: Path,
+) -> None:
+    sdk = _FakeWandb(fail_finish_calls={2}, visibility_delay_after_finish=2)
+    uploader = WandbSdkLineageUploader(
+        profile=ECOCORRIDOR_APP_PROFILE,
+        scope_resolver=_resolver(),
+        sdk=sdk,
+    )
+    values = {
+        "envelope_id": "outbox-delayed-summary-crash",
+        "idempotency_key": "analysis:delayed-summary-crash",
+        "projection": _projection(),
+        "target": _target(),
+        "project_root": tmp_path,
+        "directories": ProjectCloudDirectories.create(tmp_path, ECOCORRIDOR_APP_PROFILE),
+    }
+
+    with pytest.raises(CloudTransportError, match="WANDB_RUN_FINISH_FAILED"):
+        uploader.upload(**values)
+    sdk.fail_finish_calls.clear()
+    receipt = uploader.upload(**values)
+
+    assert receipt.projection_artifact is not None
+    assert len(sdk.runs) == 2
+    assert sum(len(run.logged) for run in sdk.runs) == 1
+    assert sum(len(run.logged_artifacts) for run in sdk.runs) == 1
+
+
+def test_sdk_boundary_reconstructs_receipt_instead_of_trusting_summary_copy(
+    tmp_path: Path,
+) -> None:
+    manifest = _artifact(tmp_path)
+    sdk = _FakeWandb()
+    uploader = WandbSdkLineageUploader(
+        profile=ECOCORRIDOR_APP_PROFILE,
+        scope_resolver=_resolver(),
+        sdk=sdk,
+    )
+    values = {
+        "envelope_id": "outbox-forged-artifact-receipt",
+        "idempotency_key": "analysis:forged-artifact-receipt",
+        "projection": _projection(artifact=manifest),
+        "target": _target(),
+        "project_root": tmp_path,
+        "directories": ProjectCloudDirectories.create(tmp_path, ECOCORRIDOR_APP_PROFILE),
+    }
+
+    uploader.upload(**values)
+    run = sdk.runs[-1]
+    acknowledgement_key = next(key for key in run.summary if "_outbox_ack_" in key)
+    receipt = run.summary[acknowledgement_key]["receipt"]
+    receipt["artifacts"][0]["provider_artifact_id"] = "provider-forged-v0"
+
+    recovered = uploader.upload(**values)
+    assert recovered.artifacts[0].provider_artifact_id != "provider-forged-v0"
+    assert len(sdk.runs) == 2
+
+
+def test_sdk_boundary_revalidates_acknowledged_artifact_bytes(tmp_path: Path) -> None:
+    manifest = _artifact(tmp_path)
+    sdk = _FakeWandb()
+    uploader = WandbSdkLineageUploader(
+        profile=ECOCORRIDOR_APP_PROFILE,
+        scope_resolver=_resolver(),
+        sdk=sdk,
+    )
+    values = {
+        "envelope_id": "outbox-corrupt-acknowledged-artifact",
+        "idempotency_key": "analysis:corrupt-acknowledged-artifact",
+        "projection": _projection(artifact=manifest),
+        "target": _target(),
+        "project_root": tmp_path,
+        "directories": ProjectCloudDirectories.create(tmp_path, ECOCORRIDOR_APP_PROFILE),
+    }
+
+    uploader.upload(**values)
+    sdk.runs[-1].logged_artifacts[0].corrupt = True
+
+    with pytest.raises(CloudIntegrityError, match="ARTIFACT_DOWNLOAD_HASH_MISMATCH"):
+        uploader.upload(**values)
+    assert len(sdk.runs) == 2
+
+
+def test_sdk_boundary_rejects_acknowledgement_when_artifact_alias_disappears(
+    tmp_path: Path,
+) -> None:
+    manifest = _artifact(tmp_path)
+    sdk = _FakeWandb()
+    uploader = WandbSdkLineageUploader(
+        profile=ECOCORRIDOR_APP_PROFILE,
+        scope_resolver=_resolver(),
+        sdk=sdk,
+    )
+    values = {
+        "envelope_id": "outbox-missing-acknowledged-artifact",
+        "idempotency_key": "analysis:missing-acknowledged-artifact",
+        "projection": _projection(artifact=manifest),
+        "target": _target(),
+        "project_root": tmp_path,
+        "directories": ProjectCloudDirectories.create(tmp_path, ECOCORRIDOR_APP_PROFILE),
+    }
+
+    uploader.upload(**values)
+    sdk.artifacts.clear()
+
+    with pytest.raises(
+        CloudIntegrityError,
+        match="ACKNOWLEDGEMENT_PROJECTION_ARTIFACT_MISSING",
+    ):
+        uploader.upload(**values)
+    assert len(sdk.runs) == 2
+
+
+def test_sdk_boundary_projection_receipt_authorizes_no_output_artifact_retry(
+    tmp_path: Path,
+) -> None:
+    sdk = _FakeWandb()
+    uploader = WandbSdkLineageUploader(
+        profile=ECOCORRIDOR_APP_PROFILE,
+        scope_resolver=_resolver(),
+        sdk=sdk,
+    )
+    values = {
+        "envelope_id": "outbox-history-only",
+        "idempotency_key": "analysis:history-only",
+        "projection": _projection(),
+        "target": _target(),
+        "project_root": tmp_path,
+        "directories": ProjectCloudDirectories.create(tmp_path, ECOCORRIDOR_APP_PROFILE),
+    }
+
+    first = uploader.upload(**values)
+    second = uploader.upload(**values)
+
+    assert first.projection_artifact is not None
+    assert second == first
+    assert first.artifacts == []
+    assert sum(len(run.logged) for run in sdk.runs) == 1
+    assert sum(len(run.logged_artifacts) for run in sdk.runs) == 1
+
+
+def test_sdk_boundary_polls_bounded_fresh_clients_for_delayed_visibility(
+    tmp_path: Path,
+) -> None:
+    sdk = _FakeWandb(visibility_delay_after_finish=2)
+    uploader = WandbSdkLineageUploader(
+        profile=ECOCORRIDOR_APP_PROFILE,
+        scope_resolver=_resolver(),
+        sdk=sdk,
+    )
+
+    receipt = uploader.upload(
+        envelope_id="outbox-delayed-readback",
+        idempotency_key="analysis:delayed-readback",
+        projection=_projection(),
+        target=_target(),
+        project_root=tmp_path,
+        directories=ProjectCloudDirectories.create(tmp_path, ECOCORRIDOR_APP_PROFILE),
+    )
+
+    assert receipt.projection_artifact is not None
+    assert len(sdk.api_instances) >= 8
+
+
+@pytest.mark.parametrize("status", [401, 403, 404, 500])
+def test_sdk_boundary_never_treats_http_lookup_failure_as_artifact_absence(
+    tmp_path: Path,
+    status: int,
+) -> None:
+    response = types.SimpleNamespace(status_code=status)
+    nested = RuntimeError(f"HTTP {status}")
+    nested.response = response  # type: ignore[attr-defined]
+    sdk = _FakeWandb(artifact_lookup_error=_FakeCommError(str(nested), nested))
+    uploader = WandbSdkLineageUploader(
+        profile=ECOCORRIDOR_APP_PROFILE,
+        scope_resolver=_resolver(),
+        sdk=sdk,
+    )
+
     with pytest.raises(CloudTransportError, match="IDEMPOTENCY_LOOKUP_AMBIGUOUS"):
         uploader.upload(
-            **{
-                **values,
-                "envelope_id": "outbox-lookup-error",
-                "idempotency_key": "analysis:other",
-            }
+            envelope_id=f"outbox-http-{status}",
+            idempotency_key=f"analysis:http-{status}",
+            projection=_projection(),
+            target=_target(),
+            project_root=tmp_path,
+            directories=ProjectCloudDirectories.create(tmp_path, ECOCORRIDOR_APP_PROFILE),
         )
-    assert sdk.runs[-1].logged_artifacts == []
+    assert sdk.runs == []
 
 
 def test_sdk_boundary_rejects_local_and_provider_hash_mismatch(tmp_path: Path) -> None:
@@ -609,7 +1076,6 @@ def test_sdk_boundary_rejects_sensitive_metadata_before_starting_run(tmp_path: P
 @pytest.mark.parametrize(
     ("sdk", "with_artifact"),
     [
-        (_FakeWandb(run_url="https://attacker.example/run/escaped"), False),
         (_FakeWandb(artifact_url="https://attacker.example/artifact/escaped"), True),
     ],
 )
@@ -780,6 +1246,8 @@ def test_rpc_adapter_drains_authoritative_store_and_rechecks_scope(tmp_path: Pat
         sync_plan={"allowed": True, "blockers": [], "projections": []},
     )
     assert result["synced"] == 1
+    assert result["remaining"] == 0
+    assert result["sync_state"] == "CONNECTED"
     reopened = EcoProjectStore(root)
     row = next(item for item in reopened.telemetry_rows() if item["outbox_id"] == outbox_id)
     assert row["state"] == "SYNCED"
@@ -833,11 +1301,65 @@ def test_rpc_adapter_offline_sync_never_claims_or_requires_credentials(tmp_path:
         "failed": 0,
         "blocked": 0,
         "queued_offline": True,
+        "sync_state": "SYNC_QUEUED_OFFLINE",
+        "remaining": len(pending_ids),
+        "state_counts": {"PENDING": len(pending_ids)},
     }
     assert uploader.uploads == []
     reopened = EcoProjectStore(root)
     assert [item["outbox_id"] for item in reopened.pending_outbox()] == pending_ids
     reopened.close()
+
+
+def test_rpc_adapter_offline_state_clears_a_stale_badge_when_outbox_is_synced(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "offline-synced-eco-project"
+    root.mkdir()
+    fixture = build_ridgeway_fixture()
+    repository = EcoProjectStore(root)
+    repository.initialize(
+        project_id=fixture.bundle.project_id,
+        title="Ridgeway",
+        mode="GUIDED",
+        skeleton={"fixture_version": fixture.fixture_version},
+    )
+    repository.store_bundle(fixture.bundle)
+    for row in repository.claim_outbox(limit=100):
+        repository.mark_outbox_synced(
+            str(row["outbox_id"]),
+            {"run_id": "verified-run", "envelope_id": str(row["outbox_id"])},
+            lease_token=str(row["lease_token"]),
+        )
+    target = _target()
+    binding = {
+        "entity": target.entity,
+        "project": target.project,
+        "external_project_id": target.external_project_id,
+        "deployment": target.deployment,
+        "api_base_url": target.api_base_url,
+        "web_base_url": target.web_base_url,
+        "scope_evidence": target.scope_evidence.model_dump(mode="json"),
+        "state": "BLOCKED",
+    }
+    repository.set_observability(binding)
+    synced_count = len(repository.telemetry_rows())
+    repository.close()
+
+    report = EcoRpcObservabilityAdapter(
+        scope_resolver=_resolver(),
+        store_factory=EcoProjectStore,
+        uploader=_RecordingUploader(),
+    ).sync(
+        project_directory=root,
+        binding=binding,
+        sync_plan={"allowed": True, "blockers": [], "projections": []},
+        online=False,
+    )
+
+    assert report["sync_state"] == "CONNECTED"
+    assert report["remaining"] == 0
+    assert report["state_counts"] == {"SYNCED": synced_count}
 
 
 def test_trace_deep_link_requires_retained_provider_readback_url(tmp_path: Path) -> None:

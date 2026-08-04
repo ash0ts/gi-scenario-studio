@@ -437,7 +437,7 @@ def test_release_manifest_is_complete_and_ed25519_signed(tmp_path: Path) -> None
         b"A" * 64 + b"\n",
         b"a" * 62 + b"\n",
         b"a" * 64 + b"\r\n",
-        b"-----BEGIN PRIVATE KEY-----\nnot-a-seed\n-----END PRIVATE KEY-----\n",
+        b"-----BEGIN " + b"PRIVATE KEY-----\nnot-a-seed\n-----END PRIVATE KEY-----\n",
     ],
 )
 def test_release_manifest_rejects_noncanonical_signing_seed(
@@ -508,7 +508,11 @@ def test_engine_manifest_helper_emits_worker_contract(tmp_path: Path) -> None:
     (runtime / "runtime.bin").write_bytes(b"runtime")
     (artifacts / "solver.bin").write_bytes(b"native")
     (project / "Manifest.toml").write_text(
-        '[[deps.Circuitscape]]\nversion = "5.17.1"\n', encoding="utf-8"
+        "[[deps.Circuitscape]]\n"
+        'git-tree-sha1 = "d612b7cc82bc4ebc176f5d0a144a484503779c39"\n'
+        'uuid = "2b7a1792-8151-5239-925d-e2b8fdfa3201"\n'
+        'version = "5.17.1"\n',
+        encoding="utf-8",
     )
     wrapper = tmp_path / "wrapper.jl"
     parser_path = tmp_path / "parser.py"

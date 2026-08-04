@@ -89,15 +89,22 @@ jobs:
         run: bash scripts/install_ci_julia.sh
 
       - name: Instantiate the committed Circuitscape 5.17.1 environment
+        shell: bash
         env:
           JULIA_DEPOT_PATH: ${{ runner.temp }}/julia-depot
           JULIA_NUM_THREADS: "1"
           OPENBLAS_NUM_THREADS: "1"
           OMP_NUM_THREADS: "1"
-        run: >-
-          julia --project=julia/EcoCorridorEngine
-          --startup-file=no --history-file=no
-          -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
+        run: |
+          julia --project=julia/EcoCorridorEngine \
+            --startup-file=no --history-file=no \
+            -e 'using Pkg; Pkg.instantiate()'
+          julia --project=julia/EcoCorridorEngine \
+            --startup-file=no --history-file=no \
+            julia/EcoCorridorEngine/scripts/verify_manifest.jl
+          julia --project=julia/EcoCorridorEngine \
+            --startup-file=no --history-file=no \
+            -e 'using Pkg; Pkg.precompile()'
 
       - name: Execute the complete clean Ridgeway direct study
         env:

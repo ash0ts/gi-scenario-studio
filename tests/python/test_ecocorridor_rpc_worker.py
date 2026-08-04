@@ -734,6 +734,20 @@ def test_planning_grid_and_validation_state_persist_in_project_sqlite(tmp_path: 
         },
     )["data"]["plan"]
     assert preview["source_asset_id"] == asset.asset_id
+    with pytest.raises(RPCFault) as reused_grid_id:
+        dispatcher.dispatch(
+            "connectivity.grid.preview",
+            {
+                "project_directory": str(project),
+                "source_asset_id": asset.asset_id,
+                "target_grid": grid.model_copy(
+                    update={"transform": (10, 0, 1, 0, -10, 20)}
+                ).model_dump(mode="json"),
+                "method": "NEAREST",
+                "plan_id": "alignment-reused-grid-id",
+            },
+        )
+    assert reused_grid_id.value.error.code == "GRID_ID_GEOMETRY_CONFLICT"
     derived_authorization = source_asset.authorization.model_copy(
         update={"asset_id": "planning-resistance-aligned"}
     )
@@ -1682,6 +1696,7 @@ class _ObservabilityAdapter:
     def __init__(self) -> None:
         self.sync_plans: list[dict[str, Any]] = []
         self.sync_requests: list[dict[str, Any]] = []
+        self.sync_result: dict[str, Any] | None = None
 
     def validate(self, *, binding: dict[str, Any]) -> dict[str, Any]:
         return {"external_project_id": binding["scope_evidence"]["external_project_id"]}
@@ -1689,7 +1704,11 @@ class _ObservabilityAdapter:
     def sync(self, **request: Any) -> dict[str, Any]:
         self.sync_requests.append(request)
         self.sync_plans.append(request["sync_plan"])
-        return {"synced": request.get("online", True)}
+        return (
+            dict(self.sync_result)
+            if self.sync_result is not None
+            else {"synced": request.get("online", True)}
+        )
 
     def open_link(self, **_: Any) -> dict[str, Any]:
         return {"url": "https://example.invalid"}
@@ -1818,16 +1837,59 @@ def test_observability_retry_keeps_verified_scope_and_resource_estimate(tmp_path
             "preflight_id": preflight["preflight_id"],
         },
     )["data"]
-    assert connected["binding"]["state"] == "CONNECTED"
+    assert connected["binding"]["state"] == "SYNC_QUEUED_OFFLINE"
     assert connected["upload_preview"]["estimated_current_raster_bytes"] == expected_bytes
     assert connected["upload_preview"]["current_raster_estimate_status"] == "PRE_RUN_ESTIMATE"
     assert connected["upload_preview"]["expected_current_raster_count"] == 12
     assert connected["upload_preview"]["retained_current_raster_count"] == 0
+    status = dispatcher.dispatch("observability.get_status", {"project_directory": str(project)})[
+        "data"
+    ]
+    assert status["state"] == "SYNC_QUEUED_OFFLINE"
+    blocked_store = EcoProjectStore(project)
+    try:
+        claimed = blocked_store.claim_outbox(limit=1)
+        assert len(claimed) == 1
+        blocked_id = str(claimed[0]["outbox_id"])
+        blocked_store.mark_outbox_failed(
+            blocked_id,
+            "CLOUD_POLICY_REVIEW_REQUIRED",
+            blocked=True,
+            lease_token=str(claimed[0]["lease_token"]),
+        )
+    finally:
+        blocked_store.close()
     retried = dispatcher.dispatch("observability.retry", {"project_directory": str(project)})
     assert retried["method"] == "observability.retry"
     assert retried["data"]["receipt"] == {"synced": True}
     assert adapter.sync_plans[-1]["estimated_current_raster_bytes"] == expected_bytes
     assert adapter.sync_requests[-1]["online"] is True
+    authoritative = EcoProjectStore(project)
+    try:
+        requeued_row = next(
+            item for item in authoritative.telemetry_rows() if item["outbox_id"] == blocked_id
+        )
+        assert requeued_row["state"] == "PENDING"
+        audits = authoritative.outbox_requeue_audits(outbox_id=blocked_id)
+        assert len(audits) == 1
+        assert audits[0]["blocked_error_code"] == "CLOUD_POLICY_REVIEW_REQUIRED"
+        _deployment, export_sync_state, _professional = dispatcher._authoritative_project_context(
+            authoritative
+        )
+    finally:
+        authoritative.close()
+    assert export_sync_state == "SYNC_QUEUED_OFFLINE"
+
+    adapter.sync_result = {
+        "sync_state": "BLOCKED",
+        "blocked": 1,
+        "remaining": 1,
+    }
+    blocked = dispatcher.dispatch("observability.retry", {"project_directory": str(project)})[
+        "data"
+    ]
+    assert blocked["binding"]["state"] == "BLOCKED"
+    assert blocked["receipt"]["remaining"] == 1
 
 
 def test_observability_sync_queues_offline_without_online_adapter_path(tmp_path: Path) -> None:

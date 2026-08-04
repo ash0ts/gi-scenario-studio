@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from ecocorridor_core.contracts import (
     ActionCellReplacement,
     ConnectivityRunPlan,
@@ -90,6 +91,44 @@ def test_cross_contract_validation_covers_effect_bounds_overlap_and_safeguards()
     codes = _codes(validate_professional_bundle(overlapping_bundle))
     assert "SEPARATE_INTERVENTION_EFFECTS_OVERLAP" in codes
     assert "SAFEGUARD_COVERAGE_INCOMPLETE" in codes
+
+
+@pytest.mark.parametrize(
+    "grid_change",
+    [
+        {"crs": "EPSG:26917"},
+        {"width": 13},
+        {"height": 13},
+        {"transform": (25.0, 0.0, 25.0, 0.0, -25.0, 300.0)},
+        {"cell_area_m2": 626.0},
+    ],
+    ids=("crs", "extent-width", "extent-height", "transform", "cell-area"),
+)
+def test_professional_preflight_rejects_review_mask_grid_identity_drift(
+    grid_change: dict[str, object],
+) -> None:
+    fixture = build_ridgeway_fixture()
+    mask = fixture.bundle.review_masks[0]
+    mask_asset = next(item for item in fixture.bundle.assets if item.asset_id == mask.asset_id)
+    assert mask_asset.grid is not None
+    changed_mask_asset = mask_asset.model_copy(
+        update={"grid": mask_asset.grid.model_copy(update=grid_change)}
+    )
+    bundle = fixture.bundle.model_copy(
+        update={
+            "assets": [
+                changed_mask_asset if item.asset_id == mask.asset_id else item
+                for item in fixture.bundle.assets
+            ]
+        }
+    )
+
+    findings = validate_professional_bundle(bundle)
+
+    assert "REVIEW_MASK_GRID_MISMATCH" in _codes(findings)
+    conflict = next(item for item in findings if item.code == "GRID_ID_GEOMETRY_CONFLICT")
+    assert conflict.object_reference == mask.grid_id
+    assert "new grid ID" in conflict.remediation
 
 
 def test_decision_rule_pairs_must_exist_in_every_scoped_scenario() -> None:

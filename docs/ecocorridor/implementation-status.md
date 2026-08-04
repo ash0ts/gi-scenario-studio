@@ -143,6 +143,31 @@ current direct evidence.
   Evidence Rail.
 - Parameterized W&B/Weave adapters, sensitive-data authorization, separate
   native credential boundaries, and deterministic assistant response checks.
+- W&B delivery now treats a deterministic immutable telemetry-projection
+  Artifact—not mutable Run summary markers—as cloud completion authority. A
+  retry validates and re-downloads that exact canonical projection plus every
+  retained output Artifact before local rows can become synced. History,
+  Tables, input edges, and Registry links are explicitly reconstructable views
+  of that payload. Direct terminal rows are mirrored in deterministic batches
+  of at most 128 rows or 512 MiB and acknowledged atomically; the 1,596-job
+  Ridgeway scale gate requires exactly 13 envelopes. `CONNECTED` is impossible
+  while any authoritative outbox row remains pending, uploading, failed, or
+  blocked. Explicit retry revalidates scope and asset policy before creating an
+  immutable blocked-row requeue audit, and professional packages are stamped
+  queued until their own atomic `evidence_export` envelope is confirmed.
+- Ecological validation now requires exact grid identity and geometry across
+  scenario assets, focal assets, resistance hypotheses, action effects, and
+  applicable review masks. A changed geometry cannot reuse a grid identity,
+  and an approved alignment plan creates a semantic revision rather than a
+  hidden transformation.
+- Circuitscape startup and packaging now require the exact package UUID,
+  version `5.17.1`, and source-tree hash recorded in the committed Julia
+  manifest, reject path/repository-tracked substitutions, and verify the loaded
+  runtime package only after the manifest provenance checks pass.
+- The GI regression boundary now verifies the complete pnpm dependency closure
+  reachable from the preserved GI importer, including package metadata,
+  dependency edges, approved optional-peer context rewrites, root pnpm policy,
+  workspace configuration, and absence of repository `.npmrc` overrides.
 - Target-specific worker/Julia staging, resource hashing, installer workflows,
   source/target-bound detached resource signatures, native GDAL/PROJ/GEOS
   inventory, SBOM generation, and installed-smoke entry points.
@@ -256,8 +281,11 @@ startup state before release.
    must complete the declared uncoached protocol, with at least five passing
    every comprehension task.
 
-The pushed draft PR still needs every actionable executable failure repaired;
-full CI remains legitimately blocked by the unwaived upstream dependency
-findings above. None of
+The pushed draft PR still needs every actionable executable failure repaired.
+Its latest GitHub Actions checks have not started jobs because the repository
+account is blocked by a billing or Actions spending-limit condition. That
+infrastructure failure is not code execution and is not green CI. After the
+account condition is resolved, the unwaived upstream dependency findings above
+are still expected to block the full release. None of
 the blockers above may be replaced with fixtures, self-attestation, a
 manual checkbox, or undocumented provider behavior.

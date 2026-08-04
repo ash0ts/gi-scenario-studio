@@ -21,6 +21,7 @@ from scenario_platform.cloud_sync import (
     DurableOutboxConsumer,
     InMemoryCredentialSession,
     LineageUploader,
+    OutboxBatchPolicy,
     OutboxRepository,
     ProjectCloudDirectories,
     WandbSdkLineageUploader,
@@ -94,6 +95,46 @@ _SENSITIVE_WEAVE_KEYS = (
     "secret",
     "token",
 )
+
+CloudSyncState = Literal[
+    "CONNECTED",
+    "SYNCING",
+    "SYNC_QUEUED_OFFLINE",
+    "FAILED_RETRYING",
+    "AUTHENTICATION_REQUIRED",
+    "BLOCKED",
+]
+
+
+def derive_cloud_sync_state(
+    *,
+    binding_state: str,
+    telemetry_rows: list[dict[str, Any]],
+) -> tuple[CloudSyncState, dict[str, int]]:
+    """Derive the visible cloud state from committed local evidence.
+
+    Persisted binding state is useful for destination/authentication policy, but
+    it cannot hide a newer outbox row.  Conversely, an old queued/syncing flag
+    cannot keep a project non-connected after every committed row is synced.
+    """
+
+    counts: dict[str, int] = {}
+    for row in telemetry_rows:
+        state = str(row.get("state", ""))
+        counts[state] = counts.get(state, 0) + 1
+    if binding_state in {"BLOCKED", "BLOCKED_PROJECT_POLICY"} or counts.get("BLOCKED", 0):
+        return "BLOCKED", counts
+    if binding_state == "AUTHENTICATION_REQUIRED":
+        return "AUTHENTICATION_REQUIRED", counts
+    if counts.get("FAILED", 0):
+        return "FAILED_RETRYING", counts
+    if counts.get("UPLOADING", 0):
+        return "SYNCING", counts
+    if counts.get("PENDING", 0):
+        return "SYNC_QUEUED_OFFLINE", counts
+    if binding_state == "FAILED_RETRYING":
+        return "FAILED_RETRYING", counts
+    return "CONNECTED", counts
 
 
 def _allowed_target_url(url: str, target: WandbTarget) -> bool:
@@ -659,16 +700,50 @@ class EcoRpcObservabilityAdapter:
                     sync_plan=sync_plan,
                     profile=self.profile,
                 ),
+                batch_policy=OutboxBatchPolicy(event_type="direct_job_terminal"),
             )
             if not online:
                 # A previously exact-scope-verified binding may continue
                 # locally.  No provider credential, target lookup, outbox
                 # claim, or fake offline W&B run is attempted here.
-                return consumer.drain(online=False).model_dump(mode="json")
+                rows = store.telemetry_rows()
+                offline = consumer.drain(online=False).model_dump(mode="json")
+                sync_state, state_counts = derive_cloud_sync_state(
+                    # The caller has already proved this persisted binding and
+                    # current sync plan are allowed. Do not let an older badge
+                    # hide the current committed outbox disposition.
+                    binding_state="CONNECTED",
+                    telemetry_rows=rows,
+                )
+                offline["sync_state"] = sync_state
+                offline["state_counts"] = state_counts
+                offline["remaining"] = sum(
+                    count for state, count in state_counts.items() if state != "SYNCED"
+                )
+                return offline
             with self.credentials.environment():
                 self.validate(binding=binding)
-                report = consumer.drain(online=True)
-                return report.model_dump(mode="json")
+                totals = {"claimed": 0, "synced": 0, "failed": 0, "blocked": 0}
+                for _ in range(1_024):
+                    report = consumer.drain(online=True)
+                    for key in totals:
+                        totals[key] += int(getattr(report, key))
+                    if report.failed or report.blocked or report.claimed == 0:
+                        break
+                rows = store.telemetry_rows()
+                sync_state, state_counts = derive_cloud_sync_state(
+                    binding_state="CONNECTED",
+                    telemetry_rows=rows,
+                )
+                remaining = sum(count for state, count in state_counts.items() if state != "SYNCED")
+                return {
+                    "online": True,
+                    **totals,
+                    "queued_offline": False,
+                    "remaining": remaining,
+                    "state_counts": state_counts,
+                    "sync_state": sync_state,
+                }
         finally:
             close = getattr(store, "close", None)
             if callable(close):
@@ -748,5 +823,6 @@ __all__ = [
     "SdkWeaveClientFactory",
     "WeaveClientFactory",
     "WeaveNestedTraceSink",
+    "derive_cloud_sync_state",
     "protected_integration_scope_resolver",
 ]

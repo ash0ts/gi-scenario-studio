@@ -3,6 +3,11 @@ using Circuitscape
 using JSON3
 using Test
 
+@testset "runtime package identity" begin
+    @test pkgversion(Circuitscape) == v"5.17.1"
+    @test EcoCorridorEngine.ENGINE_VERSION == string(pkgversion(Circuitscape))
+end
+
 function request_with(; neighbor_rule="EIGHT", resistance_average="ARITHMETIC")
     return JSON3.read(
         JSON3.write(

@@ -107,6 +107,204 @@ def test_existing_gi_dependency_records_survive_eco_additions(checker: ModuleTyp
     assert checker.dependency_isolation_issues() == []
 
 
+def _pnpm_fixture(*, root_version: str, root_integrity: str, child_edge: str) -> str:
+    return f"""lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  apps/desktop:
+    dependencies:
+      protected-root:
+        specifier: 1.0.0
+        version: {root_version}
+
+packages:
+
+  child@2.0.0:
+    resolution: {{integrity: sha512-child}}
+
+  protected-root@1.0.0:
+    resolution: {{integrity: {root_integrity}}}
+    peerDependencies:
+      peer: '*'
+    peerDependenciesMeta:
+      peer:
+        optional: true
+
+snapshots:
+
+  child@2.0.0: {{}}
+
+  protected-root@{root_version}:
+    dependencies:
+      child: {child_edge}
+"""
+
+
+def test_gi_pnpm_closure_rejects_reachable_integrity_drift(checker: ModuleType) -> None:
+    base = _pnpm_fixture(
+        root_version="1.0.0",
+        root_integrity="sha512-reviewed",
+        child_edge="2.0.0",
+    )
+    current = _pnpm_fixture(
+        root_version="1.0.0",
+        root_integrity="sha512-tampered",
+        child_edge="2.0.0",
+    )
+
+    issues = checker._pnpm_gi_closure_issues(base, current)
+
+    assert "GI pnpm package metadata or integrity drifted: protected-root@1.0.0" in issues
+
+
+def test_gi_pnpm_closure_rejects_reachable_dependency_edge_drift(checker: ModuleType) -> None:
+    base = _pnpm_fixture(
+        root_version="1.0.0",
+        root_integrity="sha512-reviewed",
+        child_edge="2.0.0",
+    )
+    current = _pnpm_fixture(
+        root_version="1.0.0",
+        root_integrity="sha512-reviewed",
+        child_edge="2.0.1",
+    ).replace("child@2.0.0", "child@2.0.1")
+
+    issues = checker._pnpm_gi_closure_issues(base, current)
+
+    assert "GI pnpm dependency edge drifted: protected-root@1.0.0 -> child@2.0.0" in issues
+
+
+def test_gi_pnpm_closure_rejects_an_added_protected_dependency_edge(checker: ModuleType) -> None:
+    base = _pnpm_fixture(
+        root_version="1.0.0",
+        root_integrity="sha512-reviewed",
+        child_edge="2.0.0",
+    )
+    current = base.replace(
+        "      child: 2.0.0\n",
+        "      child: 2.0.0\n      malware: 9.9.9\n",
+    ).replace(
+        "  protected-root@1.0.0:\n    resolution:",
+        "  malware@9.9.9:\n    resolution: {integrity: sha512-malware}\n\n"
+        "  protected-root@1.0.0:\n    resolution:",
+        1,
+    )
+    current = current.replace(
+        "  protected-root@1.0.0:\n    dependencies:",
+        "  malware@9.9.9: {}\n\n  protected-root@1.0.0:\n    dependencies:",
+        1,
+    )
+
+    issues = checker._pnpm_gi_closure_issues(base, current)
+
+    assert (
+        "GI pnpm protected snapshot gained a dependency edge: protected-root@1.0.0 -> malware@9.9.9"
+    ) in issues
+
+
+def test_gi_pnpm_closure_rejects_shared_install_setting_drift(checker: ModuleType) -> None:
+    base = _pnpm_fixture(
+        root_version="1.0.0",
+        root_integrity="sha512-reviewed",
+        child_edge="2.0.0",
+    )
+    current = base.replace("autoInstallPeers: true", "autoInstallPeers: false")
+
+    assert "shared pnpm lock settings drifted" in checker._pnpm_gi_closure_issues(base, current)
+
+
+def test_gi_pnpm_closure_never_normalizes_patch_hashes_as_peer_context(
+    checker: ModuleType,
+) -> None:
+    base = _pnpm_fixture(
+        root_version="1.0.0",
+        root_integrity="sha512-reviewed",
+        child_edge="2.0.0",
+    )
+    current = base.replace(
+        "version: 1.0.0\n",
+        "version: 1.0.0(patch_hash=unreviewed)\n",
+        1,
+    ).replace(
+        "  protected-root@1.0.0:\n    dependencies:",
+        "  protected-root@1.0.0(patch_hash=unreviewed):\n    dependencies:",
+        1,
+    )
+
+    issues = checker._pnpm_gi_closure_issues(base, current)
+
+    assert "GI pnpm closure contains an unreviewed patched dependency" in issues
+
+
+def test_gi_pnpm_closure_allows_only_reviewed_additive_optional_peers(
+    checker: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base = _pnpm_fixture(
+        root_version="1.0.0",
+        root_integrity="sha512-reviewed",
+        child_edge="2.0.0",
+    )
+    current = _pnpm_fixture(
+        root_version="1.0.0(peer@3.0.0)",
+        root_integrity="sha512-reviewed",
+        child_edge="2.0.0",
+    ).replace(
+        "      child: 2.0.0\n",
+        "      child: 2.0.0\n    optionalDependencies:\n      peer: 3.0.0\n",
+    )
+    current = current.replace(
+        "  child@2.0.0: {}\n",
+        "  child@2.0.0: {}\n\n  peer@3.0.0: {}\n",
+    ).replace(
+        "  child@2.0.0:\n    resolution: {integrity: sha512-child}\n",
+        "  child@2.0.0:\n    resolution: {integrity: sha512-child}\n\n"
+        "  peer@3.0.0:\n    resolution: {integrity: sha512-peer}\n",
+    )
+
+    packages = checker._section_records(current, "packages")
+    snapshots = checker._section_records(current, "snapshots")
+    monkeypatch.setattr(
+        checker,
+        "REVIEWED_GI_PNPM_OPTIONAL_PEER_ADDITIONS",
+        {"protected-root@1.0.0": {"peer": "3.0.0"}},
+    )
+    monkeypatch.setattr(
+        checker,
+        "REVIEWED_GI_PNPM_PEER_CONTEXT_KEYS",
+        {"protected-root@1.0.0": "protected-root@1.0.0(peer@3.0.0)"},
+    )
+    monkeypatch.setattr(checker, "REVIEWED_GI_PNPM_ADDITIVE_ROOTS", ("peer@3.0.0",))
+    monkeypatch.setattr(
+        checker,
+        "REVIEWED_GI_PNPM_ADDITIVE_CLOSURE_SHA256",
+        checker._pnpm_closure_sha256(("peer@3.0.0",), packages, snapshots),
+    )
+
+    assert checker._pnpm_gi_closure_issues(base, current) == []
+
+
+def test_gi_pnpm_closure_locks_reviewed_optional_peer_subtree_bytes(
+    checker: ModuleType,
+) -> None:
+    if checker.git("cat-file", "-e", f"{checker.BASE_SHA}^{{commit}}").returncode:
+        pytest.skip("immutable base is unavailable in this shallow checkout")
+    base = checker._base_file("pnpm-lock.yaml")
+    current = (checker.ROOT / "pnpm-lock.yaml").read_text(encoding="utf-8")
+    packages = checker._section_records(current, "packages")
+    reviewed = packages["@types/node@22.20.1"]
+    tampered = reviewed.replace("sha512-", "sha512-X", 1)
+    assert tampered != reviewed
+
+    issues = checker._pnpm_gi_closure_issues(base, current.replace(reviewed, tampered, 1))
+
+    assert any("optional-peer closure bytes drifted" in issue for issue in issues)
+
+
 def test_identity_gate_rejects_a_bundle_identifier_collision(
     checker: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:

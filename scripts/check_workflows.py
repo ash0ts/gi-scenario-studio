@@ -48,6 +48,8 @@ LOCKED_UV_SYNC = re.compile(r"(?<!\S)uv\s+sync\s+--locked(?=(?:\s|\\|['\";]|$))"
 PACKAGECOMPILER_BUILD_SCRIPT = "scripts/build_ecocorridor_engine.jl"
 PACKAGECOMPILER_HEARTBEAT_HELPER = "scripts/run_with_progress_heartbeat.sh"
 PACKAGECOMPILER_HEARTBEAT_LABEL = "PackageCompiler application build"
+CIRCUITSCAPE_MANIFEST_VERIFIER = "julia/EcoCorridorEngine/scripts/verify_manifest.jl"
+CIRCUITSCAPE_PROJECT_ARGUMENT = "--project=julia/EcoCorridorEngine"
 UPLOAD_ACTION = re.compile(
     r"^\s*-?\s*uses:\s*actions/upload(?:-pages)?-artifact@",
     re.MULTILINE,
@@ -777,6 +779,142 @@ def _shell_without_comment_lines(source: str) -> str:
     return " ".join(line for line in source.splitlines() if not line.lstrip().startswith("#"))
 
 
+def _logical_shell_commands(source: str) -> list[str]:
+    """Join backslash continuations while retaining command boundaries."""
+
+    commands: list[str] = []
+    fragments: list[str] = []
+    for raw_line in source.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.endswith("\\"):
+            fragments.append(line[:-1].rstrip())
+            continue
+        fragments.append(line)
+        commands.append(" ".join(fragments))
+        fragments = []
+    if fragments:
+        commands.append(" ".join(fragments))
+    return commands
+
+
+def _circuitscape_julia_command_kind(command: str) -> str | None:
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return None
+    prefix = [
+        "julia",
+        CIRCUITSCAPE_PROJECT_ARGUMENT,
+        "--startup-file=no",
+        "--history-file=no",
+    ]
+    if tokens[: len(prefix)] != prefix:
+        return None
+    arguments = tokens[len(prefix) :]
+    if arguments == ["-e", "using Pkg; Pkg.instantiate()"]:
+        return "instantiate"
+    if arguments == [CIRCUITSCAPE_MANIFEST_VERIFIER]:
+        return "verify"
+    if arguments == ["-e", "using Pkg; Pkg.precompile()"]:
+        return "precompile"
+    return None
+
+
+def evaluate_circuitscape_manifest_verification_topology(
+    workflows: dict[str, str],
+) -> list[str]:
+    """Require runtime-manifest verification before tests, packaging, or evidence.
+
+    Every approved Circuitscape environment must execute the same three-command
+    sequence in one step: instantiate, verify the loaded package graph, then
+    precompile.  Keeping the verifier adjacent prevents another command from
+    using or transforming an unverified dependency environment first.
+    """
+
+    findings: list[str] = []
+    expected: dict[str, dict[str, int]] = {
+        ECOCORRIDOR_CI_WORKFLOW: {
+            "connectivity-engine": 1,
+            "packaged-scientific-boundary": 1,
+        },
+        ECOCORRIDOR_RELEASE_WORKFLOW: {"build-signed-installers": 1},
+        RIDGEWAY_EVIDENCE_WORKFLOW: {"direct-ridgeway-evidence": 1},
+    }
+    missing = sorted(set(expected) - set(workflows))
+    if missing:
+        findings.append(
+            "Circuitscape manifest-verification topology is incomplete: " + ", ".join(missing)
+        )
+
+    for workflow_name, text in sorted(workflows.items()):
+        allowed_jobs = expected.get(workflow_name, {})
+        observed_by_job: dict[str, int] = {}
+        seen_jobs: set[str] = set()
+        for number, job_name, block_lines in _job_blocks(text.splitlines()):
+            seen_jobs.add(job_name)
+            for start, end in _step_ranges(block_lines):
+                source = _run_source(block_lines, start, end)
+                commands = _logical_shell_commands(source)
+                kinds = [_circuitscape_julia_command_kind(command) for command in commands]
+                raw_instantiate_count = source.count("Pkg.instantiate()")
+                recognized_instantiate_count = kinds.count("instantiate")
+                if raw_instantiate_count != recognized_instantiate_count:
+                    findings.append(
+                        f"{workflow_name}:{number + start}: Pkg.instantiate must use the exact "
+                        "pinned Circuitscape Julia command"
+                    )
+                if raw_instantiate_count and not re.search(
+                    r"^\s*shell:\s*bash\s*$",
+                    "\n".join(block_lines[start:end]),
+                    re.MULTILINE,
+                ):
+                    findings.append(
+                        f"{workflow_name}:{number + start}: Circuitscape instantiation must "
+                        "declare shell: bash for cross-platform command continuations"
+                    )
+                for command_index, kind in enumerate(kinds):
+                    if kind != "instantiate":
+                        continue
+                    if job_name not in allowed_jobs:
+                        findings.append(
+                            f"{workflow_name}:{number + start}: Circuitscape instantiation is "
+                            f"not allowed in job {job_name}"
+                        )
+                    expected_sequence = ["instantiate", "verify", "precompile"]
+                    if kinds[command_index : command_index + 3] != expected_sequence:
+                        findings.append(
+                            f"{workflow_name}:{number + start}: Circuitscape instantiation must "
+                            "be followed immediately by verify_manifest.jl and precompile"
+                        )
+                        continue
+                    observed_by_job[job_name] = observed_by_job.get(job_name, 0) + 1
+
+                for command_index, kind in enumerate(kinds):
+                    if kind == "verify" and (
+                        command_index == 0 or kinds[command_index - 1] != "instantiate"
+                    ):
+                        findings.append(
+                            f"{workflow_name}:{number + start}: verify_manifest.jl is not "
+                            "immediately bound to an approved instantiation"
+                        )
+
+        for required_job, required_count in allowed_jobs.items():
+            observed = observed_by_job.get(required_job, 0)
+            if required_job not in seen_jobs:
+                findings.append(
+                    f"{workflow_name}: required Circuitscape job {required_job} is absent"
+                )
+            elif observed != required_count:
+                findings.append(
+                    f"{workflow_name}: job {required_job} must instantiate and immediately "
+                    f"verify Circuitscape exactly {required_count} time(s); observed {observed}"
+                )
+
+    return findings
+
+
 def evaluate_ecocorridor_geospatial_dependency_topology(
     workflows: dict[str, str],
 ) -> list[str]:
@@ -1235,6 +1373,7 @@ def main() -> int:
         name: text for name, text in by_name.items() if name.startswith("ecocorridor-")
     }
     findings.extend(evaluate_ecocorridor_geospatial_dependency_topology(eco_workflows))
+    findings.extend(evaluate_circuitscape_manifest_verification_topology(eco_workflows))
     findings.extend(evaluate_packagecompiler_heartbeat_topology(eco_workflows))
     findings.extend(evaluate_release_signing_security_topology(eco_workflows))
     if findings:

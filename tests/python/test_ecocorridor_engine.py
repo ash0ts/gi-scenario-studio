@@ -24,6 +24,11 @@ from ecocorridor_core.engine import (
     parse_circuitscape_matrix,
     validate_effective_circuitscape_configuration,
 )
+from ecocorridor_core.engine_manifest_gate import (
+    REQUIRED_CIRCUITSCAPE_TREE_SHA1,
+    parse_circuitscape_manifest_version,
+    verify_circuitscape_manifest,
+)
 
 
 def test_hand_calculated_series_and_parallel_are_quarantined_test_results() -> None:
@@ -76,6 +81,120 @@ def test_release_manifest_cannot_be_fabricated_without_julia_manifest(tmp_path: 
             resistance_average="ARITHMETIC",
             platform="test",
         )
+
+
+def test_committed_manifest_resolves_the_exact_circuitscape_entry() -> None:
+    root = Path(__file__).resolve().parents[2]
+    manifest = root / "julia" / "EcoCorridorEngine" / "Manifest.toml"
+
+    assert parse_circuitscape_manifest_version(manifest) == "5.17.1"
+
+
+def test_julia_manifest_verifier_checks_loaded_circuitscape_version_after_source() -> None:
+    root = Path(__file__).resolve().parents[2]
+    verifier = (root / "julia" / "EcoCorridorEngine" / "scripts" / "verify_manifest.jl").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'UUID("2b7a1792-8151-5239-925d-e2b8fdfa3201")' in verifier
+    assert REQUIRED_CIRCUITSCAPE_TREE_SHA1 in verifier
+    assert "is_tracking_path" in verifier
+    assert "is_tracking_repo" in verifier
+    assert verifier.index("using Circuitscape") > verifier.index("is_tracking_repo")
+    assert "loaded_version = pkgversion(Circuitscape)" in verifier
+
+
+@pytest.mark.parametrize(
+    ("manifest_text", "message"),
+    [
+        (
+            '[[deps.CircuitscapeBackup]]\nuuid = "decoy"\nversion = "5.17.1"\n',
+            "exactly one",
+        ),
+        (
+            (
+                "[[deps.Circuitscape]]\n"
+                'uuid = "00000000-0000-0000-0000-000000000000"\n'
+                f'git-tree-sha1 = "{REQUIRED_CIRCUITSCAPE_TREE_SHA1}"\n'
+                'version = "5.17.1"\n'
+            ),
+            "unexpected UUID",
+        ),
+        (
+            (
+                "[[deps.Circuitscape]]\n"
+                'uuid = "2b7a1792-8151-5239-925d-e2b8fdfa3201"\n'
+                f'git-tree-sha1 = "{REQUIRED_CIRCUITSCAPE_TREE_SHA1}"\n'
+                'version = "5.17.1"\n'
+                "[[deps.Circuitscape]]\n"
+                'uuid = "2b7a1792-8151-5239-925d-e2b8fdfa3201"\n'
+                f'git-tree-sha1 = "{REQUIRED_CIRCUITSCAPE_TREE_SHA1}"\n'
+                'version = "5.17.1"\n'
+            ),
+            "exactly one",
+        ),
+    ],
+)
+def test_manifest_parser_rejects_lookalike_uuid_and_duplicate_mutations(
+    tmp_path: Path, manifest_text: str, message: str
+) -> None:
+    manifest = tmp_path / "Manifest.toml"
+    manifest.write_text(manifest_text, encoding="utf-8")
+
+    with pytest.raises(EngineManifestGateError, match=message):
+        parse_circuitscape_manifest_version(manifest)
+
+
+@pytest.mark.parametrize(
+    ("provenance", "message"),
+    [
+        ("", "reviewed registry tree"),
+        ('git-tree-sha1 = "0000000000000000000000000000000000000000"\n', "reviewed registry tree"),
+        (
+            f'git-tree-sha1 = "{REQUIRED_CIRCUITSCAPE_TREE_SHA1}"\npath = "../replacement"\n',
+            "path/repository tracking",
+        ),
+        (
+            (
+                f'git-tree-sha1 = "{REQUIRED_CIRCUITSCAPE_TREE_SHA1}"\n'
+                'repo-url = "https://example.invalid/replacement.git"\nrepo-rev = "main"\n'
+            ),
+            "path/repository tracking",
+        ),
+    ],
+    ids=("missing-tree", "wrong-tree", "path-tracked", "repository-tracked"),
+)
+def test_manifest_parser_rejects_unreviewed_circuitscape_source(
+    tmp_path: Path, provenance: str, message: str
+) -> None:
+    manifest = tmp_path / "Manifest.toml"
+    manifest.write_text(
+        "[[deps.Circuitscape]]\n"
+        'uuid = "2b7a1792-8151-5239-925d-e2b8fdfa3201"\n'
+        f"{provenance}"
+        'version = "5.17.1"\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(EngineManifestGateError, match=message):
+        parse_circuitscape_manifest_version(manifest)
+
+
+def test_engine_manifest_gate_does_not_accept_a_decoy_version_string(tmp_path: Path) -> None:
+    project = tmp_path / "julia"
+    project.mkdir()
+    (project / "Manifest.toml").write_text(
+        "[[deps.Decoy]]\n"
+        'uuid = "00000000-0000-0000-0000-000000000000"\n'
+        'version = "5.17.1"\n'
+        "[[deps.Circuitscape]]\n"
+        'uuid = "2b7a1792-8151-5239-925d-e2b8fdfa3201"\n'
+        f'git-tree-sha1 = "{REQUIRED_CIRCUITSCAPE_TREE_SHA1}"\n'
+        'version = "5.16.0"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(EngineManifestGateError, match=r"found 5\.16\.0"):
+        verify_circuitscape_manifest(project / "Manifest.toml")
 
 
 def test_engine_identity_excludes_packaging_timestamp() -> None:

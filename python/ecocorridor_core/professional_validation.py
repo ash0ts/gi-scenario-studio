@@ -290,6 +290,32 @@ def validate_professional_bundle(
                 asset.asset_id,
                 label,
             )
+
+    grid_identities: dict[str, dict[str, list[str]]] = {}
+    for asset in bundle.assets:
+        if asset.grid is None:
+            continue
+        grid_identities.setdefault(asset.grid.grid_id, {}).setdefault(
+            grid_identity(asset.grid), []
+        ).append(asset.asset_id)
+    for grid_id, identities in sorted(grid_identities.items()):
+        if len(identities) <= 1:
+            continue
+        affected_assets = sorted(
+            asset_id for asset_ids in identities.values() for asset_id in asset_ids
+        )
+        findings.append(
+            _finding(
+                "GRID_ID_GEOMETRY_CONFLICT",
+                grid_id,
+                (
+                    "Assign a new grid ID whenever CRS, extent, dimensions, affine transform, "
+                    "or cell area changes, then preview and approve any explicit alignment. "
+                    "The same grid ID currently names different cell geometries for: "
+                    f"{', '.join(affected_assets)}."
+                ),
+            )
+        )
     reference_bindings = list(bundle.reference_bindings)
     bound_reference_asset_ids = {
         binding.reference_matrix_asset_id for binding in reference_bindings
@@ -656,6 +682,8 @@ def validate_professional_bundle(
             or focal_asset.grid is None
             or scenario.grid_id != hypothesis.grid_id
             or scenario.grid_id != focal_set.grid_id
+            or resistance_asset.grid.grid_id != scenario.grid_id
+            or focal_asset.grid.grid_id != scenario.grid_id
             or grid_identity(resistance_asset.grid) != grid_identity(focal_asset.grid)
         ):
             findings.append(
@@ -945,13 +973,14 @@ def validate_professional_bundle(
 
     for mask in bundle.review_masks:
         asset = assets.get(mask.asset_id)
-        if (
+        valid_mask_asset = not (
             asset is None
             or asset.kind != AssetKind.REVIEW_MASK
             or asset.grid is None
             or asset.grid.value_kind != RasterValueKind.MASK
             or asset.grid.grid_id != mask.grid_id
-        ):
+        )
+        if not valid_mask_asset:
             findings.append(
                 _finding(
                     "REVIEW_MASK_INVALID",
@@ -959,12 +988,46 @@ def validate_professional_bundle(
                     "Use a reviewed binary mask on the exact scenario grid.",
                 )
             )
-        elif mask.grid_id not in {item.grid_id for item in bundle.scenarios}:
+            continue
+        assert asset is not None and asset.grid is not None
+
+        applicable_scenarios = [
+            scenario for scenario in bundle.scenarios if scenario.grid_id == mask.grid_id
+        ]
+        if not applicable_scenarios:
             findings.append(
                 _finding(
                     "REVIEW_MASK_SCENARIO_GRID_UNUSED",
                     mask.mask_id,
                     "Align the review mask to at least one directly evaluated scenario grid.",
+                )
+            )
+            continue
+
+        mismatched_scenarios: list[str] = []
+        for scenario in applicable_scenarios:
+            hypothesis = hypotheses.get(scenario.resistance_hypothesis_id)
+            resistance_asset = (
+                assets.get(hypothesis.resistance_asset_id) if hypothesis is not None else None
+            )
+            if (
+                resistance_asset is not None
+                and resistance_asset.grid is not None
+                and grid_identity(asset.grid) != grid_identity(resistance_asset.grid)
+            ):
+                mismatched_scenarios.append(scenario.scenario_id)
+        if mismatched_scenarios:
+            findings.append(
+                _finding(
+                    "REVIEW_MASK_GRID_MISMATCH",
+                    mask.mask_id,
+                    (
+                        "Use a review-mask asset with the exact CRS, extent, dimensions, affine "
+                        "transform, and cell area of every applicable scenario resistance grid. "
+                        "Assign changed geometry a new grid ID, then preview and approve the "
+                        "explicit alignment for: "
+                        f"{', '.join(sorted(mismatched_scenarios))}."
+                    ),
                 )
             )
 

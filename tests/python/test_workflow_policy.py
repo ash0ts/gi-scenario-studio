@@ -810,6 +810,78 @@ def _ecocorridor_workflows() -> dict[str, str]:
     }
 
 
+def test_circuitscape_instantiation_is_immediately_verified_everywhere(
+    policy: ModuleType,
+) -> None:
+    workflows = _ecocorridor_workflows()
+
+    assert policy.evaluate_circuitscape_manifest_verification_topology(workflows) == []
+    expected_counts = {
+        policy.ECOCORRIDOR_CI_WORKFLOW: 2,
+        policy.ECOCORRIDOR_RELEASE_WORKFLOW: 1,
+        policy.RIDGEWAY_EVIDENCE_WORKFLOW: 1,
+    }
+    for workflow_name, expected_count in expected_counts.items():
+        workflow = workflows[workflow_name]
+        assert workflow.count("Pkg.instantiate()") == expected_count
+        assert workflow.count(policy.CIRCUITSCAPE_MANIFEST_VERIFIER) == expected_count
+
+
+def test_circuitscape_manifest_policy_rejects_missing_or_delayed_verification(
+    policy: ModuleType,
+) -> None:
+    workflows = _ecocorridor_workflows()
+    unsafe = dict(workflows)
+    unsafe[policy.ECOCORRIDOR_CI_WORKFLOW] = unsafe[policy.ECOCORRIDOR_CI_WORKFLOW].replace(
+        f"          julia {policy.CIRCUITSCAPE_PROJECT_ARGUMENT} \\\n"
+        "            --startup-file=no --history-file=no \\\n"
+        f"            {policy.CIRCUITSCAPE_MANIFEST_VERIFIER}\n",
+        "",
+        1,
+    )
+
+    findings = policy.evaluate_circuitscape_manifest_verification_topology(unsafe)
+
+    assert any("followed immediately by verify_manifest.jl" in item for item in findings)
+
+    unsafe = dict(workflows)
+    verified = (
+        f"          julia {policy.CIRCUITSCAPE_PROJECT_ARGUMENT} \\\n"
+        "            --startup-file=no --history-file=no \\\n"
+        f"            {policy.CIRCUITSCAPE_MANIFEST_VERIFIER}\n"
+    )
+    precompile = (
+        f"          julia {policy.CIRCUITSCAPE_PROJECT_ARGUMENT} \\\n"
+        "            --startup-file=no --history-file=no \\\n"
+        "            -e 'using Pkg; Pkg.precompile()'\n"
+    )
+    release = unsafe[policy.ECOCORRIDOR_RELEASE_WORKFLOW]
+    assert verified + precompile in release
+    unsafe[policy.ECOCORRIDOR_RELEASE_WORKFLOW] = release.replace(
+        verified + precompile,
+        precompile + verified,
+        1,
+    )
+
+    findings = policy.evaluate_circuitscape_manifest_verification_topology(unsafe)
+
+    assert any("followed immediately by verify_manifest.jl" in item for item in findings)
+    assert any("not immediately bound" in item for item in findings)
+
+    unsafe = dict(workflows)
+    unsafe[policy.ECOCORRIDOR_RELEASE_WORKFLOW] = unsafe[
+        policy.ECOCORRIDOR_RELEASE_WORKFLOW
+    ].replace(
+        "      - name: Instantiate pinned Circuitscape environment\n        shell: bash\n",
+        "      - name: Instantiate pinned Circuitscape environment\n",
+        1,
+    )
+
+    findings = policy.evaluate_circuitscape_manifest_verification_topology(unsafe)
+
+    assert any("declare shell: bash" in item for item in findings)
+
+
 def test_release_signing_policy_requires_canonical_pynacl_seed_boundary(
     policy: ModuleType,
 ) -> None:

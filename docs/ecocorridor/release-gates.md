@@ -25,7 +25,7 @@ satisfied.
 | Adaptive search | Historical campaign failed its scientific gate and is independently `HISTORICAL_BENCHMARK_ONLY` / production `PROHIBITED`; production remains scrambled Sobol |
 | Julia dependency vulnerability policy | Blocked: the PR #13 scan with database timestamp 2026-08-04T01:17:42Z found 73 unwaived records (3 critical, 32 high, 29 medium, 9 low), including critical findings in `LibSSH2_jll` and `OpenSSL_jll`; the current Julia 1.12.6 dependency graph has not resolved them |
 | Python release dependency policy | Release Ed25519 signing and verification now use pinned PyNaCl 1.6.2, the unused Presidio anonymizer is removed, and raw public/signature compatibility with the Rust host is regression-tested. Release remains blocked because required Weave still resolves `polyfile-weave → pdfminer-six → cryptography 48.0.1`; the advisory remains visible to the unwaived dependency scan |
-| Branch CI and target packaging | Source workflows exist; green draft-PR and installed-target evidence still required |
+| Branch CI and target packaging | Source workflows exist; the latest GitHub Actions checks did not start jobs because of the repository account billing/spending-limit block, so no code executed and green draft-PR plus installed-target evidence are still required |
 | W&B Restricted integration | Blocked pending a supported authoritative scope resolver and invited service account |
 | Provider-backed Weave assistant evaluation | Blocked pending approved provider credential and real evaluation evidence |
 | Signed installers and update metadata | Blocked pending Apple and Windows signing channels |

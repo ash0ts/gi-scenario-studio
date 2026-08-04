@@ -144,6 +144,7 @@ from .grid import (
     apply_approved_grid_alignment,
     approve_grid_alignment,
     grid_alignment_plan_sha256,
+    grid_identity,
     preview_grid_alignment,
 )
 from .guided_evidence import GuidedEvidenceError, GuidedEvidenceResource
@@ -160,7 +161,7 @@ from .metrics import (
     validate_evidence_claim,
 )
 from .observability import ECOCORRIDOR_APP_PROFILE as APP_PROFILE
-from .observability import EcoRpcObservabilityAdapter
+from .observability import EcoRpcObservabilityAdapter, derive_cloud_sync_state
 from .professional_validation import (
     ModelFinding,
     validate_professional_bundle,
@@ -2168,6 +2169,20 @@ class RPCDispatcher:
                     "Only a reviewed raster asset can be aligned.",
                     category=ErrorCategory.MODEL_QUALITY,
                     object_reference=params.source_asset_id,
+                )
+            if asset.grid.grid_id == params.target_grid.grid_id and grid_identity(
+                asset.grid
+            ) != grid_identity(params.target_grid):
+                raise _fault(
+                    "GRID_ID_GEOMETRY_CONFLICT",
+                    "Changed grid geometry requires a new grid ID before alignment preview.",
+                    category=ErrorCategory.MODEL_QUALITY,
+                    severity=Severity.BLOCKING,
+                    object_reference=params.source_asset_id,
+                    remediation=(
+                        "Assign the target geometry a new grid ID, then preview and approve "
+                        "the explicit alignment."
+                    ),
                 )
             try:
                 raster = load_raster(store.resolve_asset_path(asset.relative_path), asset)
@@ -5402,7 +5417,7 @@ class RPCDispatcher:
                 remediation="Revalidate the destination through a documented exact-scope resolver.",
             ) from exc
         state = str(binding.get("state", ""))
-        if state == "BLOCKED_PROJECT_POLICY":
+        if state in {"BLOCKED_PROJECT_POLICY", "BLOCKED"}:
             raise _fault(
                 "BLOCKED_PROJECT_POLICY",
                 "Project data authorization blocks the professional W&B workflow.",
@@ -5410,11 +5425,29 @@ class RPCDispatcher:
                 severity=Severity.BLOCKING,
                 remediation="Resolve every asset representation and destination authorization.",
             )
-        if state == "CONNECTED":
+        cloud_state, _ = derive_cloud_sync_state(
+            binding_state=state,
+            telemetry_rows=store.telemetry_rows(),
+        )
+        if cloud_state == "BLOCKED":
+            raise _fault(
+                "OBSERVABILITY_EVIDENCE_BLOCKED",
+                "Professional evidence includes a blocked cloud-lineage envelope.",
+                category=ErrorCategory.SECURITY,
+                severity=Severity.BLOCKING,
+                remediation=(
+                    "Resolve the exact outbox integrity or authorization finding before export."
+                ),
+            )
+        if cloud_state == "CONNECTED":
             sync_state: Literal["CONNECTED", "SYNCING", "SYNC_QUEUED_OFFLINE"] = "CONNECTED"
-        elif state == "SYNCING":
+        elif cloud_state == "SYNCING":
             sync_state = "SYNCING"
-        elif state in {"SYNC_QUEUED_OFFLINE", "FAILED_RETRYING"}:
+        elif cloud_state in {
+            "SYNC_QUEUED_OFFLINE",
+            "FAILED_RETRYING",
+            "AUTHENTICATION_REQUIRED",
+        }:
             # Exact scope was previously verified; retain local authority and
             # represent pending lineage truthfully without trusting renderer input.
             sync_state = "SYNC_QUEUED_OFFLINE"
@@ -5641,6 +5674,11 @@ class RPCDispatcher:
                 category=ErrorCategory.MODEL_QUALITY,
             )
         deployment, sync_state, professional = self._authoritative_project_context(store)
+        if professional:
+            # Publication atomically enqueues this package's evidence_export
+            # lineage event. The immutable package cannot truthfully claim that
+            # its own cloud evidence is connected before that event is synced.
+            sync_state = "SYNC_QUEUED_OFFLINE"
         current_authorization_bundle = store.effective_bundle() if professional else bundle
         reference_evidence: list[ReferenceEvidenceExportSource] = []
         if professional and (
@@ -6691,7 +6729,10 @@ class RPCDispatcher:
                     severity=Severity.BLOCKING,
                 )
             binding.update(validation)
-            binding["state"] = "CONNECTED"
+            binding["state"] = derive_cloud_sync_state(
+                binding_state="CONNECTED",
+                telemetry_rows=store.telemetry_rows(),
+            )[0]
             store.set_observability(binding)
             try:
                 _, sync_plan = self._sync_plan(
@@ -6722,6 +6763,12 @@ class RPCDispatcher:
                 }
             if not sync_plan["allowed"]:
                 binding["state"] = "BLOCKED_PROJECT_POLICY"
+                store.set_observability(binding)
+            else:
+                binding["state"] = derive_cloud_sync_state(
+                    binding_state="CONNECTED",
+                    telemetry_rows=store.telemetry_rows(),
+                )[0]
                 store.set_observability(binding)
         finally:
             store.close()
@@ -6782,7 +6829,10 @@ class RPCDispatcher:
                     severity=Severity.BLOCKING,
                 )
             binding.update(validation)
-            binding["state"] = "CONNECTED"
+            binding["state"] = derive_cloud_sync_state(
+                binding_state="CONNECTED",
+                telemetry_rows=store.telemetry_rows(),
+            )[0]
             store.set_observability(binding)
         finally:
             store.close()
@@ -6792,6 +6842,12 @@ class RPCDispatcher:
         store = self._store(params.project_directory)
         try:
             binding = store.observability()
+            if binding is not None:
+                state, _ = derive_cloud_sync_state(
+                    binding_state=str(binding.get("state", "")),
+                    telemetry_rows=store.telemetry_rows(),
+                )
+                binding["state"] = state
         finally:
             store.close()
         return self._result(
@@ -6849,7 +6905,12 @@ class RPCDispatcher:
                     sync_plan=plan,
                     online=False,
                 )
-                binding["state"] = "SYNC_QUEUED_OFFLINE"
+                reported_state = str(receipt.get("sync_state") or "")
+                binding["state"] = derive_cloud_sync_state(
+                    binding_state=reported_state or "CONNECTED",
+                    telemetry_rows=store.telemetry_rows(),
+                )[0]
+                binding["last_sync"] = receipt
                 store.set_observability(binding)
                 return self._result("observability.sync", {"binding": binding, "receipt": receipt})
 
@@ -6872,7 +6933,30 @@ class RPCDispatcher:
                     retryable=True,
                     technical_message=type(exc).__name__,
                 ) from exc
-            binding["state"] = "CONNECTED"
+            reported_state = receipt.get("sync_state")
+            if reported_state is None:
+                # Compatibility for injected test adapters. The production
+                # adapter reports its authoritative outbox disposition.
+                reported_state = "CONNECTED" if receipt.get("synced") is True else "FAILED_RETRYING"
+            if reported_state not in {
+                "CONNECTED",
+                "SYNCING",
+                "SYNC_QUEUED_OFFLINE",
+                "FAILED_RETRYING",
+                "BLOCKED",
+            }:
+                binding["state"] = "FAILED_RETRYING"
+                store.set_observability(binding)
+                raise _fault(
+                    "OBSERVABILITY_SYNC_STATE_INVALID",
+                    "The cloud adapter returned no authoritative synchronization disposition.",
+                    category=ErrorCategory.DATA_PROVIDER,
+                    retryable=True,
+                )
+            binding["state"] = derive_cloud_sync_state(
+                binding_state=str(reported_state),
+                telemetry_rows=store.telemetry_rows(),
+            )[0]
             binding["last_sync"] = receipt
             store.set_observability(binding)
         finally:
@@ -6880,6 +6964,66 @@ class RPCDispatcher:
         return self._result("observability.sync", {"binding": binding, "receipt": receipt})
 
     def _observability_retry(self, params: ProjectParams) -> PayloadResult:
+        # A BLOCKED envelope is never made retryable by time alone. Revalidate
+        # the exact destination and current asset policy first, then record an
+        # immutable requeue audit before the normal projector/hash checks run
+        # again. Irreparable evidence will deterministically return to BLOCKED.
+        self._observability_validate(params)
+        store = self._store(params.project_directory)
+        try:
+            binding = store.observability()
+            if binding is None:
+                raise _fault(
+                    "OBSERVABILITY_BINDING_REQUIRED",
+                    "No verified W&B project binding exists.",
+                    category=ErrorCategory.SECURITY,
+                )
+            binding, plan = self._sync_plan(
+                store,
+                oversize_approved_by=binding.get("oversize_approved_by"),
+            )
+            if not plan["allowed"]:
+                raise _fault(
+                    "BLOCKED_PROJECT_POLICY",
+                    "Asset policy still blocks synchronization.",
+                    category=ErrorCategory.SECURITY,
+                    severity=Severity.BLOCKING,
+                )
+            blocked = [
+                row for row in store.telemetry_rows() if str(row.get("state", "")) == "BLOCKED"
+            ]
+            if blocked:
+                revalidation_sha256 = canonical_sha256(
+                    {
+                        "schema_version": "ecocorridor-outbox-revalidation/v1.0",
+                        "binding_id": str(binding.get("binding_id", "")),
+                        "external_project_id": str(binding.get("external_project_id", "")),
+                        "scope_evidence": binding.get("scope_evidence"),
+                        "sync_plan": plan,
+                        "blocked_rows": [
+                            {
+                                "outbox_id": str(row["outbox_id"]),
+                                "payload_sha256": str(row["payload_sha256"]),
+                                "last_error_code": str(row.get("last_error_code", "")),
+                                "attempt_count": int(row.get("attempt_count", 0)),
+                            }
+                            for row in blocked
+                        ],
+                    }
+                )
+                blocked_ids = [str(row["outbox_id"]) for row in blocked]
+                for offset in range(0, len(blocked_ids), 4_096):
+                    store.requeue_blocked_outbox_after_revalidation(
+                        blocked_ids[offset : offset + 4_096],
+                        revalidation_sha256=revalidation_sha256,
+                    )
+                binding["state"] = derive_cloud_sync_state(
+                    binding_state="CONNECTED",
+                    telemetry_rows=store.telemetry_rows(),
+                )[0]
+                store.set_observability(binding)
+        finally:
+            store.close()
         result = self._observability_sync(
             ObservabilitySyncParams(project_directory=params.project_directory, online=True)
         )

@@ -10,6 +10,7 @@ import platform
 from pathlib import Path
 
 from ecocorridor_core.engine import build_engine_manifest
+from ecocorridor_core.engine_manifest_gate import verify_circuitscape_manifest
 
 
 def _atomic_write(path: Path, payload: bytes) -> None:
@@ -37,6 +38,7 @@ def main() -> int:
     parser.add_argument("--resistance-average", choices=["ARITHMETIC", "HARMONIC"], required=True)
     parser.add_argument("--platform", default=platform.platform())
     arguments = parser.parse_args()
+    verify_circuitscape_manifest(arguments.julia_project / "Manifest.toml")
     manifest = build_engine_manifest(
         manifest_id=arguments.manifest_id,
         executable=arguments.executable,

@@ -676,6 +676,10 @@ def test_real_dispatcher_creates_v1_1_and_blocks_conflicting_reference_results(
             }
 
         @staticmethod
+        def telemetry_rows(**_filters: object) -> list[dict[str, object]]:
+            return []
+
+        @staticmethod
         def analysis_bundle(_analysis_id: str) -> ConnectivityProjectBundle:
             return bundle
 
@@ -778,11 +782,13 @@ def test_real_dispatcher_creates_v1_1_and_blocks_conflicting_reference_results(
     }
     validated = dispatcher.dispatch("connectivity.export.validate", request)["data"]
     assert validated["eligibility"]["eligible"] is True
+    assert validated["eligibility"]["sync_state"] == "SYNC_QUEUED_OFFLINE"
     created = dispatcher.dispatch(
         "connectivity.export.create",
         {**request, "export_id": "reference-export-v1-1"},
     )["data"]
     assert created["manifest"]["schema_version"] == "ecocorridor-export/v1.1"
+    assert created["manifest"]["sync_state"] == "SYNC_QUEUED_OFFLINE"
     assert created["manifest"]["reference_evidence"]["entries"][0]["result_id"] == (
         reference_source.result.result_id
     )

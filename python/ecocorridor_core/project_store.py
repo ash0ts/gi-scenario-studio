@@ -568,6 +568,16 @@ CREATE TABLE IF NOT EXISTS eco_telemetry_outbox (
     UNIQUE(project_id,stream_id,stream_sequence),
     UNIQUE(project_id,outbox_sequence)
 );
+CREATE TABLE IF NOT EXISTS eco_telemetry_outbox_requeue_audit (
+    audit_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES eco_projects(project_id) ON DELETE CASCADE,
+    outbox_id TEXT NOT NULL REFERENCES eco_telemetry_outbox(outbox_id) ON DELETE CASCADE,
+    blocked_error_code TEXT NOT NULL,
+    blocked_attempt_count INTEGER NOT NULL CHECK(blocked_attempt_count > 0),
+    revalidation_sha256 TEXT NOT NULL,
+    requeued_at TEXT NOT NULL,
+    UNIQUE(outbox_id,blocked_attempt_count,revalidation_sha256)
+);
 """
 
 
@@ -728,6 +738,12 @@ BEGIN SELECT RAISE(ABORT, 'telemetry sequence evidence is required'); END;
 CREATE TRIGGER IF NOT EXISTS eco_outbox_immutable_delete
 BEFORE DELETE ON eco_telemetry_outbox
 BEGIN SELECT RAISE(ABORT, 'telemetry evidence is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS eco_outbox_requeue_audit_immutable_update
+BEFORE UPDATE ON eco_telemetry_outbox_requeue_audit
+BEGIN SELECT RAISE(ABORT, 'telemetry requeue audit is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS eco_outbox_requeue_audit_immutable_delete
+BEFORE DELETE ON eco_telemetry_outbox_requeue_audit
+BEGIN SELECT RAISE(ABORT, 'telemetry requeue audit is immutable'); END;
 
 CREATE TRIGGER IF NOT EXISTS eco_assistant_record_immutable_update
 BEFORE UPDATE ON eco_assistant_records
@@ -812,7 +828,22 @@ class EcoProjectStore:
         self._connection.execute("PRAGMA journal_mode=WAL")
         self._connection.execute("PRAGMA synchronous=FULL")
         version = int(self._connection.execute("PRAGMA user_version").fetchone()[0])
-        if version not in {0, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112}:
+        if version not in {
+            0,
+            101,
+            102,
+            103,
+            104,
+            105,
+            106,
+            107,
+            108,
+            109,
+            110,
+            111,
+            112,
+            113,
+        }:
             self._connection.close()
             raise RuntimeError(f"unsupported EcoCorridor database version: {version}")
         self._connection.executescript(_SCHEMA)
@@ -1092,7 +1123,7 @@ class EcoProjectStore:
         self._connection.execute("DROP TRIGGER IF EXISTS eco_analysis_plan_immutable")
         self._connection.executescript(_MIGRATION_105_TRIGGERS)
         self._connection.executescript(_MIGRATION_106_EVENT_POLICY)
-        self._connection.execute("PRAGMA user_version=112")
+        self._connection.execute("PRAGMA user_version=113")
         # Expired leases are process-abandoned cloud work, not scientific state.
         # Releasing them at open makes retry durable without stealing a live lease.
         self.recover_expired_outbox_leases()
@@ -7294,6 +7325,108 @@ class EcoProjectStore:
             )
             return int(cursor.rowcount)
 
+    def requeue_blocked_outbox_after_revalidation(
+        self,
+        outbox_ids: Sequence[str],
+        *,
+        revalidation_sha256: str,
+    ) -> list[str]:
+        """Requeue selected blocked envelopes after caller policy revalidation.
+
+        Policy and evidence repair remain caller-owned decisions. The store
+        requires their digest and atomically records each row's prior terminal
+        error before returning it to ``PENDING``. ``last_error_code`` remains
+        visible until a later upload succeeds or records a new failure; the
+        immutable audit survives either outcome.
+        """
+
+        normalized = [str(outbox_id) for outbox_id in outbox_ids]
+        if (
+            not normalized
+            or len(normalized) > 4_096
+            or len(set(normalized)) != len(normalized)
+            or any(not outbox_id for outbox_id in normalized)
+        ):
+            raise ValueError("blocked outbox requeue requires unique non-empty row IDs")
+        if not re.fullmatch(r"[0-9a-f]{64}", revalidation_sha256):
+            raise ValueError("blocked outbox requeue requires a lowercase SHA-256 revalidation")
+
+        project_id = self.project()["project_id"]
+        placeholders = ",".join("?" for _ in normalized)
+        requeued_at = _now()
+        with self.transaction() as connection:
+            rows = connection.execute(
+                "SELECT outbox_id,last_error_code,attempt_count FROM eco_telemetry_outbox "
+                "WHERE project_id=? AND outbox_id IN ("
+                + placeholders
+                + ") AND state='BLOCKED' ORDER BY outbox_sequence,outbox_id",
+                [project_id, *normalized],
+            ).fetchall()
+            if len(rows) != len(normalized):
+                raise ValueError(
+                    "only explicitly selected blocked rows in this project may be requeued"
+                )
+            ordered_ids = [str(row["outbox_id"]) for row in rows]
+            for row in rows:
+                error_code = str(row["last_error_code"] or "")
+                attempt_count = int(row["attempt_count"])
+                if not re.fullmatch(r"[A-Z][A-Z0-9_]{2,127}", error_code) or attempt_count < 1:
+                    raise ValueError("blocked outbox row has no auditable terminal failure")
+                audit_payload = {
+                    "schema_version": "ecocorridor-outbox-requeue-audit/v1.0",
+                    "project_id": project_id,
+                    "outbox_id": str(row["outbox_id"]),
+                    "blocked_error_code": error_code,
+                    "blocked_attempt_count": attempt_count,
+                    "revalidation_sha256": revalidation_sha256,
+                    "requeued_at": requeued_at,
+                }
+                audit_id = (
+                    "outbox_requeue_"
+                    + hashlib.sha256(canonical_json(audit_payload).encode("utf-8")).hexdigest()
+                )
+                connection.execute(
+                    "INSERT INTO eco_telemetry_outbox_requeue_audit("
+                    "audit_id,project_id,outbox_id,blocked_error_code,blocked_attempt_count,"
+                    "revalidation_sha256,requeued_at) VALUES(?,?,?,?,?,?,?)",
+                    (
+                        audit_id,
+                        project_id,
+                        row["outbox_id"],
+                        error_code,
+                        attempt_count,
+                        revalidation_sha256,
+                        requeued_at,
+                    ),
+                )
+            cursor = connection.execute(
+                "UPDATE eco_telemetry_outbox SET state='PENDING',lease_token=NULL,"
+                "lease_expires_at=NULL,updated_at=? WHERE project_id=? AND state='BLOCKED' "
+                "AND outbox_id IN (" + placeholders + ")",
+                [requeued_at, project_id, *ordered_ids],
+            )
+            if cursor.rowcount != len(ordered_ids):
+                raise RuntimeError("atomic blocked outbox requeue was incomplete")
+        return ordered_ids
+
+    def outbox_requeue_audits(self, *, outbox_id: str | None = None) -> list[dict[str, Any]]:
+        """Return immutable blocked-row revalidation boundaries for diagnostics."""
+
+        project_id = self.project()["project_id"]
+        if outbox_id is None:
+            rows = self._connection.execute(
+                "SELECT * FROM eco_telemetry_outbox_requeue_audit WHERE project_id=? "
+                "ORDER BY requeued_at,audit_id",
+                (project_id,),
+            ).fetchall()
+        else:
+            rows = self._connection.execute(
+                "SELECT * FROM eco_telemetry_outbox_requeue_audit WHERE project_id=? "
+                "AND outbox_id=? ORDER BY requeued_at,audit_id",
+                (project_id, outbox_id),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def claim_outbox(self, *, limit: int = 100, lease_seconds: int = 300) -> list[dict[str, Any]]:
         if limit < 1:
             raise ValueError("outbox claim limit must be positive")
@@ -7395,6 +7528,117 @@ class EcoProjectStore:
                 raise ValueError(
                     "only the active outbox lease at the next monotonic sequence may be marked synced"
                 )
+
+    @staticmethod
+    def _validate_claimed_outbox_batch(
+        connection: sqlite3.Connection,
+        members: Sequence[tuple[str, str]],
+        *,
+        require_next_sequence: bool,
+    ) -> list[sqlite3.Row]:
+        normalized = [(str(outbox_id), str(lease_token)) for outbox_id, lease_token in members]
+        if not 2 <= len(normalized) <= 128:
+            raise ValueError("outbox batch must contain between 2 and 128 rows")
+        outbox_ids = [item[0] for item in normalized]
+        if len(set(outbox_ids)) != len(outbox_ids) or any(
+            not outbox_id or not lease_token for outbox_id, lease_token in normalized
+        ):
+            raise ValueError("outbox batch members and active leases must be unique and non-empty")
+        placeholders = ",".join("?" for _ in outbox_ids)
+        rows = connection.execute(
+            "SELECT * FROM eco_telemetry_outbox WHERE outbox_id IN ("
+            + placeholders
+            + ") ORDER BY stream_sequence,outbox_id",
+            outbox_ids,
+        ).fetchall()
+        if len(rows) != len(normalized):
+            raise ValueError("outbox batch contains an unknown row")
+        ordered_ids = [str(row["outbox_id"]) for row in rows]
+        if ordered_ids != outbox_ids:
+            raise ValueError("outbox batch members must follow their committed stream sequence")
+        expected_tokens = dict(normalized)
+        if any(
+            row["state"] != "UPLOADING"
+            or str(row["lease_token"] or "") != expected_tokens[str(row["outbox_id"])]
+            for row in rows
+        ):
+            raise ValueError("only active outbox batch leases may finish")
+        identity = {
+            (row["project_id"], row["analysis_id"], row["stream_id"], row["event_type"])
+            for row in rows
+        }
+        sequences = [int(row["stream_sequence"]) for row in rows]
+        attempts = {int(row["attempt_count"]) for row in rows}
+        if (
+            len(identity) != 1
+            or len(attempts) != 1
+            or sequences != list(range(sequences[0], sequences[0] + len(sequences)))
+        ):
+            raise ValueError("outbox batch rows must be consecutive in one producer stream")
+        if require_next_sequence:
+            first = rows[0]
+            prior = connection.execute(
+                "SELECT 1 FROM eco_telemetry_outbox WHERE project_id=? AND stream_id=? "
+                "AND stream_sequence<? AND state!='SYNCED' LIMIT 1",
+                (first["project_id"], first["stream_id"], first["stream_sequence"]),
+            ).fetchone()
+            if prior is not None:
+                raise ValueError("outbox batch is not the next monotonic stream sequence")
+        return rows
+
+    def mark_outbox_batch_synced(
+        self,
+        members: Sequence[tuple[str, str]],
+        external_reference: dict[str, Any],
+    ) -> None:
+        """Acknowledge one provider envelope for all of its rows atomically."""
+
+        external_json = canonical_json(external_reference)
+        with self.transaction() as connection:
+            rows = self._validate_claimed_outbox_batch(
+                connection,
+                members,
+                require_next_sequence=True,
+            )
+            outbox_ids = [str(row["outbox_id"]) for row in rows]
+            placeholders = ",".join("?" for _ in outbox_ids)
+            cursor = connection.execute(
+                "UPDATE eco_telemetry_outbox SET state='SYNCED',external_reference_json=?,"
+                "last_error_code=NULL,lease_token=NULL,lease_expires_at=NULL,updated_at=? "
+                "WHERE state='UPLOADING' AND outbox_id IN (" + placeholders + ")",
+                [external_json, _now(), *outbox_ids],
+            )
+            if cursor.rowcount != len(outbox_ids):
+                raise RuntimeError("atomic outbox batch acknowledgement was incomplete")
+
+    def mark_outbox_batch_failed(
+        self,
+        members: Sequence[tuple[str, str]],
+        error_code: str,
+        *,
+        blocked: bool = False,
+    ) -> None:
+        """Fail one provider envelope without leaving member leases split."""
+
+        if not error_code:
+            raise ValueError("outbox batch failure requires a stable error code")
+        with self.transaction() as connection:
+            rows = self._validate_claimed_outbox_batch(
+                connection,
+                members,
+                require_next_sequence=False,
+            )
+            outbox_ids = [str(row["outbox_id"]) for row in rows]
+            placeholders = ",".join("?" for _ in outbox_ids)
+            cursor = connection.execute(
+                "UPDATE eco_telemetry_outbox SET state=?,last_error_code=?,lease_token=NULL,"
+                "lease_expires_at=NULL,updated_at=? WHERE state='UPLOADING' AND outbox_id IN ("
+                + placeholders
+                + ")",
+                ["BLOCKED" if blocked else "FAILED", error_code, _now(), *outbox_ids],
+            )
+            if cursor.rowcount != len(outbox_ids):
+                raise RuntimeError("atomic outbox batch failure was incomplete")
 
     def mark_outbox_failed(
         self,

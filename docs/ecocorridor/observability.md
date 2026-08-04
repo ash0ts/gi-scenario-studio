@@ -23,20 +23,35 @@ row atomically. `DurableOutboxConsumer` processes committed rows in order:
 2. Verify the immutable outbox payload hash.
 3. Reject credentials, local absolute paths, and unsupported profile names.
 4. Verify each local artifact's byte count and SHA-256 before SDK startup.
-5. Resume the deterministic W&B Run and project Tables and lineage. Before an
-   output artifact is logged, query its deterministic outbox alias with W&B's
-   documented [`artifact_exists()` Public API](https://docs.wandb.ai/models/ref/python/public-api/api#method-apiartifact_exists).
-   A retry reuses an exact committed version only after
+5. Resolve the deterministic immutable telemetry-projection Artifact before
+   consulting W&B Run summary views. That Artifact contains the complete
+   canonical intended history, Tables, summary, input references, and output
+   manifests. It is the cloud completion authority: a retry accepts it only
+   after exact provider identity, bytes, and SHA-256 are read back. Run summary
+   intent and acknowledgement markers are diagnostic indexes, not completion
+   authority.
+6. Resume the deterministic W&B Run and project Tables and lineage. Before an
+   output Artifact is logged, resolve its deterministic outbox alias with the
+   documented `Api.artifact()` call. The pinned W&B SDK's `artifact_exists()`
+   helper is deliberately not used because it can collapse authorization and
+   server errors into apparent absence. Only the exact pinned-SDK
+   missing-membership exception shape means absent; every other lookup failure
+   is ambiguous and fails closed. A retry reuses an exact committed version only after
    its type, idempotency metadata, pinned `:vN` reference, bytes, and SHA-256
    all match; an ambiguous lookup or mismatch fails closed.
-6. Download the exact logged or reused artifact version without using the SDK cache and
+7. Download the exact logged or reused artifact version without using the SDK cache and
    verify its byte count and SHA-256.
-7. Mark the local outbox row synced only after provider confirmation.
+8. Publish diagnostic run indexes and read back the immutable canonical
+   telemetry-projection Artifact, then mark the local outbox row synced.
 
 Transient provider failures become retryable outbox state. Integrity,
-authorization, and policy failures become blocked state. Offline mode does not
-claim rows; W&B's run, cache, artifact, data, and verification directories stay
-under `.scenario-cloud/ecocorridor/` in that project.
+authorization, and policy failures become blocked state. An explicit retry
+first revalidates the exact destination and current asset policy, then records
+the blocked error, attempt, and revalidation digest in an immutable audit before
+returning selected rows to `PENDING`. Their projection and hashes are checked
+again normally; irreparable evidence returns to `BLOCKED`. Offline mode does
+not claim rows; W&B's run, cache, artifact, data, and verification directories
+stay under `.scenario-cloud/ecocorridor/` in that project.
 
 Typed Tables are emitted only from retained source records. `search_batches`
 describes the immutable initial run-plan batch; it does not reconstruct or
@@ -45,6 +60,36 @@ only failed rule dispositions with a matching direct evidence claim and
 successful direct-run IDs. `sync_failures` contains only durable outbox rows
 that still carry a stable failure code. If the corresponding local record does
 not exist, the Table or row is omitted rather than synthesized.
+
+Direct-job terminal events remain producer-atomic local rows, but the cloud
+consumer groups at most 128 consecutive rows from one analysis stream into one
+deterministic telemetry envelope and stops before 512 MiB of retained artifact
+bytes. A single direct job that already passed the authoritative project
+resource policy may exceed that batching threshold; it remains a complete
+one-row envelope and is never combined with a later row or silently omitted.
+Batch acknowledgement or failure is one SQLite transaction for every member
+lease. The 1,596-job Ridgeway study therefore produces 13 canonical cloud
+envelopes rather than thousands of Run-summary receipts. Non-direct events
+retain one envelope per producer transaction.
+
+An online sync drains bounded batches until the authoritative outbox is empty
+or a typed failure occurs. `CONNECTED` is returned only when every current row
+is `SYNCED`; `PENDING`, `UPLOADING`, `FAILED`, and `BLOCKED` rows produce
+`SYNC_QUEUED_OFFLINE`, `SYNCING`, `FAILED_RETRYING`, and `BLOCKED`
+respectively. Status, online/offline sync, and export use the same derivation,
+so a stale renderer or binding badge cannot hide unsynchronized evidence. A
+new professional evidence package is itself always stamped
+`SYNC_QUEUED_OFFLINE`: publication atomically creates a new `evidence_export`
+outbox row, so that immutable package cannot claim its own W&B lineage already
+exists.
+
+W&B history rows, Tables, input edges, and Registry links are reconstructable
+views of the immutable telemetry-projection Artifact; the local outbox and CAS
+remain authoritative. A transport failure before that canonical Artifact is
+confirmed remains retryable. Reconciliation may replay deterministic view
+updates, but it cannot change the canonical payload, direct evidence, local
+science, or search order. The application never describes those convenience
+views as complete merely because a mutable Run summary marker exists.
 
 ## Restricted-scope gate
 
