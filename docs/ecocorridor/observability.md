@@ -176,10 +176,19 @@ locally into a finite intent vocabulary. The returned answer maps validated
 aliases back to local evidence IDs only after trace readback; the same
 authorization decision ID is retained in the trace and answer.
 
-The Evidence Intake Assistant accepts
-selected document pages, sends only this minimized text, rejects document-borne
-prompt injection, and requires exact page/character-span citations. Drafts
-are persisted as unconfirmed and cannot change project-model state. Explicit
+The Evidence Intake Assistant accepts only a retained UTF-8 `text/plain` or
+`text/markdown` document whose current deployment authorization permits the
+selected representation. Raw sensitive-location, critical-infrastructure, and
+Tribal or cultural documents remain blocked even on Dedicated or Self-Managed
+deployments; the user must retain and select an approved generalized
+derivative. The desktop mirrors these worker gates with an explicit reason and
+remediation, and cannot enable extraction while the exact-scope project binding
+is disconnected. The worker remains authoritative: it rechecks retained bytes,
+UTF-8 decoding, page boundaries, authorization, and binding before any trace or
+provider call. It sends only selected minimized page text, rejects
+document-borne prompt injection, and requires exact page/character-span
+citations. Drafts are persisted as unconfirmed and cannot change project-model
+state. Explicit
 `assistant.intake.confirm` calls create immutable, reviewer-attributed evidence;
 they still do not automatically mutate resistance, focal-area, intervention,
 or decision-rule records.

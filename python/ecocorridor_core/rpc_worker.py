@@ -697,7 +697,12 @@ class _Method:
 
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_BINARY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
     descriptor = os.open(path, flags)
     try:
         with os.fdopen(descriptor, "rb", closefd=True) as stream:
@@ -710,39 +715,245 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _atomic_copy_file(source: Path, destination: Path) -> None:
-    """Stream a verified regular file into place without buffering it in memory."""
+class AssetIngestError(RuntimeError):
+    """A selected asset could not be bound to exact retained bytes."""
 
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{destination.name}.", dir=destination.parent
-    )
-    temporary = Path(temporary_name)
-    source_descriptor = -1
+    def __init__(self, code: str, detail: str) -> None:
+        super().__init__(detail)
+        self.code = code
+
+
+def _open_regular_readonly(path: Path) -> int:
+    """Open one regular-file identity without following the final component."""
+
     try:
-        source_descriptor = os.open(
-            source,
-            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
-        )
-        with (
-            os.fdopen(source_descriptor, "rb", closefd=True) as source_stream,
-            os.fdopen(descriptor, "wb", closefd=True) as target_stream,
+        before = os.lstat(path)
+    except OSError as exc:
+        raise AssetIngestError("ASSET_SOURCE_INVALID", "asset source is unavailable") from exc
+    if not stat.S_ISREG(before.st_mode) or stat.S_ISLNK(before.st_mode):
+        raise AssetIngestError("ASSET_SOURCE_INVALID", "asset source is not a regular file")
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_BINARY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise AssetIngestError("ASSET_SOURCE_INVALID", "asset source could not be opened") from exc
+    try:
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode):
+            raise AssetIngestError("ASSET_SOURCE_INVALID", "opened asset is not a regular file")
+        # ``st_ino`` can be zero on some Windows filesystems. Where the OS
+        # supplies stable identities, reject a path replacement between lstat
+        # and open. A byte-for-byte replacement remains safe because the
+        # streaming digest below is still authoritative.
+        if (
+            before.st_ino
+            and opened.st_ino
+            and (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino)
         ):
-            source_descriptor = -1
+            raise AssetIngestError("ASSET_SOURCE_INVALID", "asset source changed before open")
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _stream_copy_and_digest(
+    source_descriptor: int,
+    target_descriptor: int,
+    *,
+    expected_bytes: int,
+) -> tuple[int, str]:
+    """Copy with low-level binary I/O while the caller retains fd ownership."""
+
+    digest = hashlib.sha256()
+    copied = 0
+    while block := os.read(source_descriptor, 1024 * 1024):
+        copied += len(block)
+        if copied > expected_bytes:
+            raise AssetIngestError(
+                "ASSET_INGEST_INTEGRITY_MISMATCH",
+                "asset source exceeds its reviewed byte count",
+            )
+        digest.update(block)
+        remaining = memoryview(block)
+        while remaining:
+            written = os.write(target_descriptor, remaining)
+            if written <= 0:  # pragma: no cover - defensive OS contract guard
+                raise OSError("asset staging write made no progress")
+            remaining = remaining[written:]
+    os.fsync(target_descriptor)
+    return copied, digest.hexdigest()
+
+
+def _link_file_noreplace(source: Path, destination: Path) -> None:
+    """Publish a same-filesystem temporary inode without an overwrite window."""
+
+    os.link(source, destination)
+
+
+def _fsync_directory(directory: Path) -> None:
+    """Durably publish a new directory entry where the platform supports it."""
+
+    if os.name == "nt":  # Windows does not expose portable directory fsync.
+        return
+    descriptor = os.open(
+        directory,
+        os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_DIRECTORY", 0),
+    )
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _regular_file_matches(path: Path, *, expected_sha256: str, expected_bytes: int) -> bool:
+    """Hash one opened regular-file identity and compare its complete bytes."""
+
+    descriptor = -1
+    digest = hashlib.sha256()
+    observed = 0
+    try:
+        descriptor = _open_regular_readonly(path)
+        with os.fdopen(descriptor, "rb", closefd=True) as stream:
             descriptor = -1
-            shutil.copyfileobj(source_stream, target_stream, length=1024 * 1024)
-            target_stream.flush()
-            os.fsync(target_stream.fileno())
-        if destination.exists():
-            raise FileExistsError(destination)
+            while block := stream.read(1024 * 1024):
+                observed += len(block)
+                if observed > expected_bytes:
+                    return False
+                digest.update(block)
+    except AssetIngestError:
+        raise
+    except OSError as exc:
+        raise AssetIngestError(
+            "ASSET_DESTINATION_READ_FAILED",
+            "retained asset bytes could not be verified",
+        ) from exc
+    finally:
+        if descriptor >= 0:
+            try:
+                os.close(descriptor)
+            except OSError:  # pragma: no cover - cleanup must not mask the typed failure
+                pass
+    return observed == expected_bytes and digest.hexdigest() == expected_sha256
+
+
+def _ingest_verified_file(
+    source: Path,
+    destination: Path,
+    *,
+    expected_sha256: str,
+    expected_bytes: int,
+    staged_validator: Callable[[Path], None] | None = None,
+) -> bool:
+    """Retain exactly the reviewed source bytes, returning whether a file was created.
+
+    The source is opened once. Its bytes are hashed while being copied to a
+    same-directory temporary file, and that inode is linked into place with
+    no-replace semantics. A byte-identical existing destination is reusable;
+    any other collision remains untouched and blocks publication.
+    """
+
+    source_descriptor = -1
+    target_descriptor = -1
+    temporary: Path | None = None
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        source_descriptor = _open_regular_readonly(source)
+        source_stat = os.fstat(source_descriptor)
+        if not stat.S_ISREG(source_stat.st_mode):
+            raise AssetIngestError(
+                "ASSET_SOURCE_INVALID",
+                "opened asset source is not a regular file",
+            )
+        if source_stat.st_size != expected_bytes:
+            raise AssetIngestError(
+                "ASSET_INGEST_INTEGRITY_MISMATCH",
+                "asset source byte count differs from its reviewed contract",
+            )
+        target_descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{destination.name}.", dir=destination.parent
+        )
+        temporary = Path(temporary_name)
+        copied, digest = _stream_copy_and_digest(
+            source_descriptor,
+            target_descriptor,
+            expected_bytes=expected_bytes,
+        )
+        if copied != expected_bytes or digest != expected_sha256:
+            raise AssetIngestError(
+                "ASSET_INGEST_INTEGRITY_MISMATCH",
+                "copied asset bytes differ from their reviewed contract",
+            )
         os.chmod(temporary, 0o600)
-        os.replace(temporary, destination)
+        if staged_validator is not None:
+            # The validator reads the staged inode whose complete bytes were
+            # just hashed, rather than reopening the mutable source selection.
+            staged_validator(temporary)
+        try:
+            _link_file_noreplace(temporary, destination)
+        except FileExistsError:
+            try:
+                matches = _regular_file_matches(
+                    destination,
+                    expected_sha256=expected_sha256,
+                    expected_bytes=expected_bytes,
+                )
+            except AssetIngestError as exc:
+                raise AssetIngestError(
+                    "ASSET_DESTINATION_CONFLICT",
+                    "asset destination appeared during verified ingest",
+                ) from exc
+            if not matches:
+                raise AssetIngestError(
+                    "ASSET_DESTINATION_CONFLICT",
+                    "different bytes already occupy the reviewed asset destination",
+                )
+            return False
+        except OSError as exc:
+            raise AssetIngestError(
+                "ASSET_DESTINATION_PUBLISH_FAILED",
+                "verified asset bytes could not be published without overwrite",
+            ) from exc
+        try:
+            _fsync_directory(destination.parent)
+        except OSError as exc:
+            # Never compare-then-unlink: a concurrent replacement between
+            # those operations could delete bytes this process did not create.
+            # The verified no-clobber destination is safe for an idempotent
+            # retry, while no repository record has yet been published.
+            raise AssetIngestError(
+                "ASSET_DESTINATION_PUBLISH_FAILED",
+                "verified asset directory entry could not be synchronized",
+            ) from exc
+        return True
+    except (AssetIngestError, RasterIOError):
+        raise
+    except OSError as exc:
+        raise AssetIngestError(
+            "ASSET_INGEST_IO_FAILED",
+            "asset staging I/O failed before evidence publication",
+        ) from exc
     finally:
         if source_descriptor >= 0:
-            os.close(source_descriptor)
-        if descriptor >= 0:
-            os.close(descriptor)
-        temporary.unlink(missing_ok=True)
+            try:
+                os.close(source_descriptor)
+            except OSError:  # pragma: no cover - cleanup must not mask the typed failure
+                pass
+        if target_descriptor >= 0:
+            try:
+                os.close(target_descriptor)
+            except OSError:  # pragma: no cover - cleanup must not mask the typed failure
+                pass
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:  # pragma: no cover - hidden orphan is safer than masking failure
+                pass
 
 
 _SAFE_BLOCKED_RIDGEWAY_ROLE_COPY = {
@@ -1936,18 +2147,7 @@ class RPCDispatcher:
                 "The selected asset source is not a regular file.",
                 category=ErrorCategory.SECURITY,
             )
-        if (
-            _sha256_file(source) != params.asset.sha256
-            or source.stat().st_size != params.asset.byte_size
-        ):
-            raise _fault(
-                "ASSET_INTEGRITY_MISMATCH",
-                "The selected asset bytes differ from the reviewed asset contract.",
-                category=ErrorCategory.SECURITY,
-                severity=Severity.BLOCKING,
-            )
         store = self._store(params.project_directory)
-        created_destination: Path | None = None
         try:
             policy = self._project_resource_policy(store)
             existing_assets = {item["asset_id"]: item for item in store.list_records("asset")}
@@ -1970,13 +2170,8 @@ class RPCDispatcher:
                     "The reviewed asset path escapes the project.",
                     category=ErrorCategory.SECURITY,
                 )
-            if destination.exists() and _sha256_file(destination) != params.asset.sha256:
-                raise _fault(
-                    "ASSET_DESTINATION_CONFLICT",
-                    "A different asset already occupies the reviewed project path.",
-                    category=ErrorCategory.SECURITY,
-                )
             inspection: dict[str, Any] | None = None
+            staged_validator: Callable[[Path], None] | None = None
             if params.asset.kind in {
                 AssetKind.RESISTANCE_RASTER,
                 AssetKind.FOCAL_RASTER,
@@ -1989,31 +2184,75 @@ class RPCDispatcher:
                         category=ErrorCategory.MODEL_QUALITY,
                         severity=Severity.BLOCKING,
                     )
-                try:
-                    inspection = inspect_reviewed_raster(source, params.asset).model_dump()
-                except RasterIOError as exc:
-                    raise _fault(
-                        "RASTER_CONTRACT_MISMATCH",
-                        "The staged raster differs from its reviewed grid or value semantics.",
-                        category=ErrorCategory.MODEL_QUALITY,
-                        severity=Severity.BLOCKING,
-                        remediation=str(exc),
-                    ) from exc
-            if not destination.exists():
-                _atomic_copy_file(source, destination)
-                created_destination = destination
-            publication = store.publish_semantic_change(
-                [("asset", params.asset.asset_id, params.asset.model_dump(mode="json"))],
-                created_by=params.asset.authorization.reviewer,
-                created_at=params.asset.authorization.reviewed_at,
-                reason="Retain a reviewed project asset and its cloud/export authorization.",
-            )
+
+                def validate_staged_raster(path: Path) -> None:
+                    nonlocal inspection
+                    inspection = inspect_reviewed_raster(path, params.asset).model_dump()
+
+                staged_validator = validate_staged_raster
+            try:
+                _ingest_verified_file(
+                    source,
+                    destination,
+                    expected_sha256=params.asset.sha256,
+                    expected_bytes=params.asset.byte_size,
+                    staged_validator=staged_validator,
+                )
+            except RasterIOError as exc:
+                raise _fault(
+                    "RASTER_CONTRACT_MISMATCH",
+                    "The retained raster differs from its reviewed grid or value semantics.",
+                    category=ErrorCategory.MODEL_QUALITY,
+                    severity=Severity.BLOCKING,
+                    remediation=str(exc),
+                ) from exc
+            except AssetIngestError as exc:
+                raise _fault(
+                    exc.code,
+                    "The asset could not be retained as its exact reviewed bytes.",
+                    category=ErrorCategory.SECURITY,
+                    severity=Severity.BLOCKING,
+                    remediation="Reselect the reviewed source and resolve any project-path conflict.",
+                    technical_message=str(exc),
+                ) from exc
+            try:
+                retained_matches = _regular_file_matches(
+                    destination,
+                    expected_sha256=params.asset.sha256,
+                    expected_bytes=params.asset.byte_size,
+                )
+            except AssetIngestError:
+                retained_matches = False
+            if not retained_matches:
+                raise _fault(
+                    "ASSET_RETAINED_INTEGRITY_MISMATCH",
+                    "The retained asset changed before its evidence record could be published.",
+                    category=ErrorCategory.SECURITY,
+                    severity=Severity.BLOCKING,
+                    remediation="Resolve the project-path race and add the reviewed asset again.",
+                )
+            try:
+                publication = store.publish_semantic_change(
+                    [("asset", params.asset.asset_id, params.asset.model_dump(mode="json"))],
+                    created_by=params.asset.authorization.reviewer,
+                    created_at=params.asset.authorization.reviewed_at,
+                    reason="Retain a reviewed project asset and its cloud/export authorization.",
+                )
+            except (OSError, ValueError) as exc:
+                # The SQLite transaction rolls back the asset, semantic
+                # revision, and outbox together. Exact no-clobber bytes may
+                # remain as an idempotent retry target; never unlink a path a
+                # concurrent process could have replaced.
+                raise _fault(
+                    "ASSET_PUBLICATION_FAILED",
+                    "The verified asset bytes could not be published to project evidence.",
+                    category=ErrorCategory.INTERNAL,
+                    severity=Severity.BLOCKING,
+                    remediation="Retry the asset publication; the verified bytes can be reused.",
+                    retryable=True,
+                    technical_message=type(exc).__name__,
+                ) from exc
             revision = int(publication["record_revisions"][f"asset:{params.asset.asset_id}"])
-            created_destination = None
-        except BaseException:
-            if created_destination is not None:
-                created_destination.unlink(missing_ok=True)
-            raise
         finally:
             store.close()
         return self._result(

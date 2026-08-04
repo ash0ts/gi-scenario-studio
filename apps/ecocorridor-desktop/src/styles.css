@@ -981,6 +981,7 @@ tbody tr:hover { background: rgba(224,239,241,.3); }
 .intake-authorization p { margin: 0; font-size: 12px; }
 .intake-authorization strong, .intake-authorization span { display: block; }
 .intake-authorization span { margin-top: 2px; }
+.intake-authorization small { display: block; margin-top: 5px; color: currentColor; opacity: .82; }
 .intake-pages { margin-top: 13px; border: 1px solid var(--line); }
 .intake-pages-heading { min-height: 48px; padding: 8px 12px; display: flex; align-items: center; justify-content: space-between; gap: 12px; background: var(--paper); border-bottom: 1px solid var(--line); }
 .intake-pages-heading strong { font-size: 13px; }

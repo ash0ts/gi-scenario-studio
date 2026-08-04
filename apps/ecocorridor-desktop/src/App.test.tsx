@@ -1223,7 +1223,9 @@ describe("authoritative professional workspace", () => {
 
     await user.click(screen.getAllByRole("button", { name: "Rules and costs" })[0]);
     await user.selectOptions(screen.getByLabelText("Retained supporting document *"), "asset_reviewed_memo");
-    expect(screen.getByText("Authorized for DEDICATED")).toBeInTheDocument();
+    expect(screen.getByText("Verified text representation required.")).toBeInTheDocument();
+    expect(screen.getByText(/retain and authorize a UTF-8 text\/plain or text\/markdown derivative/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Extract cited draft" })).toBeDisabled();
     const briefTitle = screen.getByLabelText("Brief title *");
     expect(briefTitle).toHaveValue("Retained professional editors");
     expect(screen.getByLabelText("Decision question *")).toHaveValue("Which reviewed concept should advance to feasibility review?");

@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 
 import { AssistantStatusSchema, createAssistantCallId, IntakeConfirmResponseSchema, IntakeExtractResponseSchema, type AssistantStatus, type IntakeDraft } from "../lib/assistant";
 import { hostErrorMessage, hostRequest, rpcData } from "../lib/host";
+import { evaluateIntakeAssetEligibility } from "../lib/intakeEligibility";
 import type { ProfessionalAssetRecord, ProfessionalProjectSession, RpcPayload } from "../types";
 import { AssistantProviderSetup } from "./AssistantProviderSetup";
 import { Icon } from "./Icon";
@@ -36,12 +37,8 @@ export function IntakeAssistantPanel({ projectSession, deployment, documents, de
   const [message, setMessage] = useState("");
   const selectedDocument = documents.find((asset) => asset.assetId === documentId) ?? null;
   const bindingReady = projectSession?.bindingState === "CONNECTED";
-  const assetAuthorized = Boolean(
-    selectedDocument
-    && deployment
-    && ["RAW_ALLOWED", "DEDICATED_OR_SELF_MANAGED_ONLY"].includes(selectedDocument.cloudDisposition)
-    && selectedDocument.approvedDeployments.includes(deployment),
-  );
+  const assetEligibility = evaluateIntakeAssetEligibility(selectedDocument, deployment);
+  const assetAuthorized = assetEligibility.eligible;
   const parsedPages = useMemo(() => pages.map((page) => ({
     document_id: documentId,
     page_number: Number(page.pageNumber),
@@ -58,7 +55,7 @@ export function IntakeAssistantPanel({ projectSession, deployment, documents, de
   };
 
   const extract = async () => {
-    if (!projectSession || !status?.configured || !assetAuthorized || !pagesValid || !instruction.trim()) return;
+    if (!projectSession || !bindingReady || !status?.configured || !assetAuthorized || !pagesValid || !instruction.trim()) return;
     const callId = createAssistantCallId("intake");
     setState("extracting");
     setMessage("");
@@ -126,16 +123,16 @@ export function IntakeAssistantPanel({ projectSession, deployment, documents, de
       {selectedDocument && (
         <div className={`intake-authorization ${assetAuthorized ? "authorized" : "blocked"}`} role={assetAuthorized ? "note" : "alert"}>
           <Icon name={assetAuthorized ? "check" : "lock"} />
-          <p><strong>{assetAuthorized ? `Authorized for ${deployment}` : "Raw page context is not authorized for this destination."}</strong><span>{selectedDocument.cloudDisposition} · {selectedDocument.sensitivity} · reviewed by {selectedDocument.reviewer}</span></p>
+          <p><strong>{assetEligibility.title}</strong><span>{assetEligibility.detail}</span><small>{selectedDocument.cloudDisposition} · {selectedDocument.sensitivity} · {selectedDocument.mediaType} · reviewed by {selectedDocument.reviewer}</small></p>
         </div>
       )}
       <label><span>Extraction instruction *</span><textarea rows={3} value={instruction} onChange={(event) => setInstruction(event.target.value)} /></label>
       <label><span>Sensitive terms to generalize before tracing · one per line</span><textarea rows={2} value={prohibitedTerms} onChange={(event) => setProhibitedTerms(event.target.value)} placeholder="Sensitive place, property, or species-location terms" /></label>
       <div className="intake-pages">
-        <div className="intake-pages-heading"><strong>Page text supplied for this request</strong><button className="text-action" type="button" disabled={pages.length >= 12} onClick={() => setPages((current) => [...current, newPage(current.length + 1)])}>Add page</button></div>
-        {pages.map((page, index) => <div className="intake-page" key={page.key}><label><span>Page number *</span><input inputMode="numeric" value={page.pageNumber} onChange={(event) => updatePage(page.key, "pageNumber", event.target.value.replace(/[^0-9]/g, ""))} /></label><label><span>Exact page text *</span><textarea rows={5} value={page.text} onChange={(event) => updatePage(page.key, "text", event.target.value)} /></label>{pages.length > 1 && <button className="icon-button" type="button" aria-label={`Remove page ${index + 1}`} onClick={() => setPages((current) => current.filter((item) => item.key !== page.key))}>×</button>}</div>)}
+        <div className="intake-pages-heading"><strong>Page text supplied for this request</strong><button className="text-action" type="button" disabled={!assetAuthorized || pages.length >= 12} onClick={() => setPages((current) => [...current, newPage(current.length + 1)])}>Add page</button></div>
+        {pages.map((page, index) => <div className="intake-page" key={page.key}><label><span>Page number *</span><input inputMode="numeric" disabled={!assetAuthorized} value={page.pageNumber} onChange={(event) => updatePage(page.key, "pageNumber", event.target.value.replace(/[^0-9]/g, ""))} /></label><label><span>Exact retained page text *</span><textarea rows={5} disabled={!assetAuthorized} value={page.text} onChange={(event) => updatePage(page.key, "text", event.target.value)} /></label>{pages.length > 1 && <button className="icon-button" type="button" disabled={!assetAuthorized} aria-label={`Remove page ${index + 1}`} onClick={() => setPages((current) => current.filter((item) => item.key !== page.key))}>×</button>}</div>)}
       </div>
-      <div className="intake-action"><div><strong>Minimization boundary</strong><span>Exact locations are never authorized by this screen. Coordinates, personal data, and listed terms are generalized before trace/provider context.</span></div><button className="primary-button" type="button" disabled={!status?.configured || !assetAuthorized || !pagesValid || !instruction.trim() || state === "extracting"} onClick={() => void extract()}>{state === "extracting" ? "Tracing and validating…" : "Extract cited draft"}</button></div>
+      <div className="intake-action"><div><strong>Minimization boundary</strong><span>Exact locations are never authorized by this screen. Listed terms are additional minimization—not permission to send raw sensitive documents. The worker must verify the selected retained text before any trace or provider call.</span></div><button className="primary-button" type="button" disabled={!bindingReady || !status?.configured || !assetAuthorized || !pagesValid || !instruction.trim() || state === "extracting"} onClick={() => void extract()}>{state === "extracting" ? "Tracing and validating…" : "Extract cited draft"}</button></div>
       {draft && (
         <div className="intake-draft">
           <div className="assistant-answer-state"><Icon name="check" /><strong>Trace read back · deterministic citation validation passed</strong></div>

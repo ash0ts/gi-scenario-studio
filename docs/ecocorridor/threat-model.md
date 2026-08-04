@@ -26,6 +26,15 @@
   active-process zero; `taskkill` and direct-child wait are not substitutes.
 - **Archives and spatial assets:** path containment, symlink/device rejection,
   decompressed limits, explicit grid transforms, provenance and authorization.
+  User-selected source assets are opened as one regular-file identity and
+  streamed into a same-directory staging inode while their exact byte count and
+  SHA-256 are recomputed. Modeled rasters are inspected from those staged bytes,
+  not by reopening the mutable selection. Publication uses a no-clobber link;
+  an existing destination is reusable only when its opened bytes exactly match.
+  The semantic revision and telemetry outbox remain one SQLite transaction. If
+  that transaction fails, the exact verified file may remain as an idempotent
+  retry target, but no asset, revision, evidence claim, or outbox row is
+  published.
 - **Worker → W&B/Weave:** producer-atomic outbox, deterministic idempotency,
   sensitive-key and local-path redaction, fail-closed destination policy.
 - **Assistant:** read-only evidence authorization, minimized context, mandatory

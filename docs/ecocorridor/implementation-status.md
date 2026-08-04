@@ -119,6 +119,12 @@ current direct evidence.
 ## Implemented source surfaces awaiting full release evidence
 
 - Versioned Eco contracts and runtime-validated JSON-RPC methods.
+- User-provided assets are retained through a single-open, hash-and-count
+  verified ingest. Raster semantics are inspected from the verified staged
+  bytes, destination publication is no-clobber, and a concurrent source or
+  destination change cannot publish a mismatched asset/revision/outbox record.
+  A transaction failure leaves no authoritative record and may reuse only the
+  exact verified orphan bytes on an explicitly retryable request.
 - Eco SQLite authority, semantic revisions, durable direct-job state,
   content-addressed artifacts, evidence graph, and producer-atomic telemetry
   outbox.
@@ -171,6 +177,12 @@ current direct evidence.
   complete answer from locally revalidated evidence, and release evaluation
   independently re-renders it byte-for-byte so plausible unsupported habitat,
   survey, or feasibility prose cannot pass as a validated answer.
+- The Evidence Intake Assistant desktop eligibility now matches the worker's
+  fail-closed document boundary: only authorized retained UTF-8 plain text or
+  Markdown can enable extraction; raw sensitive classes and PDF/non-text inputs
+  show the required generalized or verified-text remediation and cannot emit an
+  intake RPC. A disconnected binding also disables the call without conflating
+  document eligibility with cloud connection state.
 - W&B delivery now treats a deterministic immutable telemetry-projection
   Artifact—not mutable Run summary markers—as cloud completion authority. A
   retry validates and re-downloads that exact canonical projection plus every

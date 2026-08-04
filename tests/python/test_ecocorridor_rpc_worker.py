@@ -202,6 +202,69 @@ def _test_wandb_credentials() -> InMemoryCredentialSession:
     return credentials
 
 
+def _create_asset_ingest_planning_project(
+    tmp_path: Path, *, project_name: str
+) -> tuple[RPCDispatcher, Path, Any]:
+    fixture = build_ridgeway_fixture()
+    project = tmp_path / project_name
+    dispatcher = RPCDispatcher(data_root=tmp_path)
+    revision_id = f"{project_name}-revision"
+    dispatcher.dispatch(
+        "connectivity.planning.create",
+        {
+            "project_directory": str(project),
+            "project_id": project_name,
+            "title": "Verified asset ingest test",
+            "revision": fixture.bundle.revision.model_copy(
+                update={"project_id": project_name, "revision_id": revision_id}
+            ).model_dump(mode="json"),
+            "decision_brief": fixture.bundle.decision_brief.model_dump(mode="json"),
+            "fitness": fixture.bundle.fitness.model_copy(
+                update={"revision_id": revision_id}
+            ).model_dump(mode="json"),
+            "resource_policy": fixture.bundle.resource_policy.model_dump(mode="json"),
+        },
+    )
+    return dispatcher, project, fixture
+
+
+def _reviewed_document_asset(
+    fixture: Any,
+    source: Path,
+    *,
+    asset_id: str,
+) -> ConnectivityAsset:
+    payload = source.read_bytes()
+    return ConnectivityAsset(
+        asset_id=asset_id,
+        kind=AssetKind.DOCUMENT,
+        title="Reviewed evidence document",
+        relative_path=f"data_assets/{asset_id}.bin",
+        sha256=hashlib.sha256(payload).hexdigest(),
+        byte_size=len(payload),
+        media_type="application/octet-stream",
+        source="User-provided test fixture",
+        vintage="2026",
+        license="CC0-1.0",
+        authorization=fixture.bundle.assets[0].authorization.model_copy(
+            update={"asset_id": asset_id}
+        ),
+    )
+
+
+def _asset_publication_state(project: Path) -> dict[str, Any]:
+    store = EcoProjectStore(project)
+    try:
+        return {
+            "assets": store.list_records("asset"),
+            "revisions": store.list_records("revision"),
+            "semantic_diffs": store.list_records("semantic_diff"),
+            "outbox": store.telemetry_rows(),
+        }
+    finally:
+        store.close()
+
+
 def _response(dispatcher: RPCDispatcher, method: str, params: dict[str, Any]) -> dict[str, Any]:
     return json.loads(dispatcher.handle_frame(_frame(method, params)))
 
@@ -693,6 +756,289 @@ def test_bundle_import_rejects_duplicate_scientific_identity(tmp_path: Path) -> 
     assert raised.value.error.category.value == "MODEL_QUALITY"
     assert "resistance hypothesis IDs must be unique" in raised.value.error.technical_message
     assert not project.exists()
+
+
+def test_asset_ingest_binds_open_inode_across_equal_length_path_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dispatcher, project, fixture = _create_asset_ingest_planning_project(
+        tmp_path, project_name="source-swap-project"
+    )
+    source = tmp_path / "reviewed-source.bin"
+    source.write_bytes(b"reviewed")
+    asset = _reviewed_document_asset(fixture, source, asset_id="source-swap-asset")
+    destination = project / asset.relative_path
+    original_stream = rpc_worker._stream_copy_and_digest
+    swapped = False
+
+    def replace_path_after_open(
+        source_descriptor: int,
+        target_descriptor: int,
+        *,
+        expected_bytes: int,
+    ) -> tuple[int, str]:
+        nonlocal swapped
+        replacement = tmp_path / "equal-length-replacement.bin"
+        replacement.write_bytes(b"tampered")
+        os.replace(replacement, source)
+        swapped = True
+        return original_stream(
+            source_descriptor,
+            target_descriptor,
+            expected_bytes=expected_bytes,
+        )
+
+    monkeypatch.setattr(rpc_worker, "_stream_copy_and_digest", replace_path_after_open)
+
+    added = dispatcher.dispatch(
+        "connectivity.asset.add",
+        {
+            "project_directory": str(project),
+            "source_path": str(source),
+            "asset": asset.model_dump(mode="json"),
+        },
+    )["data"]
+
+    assert swapped is True
+    assert source.read_bytes() == b"tampered"
+    assert destination.read_bytes() == b"reviewed"
+    assert hashlib.sha256(destination.read_bytes()).hexdigest() == added["sha256"]
+    assert len(_asset_publication_state(project)["assets"]) == 1
+    assert list(destination.parent.glob(f".{destination.name}.*")) == []
+
+
+def test_asset_ingest_rejects_equal_length_in_place_mutation_after_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dispatcher, project, fixture = _create_asset_ingest_planning_project(
+        tmp_path, project_name="source-mutation-project"
+    )
+    source = tmp_path / "reviewed-source-mutation.bin"
+    source.write_bytes(b"reviewed")
+    asset = _reviewed_document_asset(fixture, source, asset_id="source-mutation-asset")
+    destination = project / asset.relative_path
+    before = _asset_publication_state(project)
+    original_stream = rpc_worker._stream_copy_and_digest
+
+    def mutate_open_inode_before_read(
+        source_descriptor: int,
+        target_descriptor: int,
+        *,
+        expected_bytes: int,
+    ) -> tuple[int, str]:
+        source.write_bytes(b"tampered")
+        return original_stream(
+            source_descriptor,
+            target_descriptor,
+            expected_bytes=expected_bytes,
+        )
+
+    monkeypatch.setattr(rpc_worker, "_stream_copy_and_digest", mutate_open_inode_before_read)
+
+    with pytest.raises(RPCFault) as raised:
+        dispatcher.dispatch(
+            "connectivity.asset.add",
+            {
+                "project_directory": str(project),
+                "source_path": str(source),
+                "asset": asset.model_dump(mode="json"),
+            },
+        )
+
+    assert raised.value.error.code == "ASSET_INGEST_INTEGRITY_MISMATCH"
+    assert raised.value.error.severity.value == "BLOCKING"
+    assert not destination.exists()
+    assert list(destination.parent.glob(f".{destination.name}.*")) == []
+    assert _asset_publication_state(project) == before
+
+
+def test_asset_ingest_destination_race_never_clobbers_or_publishes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dispatcher, project, fixture = _create_asset_ingest_planning_project(
+        tmp_path, project_name="destination-race-project"
+    )
+    source = tmp_path / "reviewed-destination-race.bin"
+    source.write_bytes(b"reviewed")
+    asset = _reviewed_document_asset(fixture, source, asset_id="destination-race-asset")
+    destination = project / asset.relative_path
+    before = _asset_publication_state(project)
+    original_link = rpc_worker._link_file_noreplace
+    racer_inode: int | None = None
+
+    def create_conflict_then_link(staged: Path, target: Path) -> None:
+        nonlocal racer_inode
+        assert target == destination
+        target.write_bytes(b"conflict")
+        racer_inode = target.stat().st_ino
+        original_link(staged, target)
+
+    monkeypatch.setattr(rpc_worker, "_link_file_noreplace", create_conflict_then_link)
+
+    with pytest.raises(RPCFault) as raised:
+        dispatcher.dispatch(
+            "connectivity.asset.add",
+            {
+                "project_directory": str(project),
+                "source_path": str(source),
+                "asset": asset.model_dump(mode="json"),
+            },
+        )
+
+    assert raised.value.error.code == "ASSET_DESTINATION_CONFLICT"
+    assert raised.value.error.severity.value == "BLOCKING"
+    assert destination.read_bytes() == b"conflict"
+    assert destination.stat().st_ino == racer_inode
+    assert list(destination.parent.glob(f".{destination.name}.*")) == []
+    assert _asset_publication_state(project) == before
+
+
+def test_asset_ingest_reuses_identical_destination_idempotently(tmp_path: Path) -> None:
+    dispatcher, project, fixture = _create_asset_ingest_planning_project(
+        tmp_path, project_name="identical-destination-project"
+    )
+    source = tmp_path / "reviewed-identical.bin"
+    source.write_bytes(b"reviewed")
+    asset = _reviewed_document_asset(fixture, source, asset_id="identical-destination-asset")
+    destination = project / asset.relative_path
+    destination.parent.mkdir(parents=True)
+    destination.write_bytes(source.read_bytes())
+    original_inode = destination.stat().st_ino
+    params = {
+        "project_directory": str(project),
+        "source_path": str(source),
+        "asset": asset.model_dump(mode="json"),
+    }
+
+    first = dispatcher.dispatch("connectivity.asset.add", params)["data"]
+    after_first = _asset_publication_state(project)
+    second = dispatcher.dispatch("connectivity.asset.add", params)["data"]
+
+    assert first == second
+    assert destination.read_bytes() == b"reviewed"
+    assert destination.stat().st_ino == original_inode
+    assert len(after_first["assets"]) == 1
+    assert _asset_publication_state(project) == after_first
+
+
+def test_raster_contract_inspects_hash_verified_staged_inode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dispatcher, project, fixture = _create_asset_ingest_planning_project(
+        tmp_path, project_name="staged-raster-project"
+    )
+    source = tmp_path / "reviewed-staged-raster.asc"
+    source.write_text(
+        "ncols 2\nnrows 2\nxllcorner 0\nyllcorner 0\ncellsize 10\n"
+        "NODATA_value -9999\n10 20\n30 40\n",
+        encoding="utf-8",
+    )
+    grid = RasterGrid(
+        grid_id="staged-raster-grid",
+        crs="EPSG:3857",
+        width=2,
+        height=2,
+        transform=(10, 0, 0, 0, -10, 20),
+        nodata=-9999,
+        value_kind=RasterValueKind.CONTINUOUS,
+        cell_area_m2=100,
+    )
+    asset = ConnectivityAsset(
+        asset_id="staged-raster-asset",
+        kind=AssetKind.RESISTANCE_RASTER,
+        title="Reviewed staged raster",
+        relative_path="data_assets/staged-raster.asc",
+        sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+        byte_size=source.stat().st_size,
+        media_type="application/x-esri-ascii-grid",
+        source="User-provided test fixture",
+        vintage="2026",
+        license="CC0-1.0",
+        grid=grid,
+        authorization=fixture.bundle.assets[0].authorization.model_copy(
+            update={"asset_id": "staged-raster-asset"}
+        ),
+    )
+    destination = project / asset.relative_path
+    original_inspect = rpc_worker.inspect_reviewed_raster
+    inspected_paths: list[Path] = []
+
+    def inspect_staged(path: Path, reviewed_asset: ConnectivityAsset) -> Any:
+        inspected_paths.append(Path(path))
+        assert Path(path) != source
+        assert Path(path).parent == destination.parent
+        assert Path(path).read_bytes() == source.read_bytes()
+        return original_inspect(path, reviewed_asset)
+
+    monkeypatch.setattr(rpc_worker, "inspect_reviewed_raster", inspect_staged)
+
+    added = dispatcher.dispatch(
+        "connectivity.asset.add",
+        {
+            "project_directory": str(project),
+            "source_path": str(source),
+            "asset": asset.model_dump(mode="json"),
+        },
+    )["data"]
+
+    assert added["inspection"]["minimum"] == 10
+    assert len(inspected_paths) == 1
+    assert inspected_paths[0].name.startswith(f".{destination.name}.")
+    assert not inspected_paths[0].exists()
+    assert destination.read_bytes() == source.read_bytes()
+
+
+def test_asset_publication_failure_rolls_back_repository_and_reuses_exact_orphan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dispatcher, project, fixture = _create_asset_ingest_planning_project(
+        tmp_path, project_name="publication-failure-project"
+    )
+    source = tmp_path / "reviewed-publication-failure.bin"
+    source.write_bytes(b"reviewed")
+    asset = _reviewed_document_asset(fixture, source, asset_id="publication-failure-asset")
+    destination = project / asset.relative_path
+    before = _asset_publication_state(project)
+    original_enqueue = EcoProjectStore._enqueue_outbox
+
+    def fail_semantic_outbox(*args: Any, **kwargs: Any) -> str:
+        if kwargs.get("event_type") == "semantic_revision":
+            raise OSError("injected transactional outbox failure")
+        return original_enqueue(*args, **kwargs)
+
+    monkeypatch.setattr(
+        EcoProjectStore,
+        "_enqueue_outbox",
+        staticmethod(fail_semantic_outbox),
+    )
+
+    with pytest.raises(RPCFault) as raised:
+        dispatcher.dispatch(
+            "connectivity.asset.add",
+            {
+                "project_directory": str(project),
+                "source_path": str(source),
+                "asset": asset.model_dump(mode="json"),
+            },
+        )
+
+    assert raised.value.error.code == "ASSET_PUBLICATION_FAILED"
+    assert raised.value.error.severity.value == "BLOCKING"
+    assert raised.value.error.retryable is True
+    assert destination.read_bytes() == b"reviewed"
+    assert _asset_publication_state(project) == before
+
+    monkeypatch.setattr(EcoProjectStore, "_enqueue_outbox", staticmethod(original_enqueue))
+    recovered = dispatcher.dispatch(
+        "connectivity.asset.add",
+        {
+            "project_directory": str(project),
+            "source_path": str(source),
+            "asset": asset.model_dump(mode="json"),
+        },
+    )["data"]
+    assert recovered["asset_id"] == asset.asset_id
+    assert len(_asset_publication_state(project)["assets"]) == 1
 
 
 def test_planning_grid_and_validation_state_persist_in_project_sqlite(tmp_path: Path) -> None:
