@@ -794,6 +794,7 @@ jobs:
           -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
 
       - name: Build relocatable Circuitscape application
+        shell: bash
         env:
           ECOCORRIDOR_ENGINE_OUTPUT: ${{ runner.temp }}/ecocorridor-engine
           JULIA_DEPOT_PATH: ${{ runner.temp }}/julia-depot
@@ -801,10 +802,14 @@ jobs:
           JULIA_NUM_PRECOMPILE_TASKS: "1"
           OPENBLAS_NUM_THREADS: "1"
           OMP_NUM_THREADS: "1"
-        run: >-
-          julia --project=julia/EcoCorridorEngine
-          --startup-file=no --history-file=no
-          scripts/build_ecocorridor_engine.jl
+        run: |
+          bash scripts/run_with_progress_heartbeat.sh \
+            --interval-seconds 60 \
+            --label "PackageCompiler application build" \
+            -- \
+            julia --project=julia/EcoCorridorEngine \
+            --startup-file=no --history-file=no \
+            scripts/build_ecocorridor_engine.jl
 
       - name: Build self-contained scientific worker
         shell: bash

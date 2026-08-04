@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import re
+import shlex
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,6 +34,9 @@ ECOCORRIDOR_GEOSPATIAL_INVOCATION = re.compile(
     + r"(?=(?:\s|\\|['\";]|$))"
 )
 LOCKED_UV_SYNC = re.compile(r"(?<!\S)uv\s+sync\s+--locked(?=(?:\s|\\|['\";]|$))")
+PACKAGECOMPILER_BUILD_SCRIPT = "scripts/build_ecocorridor_engine.jl"
+PACKAGECOMPILER_HEARTBEAT_HELPER = "scripts/run_with_progress_heartbeat.sh"
+PACKAGECOMPILER_HEARTBEAT_LABEL = "PackageCompiler application build"
 
 
 def _declares_event(text: str, event: str) -> bool:
@@ -661,6 +665,94 @@ def evaluate_ecocorridor_geospatial_dependency_topology(
     return findings
 
 
+def evaluate_packagecompiler_heartbeat_topology(
+    workflows: dict[str, str],
+) -> list[str]:
+    """Require every long PackageCompiler build to emit bounded progress.
+
+    GitHub-hosted builds can spend tens of minutes inside the nonincremental
+    sysimage compiler without writing output.  Both the PR smoke build and the
+    signed-installer matrix must therefore execute the same checked heartbeat
+    wrapper.  Requiring an explicit Bash shell also keeps the release command
+    identical on macOS and Windows runners.
+    """
+
+    findings: list[str] = []
+    expected = {
+        ECOCORRIDOR_CI_WORKFLOW: "packaged-scientific-boundary",
+        ECOCORRIDOR_RELEASE_WORKFLOW: "build-signed-installers",
+    }
+    missing = sorted(set(expected) - set(workflows))
+    if missing:
+        findings.append("PackageCompiler heartbeat topology is incomplete: " + ", ".join(missing))
+
+    expected_prefix = [
+        "bash",
+        PACKAGECOMPILER_HEARTBEAT_HELPER,
+        "--interval-seconds",
+        "60",
+        "--label",
+        PACKAGECOMPILER_HEARTBEAT_LABEL,
+        "--",
+        "julia",
+    ]
+    for workflow_name, text in sorted(workflows.items()):
+        required_job = expected.get(workflow_name)
+        recognized_builds = 0
+        for number, job_name, block_lines in _job_blocks(text.splitlines()):
+            for start, end in _step_ranges(block_lines):
+                step = "\n".join(block_lines[start:end])
+                source = _shell_without_comment_lines(_run_source(block_lines, start, end))
+                has_build = PACKAGECOMPILER_BUILD_SCRIPT in source
+                has_helper = PACKAGECOMPILER_HEARTBEAT_HELPER in source
+                if not has_build and not has_helper:
+                    continue
+                if job_name != required_job:
+                    findings.append(
+                        f"{workflow_name}:{number + start}: PackageCompiler build helper is "
+                        f"not allowed in job {job_name}"
+                    )
+                    continue
+                if not has_build or not has_helper:
+                    findings.append(
+                        f"{workflow_name}:{number + start}: PackageCompiler build must use "
+                        f"{PACKAGECOMPILER_HEARTBEAT_HELPER}"
+                    )
+                    continue
+                recognized_builds += 1
+                if not re.search(
+                    r"^(?:      -\s+|        )shell:\s*bash\s*(?:#.*)?$",
+                    step,
+                    re.MULTILINE,
+                ):
+                    findings.append(
+                        f"{workflow_name}:{number + start}: PackageCompiler heartbeat step "
+                        "must declare shell: bash"
+                    )
+                try:
+                    tokens = shlex.split(source.replace("\\", " "))
+                except ValueError:
+                    tokens = []
+                if tokens[: len(expected_prefix)] != expected_prefix:
+                    findings.append(
+                        f"{workflow_name}:{number + start}: PackageCompiler heartbeat command "
+                        "must use the reviewed 60-second invocation"
+                    )
+                if not tokens or tokens[-1] != PACKAGECOMPILER_BUILD_SCRIPT:
+                    findings.append(
+                        f"{workflow_name}:{number + start}: PackageCompiler build script must be "
+                        "the wrapped command"
+                    )
+
+        if required_job is not None and recognized_builds != 1:
+            findings.append(
+                f"{workflow_name}: job {required_job} must contain exactly one heartbeat-wrapped "
+                f"PackageCompiler build; observed {recognized_builds}"
+            )
+
+    return findings
+
+
 def main() -> int:
     findings: list[str] = []
     paths = sorted({*WORKFLOWS.glob("*.yml"), *WORKFLOWS.glob("*.yaml")})
@@ -698,6 +790,7 @@ def main() -> int:
         name: text for name, text in by_name.items() if name.startswith("ecocorridor-")
     }
     findings.extend(evaluate_ecocorridor_geospatial_dependency_topology(eco_workflows))
+    findings.extend(evaluate_packagecompiler_heartbeat_topology(eco_workflows))
     if findings:
         for finding in findings:
             print(finding)

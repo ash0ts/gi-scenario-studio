@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 from pathlib import Path
 from types import ModuleType
 
@@ -556,6 +557,79 @@ def test_packaged_boundary_provisions_bounded_swap_for_nonincremental_sysimage()
         "\n  installed-artifact-smoke:", 1
     )[0]
     assert package_job.count('JULIA_NUM_PRECOMPILE_TASKS: "1"') == 2
+
+
+def test_packagecompiler_builds_are_heartbeat_wrapped_in_ci_and_release(
+    policy: ModuleType,
+) -> None:
+    workflows = _ecocorridor_workflows()
+
+    assert policy.evaluate_packagecompiler_heartbeat_topology(workflows) == []
+    for workflow_name in (
+        policy.ECOCORRIDOR_CI_WORKFLOW,
+        policy.ECOCORRIDOR_RELEASE_WORKFLOW,
+    ):
+        workflow = workflows[workflow_name]
+        assert workflow.count(policy.PACKAGECOMPILER_BUILD_SCRIPT) == 1
+        assert workflow.count(policy.PACKAGECOMPILER_HEARTBEAT_HELPER) == 1
+
+
+def test_packagecompiler_heartbeat_policy_rejects_unwrapped_or_wrong_shell(
+    policy: ModuleType,
+) -> None:
+    workflows = _ecocorridor_workflows()
+    unsafe = dict(workflows)
+    unsafe[policy.ECOCORRIDOR_RELEASE_WORKFLOW] = unsafe[
+        policy.ECOCORRIDOR_RELEASE_WORKFLOW
+    ].replace(
+        "        shell: bash\n        env:\n          ECOCORRIDOR_ENGINE_OUTPUT:",
+        "        env:\n          ECOCORRIDOR_ENGINE_OUTPUT:",
+        1,
+    )
+    findings = policy.evaluate_packagecompiler_heartbeat_topology(unsafe)
+
+    assert any("heartbeat step must declare shell: bash" in item for item in findings)
+
+    unsafe = dict(workflows)
+    unsafe[policy.ECOCORRIDOR_CI_WORKFLOW] = unsafe[policy.ECOCORRIDOR_CI_WORKFLOW].replace(
+        "bash scripts/run_with_progress_heartbeat.sh \\\n"
+        "            --interval-seconds 60 \\\n"
+        '            --label "PackageCompiler application build" \\\n'
+        "            -- \\\n"
+        "            ",
+        "",
+        1,
+    )
+    findings = policy.evaluate_packagecompiler_heartbeat_topology(unsafe)
+
+    assert any("must use scripts/run_with_progress_heartbeat.sh" in item for item in findings)
+
+
+def test_progress_heartbeat_preserves_wrapped_command_failure_status() -> None:
+    root = Path(__file__).resolve().parents[2]
+    helper = root / "scripts" / "run_with_progress_heartbeat.sh"
+    completed = subprocess.run(
+        [
+            "bash",
+            str(helper),
+            "--interval-seconds",
+            "1",
+            "--label",
+            "test compiler",
+            "--",
+            "bash",
+            "-c",
+            "sleep 2; exit 23",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert completed.returncode == 23
+    assert "test compiler is still running" in completed.stdout
+    assert "test compiler exited with status 23" in completed.stderr
 
 
 def _ecocorridor_workflows() -> dict[str, str]:
