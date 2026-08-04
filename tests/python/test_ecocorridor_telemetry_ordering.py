@@ -455,6 +455,103 @@ def test_schema_109_migration_backfills_deterministic_stream_sequences(tmp_path:
         ]
         guided_rows = [row for row in rows if row["stream_id"] == "guided_session:guided-session"]
         assert [row["stream_sequence"] for row in guided_rows] == [1, 2]
-        assert migrated._connection.execute("PRAGMA user_version").fetchone()[0] == 109
+        assert migrated._connection.execute("PRAGMA user_version").fetchone()[0] == 111
+    finally:
+        migrated.close()
+
+
+def test_schema_110_migration_recreates_pre_reference_event_allowlist(tmp_path: Path) -> None:
+    root = tmp_path / "migration-reference-event"
+    root.mkdir()
+    connection = sqlite3.connect(root / "project.sqlite")
+    try:
+        connection.executescript(
+            """
+            CREATE TABLE eco_projects (
+                project_id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                skeleton_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE eco_telemetry_outbox (
+                outbox_id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL REFERENCES eco_projects(project_id) ON DELETE CASCADE,
+                analysis_id TEXT,
+                event_type TEXT NOT NULL,
+                subject_id TEXT NOT NULL,
+                stream_id TEXT NOT NULL,
+                stream_sequence INTEGER NOT NULL,
+                outbox_sequence INTEGER NOT NULL,
+                payload_json TEXT NOT NULL,
+                payload_sha256 TEXT NOT NULL,
+                idempotency_key TEXT NOT NULL,
+                state TEXT NOT NULL,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                external_reference_json TEXT,
+                last_error_code TEXT,
+                lease_token TEXT,
+                lease_expires_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(project_id,idempotency_key),
+                UNIQUE(project_id,stream_id,stream_sequence),
+                UNIQUE(project_id,outbox_sequence)
+            );
+            CREATE TRIGGER eco_outbox_event_type_insert
+            BEFORE INSERT ON eco_telemetry_outbox
+            WHEN NEW.event_type NOT IN (
+              'bundle_import','semantic_revision','model_attestation','analysis_plan',
+              'guided_session','guided_checkpoint','direct_job_terminal',
+              'analysis_completion','evidence_export'
+            )
+            BEGIN SELECT RAISE(ABORT, 'unsupported telemetry event type'); END;
+            CREATE TRIGGER eco_outbox_event_type_update
+            BEFORE UPDATE OF event_type ON eco_telemetry_outbox
+            WHEN NEW.event_type NOT IN (
+              'bundle_import','semantic_revision','model_attestation','analysis_plan',
+              'guided_session','guided_checkpoint','direct_job_terminal',
+              'analysis_completion','evidence_export'
+            )
+            BEGIN SELECT RAISE(ABORT, 'unsupported telemetry event type'); END;
+            PRAGMA user_version=109;
+            """
+        )
+        connection.execute(
+            "INSERT INTO eco_projects VALUES(?,?,?,?,?,?)",
+            ("migration-project", "Migration", "PLANNING", "{}", "t0", "t0"),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    migrated = EcoProjectStore(root)
+    try:
+        trigger_sql = {
+            str(row["name"]): str(row["sql"])
+            for row in migrated._connection.execute(
+                "SELECT name,sql FROM sqlite_master WHERE type='trigger' "
+                "AND name IN ('eco_outbox_event_type_insert','eco_outbox_event_type_update')"
+            )
+        }
+        assert set(trigger_sql) == {
+            "eco_outbox_event_type_insert",
+            "eco_outbox_event_type_update",
+        }
+        assert all("reference_comparison" in value for value in trigger_sql.values())
+        with migrated.transaction() as transaction:
+            outbox_id = migrated._enqueue_outbox(
+                transaction,
+                project_id="migration-project",
+                analysis_id=None,
+                event_type="reference_comparison",
+                subject_id="reference-result",
+                stream_id="reference_comparison:analysis",
+                payload={"result_id": "reference-result"},
+                idempotency_key="reference-comparison:migration",
+            )
+        assert migrated.telemetry_rows()[0]["outbox_id"] == outbox_id
+        assert migrated._connection.execute("PRAGMA user_version").fetchone()[0] == 111
     finally:
         migrated.close()

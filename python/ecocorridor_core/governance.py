@@ -103,7 +103,7 @@ class CloudSyncPlan:
 
 
 def scientific_asset_ids(bundle: ConnectivityProjectBundle) -> set[str]:
-    """Return assets whose exact spatial bytes influence reportable model evidence."""
+    """Return assets whose exact bytes are part of reportable scientific evidence."""
 
     return {
         *(item.resistance_asset_id for item in bundle.resistance_hypotheses),
@@ -113,6 +113,12 @@ def scientific_asset_ids(bundle: ConnectivityProjectBundle) -> set[str]:
             effect.footprint_asset_id
             for option in bundle.intervention_options
             for effect in option.effects
+        ),
+        *(binding.reference_matrix_asset_id for binding in bundle.reference_bindings),
+        *(
+            binding.reference_current_asset_id
+            for binding in bundle.reference_bindings
+            if binding.reference_current_asset_id is not None
         ),
     }
 

@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import secrets
 import sqlite3
+import stat
 import threading
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
@@ -24,13 +26,22 @@ from scenario_platform.contracts import (
 from scenario_platform.storage import PathSecurityError, contained_path
 
 from .contracts import (
+    CURRENT_RASTER_LIMITATION,
+    FITNESS_LIMITATION,
+    AssetKind,
     ComputationalResourceObservation,
     ConnectivityEvidenceClaim,
     ConnectivityProjectBundle,
     ConnectivityRunPlan,
     DirectConnectivityRun,
+    EvidenceEdge,
+    EvidenceNode,
     ModelRevision,
     PortfolioDecisionSummary,
+    QAStatus,
+    ReferenceComparisonPlan,
+    ReferenceComparisonResult,
+    ReferencePairComparison,
     SemanticChange,
     SemanticModelDiff,
     canonical_sha256,
@@ -38,15 +49,21 @@ from .contracts import (
 from .engine import (
     EngineProtocolResult,
     PreparedConnectivityRun,
+    PreparedPair,
     engine_request_payload,
     parse_circuitscape_matrix,
     validate_effective_circuitscape_configuration,
 )
 from .footprints import ProfessionalFootprintProofDocument
 from .metrics import (
+    CONNECTIVITY_LIMITATION,
     validate_evidence_claim,
     validate_portfolio_disposition_support,
     verify_direct_claim_against_retained_evidence,
+)
+from .reference_matrix_parser import (
+    REFERENCE_MATRIX_PARSER_SHA256,
+    parse_reference_matrix_bytes,
 )
 
 
@@ -60,6 +77,69 @@ def _sha256_file(path: Path) -> str:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def _read_verified_regular_file(
+    path: Path,
+    *,
+    expected_sha256: str,
+    expected_byte_size: int,
+    capture_bytes: bool,
+) -> bytes | None:
+    """Hash one descriptor-backed read and optionally retain those exact bytes.
+
+    Path checks performed before ``open`` are inherently racy.  Open the
+    resolved path without following a final-component symlink where the host
+    supports it, reconcile the descriptor with ``lstat``, and hash only bytes
+    read from that descriptor.  Matrix parsing receives the captured bytes;
+    it never reopens the mutable path after checksum verification.
+    """
+
+    try:
+        before = path.lstat()
+    except OSError as exc:
+        raise ValueError("retained evidence bytes are absent") from exc
+    if not stat.S_ISREG(before.st_mode) or stat.S_ISLNK(before.st_mode):
+        raise ValueError("retained evidence path is not a regular file")
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_CLOEXEC", 0)
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise ValueError("retained evidence path could not be opened safely") from exc
+    digest = hashlib.sha256()
+    captured: list[bytes] | None = [] if capture_bytes else None
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_dev != before.st_dev
+            or opened.st_ino != before.st_ino
+        ):
+            raise ValueError("retained evidence path changed before descriptor capture")
+        byte_count = 0
+        while True:
+            block = os.read(descriptor, 1024 * 1024)
+            if not block:
+                break
+            byte_count += len(block)
+            digest.update(block)
+            if captured is not None:
+                captured.append(block)
+        after = os.fstat(descriptor)
+        stable_fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+        if any(getattr(opened, field) != getattr(after, field) for field in stable_fields):
+            raise ValueError("retained evidence changed during descriptor capture")
+    finally:
+        os.close(descriptor)
+    if byte_count != expected_byte_size or digest.hexdigest() != expected_sha256:
+        raise ValueError("retained evidence bytes failed their checksum")
+    return b"".join(captured) if captured is not None else None
+
+
+def _assumption_node_id(limitation: str) -> str:
+    return f"assumption:{hashlib.sha256(limitation.encode('utf-8')).hexdigest()}"
 
 
 _ASSISTANT_AUDIT_ERROR = re.compile(r"[A-Z][A-Z0-9_]{2,127}\Z")
@@ -243,6 +323,48 @@ CREATE TABLE IF NOT EXISTS eco_evidence_claims (
     analysis_id TEXT NOT NULL REFERENCES eco_analyses(analysis_id) ON DELETE CASCADE,
     payload_json TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS eco_reference_comparison_plans (
+    plan_id TEXT PRIMARY KEY,
+    analysis_id TEXT NOT NULL REFERENCES eco_analyses(analysis_id) ON DELETE CASCADE,
+    revision_id TEXT NOT NULL,
+    model_sha256 TEXT NOT NULL,
+    engine_manifest_sha256 TEXT NOT NULL,
+    reference_matrix_parser_sha256 TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    payload_sha256 TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(plan_id,analysis_id)
+);
+CREATE TABLE IF NOT EXISTS eco_reference_comparison_results (
+    result_id TEXT PRIMARY KEY,
+    analysis_id TEXT NOT NULL REFERENCES eco_analyses(analysis_id) ON DELETE CASCADE,
+    plan_id TEXT NOT NULL,
+    revision_id TEXT NOT NULL,
+    model_sha256 TEXT NOT NULL,
+    engine_manifest_sha256 TEXT NOT NULL,
+    reference_matrix_parser_sha256 TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('PASSED','FAILED')),
+    payload_json TEXT NOT NULL,
+    payload_sha256 TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(analysis_id,plan_id),
+    FOREIGN KEY(plan_id,analysis_id)
+      REFERENCES eco_reference_comparison_plans(plan_id,analysis_id)
+);
+CREATE TABLE IF NOT EXISTS eco_reference_comparison_claims (
+    claim_id TEXT PRIMARY KEY,
+    result_id TEXT NOT NULL REFERENCES eco_reference_comparison_results(result_id)
+      ON DELETE CASCADE,
+    analysis_id TEXT NOT NULL REFERENCES eco_analyses(analysis_id) ON DELETE CASCADE,
+    comparison_id TEXT NOT NULL,
+    scenario_id TEXT NOT NULL,
+    pair_id TEXT NOT NULL,
+    direct_run_id TEXT NOT NULL REFERENCES eco_analysis_runs(direct_run_id),
+    payload_json TEXT NOT NULL,
+    payload_sha256 TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(result_id,comparison_id,scenario_id,pair_id,direct_run_id)
+);
 CREATE TABLE IF NOT EXISTS eco_observability (
     project_id TEXT PRIMARY KEY REFERENCES eco_projects(project_id) ON DELETE CASCADE,
     payload_json TEXT NOT NULL,
@@ -369,6 +491,19 @@ BEGIN SELECT RAISE(ABORT, 'terminal direct job is immutable'); END;
 CREATE TRIGGER IF NOT EXISTS eco_analysis_run_immutable_update
 BEFORE UPDATE ON eco_analysis_runs
 BEGIN SELECT RAISE(ABORT, 'direct run is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS eco_analysis_run_requires_prepared_job
+BEFORE INSERT ON eco_analysis_runs
+WHEN NOT EXISTS (
+  SELECT 1 FROM eco_direct_jobs AS job
+  WHERE job.direct_job_id=NEW.direct_run_id
+    AND job.analysis_id=NEW.analysis_id
+    AND job.portfolio_id=NEW.portfolio_id
+    AND job.scenario_id=NEW.scenario_id
+    AND job.state='RUNNING'
+    AND job.prepared_json IS NOT NULL
+    AND job.model_run_cache_key=NEW.model_run_cache_key
+)
+BEGIN SELECT RAISE(ABORT, 'direct run requires its running prepared durable job'); END;
 CREATE TRIGGER IF NOT EXISTS eco_analysis_run_immutable_delete
 BEFORE DELETE ON eco_analysis_runs
 BEGIN SELECT RAISE(ABORT, 'direct run is immutable'); END;
@@ -420,6 +555,32 @@ BEGIN SELECT RAISE(ABORT, 'evidence claim is immutable'); END;
 CREATE TRIGGER IF NOT EXISTS eco_evidence_claim_immutable_delete
 BEFORE DELETE ON eco_evidence_claims
 BEGIN SELECT RAISE(ABORT, 'evidence claim is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS eco_reference_plan_immutable_update
+BEFORE UPDATE ON eco_reference_comparison_plans
+BEGIN SELECT RAISE(ABORT, 'reference comparison plan is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS eco_reference_plan_immutable_delete
+BEFORE DELETE ON eco_reference_comparison_plans
+BEGIN SELECT RAISE(ABORT, 'reference comparison plan is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS eco_reference_result_immutable_update
+BEFORE UPDATE ON eco_reference_comparison_results
+BEGIN SELECT RAISE(ABORT, 'reference comparison result is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS eco_reference_result_immutable_delete
+BEFORE DELETE ON eco_reference_comparison_results
+BEGIN SELECT RAISE(ABORT, 'reference comparison result is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS eco_reference_claim_immutable_update
+BEFORE UPDATE ON eco_reference_comparison_claims
+BEGIN SELECT RAISE(ABORT, 'reference comparison claim is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS eco_reference_claim_immutable_delete
+BEFORE DELETE ON eco_reference_comparison_claims
+BEGIN SELECT RAISE(ABORT, 'reference comparison claim is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS eco_reference_claim_excludes_analysis_claim
+BEFORE INSERT ON eco_reference_comparison_claims
+WHEN EXISTS (SELECT 1 FROM eco_evidence_claims WHERE claim_id=NEW.claim_id)
+BEGIN SELECT RAISE(ABORT, 'reference claim identity collides with analysis evidence'); END;
+CREATE TRIGGER IF NOT EXISTS eco_analysis_claim_excludes_reference_claim
+BEFORE INSERT ON eco_evidence_claims
+WHEN EXISTS (SELECT 1 FROM eco_reference_comparison_claims WHERE claim_id=NEW.claim_id)
+BEGIN SELECT RAISE(ABORT, 'analysis claim identity collides with reference evidence'); END;
 
 CREATE TRIGGER IF NOT EXISTS eco_outbox_evidence_immutable
 BEFORE UPDATE OF project_id,analysis_id,event_type,subject_id,stream_id,stream_sequence,
@@ -470,20 +631,24 @@ BEGIN SELECT RAISE(ABORT, 'answered assistant call cannot become rejected'); END
 
 
 _MIGRATION_106_EVENT_POLICY = """
+BEGIN IMMEDIATE;
+DROP TRIGGER IF EXISTS eco_outbox_event_type_insert;
+DROP TRIGGER IF EXISTS eco_outbox_event_type_update;
 CREATE TRIGGER IF NOT EXISTS eco_outbox_event_type_insert
 BEFORE INSERT ON eco_telemetry_outbox
 WHEN NEW.event_type NOT IN (
   'bundle_import','semantic_revision','model_attestation','analysis_plan','guided_session','guided_checkpoint',
-  'direct_job_terminal','analysis_completion','evidence_export'
+  'direct_job_terminal','analysis_completion','reference_comparison','evidence_export'
 )
 BEGIN SELECT RAISE(ABORT, 'unsupported telemetry event type'); END;
 CREATE TRIGGER IF NOT EXISTS eco_outbox_event_type_update
 BEFORE UPDATE OF event_type ON eco_telemetry_outbox
 WHEN NEW.event_type NOT IN (
   'bundle_import','semantic_revision','model_attestation','analysis_plan','guided_session','guided_checkpoint',
-  'direct_job_terminal','analysis_completion','evidence_export'
+  'direct_job_terminal','analysis_completion','reference_comparison','evidence_export'
 )
 BEGIN SELECT RAISE(ABORT, 'unsupported telemetry event type'); END;
+COMMIT;
 """
 
 
@@ -525,10 +690,50 @@ class EcoProjectStore:
         self._connection.execute("PRAGMA journal_mode=WAL")
         self._connection.execute("PRAGMA synchronous=FULL")
         version = int(self._connection.execute("PRAGMA user_version").fetchone()[0])
-        if version not in {0, 101, 102, 103, 104, 105, 106, 107, 108, 109}:
+        if version not in {0, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111}:
             self._connection.close()
             raise RuntimeError(f"unsupported EcoCorridor database version: {version}")
         self._connection.executescript(_SCHEMA)
+        if version == 110:
+            reference_tables = (
+                "eco_reference_comparison_plans",
+                "eco_reference_comparison_results",
+            )
+            missing_parser_columns = [
+                table
+                for table in reference_tables
+                if "reference_matrix_parser_sha256"
+                not in {
+                    str(row[1]) for row in self._connection.execute(f"PRAGMA table_info({table})")
+                }
+            ]
+            # Old reference evidence cannot be attributed to the new parser
+            # after the fact.  Preflight both tables before changing either:
+            # empty tables migrate atomically; any populated unprovenanced
+            # table remains untouched and must be recreated from direct runs.
+            if any(
+                self._connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                for table in missing_parser_columns
+            ):
+                self._connection.close()
+                raise RuntimeError(
+                    "schema-110 reference evidence has no cryptographic parser provenance; "
+                    "recreate the reference comparison before upgrading"
+                )
+            if missing_parser_columns:
+                self._connection.execute("BEGIN IMMEDIATE")
+                try:
+                    for table in missing_parser_columns:
+                        self._connection.execute(
+                            f"ALTER TABLE {table} ADD COLUMN reference_matrix_parser_sha256 "
+                            f"TEXT NOT NULL DEFAULT '{REFERENCE_MATRIX_PARSER_SHA256}'"
+                        )
+                except BaseException:
+                    self._connection.rollback()
+                    self._connection.close()
+                    raise
+                else:
+                    self._connection.commit()
         if version in {101, 102}:
             guided_columns = {
                 str(row[1])
@@ -616,6 +821,22 @@ class EcoProjectStore:
             "CREATE INDEX IF NOT EXISTS eco_telemetry_outbox_stream_state "
             "ON eco_telemetry_outbox(project_id,stream_id,stream_sequence,state)"
         )
+        orphaned_run = self._connection.execute(
+            "SELECT run.direct_run_id FROM eco_analysis_runs AS run "
+            "LEFT JOIN eco_direct_jobs AS job ON job.direct_job_id=run.direct_run_id "
+            "WHERE job.direct_job_id IS NULL OR job.analysis_id!=run.analysis_id "
+            "OR job.portfolio_id!=run.portfolio_id OR job.scenario_id!=run.scenario_id "
+            "OR job.state!='SUCCEEDED' OR job.prepared_json IS NULL "
+            "OR job.model_run_cache_key!=run.model_run_cache_key "
+            "OR job.terminal_sha256 IS NULL OR job.terminal_sha256='' "
+            "OR job.completed_at IS NULL LIMIT 1"
+        ).fetchone()
+        if orphaned_run is not None:
+            self._connection.close()
+            raise RuntimeError(
+                "legacy direct-run evidence lacks a successful prepared durable job; "
+                "recreate the analysis through the durable scheduler"
+            )
         regressed = self._connection.execute(
             "SELECT later.outbox_id FROM eco_telemetry_outbox AS later "
             "WHERE later.state='SYNCED' AND EXISTS ("
@@ -632,7 +853,7 @@ class EcoProjectStore:
             self._connection.execute("DROP TRIGGER IF EXISTS eco_outbox_evidence_immutable")
         self._connection.executescript(_MIGRATION_105_TRIGGERS)
         self._connection.executescript(_MIGRATION_106_EVENT_POLICY)
-        self._connection.execute("PRAGMA user_version=109")
+        self._connection.execute("PRAGMA user_version=111")
         # Expired leases are process-abandoned cloud work, not scientific state.
         # Releasing them at open makes retry durable without stealing a live lease.
         self.recover_expired_outbox_leases()
@@ -3051,6 +3272,1076 @@ class EcoProjectStore:
                     "pair evidence must exist in both subject and baseline direct runs"
                 )
 
+    @staticmethod
+    def _load_reference_comparison_plan(
+        connection: sqlite3.Connection,
+        *,
+        plan_id: str,
+        analysis_id: str | None = None,
+    ) -> ReferenceComparisonPlan:
+        query = "SELECT * FROM eco_reference_comparison_plans WHERE plan_id=?"
+        parameters: tuple[str, ...] = (plan_id,)
+        if analysis_id is not None:
+            query += " AND analysis_id=?"
+            parameters = (plan_id, analysis_id)
+        row = connection.execute(query, parameters).fetchone()
+        if row is None:
+            raise ValueError("reference comparison requires an immutable stored plan")
+        payload_json = str(row["payload_json"])
+        if hashlib.sha256(payload_json.encode("utf-8")).hexdigest() != row["payload_sha256"]:
+            raise ValueError("reference comparison plan failed its immutable checksum")
+        plan = ReferenceComparisonPlan.model_validate_json(payload_json)
+        if (
+            canonical_json(plan.model_dump(mode="json")) != payload_json
+            or row["plan_id"] != plan.plan_id
+            or row["analysis_id"] != plan.analysis_id
+            or row["revision_id"] != plan.revision_id
+            or row["model_sha256"] != plan.model_sha256
+            or row["engine_manifest_sha256"] != plan.engine_manifest_sha256
+            or row["reference_matrix_parser_sha256"] != REFERENCE_MATRIX_PARSER_SHA256
+        ):
+            raise ValueError("reference comparison plan row differs from its payload")
+        return plan
+
+    def store_reference_comparison_plan(
+        self,
+        reference_plan: ReferenceComparisonPlan,
+    ) -> dict[str, Any]:
+        """Persist the reviewed baseline-only plan before any direct work begins."""
+
+        reference_plan = ReferenceComparisonPlan.model_validate(
+            reference_plan.model_dump(mode="json")
+        )
+        payload_json = canonical_json(reference_plan.model_dump(mode="json"))
+        payload_sha256 = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+        with self.transaction() as connection:
+            analysis = connection.execute(
+                "SELECT state,plan_json FROM eco_analyses WHERE analysis_id=?",
+                (reference_plan.analysis_id,),
+            ).fetchone()
+            if analysis is None:
+                raise KeyError(reference_plan.analysis_id)
+            if canonical_json(reference_plan.run_plan.model_dump(mode="json")) != canonical_json(
+                ConnectivityRunPlan.model_validate_json(str(analysis["plan_json"])).model_dump(
+                    mode="json"
+                )
+            ):
+                raise ValueError("reference plan differs from the immutable analysis run plan")
+            model_row = connection.execute(
+                "SELECT bundle_sha256,bundle_json FROM eco_analysis_models WHERE analysis_id=?",
+                (reference_plan.analysis_id,),
+            ).fetchone()
+            if model_row is None:
+                raise ValueError("reference plan has no immutable analysis model snapshot")
+            bundle_json = str(model_row["bundle_json"])
+            if (
+                hashlib.sha256(bundle_json.encode("utf-8")).hexdigest()
+                != model_row["bundle_sha256"]
+            ):
+                raise ValueError("analysis model snapshot failed its immutable checksum")
+            bundle = ConnectivityProjectBundle.model_validate_json(bundle_json)
+            bindings_by_id = {item.binding_id: item for item in bundle.reference_bindings}
+            selected_bindings = [
+                bindings_by_id.get(binding_id) for binding_id in reference_plan.binding_ids
+            ]
+            if (
+                reference_plan.revision_id != bundle.revision.revision_id
+                or reference_plan.model_sha256 != bundle.revision.model_sha256
+                or any(item is None for item in selected_bindings)
+                or {item.scenario_id for item in selected_bindings if item is not None}
+                != set(reference_plan.bound_scenario_ids)
+            ):
+                raise ValueError(
+                    "reference plan identity or binding scope differs from its model snapshot"
+                )
+            existing = connection.execute(
+                "SELECT * FROM eco_reference_comparison_plans WHERE plan_id=?",
+                (reference_plan.plan_id,),
+            ).fetchone()
+            replayed = existing is not None
+            if existing is not None:
+                if (
+                    existing["analysis_id"] != reference_plan.analysis_id
+                    or existing["revision_id"] != reference_plan.revision_id
+                    or existing["model_sha256"] != reference_plan.model_sha256
+                    or existing["engine_manifest_sha256"] != reference_plan.engine_manifest_sha256
+                    or existing["reference_matrix_parser_sha256"] != REFERENCE_MATRIX_PARSER_SHA256
+                    or existing["payload_json"] != payload_json
+                    or existing["payload_sha256"] != payload_sha256
+                ):
+                    raise ValueError(
+                        "reference comparison plan identity was reused for different evidence"
+                    )
+            else:
+                if (
+                    connection.execute(
+                        "SELECT 1 FROM eco_direct_jobs WHERE analysis_id=? LIMIT 1",
+                        (reference_plan.analysis_id,),
+                    ).fetchone()
+                    is not None
+                    or connection.execute(
+                        "SELECT 1 FROM eco_analysis_runs WHERE analysis_id=? LIMIT 1",
+                        (reference_plan.analysis_id,),
+                    ).fetchone()
+                    is not None
+                ):
+                    raise ValueError("reference plan cannot be introduced after direct work exists")
+                if analysis["state"] != AnalysisState.READY.value:
+                    raise ValueError("reference plan must be stored while its analysis is ready")
+                connection.execute(
+                    "INSERT INTO eco_reference_comparison_plans(plan_id,analysis_id,revision_id,"
+                    "model_sha256,engine_manifest_sha256,reference_matrix_parser_sha256,"
+                    "payload_json,payload_sha256,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                    (
+                        reference_plan.plan_id,
+                        reference_plan.analysis_id,
+                        reference_plan.revision_id,
+                        reference_plan.model_sha256,
+                        reference_plan.engine_manifest_sha256,
+                        REFERENCE_MATRIX_PARSER_SHA256,
+                        payload_json,
+                        payload_sha256,
+                        _now(),
+                    ),
+                )
+        return {
+            "plan_id": reference_plan.plan_id,
+            "plan_sha256": payload_sha256,
+            "reference_matrix_parser_sha256": REFERENCE_MATRIX_PARSER_SHA256,
+            "replayed": replayed,
+        }
+
+    def reference_comparison_plan(
+        self,
+        plan_id: str,
+        *,
+        analysis_id: str | None = None,
+    ) -> tuple[ReferenceComparisonPlan, str]:
+        """Return the exact canonical stored plan and its immutable payload digest."""
+
+        with self._lock:
+            plan = self._load_reference_comparison_plan(
+                self._connection,
+                plan_id=plan_id,
+                analysis_id=analysis_id,
+            )
+            payload_sha256 = hashlib.sha256(
+                canonical_json(plan.model_dump(mode="json")).encode("utf-8")
+            ).hexdigest()
+            return plan, payload_sha256
+
+    def _validate_reference_comparison_evidence(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        reference_plan: ReferenceComparisonPlan,
+        result: ReferenceComparisonResult,
+        claims: Sequence[ConnectivityEvidenceClaim],
+    ) -> tuple[str, dict[str, ConnectivityEvidenceClaim]]:
+        """Reconcile a reference result with immutable local science and source bytes."""
+
+        # ``model_copy`` can bypass model validators.  Persistence is a trust
+        # boundary, so deserialize every caller-supplied contract again.
+        reference_plan = ReferenceComparisonPlan.model_validate(
+            reference_plan.model_dump(mode="json")
+        )
+        result = ReferenceComparisonResult.model_validate(result.model_dump(mode="json"))
+        validated_claims = [
+            ConnectivityEvidenceClaim.model_validate(item.model_dump(mode="json"))
+            for item in claims
+        ]
+        claims_by_id = {item.claim_id: item for item in validated_claims}
+        if len(claims_by_id) != len(validated_claims):
+            raise ValueError("reference comparison contains duplicate evidence claim IDs")
+        links_by_claim_id = {item.claim_id: item for item in result.evidence_claim_links}
+        if set(claims_by_id) != set(links_by_claim_id):
+            raise ValueError(
+                "reference comparison claims differ from its authoritative evidence links"
+            )
+
+        analysis = connection.execute(
+            "SELECT project_id,plan_json FROM eco_analyses WHERE analysis_id=?",
+            (result.analysis_id,),
+        ).fetchone()
+        if analysis is None:
+            raise KeyError(result.analysis_id)
+        analysis_plan = ConnectivityRunPlan.model_validate_json(str(analysis["plan_json"]))
+        model_row = connection.execute(
+            "SELECT bundle_sha256,bundle_json FROM eco_analysis_models WHERE analysis_id=?",
+            (result.analysis_id,),
+        ).fetchone()
+        if model_row is None:
+            raise ValueError("reference comparison has no immutable analysis model snapshot")
+        bundle_json = str(model_row["bundle_json"])
+        if hashlib.sha256(bundle_json.encode("utf-8")).hexdigest() != model_row["bundle_sha256"]:
+            raise ValueError("analysis model snapshot failed its immutable checksum")
+        bundle = ConnectivityProjectBundle.model_validate_json(bundle_json)
+        if (
+            reference_plan.plan_id != result.plan_id
+            or reference_plan.analysis_id != result.analysis_id
+            or reference_plan.revision_id != result.revision_id
+            or reference_plan.model_sha256 != result.model_sha256
+            or reference_plan.engine_manifest_sha256 != result.engine_manifest_sha256
+            or canonical_json(reference_plan.run_plan.model_dump(mode="json"))
+            != canonical_json(analysis_plan.model_dump(mode="json"))
+            or analysis_plan.analysis_id != result.analysis_id
+            or analysis_plan.revision_id != result.revision_id
+            or bundle.revision.revision_id != result.revision_id
+            or bundle.revision.model_sha256 != result.model_sha256
+            or analysis_plan.engine_manifest_sha256 != result.engine_manifest_sha256
+        ):
+            raise ValueError(
+                "reference plan or result differs from its analysis, revision, model, or engine"
+            )
+
+        scenarios = {item.scenario_id: item for item in bundle.scenarios}
+        planned_binding_ids = set(reference_plan.binding_ids)
+        bindings = {
+            item.scenario_id: item
+            for item in bundle.reference_bindings
+            if item.binding_id in planned_binding_ids
+        }
+        if (
+            set(bindings) != set(reference_plan.bound_scenario_ids)
+            or {item.binding_id for item in bindings.values()} != planned_binding_ids
+        ):
+            raise ValueError(
+                "reference plan binding scope differs from the immutable analysis model"
+            )
+        comparison_by_scenario = {item.scenario_id: item for item in result.scenario_comparisons}
+        if set(comparison_by_scenario) != set(reference_plan.bound_scenario_ids):
+            raise ValueError("reference result coverage differs from its immutable reference plan")
+        if not set(comparison_by_scenario).issubset(analysis_plan.scenario_ids):
+            raise ValueError("reference comparison contains an unplanned scenario")
+
+        assets = {item.asset_id: item for item in bundle.assets}
+        focal_sets = {item.focal_set_id: item for item in bundle.focal_area_sets}
+        canonical_comparisons: dict[str, Any] = {}
+        pair_comparison_by_subject: dict[tuple[str, str], ReferencePairComparison] = {}
+        run_by_scenario: dict[str, DirectConnectivityRun] = {}
+        matrix_asset_by_scenario: dict[str, Any] = {}
+
+        def verify_asset_bytes(
+            asset_id: str,
+            expected_kind: AssetKind,
+            *,
+            capture_bytes: bool,
+        ) -> tuple[Any, bytes | None]:
+            asset = assets.get(asset_id)
+            if asset is None or asset.kind != expected_kind:
+                raise ValueError(
+                    f"reference comparison requires a retained {expected_kind.value} asset"
+                )
+            try:
+                path = self.resolve_asset_path(asset.relative_path)
+            except FileNotFoundError as exc:
+                raise ValueError("reference comparison source asset bytes are absent") from exc
+            return asset, _read_verified_regular_file(
+                path,
+                expected_sha256=asset.sha256,
+                expected_byte_size=asset.byte_size,
+                capture_bytes=capture_bytes,
+            )
+
+        for scenario_id, comparison in comparison_by_scenario.items():
+            scenario = scenarios.get(scenario_id)
+            binding = bindings.get(scenario_id)
+            if scenario is None or binding is None:
+                raise ValueError("reference comparison scenario or binding is unavailable")
+            if (
+                comparison.analysis_id != result.analysis_id
+                or comparison.revision_id != result.revision_id
+                or comparison.model_sha256 != result.model_sha256
+                or comparison.engine_manifest_sha256 != result.engine_manifest_sha256
+                or comparison.binding_id != binding.binding_id
+                or comparison.reference_matrix_asset_id != binding.reference_matrix_asset_id
+                or comparison.tolerance != binding.tolerance
+                or comparison.reference_current_asset_id != binding.reference_current_asset_id
+                or comparison.current_raster_disposition != binding.current_raster_disposition
+            ):
+                raise ValueError("reference scenario comparison differs from its reviewed binding")
+
+            focal_set = focal_sets.get(scenario.focal_set_id)
+            if focal_set is None:
+                raise ValueError("reference scenario focal-area set is unavailable")
+            focal_pairs = {item.pair_id: item for item in focal_set.pairs}
+            if set(scenario.included_pair_ids) - set(focal_pairs):
+                raise ValueError("reference scenario includes an unavailable focal pair")
+            prepared_pairs = [
+                PreparedPair(
+                    pair_id=pair_id,
+                    from_focal_id=focal_pairs[pair_id].from_focal_id,
+                    to_focal_id=focal_pairs[pair_id].to_focal_id,
+                )
+                for pair_id in scenario.included_pair_ids
+            ]
+
+            matrix_asset, reference_matrix_bytes = verify_asset_bytes(
+                binding.reference_matrix_asset_id,
+                AssetKind.REFERENCE_MATRIX,
+                capture_bytes=True,
+            )
+            if reference_matrix_bytes is None:
+                raise AssertionError("captured reference matrix bytes are unavailable")
+            if comparison.reference_matrix_sha256 != matrix_asset.sha256:
+                raise ValueError("reference matrix comparison hash differs from its source asset")
+            parsed_reference = parse_reference_matrix_bytes(
+                reference_matrix_bytes,
+                prepared_pairs,
+            )
+            if comparison.reference_current_asset_id is not None:
+                current_asset, _ = verify_asset_bytes(
+                    comparison.reference_current_asset_id,
+                    AssetKind.REFERENCE_CURRENT,
+                    capture_bytes=False,
+                )
+                if comparison.reference_current_sha256 != current_asset.sha256:
+                    raise ValueError(
+                        "reference current diagnostic hash differs from its source asset"
+                    )
+            elif comparison.reference_current_sha256 is not None:
+                raise ValueError("reference current hash has no reviewed source asset")
+
+            run_row = connection.execute(
+                "SELECT analysis_id,portfolio_id,scenario_id,state,model_run_cache_key,"
+                "result_sha256,payload_json "
+                "FROM eco_analysis_runs WHERE direct_run_id=?",
+                (comparison.direct_run_id,),
+            ).fetchone()
+            if run_row is None:
+                raise ValueError("reference comparison direct run is not stored")
+            run = DirectConnectivityRun.model_validate_json(str(run_row["payload_json"]))
+            if (
+                run_row["state"] != "SUCCEEDED"
+                or run.state.value != "SUCCEEDED"
+                or run_row["analysis_id"] != result.analysis_id
+                or run_row["portfolio_id"] != analysis_plan.baseline_portfolio_id
+                or run_row["scenario_id"] != scenario_id
+                or run_row["model_run_cache_key"] != run.model_run_cache_key
+                or run_row["result_sha256"] != run.result_sha256
+                or run.analysis_id != result.analysis_id
+                or run.revision_id != result.revision_id
+                or run.portfolio_id != analysis_plan.baseline_portfolio_id
+                or run.scenario_id != scenario_id
+                or run.engine_manifest_sha256 != result.engine_manifest_sha256
+                or not run.exact
+                or run.test_only
+                or run.engine_name != "Circuitscape"
+                or run.qa_status not in {QAStatus.ACCEPTED, QAStatus.WARNING_ACCEPTED}
+                or run.qa_status != comparison.qa_status
+                or run.matrix_sha256 != comparison.observed_matrix_sha256
+            ):
+                raise ValueError(
+                    "reference comparison differs from its exact stored successful direct run"
+                )
+            direct_job_row = connection.execute(
+                "SELECT direct_job_id,analysis_id,portfolio_id,scenario_id,phase,state,"
+                "model_run_cache_key,prepared_json,terminal_sha256,completed_at "
+                "FROM eco_direct_jobs WHERE direct_job_id=?",
+                (run.direct_run_id,),
+            ).fetchone()
+            if direct_job_row is None:
+                raise ValueError(
+                    "reference comparison direct run has no successful durable direct job"
+                )
+            prepared_json = direct_job_row["prepared_json"]
+            terminal_sha256 = direct_job_row["terminal_sha256"]
+            if (
+                direct_job_row["analysis_id"] != run.analysis_id
+                or direct_job_row["portfolio_id"] != run.portfolio_id
+                or direct_job_row["scenario_id"] != run.scenario_id
+                or direct_job_row["phase"] != "MATRIX"
+                or direct_job_row["state"] != DirectJobState.SUCCEEDED.value
+                or direct_job_row["model_run_cache_key"] != run.model_run_cache_key
+                or not isinstance(prepared_json, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", str(terminal_sha256 or ""))
+                or direct_job_row["completed_at"] is None
+            ):
+                raise ValueError(
+                    "reference comparison direct run differs from its terminal durable job"
+                )
+            prepared = PreparedConnectivityRun.model_validate_json(prepared_json)
+            if (
+                prepared.prepared_run_id != run.direct_run_id
+                or prepared.analysis_id != run.analysis_id
+                or prepared.revision_id != run.revision_id
+                or prepared.portfolio_id != run.portfolio_id
+                or prepared.scenario != scenario
+                or prepared.pairs != prepared_pairs
+                or prepared.engine_manifest_sha256 != run.engine_manifest_sha256
+                or prepared.model_run_cache_key != run.model_run_cache_key
+            ):
+                raise ValueError(
+                    "reference comparison prepared evidence differs from its direct run"
+                )
+            run_metrics = {item.pair_id: item.effective_resistance for item in run.pair_metrics}
+            stored_metric_rows = connection.execute(
+                "SELECT pair_id,effective_resistance,units FROM eco_run_metrics "
+                "WHERE direct_run_id=? ORDER BY pair_id",
+                (run.direct_run_id,),
+            ).fetchall()
+            stored_metrics = {
+                str(item["pair_id"]): float(item["effective_resistance"])
+                for item in stored_metric_rows
+                if item["units"] == "effective_resistance"
+            }
+            qa_row = connection.execute(
+                "SELECT status,findings_json FROM eco_run_qa WHERE direct_run_id=?",
+                (run.direct_run_id,),
+            ).fetchone()
+            if qa_row is not None and str(qa_row["findings_json"]) != canonical_json(
+                run.qa_findings
+            ):
+                raise ValueError(
+                    "reference comparison direct-run QA findings differ from its retained QA "
+                    "evidence"
+                )
+            artifact_row = connection.execute(
+                "SELECT sha256,byte_size,cas_relative_path FROM eco_run_artifacts "
+                "WHERE direct_run_id=? AND role='matrix'",
+                (run.direct_run_id,),
+            ).fetchone()
+            run_artifact_rows = connection.execute(
+                "SELECT role,sha256,byte_size,cas_relative_path,media_type "
+                "FROM eco_run_artifacts WHERE direct_run_id=? ORDER BY role",
+                (run.direct_run_id,),
+            ).fetchall()
+            terminal_artifact_rows = connection.execute(
+                "SELECT role,sha256,byte_size,cas_relative_path,media_type "
+                "FROM eco_terminal_job_artifacts WHERE direct_job_id=? ORDER BY role",
+                (run.direct_run_id,),
+            ).fetchall()
+            run_artifact_tuples = [tuple(item) for item in run_artifact_rows]
+            terminal_artifact_tuples = [tuple(item) for item in terminal_artifact_rows]
+            run_artifacts_by_role = {str(item["role"]): dict(item) for item in run_artifact_rows}
+            if (
+                len(stored_metrics) != len(stored_metric_rows)
+                or stored_metrics != run_metrics
+                or qa_row is None
+                or qa_row["status"] != run.qa_status.value
+                or artifact_row is None
+                or artifact_row["sha256"] != run.matrix_sha256
+                or not run_artifact_tuples
+                or run_artifact_tuples != terminal_artifact_tuples
+                or run_artifacts_by_role.get("request", {}).get("sha256") != run.input_sha256
+                or run_artifacts_by_role.get("result_protocol", {}).get("sha256")
+                != run.result_sha256
+            ):
+                raise ValueError(
+                    "reference comparison direct run lacks authoritative metrics, QA, or matrix"
+                )
+            try:
+                observed_matrix_path = contained_path(
+                    self.root,
+                    str(artifact_row["cas_relative_path"]),
+                )
+            except PathSecurityError as exc:
+                raise ValueError("direct-run matrix artifact escapes the project") from exc
+            observed_matrix_bytes = _read_verified_regular_file(
+                observed_matrix_path,
+                expected_sha256=run.matrix_sha256,
+                expected_byte_size=int(artifact_row["byte_size"]),
+                capture_bytes=True,
+            )
+            if observed_matrix_bytes is None:
+                raise AssertionError("captured observed matrix bytes are unavailable")
+            parsed_observed = parse_reference_matrix_bytes(
+                observed_matrix_bytes,
+                prepared_pairs,
+            )
+            comparison_pairs = {item.pair_id: item for item in comparison.pair_comparisons}
+            expected_pair_ids = set(scenario.included_pair_ids)
+            if (
+                set(run_metrics) != expected_pair_ids
+                or set(parsed_observed) != expected_pair_ids
+                or set(parsed_reference) != expected_pair_ids
+                or set(comparison_pairs) != expected_pair_ids
+            ):
+                raise ValueError(
+                    "reference comparison does not cover the complete direct-run focal-pair set"
+                )
+            if run_metrics != parsed_observed or stored_metrics != parsed_observed:
+                raise ValueError(
+                    "stored direct metrics differ from the exact retained matrix bytes"
+                )
+            canonical_pairs: list[ReferencePairComparison] = []
+            for pair_id in sorted(expected_pair_ids):
+                reference_value = parsed_reference[pair_id]
+                observed_value = parsed_observed[pair_id]
+                absolute_difference = abs(observed_value - reference_value)
+                relative_difference = absolute_difference / abs(reference_value)
+                allowed_difference = binding.tolerance.absolute_tolerance + (
+                    binding.tolerance.relative_tolerance * abs(reference_value)
+                )
+                canonical_pair = ReferencePairComparison(
+                    pair_id=pair_id,
+                    reference_effective_resistance=reference_value,
+                    observed_effective_resistance=observed_value,
+                    tolerance=binding.tolerance,
+                    absolute_difference=absolute_difference,
+                    relative_difference=relative_difference,
+                    allowed_difference=allowed_difference,
+                    within_tolerance=absolute_difference <= allowed_difference,
+                )
+                canonical_pairs.append(canonical_pair)
+                pair_comparison_by_subject[(scenario_id, pair_id)] = canonical_pair
+            canonical_comparison = type(comparison).model_validate(
+                {
+                    **comparison.model_dump(mode="json"),
+                    "pair_comparisons": [item.model_dump(mode="json") for item in canonical_pairs],
+                    "qa_status": run.qa_status.value,
+                    "limitations": list(
+                        dict.fromkeys(
+                            [
+                                *binding.limitations,
+                                CURRENT_RASTER_LIMITATION,
+                                FITNESS_LIMITATION,
+                            ]
+                        )
+                    ),
+                    "status": (
+                        "PASSED"
+                        if all(item.within_tolerance for item in canonical_pairs)
+                        else "FAILED"
+                    ),
+                }
+            )
+            if canonical_json(comparison.model_dump(mode="json")) != canonical_json(
+                canonical_comparison.model_dump(mode="json")
+            ):
+                raise ValueError(
+                    "reference comparison is not the canonical result of retained matrix bytes"
+                )
+            canonical_comparisons[scenario_id] = canonical_comparison
+            run_by_scenario[scenario_id] = run
+            matrix_asset_by_scenario[scenario_id] = matrix_asset
+
+        canonical_result = ReferenceComparisonResult.model_validate(
+            {
+                **result.model_dump(mode="json"),
+                "scenario_comparisons": [
+                    canonical_comparisons[scenario_id].model_dump(mode="json")
+                    for scenario_id in sorted(canonical_comparisons)
+                ],
+                "status": (
+                    "PASSED"
+                    if all(item.status == "PASSED" for item in canonical_comparisons.values())
+                    else "FAILED"
+                ),
+                "evidence_claim_links": [
+                    item.model_dump(mode="json")
+                    for item in sorted(
+                        result.evidence_claim_links,
+                        key=lambda item: (
+                            item.scenario_id,
+                            item.pair_id,
+                            item.comparison_id,
+                            item.direct_run_id,
+                            item.claim_id,
+                        ),
+                    )
+                ],
+            }
+        )
+        if canonical_json(result.model_dump(mode="json")) != canonical_json(
+            canonical_result.model_dump(mode="json")
+        ):
+            raise ValueError(
+                "reference result ordering or status differs from canonical direct evidence"
+            )
+
+        for claim_id, link in links_by_claim_id.items():
+            claim = claims_by_id[claim_id]
+            validate_evidence_claim(claim)
+            comparison = canonical_comparisons.get(link.scenario_id)
+            pair_comparison = pair_comparison_by_subject.get((link.scenario_id, link.pair_id))
+            run = run_by_scenario.get(link.scenario_id)
+            matrix_asset = matrix_asset_by_scenario.get(link.scenario_id)
+            if comparison is None or pair_comparison is None or run is None or matrix_asset is None:
+                raise ValueError("reference evidence link has no matching comparison evidence")
+            if (
+                link.comparison_id != comparison.comparison_id
+                or link.direct_run_id != comparison.direct_run_id
+                or claim.claim_kind != "DIRECT_REFERENCE_COMPARISON"
+                or claim.root_node_id != claim.claim_id
+                or claim.portfolio_id != analysis_plan.baseline_portfolio_id
+                or claim.scenario_id != link.scenario_id
+                or claim.pair_id != link.pair_id
+                or claim.direct_run_ids != [link.direct_run_id]
+                or type(claim.value) is not bool
+                or claim.value != pair_comparison.within_tolerance
+                or claim.units != "within_tolerance"
+            ):
+                raise ValueError(
+                    "reference evidence claim subject or value differs from its result link"
+                )
+            canonical_claim_limitations = list(
+                dict.fromkeys([CONNECTIVITY_LIMITATION, *comparison.limitations])
+            )
+            if claim.limitations != canonical_claim_limitations:
+                raise ValueError(
+                    "reference evidence claim limitations differ from its reviewed comparison"
+                )
+            scenario = scenarios[link.scenario_id]
+            comparison_node_id = f"reference-comparison:{comparison.comparison_id}"
+            metric_node_id = f"metric:{comparison.comparison_id}:{link.pair_id}"
+            run_node_id = f"run:{run.direct_run_id}"
+            scenario_node_id = f"scenario:{scenario.scenario_id}"
+            asset_node_id = f"asset:{matrix_asset.asset_id}"
+            engine_node_id = f"engine:{result.engine_manifest_sha256}"
+            qa_node_id = f"qa:{run.direct_run_id}"
+            artifact_node_id = (
+                f"artifact:matrix:{run.direct_run_id}:{comparison.observed_matrix_sha256}"
+            )
+            authorization_node_id = f"authorization:{matrix_asset.authorization.asset_id}"
+            expected_nodes = [
+                EvidenceNode(
+                    node_id=claim.claim_id,
+                    node_type="CLAIM",
+                    label=claim.text,
+                ),
+                EvidenceNode(
+                    node_id=comparison_node_id,
+                    node_type="REFERENCE_COMPARISON",
+                    label="Reviewed effective-resistance matrix comparison",
+                    sha256=canonical_sha256(comparison.model_dump(mode="json")),
+                    attributes={
+                        "comparison_id": comparison.comparison_id,
+                        "scenario_id": scenario.scenario_id,
+                        "pair_id": link.pair_id,
+                        "direct_run_id": run.direct_run_id,
+                        "binding_id": comparison.binding_id,
+                        "reference_matrix_asset_id": matrix_asset.asset_id,
+                        "status": comparison.status,
+                    },
+                ),
+                EvidenceNode(
+                    node_id=metric_node_id,
+                    node_type="METRIC",
+                    label="Reference tolerance disposition",
+                    attributes={
+                        "pair_id": link.pair_id,
+                        "reference_effective_resistance": (
+                            pair_comparison.reference_effective_resistance
+                        ),
+                        "observed_effective_resistance": (
+                            pair_comparison.observed_effective_resistance
+                        ),
+                        "absolute_difference": pair_comparison.absolute_difference,
+                        "relative_difference": pair_comparison.relative_difference,
+                        "allowed_difference": pair_comparison.allowed_difference,
+                        "within_tolerance": pair_comparison.within_tolerance,
+                        "units": "effective_resistance",
+                    },
+                ),
+                EvidenceNode(
+                    node_id=run_node_id,
+                    node_type="DIRECT_RUN",
+                    label=run.direct_run_id,
+                    sha256=run.result_sha256,
+                    attributes={
+                        "analysis_id": run.analysis_id,
+                        "portfolio_id": run.portfolio_id,
+                        "scenario_id": run.scenario_id,
+                    },
+                ),
+                EvidenceNode(
+                    node_id=scenario_node_id,
+                    node_type="SCENARIO",
+                    label=scenario.scenario_id,
+                    attributes={
+                        "scenario_id": scenario.scenario_id,
+                        "guild_id": scenario.guild_id,
+                        "resistance_hypothesis_id": scenario.resistance_hypothesis_id,
+                        "focal_set_id": scenario.focal_set_id,
+                        "safeguard": scenario.safeguard,
+                    },
+                ),
+                EvidenceNode(
+                    node_id=asset_node_id,
+                    node_type="ASSET",
+                    label=matrix_asset.title,
+                    sha256=matrix_asset.sha256,
+                    attributes={
+                        "asset_id": matrix_asset.asset_id,
+                        "kind": matrix_asset.kind.value,
+                        "authorization_id": matrix_asset.authorization.asset_id,
+                    },
+                ),
+                EvidenceNode(
+                    node_id=engine_node_id,
+                    node_type="ENGINE_MANIFEST",
+                    label="Pinned Circuitscape engine manifest",
+                    sha256=result.engine_manifest_sha256,
+                    attributes={
+                        "engine_name": "Circuitscape",
+                        "reference_matrix_parser_sha256": REFERENCE_MATRIX_PARSER_SHA256,
+                    },
+                ),
+                EvidenceNode(
+                    node_id=qa_node_id,
+                    node_type="QA",
+                    label=run.qa_status.value,
+                    attributes={
+                        "status": run.qa_status.value,
+                        "direct_run_id": run.direct_run_id,
+                        "findings_sha256": canonical_sha256(run.qa_findings),
+                    },
+                ),
+                EvidenceNode(
+                    node_id=artifact_node_id,
+                    node_type="ARTIFACT",
+                    label="Retained direct effective-resistance matrix",
+                    sha256=comparison.observed_matrix_sha256,
+                    attributes={"role": "matrix", "direct_run_id": run.direct_run_id},
+                ),
+                EvidenceNode(
+                    node_id=authorization_node_id,
+                    node_type="AUTHORIZATION",
+                    label="Reviewed reference-data authorization",
+                    sha256=canonical_sha256(matrix_asset.authorization.model_dump(mode="json")),
+                    attributes={
+                        "asset_id": matrix_asset.authorization.asset_id,
+                        "cloud_disposition": (matrix_asset.authorization.cloud_disposition.value),
+                        "export_allowed": matrix_asset.authorization.export_allowed,
+                        "reviewer": matrix_asset.authorization.reviewer,
+                    },
+                ),
+                *[
+                    EvidenceNode(
+                        node_id=_assumption_node_id(limitation),
+                        node_type="ASSUMPTION",
+                        label=limitation,
+                    )
+                    for limitation in canonical_claim_limitations
+                ],
+            ]
+            expected_edges = [
+                EvidenceEdge(
+                    from_node_id=claim.claim_id,
+                    to_node_id=metric_node_id,
+                    relation="reports",
+                ),
+                EvidenceEdge(
+                    from_node_id=metric_node_id,
+                    to_node_id=comparison_node_id,
+                    relation="derived_from",
+                ),
+                EvidenceEdge(
+                    from_node_id=comparison_node_id,
+                    to_node_id=run_node_id,
+                    relation="compares_direct_run",
+                ),
+                EvidenceEdge(
+                    from_node_id=comparison_node_id,
+                    to_node_id=asset_node_id,
+                    relation="compares_against",
+                ),
+                EvidenceEdge(
+                    from_node_id=run_node_id,
+                    to_node_id=scenario_node_id,
+                    relation="executes",
+                ),
+                EvidenceEdge(
+                    from_node_id=run_node_id,
+                    to_node_id=engine_node_id,
+                    relation="executed_by",
+                ),
+                EvidenceEdge(
+                    from_node_id=run_node_id,
+                    to_node_id=qa_node_id,
+                    relation="checked_by",
+                ),
+                EvidenceEdge(
+                    from_node_id=run_node_id,
+                    to_node_id=artifact_node_id,
+                    relation="retained_as",
+                ),
+                EvidenceEdge(
+                    from_node_id=asset_node_id,
+                    to_node_id=authorization_node_id,
+                    relation="authorized_by",
+                ),
+                *[
+                    EvidenceEdge(
+                        from_node_id=scenario_node_id,
+                        to_node_id=_assumption_node_id(limitation),
+                        relation="assumes",
+                    )
+                    for limitation in canonical_claim_limitations
+                ],
+            ]
+            expected_nodes_by_id = {
+                item.node_id: canonical_json(item.model_dump(mode="json"))
+                for item in expected_nodes
+            }
+            actual_nodes_by_id = {
+                item.node_id: canonical_json(item.model_dump(mode="json")) for item in claim.nodes
+            }
+            expected_edge_payloads = {
+                canonical_json(item.model_dump(mode="json")) for item in expected_edges
+            }
+            actual_edge_payloads = [
+                canonical_json(item.model_dump(mode="json")) for item in claim.edges
+            ]
+            if expected_nodes_by_id != actual_nodes_by_id:
+                raise ValueError("reference claim nodes differ from canonical evidence semantics")
+            if (
+                len(actual_edge_payloads) != len(set(actual_edge_payloads))
+                or set(actual_edge_payloads) != expected_edge_payloads
+            ):
+                raise ValueError("reference claim edges differ from canonical evidence topology")
+
+        return str(analysis["project_id"]), claims_by_id
+
+    def store_reference_comparison_result(
+        self,
+        result: ReferenceComparisonResult,
+        *,
+        claims: Sequence[ConnectivityEvidenceClaim],
+    ) -> dict[str, Any]:
+        """Atomically persist a direct reference result, its claims, and outbox event."""
+
+        # Canonical revalidation happens again inside the transaction so an
+        # invalid ``model_copy`` cannot reach either science or telemetry rows.
+        result = ReferenceComparisonResult.model_validate(result.model_dump(mode="json"))
+        claims = tuple(
+            ConnectivityEvidenceClaim.model_validate(item.model_dump(mode="json"))
+            for item in claims
+        )
+        result_json = canonical_json(result.model_dump(mode="json"))
+        result_sha256 = hashlib.sha256(result_json.encode("utf-8")).hexdigest()
+        claim_json_by_id = {
+            item.claim_id: canonical_json(item.model_dump(mode="json")) for item in claims
+        }
+        if len(claim_json_by_id) != len(claims):
+            raise ValueError("reference comparison contains duplicate evidence claim IDs")
+        links_by_id = {item.claim_id: item for item in result.evidence_claim_links}
+        with self.transaction() as connection:
+            reference_plan = self._load_reference_comparison_plan(
+                connection,
+                plan_id=result.plan_id,
+                analysis_id=result.analysis_id,
+            )
+            plan_sha256 = hashlib.sha256(
+                canonical_json(reference_plan.model_dump(mode="json")).encode("utf-8")
+            ).hexdigest()
+            project_id, claims_by_id = self._validate_reference_comparison_evidence(
+                connection,
+                reference_plan=reference_plan,
+                result=result,
+                claims=claims,
+            )
+            existing = connection.execute(
+                "SELECT * FROM eco_reference_comparison_results WHERE result_id=?",
+                (result.result_id,),
+            ).fetchone()
+            conflicting_plan = connection.execute(
+                "SELECT result_id FROM eco_reference_comparison_results "
+                "WHERE analysis_id=? AND plan_id=? AND result_id!=?",
+                (result.analysis_id, result.plan_id, result.result_id),
+            ).fetchone()
+            if conflicting_plan is not None:
+                raise ValueError(
+                    "reference comparison plan already has a different immutable result"
+                )
+            replayed = existing is not None
+            if existing is not None:
+                if (
+                    existing["analysis_id"] != result.analysis_id
+                    or existing["plan_id"] != result.plan_id
+                    or existing["revision_id"] != result.revision_id
+                    or existing["model_sha256"] != result.model_sha256
+                    or existing["engine_manifest_sha256"] != result.engine_manifest_sha256
+                    or existing["reference_matrix_parser_sha256"] != REFERENCE_MATRIX_PARSER_SHA256
+                    or existing["status"] != result.status
+                    or existing["payload_json"] != result_json
+                    or existing["payload_sha256"] != result_sha256
+                ):
+                    raise ValueError(
+                        "reference comparison result identity was reused for different evidence"
+                    )
+                persisted_claims = connection.execute(
+                    "SELECT * FROM eco_reference_comparison_claims WHERE result_id=? "
+                    "ORDER BY claim_id",
+                    (result.result_id,),
+                ).fetchall()
+                if len(persisted_claims) != len(claims_by_id):
+                    raise ValueError("stored reference comparison claim set is incomplete")
+                for row in persisted_claims:
+                    claim_id = str(row["claim_id"])
+                    link = links_by_id.get(claim_id)
+                    claim_json = claim_json_by_id.get(claim_id)
+                    if (
+                        link is None
+                        or claim_json is None
+                        or (
+                            row["analysis_id"] != result.analysis_id
+                            or row["comparison_id"] != link.comparison_id
+                            or row["scenario_id"] != link.scenario_id
+                            or row["pair_id"] != link.pair_id
+                            or row["direct_run_id"] != link.direct_run_id
+                            or row["payload_json"] != claim_json
+                            or row["payload_sha256"]
+                            != hashlib.sha256(claim_json.encode("utf-8")).hexdigest()
+                        )
+                    ):
+                        raise ValueError(
+                            "reference comparison replay differs from stored claim evidence"
+                        )
+            else:
+                for claim_id in claims_by_id:
+                    claimed_elsewhere = connection.execute(
+                        "SELECT claim_id FROM eco_evidence_claims WHERE claim_id=? "
+                        "UNION ALL SELECT claim_id FROM eco_reference_comparison_claims "
+                        "WHERE claim_id=? LIMIT 1",
+                        (claim_id, claim_id),
+                    ).fetchone()
+                    if claimed_elsewhere is not None:
+                        raise ValueError("reference claim identity collides with stored evidence")
+                now = _now()
+                connection.execute(
+                    "INSERT INTO eco_reference_comparison_results(result_id,analysis_id,plan_id,"
+                    "revision_id,model_sha256,engine_manifest_sha256,"
+                    "reference_matrix_parser_sha256,status,payload_json,payload_sha256,created_at) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        result.result_id,
+                        result.analysis_id,
+                        result.plan_id,
+                        result.revision_id,
+                        result.model_sha256,
+                        result.engine_manifest_sha256,
+                        REFERENCE_MATRIX_PARSER_SHA256,
+                        result.status,
+                        result_json,
+                        result_sha256,
+                        now,
+                    ),
+                )
+                for claim_id in sorted(claims_by_id):
+                    link = links_by_id[claim_id]
+                    claim_json = claim_json_by_id[claim_id]
+                    connection.execute(
+                        "INSERT INTO eco_reference_comparison_claims(claim_id,result_id,"
+                        "analysis_id,comparison_id,scenario_id,pair_id,direct_run_id,payload_json,"
+                        "payload_sha256,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                        (
+                            claim_id,
+                            result.result_id,
+                            result.analysis_id,
+                            link.comparison_id,
+                            link.scenario_id,
+                            link.pair_id,
+                            link.direct_run_id,
+                            claim_json,
+                            hashlib.sha256(claim_json.encode("utf-8")).hexdigest(),
+                            now,
+                        ),
+                    )
+            outbox_id = self._enqueue_outbox(
+                connection,
+                project_id=project_id,
+                analysis_id=result.analysis_id,
+                event_type="reference_comparison",
+                subject_id=result.result_id,
+                stream_id=f"reference_comparison:{result.analysis_id}",
+                payload={
+                    "schema_version": "ecocorridor/v1.0",
+                    "result_id": result.result_id,
+                    "plan_id": result.plan_id,
+                    "analysis_id": result.analysis_id,
+                    "revision_id": result.revision_id,
+                    "model_sha256": result.model_sha256,
+                    "engine_manifest_sha256": result.engine_manifest_sha256,
+                    "reference_matrix_parser_sha256": REFERENCE_MATRIX_PARSER_SHA256,
+                    "status": result.status,
+                    "plan_payload_sha256": plan_sha256,
+                    "result_payload_sha256": result_sha256,
+                    "comparison_ids": sorted(
+                        item.comparison_id for item in result.scenario_comparisons
+                    ),
+                    "claim_ids": sorted(claims_by_id),
+                    "direct_run_ids": sorted(
+                        item.direct_run_id for item in result.scenario_comparisons
+                    ),
+                },
+                idempotency_key=f"reference_comparison:{result.result_id}",
+            )
+        return {
+            "result_id": result.result_id,
+            "plan_sha256": plan_sha256,
+            "result_sha256": result_sha256,
+            "reference_matrix_parser_sha256": REFERENCE_MATRIX_PARSER_SHA256,
+            "outbox_id": outbox_id,
+            "replayed": replayed,
+        }
+
+    def reference_comparison_result(
+        self,
+        result_id: str,
+    ) -> tuple[ReferenceComparisonResult, list[ConnectivityEvidenceClaim]]:
+        """Read and fully revalidate immutable reference-comparison evidence."""
+
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM eco_reference_comparison_results WHERE result_id=?",
+                (result_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(result_id)
+            payload_json = str(row["payload_json"])
+            if hashlib.sha256(payload_json.encode("utf-8")).hexdigest() != row["payload_sha256"]:
+                raise ValueError("reference comparison result failed its immutable checksum")
+            result = ReferenceComparisonResult.model_validate_json(payload_json)
+            if (
+                row["analysis_id"] != result.analysis_id
+                or row["plan_id"] != result.plan_id
+                or row["revision_id"] != result.revision_id
+                or row["model_sha256"] != result.model_sha256
+                or row["engine_manifest_sha256"] != result.engine_manifest_sha256
+                or row["reference_matrix_parser_sha256"] != REFERENCE_MATRIX_PARSER_SHA256
+                or row["status"] != result.status
+            ):
+                raise ValueError("reference comparison row differs from its payload")
+            claim_rows = self._connection.execute(
+                "SELECT * FROM eco_reference_comparison_claims WHERE result_id=? ORDER BY claim_id",
+                (result_id,),
+            ).fetchall()
+            claims: list[ConnectivityEvidenceClaim] = []
+            links_by_id = {item.claim_id: item for item in result.evidence_claim_links}
+            if len(claim_rows) != len(links_by_id):
+                raise ValueError("stored reference comparison claim set is incomplete")
+            for claim_row in claim_rows:
+                claim_json = str(claim_row["payload_json"])
+                if (
+                    hashlib.sha256(claim_json.encode("utf-8")).hexdigest()
+                    != claim_row["payload_sha256"]
+                ):
+                    raise ValueError("reference comparison claim failed its immutable checksum")
+                claim = ConnectivityEvidenceClaim.model_validate_json(claim_json)
+                link = links_by_id.get(claim.claim_id)
+                if link is None or (
+                    claim_row["analysis_id"] != result.analysis_id
+                    or claim_row["comparison_id"] != link.comparison_id
+                    or claim_row["scenario_id"] != link.scenario_id
+                    or claim_row["pair_id"] != link.pair_id
+                    or claim_row["direct_run_id"] != link.direct_run_id
+                ):
+                    raise ValueError("reference comparison claim row differs from its link")
+                claims.append(claim)
+            self._validate_reference_comparison_evidence(
+                self._connection,
+                reference_plan=self._load_reference_comparison_plan(
+                    self._connection,
+                    plan_id=result.plan_id,
+                    analysis_id=result.analysis_id,
+                ),
+                result=result,
+                claims=claims,
+            )
+            return result, claims
+
     def store_results(
         self,
         analysis_id: str,
@@ -3059,117 +4350,19 @@ class EcoProjectStore:
         summaries: Sequence[PortfolioDecisionSummary],
         claims: Sequence[ConnectivityEvidenceClaim],
     ) -> None:
-        if not runs or not summaries:
-            raise ValueError("completed analysis requires direct runs and portfolio summaries")
-        with self.transaction() as connection:
-            analysis = connection.execute(
-                "SELECT project_id,state,plan_json FROM eco_analyses WHERE analysis_id=?",
-                (analysis_id,),
-            ).fetchone()
-            if analysis is None or analysis["state"] != AnalysisState.RUNNING.value:
-                raise ValueError("analysis results require a running authoritative analysis")
-            plan = ConnectivityRunPlan.model_validate(json.loads(analysis["plan_json"]))
-            expected = {
-                (portfolio.portfolio_id, scenario_id)
-                for portfolio in plan.portfolios
-                for scenario_id in plan.scenario_ids
-            }
-            observed = {(run.portfolio_id, run.scenario_id) for run in runs}
-            if observed != expected or len(observed) != len(runs):
-                raise ValueError(
-                    "completed results require exactly one direct run per portfolio and scenario"
-                )
-            if any(run.state.value != "SUCCEEDED" for run in runs):
-                raise ValueError("completed analysis cannot contain rejected or failed direct runs")
-            portfolio_ids = {item.portfolio_id for item in plan.portfolios}
-            if {item.portfolio_id for item in summaries} != portfolio_ids:
-                raise ValueError("completed analysis requires one summary per planned portfolio")
-            run_by_id = {item.direct_run_id: item for item in runs}
-            if len(run_by_id) != len(runs):
-                raise ValueError("completed analysis contains duplicate direct-run IDs")
-            for summary in summaries:
-                expected_run_ids = {
-                    run.direct_run_id for run in runs if run.portfolio_id == summary.portfolio_id
-                }
-                if set(summary.direct_run_ids) != expected_run_ids:
-                    raise ValueError(
-                        "portfolio summary must reference its complete direct scenario ensemble"
-                    )
-            self._validate_claim_run_references(plan=plan, runs=runs, claims=claims)
-            validate_portfolio_disposition_support(
-                summaries=summaries,
-                runs=runs,
-                claims=claims,
-            )
-            for run in runs:
-                if run.analysis_id != analysis_id:
-                    raise ValueError("direct run belongs to another analysis")
-                connection.execute(
-                    "INSERT INTO eco_analysis_runs(direct_run_id,analysis_id,portfolio_id,"
-                    "scenario_id,state,model_run_cache_key,result_sha256,payload_json) "
-                    "VALUES(?,?,?,?,?,?,?,?)",
-                    (
-                        run.direct_run_id,
-                        analysis_id,
-                        run.portfolio_id,
-                        run.scenario_id,
-                        run.state.value,
-                        run.model_run_cache_key,
-                        run.result_sha256,
-                        canonical_json(run.model_dump(mode="json")),
-                    ),
-                )
-                cached = connection.execute(
-                    "SELECT result_sha256 FROM eco_model_run_cache WHERE model_run_cache_key=?",
-                    (run.model_run_cache_key,),
-                ).fetchone()
-                if cached is None:
-                    connection.execute(
-                        "INSERT INTO eco_model_run_cache(model_run_cache_key,result_sha256,"
-                        "source_direct_run_id,created_at) VALUES(?,?,?,?)",
-                        (
-                            run.model_run_cache_key,
-                            run.result_sha256,
-                            run.direct_run_id,
-                            _now(),
-                        ),
-                    )
-                elif cached["result_sha256"] != run.result_sha256:
-                    raise ValueError("immutable model-run cache key produced different evidence")
-            for summary in summaries:
-                connection.execute(
-                    "INSERT INTO eco_analysis_summaries(analysis_id,portfolio_id,payload_json) "
-                    "VALUES(?,?,?)",
-                    (
-                        analysis_id,
-                        summary.portfolio_id,
-                        canonical_json(summary.model_dump(mode="json")),
-                    ),
-                )
-            for claim in claims:
-                connection.execute(
-                    "INSERT INTO eco_evidence_claims(claim_id,analysis_id,payload_json) VALUES(?,?,?)",
-                    (claim.claim_id, analysis_id, canonical_json(claim.model_dump(mode="json"))),
-                )
-            connection.execute(
-                "UPDATE eco_analyses SET state='COMPLETED',updated_at=? WHERE analysis_id=?",
-                (_now(), analysis_id),
-            )
-            self._enqueue_outbox(
-                connection,
-                project_id=str(analysis["project_id"]),
-                analysis_id=analysis_id,
-                event_type="analysis_completion",
-                subject_id=analysis_id,
-                stream_id=f"connectivity_analysis:{analysis_id}",
-                payload={
-                    "analysis_id": analysis_id,
-                    "direct_run_ids": sorted(run_by_id),
-                    "portfolio_ids": sorted(portfolio_ids),
-                    "evidence_claim_ids": sorted(item.claim_id for item in claims),
-                },
-                idempotency_key=f"analysis_completion:{analysis_id}",
-            )
+        """Reject the pre-durable bulk result path.
+
+        Successful science must be persisted through ``finalize_direct_job``
+        before ``complete_analysis``.  Keeping this explicit failure preserves
+        a clear upgrade error for callers without retaining a second path that
+        could create evidence without terminal direct jobs.
+        """
+
+        del analysis_id, runs, summaries, claims
+        raise RuntimeError(
+            "store_results is unsupported; finalize every durable direct job and then call "
+            "complete_analysis"
+        )
 
     def complete_analysis(
         self,

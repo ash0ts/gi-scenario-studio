@@ -39,6 +39,7 @@ from .governance import (
     scientific_asset_ids,
 )
 from .project_store import EcoProjectStore
+from .reference_matrix_parser import REFERENCE_MATRIX_PARSER_SHA256
 
 _SAFE_COMPONENT = re.compile(r"[^A-Za-z0-9._-]+")
 _LOCAL_PATH = re.compile(
@@ -54,6 +55,7 @@ _SUPPORTED_EVENTS = frozenset(
         "guided_checkpoint",
         "direct_job_terminal",
         "analysis_completion",
+        "reference_comparison",
         "evidence_export",
     }
 )
@@ -323,6 +325,7 @@ class EcoTelemetryProjector:
             "guided_checkpoint": self._guided_checkpoint,
             "direct_job_terminal": self._direct_job_terminal,
             "analysis_completion": self._analysis_completion,
+            "reference_comparison": self._reference_comparison,
             "evidence_export": self._evidence_export,
         }
         projection = handlers[event_type](row, payload)
@@ -1794,6 +1797,347 @@ class EcoTelemetryProjector:
                 required=True,
                 require_each=True,
             ),
+            artifacts=[snapshot],
+        )
+
+    def _reference_comparison(
+        self, row: dict[str, Any], payload: dict[str, Any]
+    ) -> TelemetryProjection:
+        """Mirror one immutable direct reference comparison and its exact lineage.
+
+        Reference matching is intentionally a separate provider run from the
+        alternatives-analysis history.  Its local outbox stream therefore has
+        its own monotonic clock and cannot regress an already-completed W&B
+        analysis run.  The local repository remains authoritative: the
+        projection revalidates source/reference bytes, retained direct-run
+        artifacts, claims, and hashes before emitting any cloud payload.
+        """
+
+        result_id = str(row.get("subject_id", ""))
+        analysis_id = str(row.get("analysis_id", ""))
+        if not result_id or not analysis_id:
+            raise CloudIntegrityError("ECO_REFERENCE_COMPARISON_IDENTITY_MISSING")
+        expected_stream_id = f"reference_comparison:{analysis_id}"
+        try:
+            event_sequence = int(row["stream_sequence"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise CloudIntegrityError("ECO_REFERENCE_COMPARISON_STREAM_SEQUENCE_MISSING") from exc
+        if row.get("stream_id") != expected_stream_id or event_sequence < 1:
+            raise CloudIntegrityError("ECO_REFERENCE_COMPARISON_STREAM_MISMATCH")
+
+        retained_rows = self.store.telemetry_rows(
+            event_type="reference_comparison",
+            analysis_id=analysis_id,
+            subject_id=result_id,
+        )
+        retained_row = next(
+            (item for item in retained_rows if item["outbox_id"] == row.get("outbox_id")),
+            None,
+        )
+        if (
+            retained_row is None
+            or retained_row["stream_id"] != expected_stream_id
+            or int(retained_row["stream_sequence"]) != event_sequence
+            or retained_row["payload"] != payload
+        ):
+            raise CloudIntegrityError("ECO_REFERENCE_COMPARISON_OUTBOX_ROW_MISMATCH")
+
+        self._require_current_analysis_asset_authorization(analysis_id)
+        try:
+            reference_plan, plan_sha256 = self.store.reference_comparison_plan(
+                str(payload.get("plan_id", "")),
+                analysis_id=analysis_id,
+            )
+            result, claims = self.store.reference_comparison_result(result_id)
+            analysis_run_plan = ConnectivityRunPlan.model_validate(
+                self.store.analysis(analysis_id)["plan"]
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise CloudIntegrityError("ECO_REFERENCE_COMPARISON_EVIDENCE_INVALID") from exc
+        result_payload = result.model_dump(mode="json")
+        result_sha256 = hashlib.sha256(canonical_json(result_payload).encode("utf-8")).hexdigest()
+        comparison_ids = sorted(item.comparison_id for item in result.scenario_comparisons)
+        claim_ids = sorted(item.claim_id for item in claims)
+        direct_run_ids = sorted(item.direct_run_id for item in result.scenario_comparisons)
+        expected_payload = {
+            "schema_version": "ecocorridor/v1.0",
+            "result_id": result.result_id,
+            "plan_id": result.plan_id,
+            "analysis_id": result.analysis_id,
+            "revision_id": result.revision_id,
+            "model_sha256": result.model_sha256,
+            "engine_manifest_sha256": result.engine_manifest_sha256,
+            "reference_matrix_parser_sha256": REFERENCE_MATRIX_PARSER_SHA256,
+            "status": result.status,
+            "plan_payload_sha256": plan_sha256,
+            "result_payload_sha256": result_sha256,
+            "comparison_ids": comparison_ids,
+            "claim_ids": claim_ids,
+            "direct_run_ids": direct_run_ids,
+        }
+        if (
+            payload != expected_payload
+            or result.analysis_id != analysis_id
+            or result.result_id != result_id
+            or reference_plan.plan_id != result.plan_id
+            or reference_plan.analysis_id != result.analysis_id
+            or reference_plan.revision_id != result.revision_id
+            or reference_plan.model_sha256 != result.model_sha256
+            or reference_plan.engine_manifest_sha256 != result.engine_manifest_sha256
+            or canonical_json(reference_plan.run_plan.model_dump(mode="json"))
+            != canonical_json(analysis_run_plan.model_dump(mode="json"))
+            or set(reference_plan.bound_scenario_ids)
+            != {item.scenario_id for item in result.scenario_comparisons}
+        ):
+            raise CloudIntegrityError("ECO_REFERENCE_COMPARISON_OUTBOX_MISMATCH")
+
+        links_by_subject = {
+            (item.comparison_id, item.scenario_id, item.pair_id, item.direct_run_id): item
+            for item in result.evidence_claim_links
+        }
+        scenario_rows: list[list[Any]] = []
+        pair_rows: list[list[Any]] = []
+        for comparison in sorted(
+            result.scenario_comparisons,
+            key=lambda item: (item.scenario_id, item.comparison_id),
+        ):
+            scenario_rows.append(
+                [
+                    result.result_id,
+                    comparison.comparison_id,
+                    comparison.binding_id,
+                    comparison.scenario_id,
+                    comparison.direct_run_id,
+                    comparison.status,
+                    comparison.qa_status,
+                    comparison.reference_matrix_asset_id,
+                    comparison.reference_matrix_sha256,
+                    comparison.observed_matrix_sha256,
+                    comparison.tolerance.absolute_tolerance,
+                    comparison.tolerance.relative_tolerance,
+                    comparison.reference_current_asset_id,
+                    comparison.reference_current_sha256,
+                    comparison.current_raster_disposition,
+                    comparison.current_raster_numeric_comparison_performed,
+                    len(comparison.pair_comparisons),
+                ]
+            )
+            for pair in sorted(comparison.pair_comparisons, key=lambda item: item.pair_id):
+                subject = (
+                    comparison.comparison_id,
+                    comparison.scenario_id,
+                    pair.pair_id,
+                    comparison.direct_run_id,
+                )
+                link = links_by_subject.get(subject)
+                if link is None:
+                    raise CloudIntegrityError("ECO_REFERENCE_COMPARISON_CLAIM_LINK_MISSING")
+                pair_rows.append(
+                    [
+                        result.result_id,
+                        comparison.comparison_id,
+                        comparison.scenario_id,
+                        pair.pair_id,
+                        comparison.direct_run_id,
+                        pair.reference_effective_resistance,
+                        pair.observed_effective_resistance,
+                        pair.absolute_difference,
+                        pair.relative_difference,
+                        pair.allowed_difference,
+                        pair.tolerance.absolute_tolerance,
+                        pair.tolerance.relative_tolerance,
+                        pair.within_tolerance,
+                        link.claim_id,
+                    ]
+                )
+
+        claim_rows = [
+            [
+                claim.claim_id,
+                claim.portfolio_id,
+                claim.scenario_id,
+                claim.pair_id,
+                claim.value,
+                claim.units,
+                claim.direct_run_ids[0],
+                list(claim.limitations),
+            ]
+            for claim in sorted(claims, key=lambda item: item.claim_id)
+        ]
+        snapshot_value = {
+            "schema_version": "ecocorridor-reference-evidence/v1.0",
+            "reference_matrix_parser_sha256": REFERENCE_MATRIX_PARSER_SHA256,
+            "plan_payload_sha256": plan_sha256,
+            "plan": reference_plan.model_dump(mode="json"),
+            "result": result_payload,
+            "claims": [
+                item.model_dump(mode="json")
+                for item in sorted(claims, key=lambda claim: claim.claim_id)
+            ],
+        }
+        snapshot = self._stage_json(
+            category="reference-comparison",
+            logical_id=f"{result.result_id}:{result_sha256}",
+            value=snapshot_value,
+            artifact_type="decision_evidence",
+            logical_name="reference/reference-comparison.json",
+        )
+
+        input_references = self._receipt_refs(
+            event_type="analysis_plan",
+            analysis_id=analysis_id,
+            required=True,
+            require_each=True,
+        )
+        for direct_run_id in direct_run_ids:
+            input_references.extend(
+                self._receipt_refs(
+                    event_type="direct_job_terminal",
+                    analysis_id=analysis_id,
+                    subject_id=direct_run_id,
+                    required=True,
+                    require_each=True,
+                )
+            )
+
+        within_tolerance_count = sum(
+            pair.within_tolerance
+            for comparison in result.scenario_comparisons
+            for pair in comparison.pair_comparisons
+        )
+        return self._base(
+            row,
+            run_kind="connectivity_analysis",
+            run_subject_id=f"{analysis_id}:reference-comparison",
+            event_sequence=event_sequence,
+            config={
+                "analysis_id": analysis_id,
+                "reference_plan_id": result.plan_id,
+                "reference_plan_payload_sha256": plan_sha256,
+                "reference_result_id": result.result_id,
+                "revision_id": result.revision_id,
+                "model_sha256": result.model_sha256,
+                "engine_manifest_sha256": result.engine_manifest_sha256,
+                "reference_matrix_parser_sha256": REFERENCE_MATRIX_PARSER_SHA256,
+                "exact_direct_evidence_only": result.exact_direct_evidence_only,
+            },
+            history={
+                "reference_scenarios_compared": len(scenario_rows),
+                "reference_pairs_compared": len(pair_rows),
+                "reference_pairs_within_tolerance": within_tolerance_count,
+            },
+            summary={
+                "reference_result_id": result.result_id,
+                "reference_result_sha256": result_sha256,
+                "reference_matrix_parser_sha256": REFERENCE_MATRIX_PARSER_SHA256,
+                "reference_status": result.status,
+                "reference_scenario_count": len(scenario_rows),
+                "reference_pair_count": len(pair_rows),
+                "reference_claim_count": len(claim_rows),
+                "reference_scenarios_passed": sum(
+                    comparison.status == "PASSED" for comparison in result.scenario_comparisons
+                ),
+                "reference_scenarios_failed": sum(
+                    comparison.status == "FAILED" for comparison in result.scenario_comparisons
+                ),
+                "current_raster_numeric_comparison_performed": (
+                    result.current_raster_numeric_comparison_performed
+                ),
+                "model_fitness_attested_by_reference_match": False,
+            },
+            tables=[
+                TableProjection(
+                    logical_name="reference_plan",
+                    columns=[
+                        "plan_id",
+                        "analysis_id",
+                        "revision_id",
+                        "model_sha256",
+                        "engine_manifest_sha256",
+                        "reference_matrix_parser_sha256",
+                        "payload_sha256",
+                        "baseline_portfolio_id",
+                        "bound_scenario_count",
+                        "binding_count",
+                        "direct_job_count",
+                        "exact_direct_evidence_only",
+                    ],
+                    rows=[
+                        [
+                            reference_plan.plan_id,
+                            reference_plan.analysis_id,
+                            reference_plan.revision_id,
+                            reference_plan.model_sha256,
+                            reference_plan.engine_manifest_sha256,
+                            REFERENCE_MATRIX_PARSER_SHA256,
+                            plan_sha256,
+                            reference_plan.run_plan.baseline_portfolio_id,
+                            len(reference_plan.bound_scenario_ids),
+                            len(reference_plan.binding_ids),
+                            reference_plan.run_plan.direct_job_count,
+                            reference_plan.exact_direct_evidence_only,
+                        ]
+                    ],
+                ),
+                TableProjection(
+                    logical_name="reference_comparisons",
+                    columns=[
+                        "result_id",
+                        "comparison_id",
+                        "binding_id",
+                        "scenario_id",
+                        "direct_run_id",
+                        "status",
+                        "qa_status",
+                        "reference_matrix_asset_id",
+                        "reference_matrix_sha256",
+                        "observed_matrix_sha256",
+                        "absolute_tolerance",
+                        "relative_tolerance",
+                        "reference_current_asset_id",
+                        "reference_current_sha256",
+                        "current_raster_disposition",
+                        "current_raster_numeric_comparison_performed",
+                        "pair_count",
+                    ],
+                    rows=scenario_rows,
+                ),
+                TableProjection(
+                    logical_name="reference_pair_comparisons",
+                    columns=[
+                        "result_id",
+                        "comparison_id",
+                        "scenario_id",
+                        "pair_id",
+                        "direct_run_id",
+                        "reference_effective_resistance",
+                        "observed_effective_resistance",
+                        "absolute_difference",
+                        "relative_difference",
+                        "allowed_difference",
+                        "absolute_tolerance",
+                        "relative_tolerance",
+                        "within_tolerance",
+                        "evidence_claim_id",
+                    ],
+                    rows=pair_rows,
+                ),
+                TableProjection(
+                    logical_name="reference_evidence_claims",
+                    columns=[
+                        "claim_id",
+                        "portfolio_id",
+                        "scenario_id",
+                        "pair_id",
+                        "value",
+                        "units",
+                        "direct_run_id",
+                        "limitations",
+                    ],
+                    rows=claim_rows,
+                ),
+            ],
+            input_artifact_refs=sorted(set(input_references)),
             artifacts=[snapshot],
         )
 
