@@ -20,6 +20,15 @@ use worker::{
     WorkerStatus,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReleaseHealthCheckError;
+
+impl From<()> for ReleaseHealthCheckError {
+    fn from(_: ()) -> Self {
+        Self
+    }
+}
+
 fn application_profile() -> AppProfile {
     let executable_suffix = if cfg!(windows) { ".exe" } else { "" };
     let release_target = if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
@@ -124,24 +133,24 @@ fn application_profile() -> AppProfile {
 /// Runs only from an installed, key-injected release executable. The receipt
 /// must be a new regular file below the operating-system temporary directory;
 /// arbitrary application or user paths are intentionally not accepted.
-pub fn run_release_health_check(receipt_path: &Path) -> Result<(), ()> {
+pub fn run_release_health_check(receipt_path: &Path) -> Result<(), ReleaseHealthCheckError> {
     let profile = application_profile();
     if profile.release_public_key_hex.is_empty() || profile.release_source_commit_sha.is_empty() {
-        return Err(());
+        return Err(ReleaseHealthCheckError);
     }
     let receipt_path = validate_health_receipt_path(receipt_path)?;
     let receipt_parent = receipt_path.parent().ok_or(())?;
     let app_data_root = receipt_parent.join("ecocorridor-installed-health-data");
     if let Ok(metadata) = std::fs::symlink_metadata(&app_data_root) {
         if metadata.file_type().is_symlink() || !metadata.is_dir() {
-            return Err(());
+            return Err(ReleaseHealthCheckError);
         }
     } else {
         std::fs::create_dir(&app_data_root).map_err(|_| ())?;
     }
     let app_data_root = std::fs::canonicalize(&app_data_root).map_err(|_| ())?;
     if !app_data_root.starts_with(receipt_parent) {
-        return Err(());
+        return Err(ReleaseHealthCheckError);
     }
     let resource_root = installed_release_resource_root()?;
     let receipt =
@@ -149,7 +158,7 @@ pub fn run_release_health_check(receipt_path: &Path) -> Result<(), ()> {
     let mut bytes = serde_json::to_vec_pretty(&receipt).map_err(|_| ())?;
     bytes.push(b'\n');
     if bytes.len() > 16 * 1024 {
-        return Err(());
+        return Err(ReleaseHealthCheckError);
     }
     let mut output = OpenOptions::new()
         .write(true)
@@ -162,7 +171,7 @@ pub fn run_release_health_check(receipt_path: &Path) -> Result<(), ()> {
         .is_err()
     {
         let _ = std::fs::remove_file(&receipt_path);
-        return Err(());
+        return Err(ReleaseHealthCheckError);
     }
     Ok(())
 }
@@ -190,23 +199,25 @@ fn validate_health_receipt_path(value: &Path) -> Result<PathBuf, ()> {
 }
 
 fn installed_release_resource_root() -> Result<PathBuf, ()> {
-    let executable = std::env::current_exe().map_err(|_| ())?;
-    let executable = std::fs::canonicalize(executable).map_err(|_| ())?;
-    #[cfg(target_os = "macos")]
-    let candidate = executable
-        .parent()
-        .and_then(Path::parent)
-        .map(|contents| contents.join("Resources").join("release"))
-        .ok_or(())?;
-    #[cfg(target_os = "windows")]
-    let candidate = executable
-        .parent()
-        .map(|root| root.join("release"))
-        .ok_or(())?;
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    return Err(());
+    {
+        Err(())
+    }
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     {
+        let executable = std::env::current_exe().map_err(|_| ())?;
+        let executable = std::fs::canonicalize(executable).map_err(|_| ())?;
+        #[cfg(target_os = "macos")]
+        let candidate = executable
+            .parent()
+            .and_then(Path::parent)
+            .map(|contents| contents.join("Resources").join("release"))
+            .ok_or(())?;
+        #[cfg(target_os = "windows")]
+        let candidate = executable
+            .parent()
+            .map(|root| root.join("release"))
+            .ok_or(())?;
         let candidate = std::fs::canonicalize(candidate).map_err(|_| ())?;
         if candidate.is_dir() {
             Ok(candidate)
