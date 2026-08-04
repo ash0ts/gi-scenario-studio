@@ -468,6 +468,38 @@
       "public_replay_allowed": true
     },
     {
+      "path": "apps/ecocorridor-desktop/tests/__screenshots__/current-map-desktop-1280-linux.png",
+      "sha256": "350436c421462458d51a7c621c63d61e6ebe6e1fcaf8aa35fde6755d0e66fc1a",
+      "byte_size": 54551,
+      "media_type": "image/png",
+      "asset_role": "SCREENSHOT",
+      "repository_use": "VERIFICATION_EVIDENCE",
+      "ownership": "EcoCorridor Scenario Studio contributors",
+      "license": "CC0-1.0",
+      "provenance": "SELF_AUTHORED_SYNTHETIC",
+      "synthetic": true,
+      "sensitivity": "PUBLIC",
+      "contains_real_locations": false,
+      "contains_species_occurrences": false,
+      "public_replay_allowed": true
+    },
+    {
+      "path": "apps/ecocorridor-desktop/tests/__screenshots__/current-map-desktop-1440-linux.png",
+      "sha256": "9acffe8cae83aa6acd474f24b011dc8d0f62943d2d79d7e7d5349f7c610b693b",
+      "byte_size": 53970,
+      "media_type": "image/png",
+      "asset_role": "SCREENSHOT",
+      "repository_use": "VERIFICATION_EVIDENCE",
+      "ownership": "EcoCorridor Scenario Studio contributors",
+      "license": "CC0-1.0",
+      "provenance": "SELF_AUTHORED_SYNTHETIC",
+      "synthetic": true,
+      "sensitivity": "PUBLIC",
+      "contains_real_locations": false,
+      "contains_species_occurrences": false,
+      "public_replay_allowed": true
+    },
+    {
       "path": "apps/ecocorridor-desktop/tests/__screenshots__/evidence-boundary-compact-760-linux.png",
       "sha256": "ea114a79a36554386555e9a7e669530a64a586a7b420accab054181ec7837b2d",
       "byte_size": 93576,

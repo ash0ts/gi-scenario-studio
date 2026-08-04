@@ -2,14 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_visual_regression_uses_reviewed_linux_baselines_without_relaxing_pixels() -> None:
-    config = (ROOT / "apps/ecocorridor-desktop/playwright.config.ts").read_text(
-        encoding="utf-8"
-    )
+    config = (ROOT / "apps/ecocorridor-desktop/playwright.config.ts").read_text(encoding="utf-8")
     visual_spec = (ROOT / "apps/ecocorridor-desktop/tests/visual.spec.ts").read_text(
         encoding="utf-8"
     )
