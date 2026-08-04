@@ -122,3 +122,68 @@ def test_required_safeguard_rule_must_cover_every_scenario_and_required_pair() -
     assert len(pair_findings) == 1
     assert pair_findings[0].object_reference == covered_scenario_id
     assert covered_scenario.included_pair_ids[1] in pair_findings[0].remediation
+
+
+def test_target_scenarios_require_a_required_connectivity_rule() -> None:
+    fixture = build_ridgeway_fixture()
+    target_metrics = {
+        RuleMetric.MIN_RESISTANCE_REDUCTION_PERCENT,
+        RuleMetric.MAX_RESISTANCE_INCREASE_PERCENT,
+    }
+    bundle = fixture.bundle.model_copy(
+        update={
+            "decision_rules": [
+                rule for rule in fixture.bundle.decision_rules if rule.metric not in target_metrics
+            ]
+        }
+    )
+
+    findings = validate_professional_bundle(bundle)
+    missing = [item for item in findings if item.code == "TARGET_CONNECTIVITY_RULE_MISSING"]
+
+    assert len(missing) == 1
+    assert missing[0].severity == "BLOCKING"
+    assert missing[0].object_reference == "decision_rules"
+    assert "every target scenario" in missing[0].remediation
+    assert "every required included focal pair" in missing[0].remediation
+
+
+def test_required_target_rule_must_cover_every_scenario_and_required_pair() -> None:
+    fixture = build_ridgeway_fixture()
+    target_rule = next(
+        rule
+        for rule in fixture.bundle.decision_rules
+        if rule.metric == RuleMetric.MIN_RESISTANCE_REDUCTION_PERCENT
+    )
+    target_scenarios = [item for item in fixture.bundle.scenarios if not item.safeguard]
+    covered_scenario = target_scenarios[0]
+    partially_covered_rule = target_rule.model_copy(
+        update={
+            "scenario_ids": [covered_scenario.scenario_id],
+            "pair_ids": [covered_scenario.included_pair_ids[0]],
+        }
+    )
+    bundle = fixture.bundle.model_copy(
+        update={
+            "decision_rules": [
+                partially_covered_rule if rule.rule_id == target_rule.rule_id else rule
+                for rule in fixture.bundle.decision_rules
+            ]
+        }
+    )
+
+    findings = validate_professional_bundle(bundle)
+    scenario_findings = [
+        item for item in findings if item.code == "TARGET_RULE_SCENARIO_COVERAGE_INCOMPLETE"
+    ]
+    pair_findings = [
+        item for item in findings if item.code == "TARGET_RULE_PAIR_COVERAGE_INCOMPLETE"
+    ]
+
+    assert {item.object_reference for item in scenario_findings} == {
+        item.scenario_id for item in target_scenarios[1:]
+    }
+    assert all(item.severity == "BLOCKING" for item in scenario_findings)
+    assert len(pair_findings) == 1
+    assert pair_findings[0].object_reference == covered_scenario.scenario_id
+    assert covered_scenario.included_pair_ids[1] in pair_findings[0].remediation

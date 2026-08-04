@@ -25,6 +25,8 @@ from scenario_platform.observability import AppProfile
 from scenario_platform.storage import PathSecurityError, atomic_write_json, contained_path
 
 from .contracts import (
+    APPROVAL_AUDIT_RESERVATION_BYTES_PER_PROJECTION,
+    OPERATIONAL_METADATA_RESERVATION_BYTES_PER_PROJECTION,
     CloudDisposition,
     ComputationalResourceObservation,
     ConnectivityEvidenceClaim,
@@ -39,6 +41,8 @@ from .export import (
 )
 from .governance import (
     SnapshotAssetAuthorizationError,
+    TelemetryEnvelopeAuthorization,
+    TelemetryProjectionInventory,
     reconcile_snapshot_assets,
     scientific_asset_ids,
 )
@@ -61,6 +65,7 @@ _SUPPORTED_EVENTS = frozenset(
         "analysis_completion",
         "reference_comparison",
         "evidence_export",
+        "oversize_sync_approval",
     }
 )
 
@@ -90,6 +95,43 @@ _RESOURCE_COLUMNS = [
     "assumptions",
     "exclusions",
 ]
+
+_OVERSIZE_APPROVAL_PROJECTION_SCHEMA = "ecocorridor-oversize-approval-projection/v1.0"
+_OPERATIONAL_METADATA_RESERVATION_SCHEMA = (
+    "ecocorridor-telemetry-operational-metadata-reservation/v1.0"
+)
+
+
+def _projection_payloads(projection: TelemetryProjection) -> tuple[bytes, bytes]:
+    raw = (canonical_json(projection.model_dump(mode="json")) + "\n").encode()
+    normalized = projection.model_dump(mode="json")
+    normalized["input_artifact_refs"] = []
+    normalized["tables"] = [
+        table for table in normalized["tables"] if table.get("logical_name") != "sync_failures"
+    ]
+    stable = (canonical_json(normalized) + "\n").encode()
+    return raw, stable
+
+
+def validate_projection_operational_bound(
+    projection: TelemetryProjection,
+    *,
+    reservation_count: int = 1,
+    authorized_stable_bytes: int | None = None,
+) -> tuple[bytes, bytes]:
+    """Reject cloud metadata growth beyond the pre-authorized fixed reserve."""
+
+    if reservation_count < 1:
+        raise ValueError("operational metadata reservation count must be positive")
+    raw, stable = _projection_payloads(projection)
+    stable_bound = len(stable) if authorized_stable_bytes is None else authorized_stable_bytes
+    if isinstance(stable_bound, bool) or not isinstance(stable_bound, int) or stable_bound < 0:
+        raise ValueError("authorized stable projection bytes must be a nonnegative integer")
+    if len(raw) > stable_bound + (
+        reservation_count * OPERATIONAL_METADATA_RESERVATION_BYTES_PER_PROJECTION
+    ):
+        raise CloudIntegrityError("ECO_TELEMETRY_OPERATIONAL_METADATA_BOUND_EXCEEDED")
+    return raw, stable
 
 
 def _resource_row(subject_id: str, observation: ComputationalResourceObservation) -> list[Any]:
@@ -129,6 +171,201 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def build_telemetry_projection_inventory(
+    *,
+    store: EcoProjectStore,
+    project_root: str | Path,
+    sync_plan: dict[str, Any],
+    profile: AppProfile,
+    prospective_rows: list[tuple[dict[str, Any], dict[str, Any]]] | None = None,
+    reserve_oversize_approval: bool = False,
+) -> TelemetryProjectionInventory:
+    """Hash and size every authoritative cloud projection and unique artifact.
+
+    Outbox payload hashes are checked before projection.  Projected artifact
+    paths, sizes, and digests are checked again against retained bytes.  Exact
+    input assets already counted by the sync plan are deduplicated by
+    ``(sha256, bytes)``; every canonical telemetry envelope is counted once.
+    """
+
+    projector = EcoTelemetryProjector(
+        store=store,
+        project_root=project_root,
+        sync_plan=sync_plan,
+        profile=profile,
+        inventory_mode=True,
+    )
+    bundle = store.effective_bundle()
+    assets = {asset.asset_id: asset for asset in bundle.assets}
+    input_content: set[tuple[str, int]] = set()
+    for item in sync_plan.get("projections", []):
+        if not isinstance(item, dict):
+            raise CloudPolicyError("ECO_SYNC_PLAN_PROJECTION_INVALID")
+        asset = assets.get(str(item.get("uploaded_asset_id", "")))
+        if asset is None or asset.byte_size != int(item.get("bytes", -1)):
+            raise CloudIntegrityError("ECO_SYNC_PLAN_ASSET_METADATA_MISMATCH")
+        input_content.add((asset.sha256, asset.byte_size))
+
+    rows: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    for row in store.telemetry_rows():
+        payload = row.get("payload")
+        if not isinstance(payload, dict):
+            raise CloudIntegrityError("ECO_TELEMETRY_PAYLOAD_INVALID")
+        payload_json = canonical_json(payload)
+        if hashlib.sha256(payload_json.encode("utf-8")).hexdigest() != row.get("payload_sha256"):
+            raise CloudIntegrityError("ECO_TELEMETRY_PAYLOAD_DIGEST_MISMATCH")
+        rows.append((row, payload))
+    rows.extend(prospective_rows or [])
+
+    descriptors: list[dict[str, Any]] = []
+    unique_content = set(input_content)
+    projected_bytes = 0
+    projected_count = 0
+    approval_event_count = 0
+    operational_reservation_count = 0
+    operational_reservation_bytes = 0
+    authorized_envelopes: list[TelemetryEnvelopeAuthorization] = []
+    for row, payload in rows:
+        projection = projector(row, payload)
+        _, projection_payload = validate_projection_operational_bound(projection)
+        projection_artifacts = sorted(
+            (artifact.model_dump(mode="json") for artifact in projection.artifacts),
+            key=lambda item: str(item["local_artifact_id"]),
+        )
+        try:
+            authorization = TelemetryEnvelopeAuthorization(
+                outbox_id=str(row["outbox_id"]),
+                project_id=str(row["project_id"]),
+                event_type=str(row["event_type"]),
+                subject_id=str(row["subject_id"]),
+                stream_id=str(row["stream_id"]),
+                stream_sequence=int(row["stream_sequence"]),
+                payload_sha256=str(row["payload_sha256"]),
+                stable_projection_sha256=hashlib.sha256(projection_payload).hexdigest(),
+                stable_projection_bytes=len(projection_payload),
+                artifacts_sha256=canonical_sha256(projection_artifacts),
+                artifact_count=len(projection_artifacts),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise CloudIntegrityError("ECO_TELEMETRY_AUTHORIZATION_INVALID") from exc
+        authorized_envelopes.append(authorization)
+        operational_reservation_count += 1
+        operational_reservation_bytes += OPERATIONAL_METADATA_RESERVATION_BYTES_PER_PROJECTION
+        if row.get("event_type") == "oversize_sync_approval":
+            if (
+                projection.artifacts
+                or len(projection_payload) > APPROVAL_AUDIT_RESERVATION_BYTES_PER_PROJECTION
+            ):
+                raise CloudIntegrityError("ECO_OVERSIZE_APPROVAL_PROJECTION_BOUND_EXCEEDED")
+            approval_event_count += 1
+            descriptors.append(
+                {
+                    "event_type": "oversize_sync_approval",
+                    "reservation_ordinal": approval_event_count,
+                    "projection_schema": _OVERSIZE_APPROVAL_PROJECTION_SCHEMA,
+                    "maximum_projection_bytes": (APPROVAL_AUDIT_RESERVATION_BYTES_PER_PROJECTION),
+                    "operational_metadata_schema": (_OPERATIONAL_METADATA_RESERVATION_SCHEMA),
+                    "operational_metadata_reservation_bytes": (
+                        OPERATIONAL_METADATA_RESERVATION_BYTES_PER_PROJECTION
+                    ),
+                }
+            )
+            projected_bytes += (
+                APPROVAL_AUDIT_RESERVATION_BYTES_PER_PROJECTION
+                + OPERATIONAL_METADATA_RESERVATION_BYTES_PER_PROJECTION
+            )
+            projected_count += 1
+            continue
+        projection_digest = hashlib.sha256(projection_payload).hexdigest()
+        projection_key = (projection_digest, len(projection_payload))
+        if projection_key not in unique_content:
+            unique_content.add(projection_key)
+            projected_bytes += len(projection_payload)
+            projected_count += 1
+        projected_bytes += OPERATIONAL_METADATA_RESERVATION_BYTES_PER_PROJECTION
+        artifact_descriptors: list[dict[str, Any]] = []
+        for artifact in projection.artifacts:
+            try:
+                source = contained_path(Path(project_root).resolve(), artifact.source_relative_path)
+            except PathSecurityError as exc:
+                raise CloudIntegrityError("ECO_TELEMETRY_ARTIFACT_PATH_UNSAFE") from exc
+            if (
+                not source.is_file()
+                or source.is_symlink()
+                or source.stat().st_size != artifact.bytes
+                or _sha256_file(source) != artifact.sha256
+            ):
+                raise CloudIntegrityError("ECO_TELEMETRY_ARTIFACT_INTEGRITY_MISMATCH")
+            artifact_key = (artifact.sha256, artifact.bytes)
+            if artifact_key not in unique_content:
+                unique_content.add(artifact_key)
+                projected_bytes += artifact.bytes
+                projected_count += 1
+            artifact_descriptors.append(
+                {
+                    "sha256": artifact.sha256,
+                    "bytes": artifact.bytes,
+                    "artifact_type": artifact.artifact_type,
+                    "logical_id": artifact.logical_id,
+                }
+            )
+        descriptors.append(
+            {
+                "event_type": row.get("event_type"),
+                "subject_id": row.get("subject_id"),
+                "stream_id": row.get("stream_id"),
+                "stream_sequence": row.get("stream_sequence"),
+                "payload_sha256": hashlib.sha256(
+                    canonical_json(payload).encode("utf-8")
+                ).hexdigest(),
+                "projection_sha256": projection_digest,
+                "projection_bytes": len(projection_payload),
+                "operational_metadata_schema": _OPERATIONAL_METADATA_RESERVATION_SCHEMA,
+                "operational_metadata_reservation_bytes": (
+                    OPERATIONAL_METADATA_RESERVATION_BYTES_PER_PROJECTION
+                ),
+                "artifacts": sorted(
+                    artifact_descriptors,
+                    key=lambda item: (item["sha256"], item["bytes"], item["logical_id"]),
+                ),
+            }
+        )
+    if reserve_oversize_approval:
+        approval_event_count += 1
+        descriptors.append(
+            {
+                "event_type": "oversize_sync_approval",
+                "reservation_ordinal": approval_event_count,
+                "projection_schema": _OVERSIZE_APPROVAL_PROJECTION_SCHEMA,
+                "maximum_projection_bytes": (APPROVAL_AUDIT_RESERVATION_BYTES_PER_PROJECTION),
+                "operational_metadata_schema": _OPERATIONAL_METADATA_RESERVATION_SCHEMA,
+                "operational_metadata_reservation_bytes": (
+                    OPERATIONAL_METADATA_RESERVATION_BYTES_PER_PROJECTION
+                ),
+            }
+        )
+        operational_reservation_count += 1
+        operational_reservation_bytes += OPERATIONAL_METADATA_RESERVATION_BYTES_PER_PROJECTION
+        projected_bytes += (
+            APPROVAL_AUDIT_RESERVATION_BYTES_PER_PROJECTION
+            + OPERATIONAL_METADATA_RESERVATION_BYTES_PER_PROJECTION
+        )
+        projected_count += 1
+    return TelemetryProjectionInventory(
+        sha256=canonical_sha256(descriptors),
+        projected_bytes=projected_bytes,
+        artifact_count=projected_count,
+        approval_audit_reservation_bytes=(
+            approval_event_count * APPROVAL_AUDIT_RESERVATION_BYTES_PER_PROJECTION
+        ),
+        approval_audit_reservation_count=approval_event_count,
+        operational_metadata_reservation_bytes=operational_reservation_bytes,
+        operational_metadata_reservation_count=operational_reservation_count,
+        authority_sha256=canonical_sha256([item.as_dict() for item in authorized_envelopes]),
+        authorized_envelopes=tuple(authorized_envelopes),
+    )
+
+
 def _safe_component(value: str, *, fallback: str) -> str:
     normalized = _SAFE_COMPONENT.sub("-", value).strip(".-")
     return (normalized or fallback)[:96]
@@ -155,10 +392,12 @@ class EcoTelemetryProjector:
         project_root: str | Path,
         sync_plan: dict[str, Any],
         profile: AppProfile,
+        inventory_mode: bool = False,
     ) -> None:
         self.store = store
         self.root = Path(project_root).resolve()
         self.profile = profile
+        self.inventory_mode = inventory_mode
         if store.root != self.root:
             raise ValueError("Eco telemetry store and project root differ")
         if sync_plan.get("allowed") is not True or sync_plan.get("blockers"):
@@ -331,11 +570,69 @@ class EcoTelemetryProjector:
             "analysis_completion": self._analysis_completion,
             "reference_comparison": self._reference_comparison,
             "evidence_export": self._evidence_export,
+            "oversize_sync_approval": self._oversize_sync_approval,
         }
         projection = handlers[event_type](row, payload)
         dumped = projection.model_dump(mode="json")
         _assert_no_local_paths(dumped)
+        if not self.inventory_mode:
+            validate_projection_operational_bound(projection)
         return projection
+
+    @staticmethod
+    def stable_projection_bytes(projection: TelemetryProjection) -> int:
+        """Return the exact inventory identity bytes for one unmerged envelope."""
+
+        _, stable = _projection_payloads(projection)
+        return len(stable)
+
+    @staticmethod
+    def validate_authorized_projection(
+        row: dict[str, Any],
+        projection: TelemetryProjection,
+        authorization: dict[str, Any],
+    ) -> None:
+        """Verify a live claimed member is exactly the inventoried envelope."""
+
+        try:
+            expected = TelemetryEnvelopeAuthorization(**authorization)
+            _, stable = _projection_payloads(projection)
+            artifact_payload = sorted(
+                (artifact.model_dump(mode="json") for artifact in projection.artifacts),
+                key=lambda item: str(item["local_artifact_id"]),
+            )
+            actual = TelemetryEnvelopeAuthorization(
+                outbox_id=str(row["outbox_id"]),
+                project_id=str(row["project_id"]),
+                event_type=str(row["event_type"]),
+                subject_id=str(row["subject_id"]),
+                stream_id=str(row["stream_id"]),
+                stream_sequence=int(row["stream_sequence"]),
+                payload_sha256=str(row["payload_sha256"]),
+                stable_projection_sha256=hashlib.sha256(stable).hexdigest(),
+                stable_projection_bytes=len(stable),
+                artifacts_sha256=canonical_sha256(artifact_payload),
+                artifact_count=len(artifact_payload),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise CloudIntegrityError("ECO_TELEMETRY_AUTHORIZATION_INVALID") from exc
+        if actual != expected:
+            raise CloudIntegrityError("ECO_TELEMETRY_AUTHORIZATION_MISMATCH")
+
+    @staticmethod
+    def validate_upload_projection(
+        projection: TelemetryProjection,
+        *,
+        envelope_member_count: int,
+        member_stable_bytes: int,
+    ) -> None:
+        """Bind merged upload bytes to the exact inventoried member budget."""
+
+        validate_projection_operational_bound(
+            projection,
+            reservation_count=envelope_member_count,
+            authorized_stable_bytes=member_stable_bytes,
+        )
 
     def _base(
         self,
@@ -352,7 +649,7 @@ class EcoTelemetryProjector:
         artifacts: list[ArtifactProjection] | None = None,
     ) -> TelemetryProjection:
         projected_tables = list(tables or [])
-        sync_failures = self._sync_failures_table()
+        sync_failures = self._sync_failure_table(row)
         if sync_failures is not None:
             if any(item.logical_name == sync_failures.logical_name for item in projected_tables):
                 raise CloudIntegrityError("ECO_TELEMETRY_TABLE_NAME_CONFLICT")
@@ -385,36 +682,45 @@ class EcoTelemetryProjector:
             raise CloudIntegrityError("ECO_TELEMETRY_STREAM_SEQUENCE_MISMATCH")
         return sequence
 
-    def _sync_failures_table(self) -> TableProjection | None:
-        """Project only durable, stable outbox failures that still exist locally."""
+    @staticmethod
+    def _sync_failure_table(row: dict[str, Any]) -> TableProjection | None:
+        """Project only the current envelope's durable prior failure, if any.
 
-        rows: list[list[Any]] = []
-        for item in self.store.telemetry_rows():
-            error_code = item.get("last_error_code")
-            if not error_code:
-                continue
-            if not isinstance(error_code, str) or not re.fullmatch(
-                r"[A-Z][A-Z0-9_]{2,127}", error_code
-            ):
-                raise CloudIntegrityError("ECO_SYNC_FAILURE_CODE_INVALID")
-            state = str(item.get("state", ""))
-            if state not in {"PENDING", "UPLOADING", "FAILED", "BLOCKED"}:
-                raise CloudIntegrityError("ECO_SYNC_FAILURE_STATE_INVALID")
-            rows.append(
-                [
-                    item["outbox_id"],
-                    item["event_type"],
-                    item["subject_id"],
-                    item.get("analysis_id"),
-                    state,
-                    int(item["attempt_count"]),
-                    error_code,
-                    item["created_at"],
-                    item["updated_at"],
-                ]
-            )
-        if not rows:
+        The local outbox remains the complete diagnostic record.  Repeating a
+        project-wide snapshot on every envelope would grow quadratically and
+        let unrelated failures exhaust another row's approved metadata reserve.
+        Barrier batching merges these one-row projections, yielding at most one
+        failure row per member.
+        """
+
+        error_code = row.get("last_error_code")
+        if not error_code:
             return None
+        if not isinstance(error_code, str) or not re.fullmatch(
+            r"[A-Z][A-Z0-9_]{2,127}", error_code
+        ):
+            raise CloudIntegrityError("ECO_SYNC_FAILURE_CODE_INVALID")
+        state = str(row.get("state", ""))
+        if state not in {"PENDING", "UPLOADING", "FAILED", "BLOCKED"}:
+            raise CloudIntegrityError("ECO_SYNC_FAILURE_STATE_INVALID")
+        try:
+            attempt_count = int(row["attempt_count"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise CloudIntegrityError("ECO_SYNC_FAILURE_ATTEMPT_INVALID") from exc
+        if attempt_count < 1:
+            raise CloudIntegrityError("ECO_SYNC_FAILURE_ATTEMPT_INVALID")
+        required_text = {
+            key: row.get(key)
+            for key in (
+                "outbox_id",
+                "event_type",
+                "subject_id",
+                "created_at",
+                "updated_at",
+            )
+        }
+        if any(not isinstance(value, str) or not value for value in required_text.values()):
+            raise CloudIntegrityError("ECO_SYNC_FAILURE_IDENTITY_INVALID")
         return TableProjection(
             logical_name="sync_failures",
             columns=[
@@ -428,7 +734,19 @@ class EcoTelemetryProjector:
                 "created_at",
                 "updated_at",
             ],
-            rows=rows,
+            rows=[
+                [
+                    required_text["outbox_id"],
+                    required_text["event_type"],
+                    required_text["subject_id"],
+                    row.get("analysis_id"),
+                    state,
+                    attempt_count,
+                    error_code,
+                    required_text["created_at"],
+                    required_text["updated_at"],
+                ]
+            ],
         )
 
     @staticmethod
@@ -2268,6 +2586,95 @@ class EcoTelemetryProjector:
             artifacts=[snapshot],
         )
 
+    def _oversize_sync_approval(
+        self, row: dict[str, Any], payload: dict[str, Any]
+    ) -> TelemetryProjection:
+        required = {
+            "approval_id",
+            "project_id",
+            "binding_id_sha256",
+            "destination",
+            "entity",
+            "project",
+            "external_project_id",
+            "model_revision_id",
+            "model_sha256",
+            "reviewed_sync_plan_sha256",
+            "reviewed_by",
+            "approved_at",
+            "acknowledgement_sha256",
+        }
+        if set(payload) != required:
+            raise CloudIntegrityError("ECO_OVERSIZE_APPROVAL_EVENT_INVALID")
+        approval_id = str(payload["approval_id"])
+        if (
+            approval_id != row.get("subject_id")
+            or payload["project_id"] != row.get("project_id")
+            or any(
+                not re.fullmatch(r"[0-9a-f]{64}", str(payload[key]))
+                for key in (
+                    "binding_id_sha256",
+                    "model_sha256",
+                    "reviewed_sync_plan_sha256",
+                    "acknowledgement_sha256",
+                )
+            )
+        ):
+            raise CloudIntegrityError("ECO_OVERSIZE_APPROVAL_EVENT_MISMATCH")
+        sequence = self._stream_sequence(
+            row,
+            run_kind="release_gate",
+            run_subject_id=approval_id,
+        )
+        return self._base(
+            row,
+            run_kind="release_gate",
+            run_subject_id=approval_id,
+            event_sequence=sequence,
+            config={
+                "model_revision_id": payload["model_revision_id"],
+                "model_sha256": payload["model_sha256"],
+                "destination": payload["destination"],
+                "entity": payload["entity"],
+                "project": payload["project"],
+                "external_project_id": payload["external_project_id"],
+                "reviewed_sync_plan_sha256": payload["reviewed_sync_plan_sha256"],
+            },
+            summary={
+                "approval_id": approval_id,
+                "reviewed_by": payload["reviewed_by"],
+                "approved_at": payload["approved_at"],
+                "approval_disposition": "EXPLICIT_OVERSIZE_SYNC_APPROVAL",
+            },
+            tables=[
+                TableProjection(
+                    logical_name="oversize_sync_approvals",
+                    columns=[
+                        "approval_id",
+                        "reviewed_sync_plan_sha256",
+                        "reviewed_by",
+                        "approved_at",
+                        "destination",
+                        "entity",
+                        "project",
+                        "model_revision_id",
+                    ],
+                    rows=[
+                        [
+                            approval_id,
+                            payload["reviewed_sync_plan_sha256"],
+                            payload["reviewed_by"],
+                            payload["approved_at"],
+                            payload["destination"],
+                            payload["entity"],
+                            payload["project"],
+                            payload["model_revision_id"],
+                        ]
+                    ],
+                )
+            ],
+        )
+
     def _evidence_export(self, row: dict[str, Any], payload: dict[str, Any]) -> TelemetryProjection:
         manifest = payload.get("manifest")
         package_files = payload.get("package_files")
@@ -2435,6 +2842,17 @@ class EcoTelemetryProjector:
             event_type=event_type, analysis_id=analysis_id, subject_id=subject_id
         )
         rows = matching[:1] if first_only else (matching[-1:] if latest_only else matching)
+        if self.inventory_mode:
+            if required and not rows:
+                raise CloudTransportError("ECO_REQUIRED_ARTIFACT_LINEAGE_NOT_SYNCED")
+            return [
+                "inventory/local/"
+                + hashlib.sha256(
+                    f"{row['event_type']}:{row['subject_id']}:{row['payload_sha256']}".encode()
+                ).hexdigest()[:24]
+                + ":v1"
+                for row in rows
+            ]
         for row in rows:
             row_references: list[str] = []
             if row["state"] != "SYNCED" or row["external_reference"] is None:
@@ -2463,6 +2881,14 @@ class EcoTelemetryProjector:
         if len(matching) != 1:
             raise CloudIntegrityError("ECO_ANALYSIS_BUNDLE_REVISION_AMBIGUOUS")
         row = matching[0]
+        if self.inventory_mode:
+            return [
+                "inventory/local/"
+                + hashlib.sha256(
+                    f"bundle_import:{row['subject_id']}:{row['payload_sha256']}".encode()
+                ).hexdigest()[:24]
+                + ":v1"
+            ]
         if row["state"] != "SYNCED" or row["external_reference"] is None:
             raise CloudTransportError("ECO_REQUIRED_ARTIFACT_LINEAGE_NOT_SYNCED")
         references = [

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -16,9 +17,15 @@ def test_visual_regression_uses_reviewed_linux_baselines_without_relaxing_pixels
     assert "maxDiffPixelRatio" not in config
     assert "maxDiffPixels" not in config
     assert "threshold:" not in config
-    assert "maxDiffPixelRatio" not in visual_spec
-    assert "maxDiffPixels" not in visual_spec
-    assert "threshold:" not in visual_spec
+
+    # Decision contracts legitimately use a numeric ``threshold`` field. Keep
+    # the visual-policy guard scoped to Playwright screenshot assertions so a
+    # scientific rule cannot be mistaken for a pixel-tolerance escape hatch.
+    screenshot_assertions = re.findall(r"toHaveScreenshot\((.*?)\);", visual_spec, flags=re.DOTALL)
+    assert screenshot_assertions
+    assert all("maxDiffPixelRatio" not in assertion for assertion in screenshot_assertions)
+    assert all("maxDiffPixels" not in assertion for assertion in screenshot_assertions)
+    assert all("threshold:" not in assertion for assertion in screenshot_assertions)
 
 
 def test_every_linux_baseline_has_a_local_renderer_counterpart() -> None:

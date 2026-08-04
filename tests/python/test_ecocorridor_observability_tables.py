@@ -100,42 +100,78 @@ def _claim() -> ConnectivityEvidenceClaim:
     )
 
 
-def test_sync_failures_table_contains_only_durable_failure_records(tmp_path: Path) -> None:
-    rows = [
+def test_sync_failures_table_is_bounded_to_the_current_envelope(tmp_path: Path) -> None:
+    unrelated = [
         {
-            "outbox_id": "outbox-failed",
+            "outbox_id": f"outbox-unrelated-{index}",
             "event_type": "analysis_completion",
-            "subject_id": "analysis-1",
-            "analysis_id": "analysis-1",
-            "state": "UPLOADING",
-            "attempt_count": 2,
+            "subject_id": f"analysis-{index}",
+            "analysis_id": f"analysis-{index}",
+            "state": "FAILED",
+            "attempt_count": 99,
             "last_error_code": "WANDB_RUN_INITIALIZATION_FAILED",
             "created_at": "2026-08-03T00:00:00+00:00",
             "updated_at": "2026-08-03T00:01:00+00:00",
-        },
-        {
-            "outbox_id": "outbox-clean",
-            "event_type": "bundle_import",
-            "subject_id": "project-1",
-            "analysis_id": None,
-            "state": "PENDING",
-            "attempt_count": 0,
-            "last_error_code": None,
-            "created_at": "2026-08-03T00:00:00+00:00",
-            "updated_at": "2026-08-03T00:00:00+00:00",
-        },
+        }
+        for index in range(2_000)
     ]
-    projection = _projector(tmp_path, rows)._base(
-        {"project_id": "project-1", "event_type": "guided_session"},
+    projector = _projector(tmp_path, unrelated)
+    clean = projector._base(
+        {
+            "project_id": "project-1",
+            "event_type": "guided_session",
+            "last_error_code": None,
+        },
         run_kind="guided_session",
         run_subject_id="guided-1",
         event_sequence=1,
     )
+    assert all(item.logical_name != "sync_failures" for item in clean.tables)
 
+    current = {
+        "project_id": "project-1",
+        "outbox_id": "outbox-current",
+        "event_type": "guided_session",
+        "subject_id": "guided-1",
+        "analysis_id": None,
+        "state": "UPLOADING",
+        "attempt_count": 2,
+        "last_error_code": "WANDB_RUN_INITIALIZATION_FAILED",
+        "created_at": "2026-08-03T00:00:00+00:00",
+        "updated_at": "2026-08-03T00:01:00+00:00",
+    }
+    projection = projector._base(
+        current,
+        run_kind="guided_session",
+        run_subject_id="guided-1",
+        event_sequence=1,
+    )
     table = next(item for item in projection.tables if item.logical_name == "sync_failures")
     assert len(table.rows) == 1
-    assert table.rows[0][0] == "outbox-failed"
+    assert table.rows[0][0] == "outbox-current"
     assert table.rows[0][6] == "WANDB_RUN_INITIALIZATION_FAILED"
+
+
+def test_sync_failure_projection_rejects_invalid_current_row_data(tmp_path: Path) -> None:
+    projector = _projector(tmp_path, [])
+    with pytest.raises(CloudIntegrityError, match="ECO_SYNC_FAILURE_CODE_INVALID"):
+        projector._base(
+            {
+                "project_id": "project-1",
+                "outbox_id": "outbox-current",
+                "event_type": "guided_session",
+                "subject_id": "guided-1",
+                "analysis_id": None,
+                "state": "UPLOADING",
+                "attempt_count": 2,
+                "last_error_code": "x" * 100_000,
+                "created_at": "2026-08-03T00:00:00+00:00",
+                "updated_at": "2026-08-03T00:01:00+00:00",
+            },
+            run_kind="guided_session",
+            run_subject_id="guided-1",
+            event_sequence=1,
+        )
 
 
 def test_search_batch_table_is_an_exact_projection_of_the_immutable_plan() -> None:

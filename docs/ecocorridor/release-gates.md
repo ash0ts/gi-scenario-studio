@@ -6,10 +6,13 @@ a blocker, not an invitation to weaken policy.
 
 ## Current disposition
 
-**Full practitioner release: blocked.** A current local Ridgeway reference
-package is present and semantically verified, while the earlier v1.0 archive
-remains explicitly historical. The local package cannot substitute for the
-required clean, same-commit protected producer attestation. The ecological
+**Full practitioner release: blocked.** A checksum-intact local Ridgeway
+reference package is present, while the earlier v1.0 archive remains explicitly
+historical. The current source-identity gate correctly reports `contracts`
+drift after the decision-rule and synchronization-contract hardening in this
+branch; a clean same-commit protected producer run and repack are required
+before that reference can be promoted for this revision. The local package
+cannot substitute for that execution attestation. The ecological
 release-asset manifest is present, and the adaptive benchmark has correctly
 selected Sobol because its historical ML gates failed. Draft PR #13 is pushed;
 its actionable executable failures are being repaired while the live dependency
@@ -19,7 +22,7 @@ satisfied.
 
 | Evidence area | Current state |
 |---|---|
-| Ridgeway 1,536 matrix + 60 map jobs | Local reference verified: 1,596 accepted jobs, complete pair/current-raster evidence, archive `a0dc6b763347…`; not protected execution attestation |
+| Ridgeway 1,536 matrix + 60 map jobs | Prior-source local reference remains checksum-intact: 1,596 accepted jobs and archive `a0dc6b763347…`; current source-identity verification blocks on `contracts` drift pending a same-commit protected rerun and repack |
 | Ridgeway execution provenance | Gate implemented, evidence blocked: the manual protected producer workflow must execute a clean same-commit 1,596-job study after green Eco CI, publish its immutable Actions artifact, and pass the complete metric/current-raster differential; no successful producer run exists yet |
 | Ecological asset classification | Synthetic CC0 assets, including the manifest-bound local-reference trust record, are checksum- and relationship-checked; protected producer trust remains a separate unsatisfied gate |
 | Display and redacted story evidence | Source gate implemented: Decision Board and Scenario Detail re-verify authoritative selected/baseline direct-run chains, Decision Board reducers and dispositions reconcile to those verified primitives, and the shared synthetic story carries claim/run/artifact/QA links while excluding raster cells and private data; protected producer provenance remains separately required |
@@ -42,6 +45,10 @@ satisfied.
   tests.
 - Eco contract, raster/grid, mutation, decision, evidence, export, and RPC
   tests.
+- Adversarial rule-coverage tests proving that every target scenario and
+  included focal pair is governed by a required target rule before comparison
+  or professional export, plus retained-criterion UI tests for exact scope,
+  stable identity, Undo, and edits made during an in-flight save.
 - Julia/Circuitscape official fixtures plus hand-calculated series/parallel
   landscapes using the packaged resource.
 - Worker-to-packaged-engine smoke tests on each target. The frozen worker must
@@ -81,6 +88,14 @@ satisfied.
   database rather than trusting an older PR result.
 - W&B hash roundtrip/offline/expiry/quota checks and deterministic Weave
   evaluations in protected environments.
+- Full-inventory oversize-plan tests covering deterministic byte accounting,
+  plan staleness, immutable and restart-idempotent reviewer approval,
+  producer-atomic approval/outbox writes, W&B audit projection, desktop
+  acknowledgement, invariant pre/post approval digest and byte total through
+  the bounded audit-projection reservation, per-envelope operational-metadata
+  bounds, merged-batch framing, exact outbox-member authorization under a
+  concurrent producer commit, strict worker/renderer receipt parity, and
+  authoritative scope revalidation immediately before an online upload.
 - Search evaluation across three fixed landscapes and ten seeds before an ML
   proposer can displace Sobol.
 

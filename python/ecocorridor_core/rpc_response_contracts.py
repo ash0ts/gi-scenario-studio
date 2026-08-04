@@ -13,9 +13,12 @@ from typing import Any, Generic, Literal, TypeVar
 
 from pydantic import AwareDatetime, Field, model_validator
 from scenario_platform.contracts import ContractModel, TypedError, canonical_json, require_sha256
+from scenario_platform.observability import ProjectScopeEvidence
 
 from .assistants import AssistantAnswer, AssistantRunAssociation, IntakeDraft
 from .contracts import (
+    APPROVAL_AUDIT_RESERVATION_BYTES_PER_PROJECTION,
+    OPERATIONAL_METADATA_RESERVATION_BYTES_PER_PROJECTION,
     ConnectivityAsset,
     ConnectivityCostBasis,
     ConnectivityEvidenceClaim,
@@ -30,6 +33,7 @@ from .contracts import (
     InterventionOption,
     InterventionSite,
     ModelRevision,
+    OversizeSyncApproval,
     PortfolioDecisionSummary,
     RasterGrid,
     ReferenceComparisonPlan,
@@ -858,9 +862,21 @@ class ObservabilityPreflightData(ContractModel):
 
 class CloudSyncPlanData(ContractModel):
     destination: str | None = None
+    entity: str | None = None
+    project: str | None = None
+    external_project_id: str | None = None
     projections: list[dict[str, Any]] | None = None
+    model_revision_id: str | None = None
+    model_sha256: Sha256Digest | None = None
     input_bytes: int | None = Field(default=None, ge=0)
     estimated_current_raster_bytes: int | None = Field(default=None, ge=0)
+    telemetry_inventory_sha256: Sha256Digest | None = None
+    telemetry_projected_bytes: int | None = Field(default=None, ge=0)
+    telemetry_artifact_count: int | None = Field(default=None, ge=0)
+    approval_audit_reservation_bytes: int | None = Field(default=None, ge=0)
+    approval_audit_reservation_count: int | None = Field(default=None, ge=0)
+    operational_metadata_reservation_bytes: int | None = Field(default=None, ge=0)
+    operational_metadata_reservation_count: int | None = Field(default=None, ge=0)
     estimated_total_bytes: int | None = Field(default=None, ge=0)
     current_raster_estimate_status: (
         Literal[
@@ -877,43 +893,408 @@ class CloudSyncPlanData(ContractModel):
     expected_current_raster_count: int | None = Field(default=None, ge=0)
     retained_current_raster_count: int | None = Field(default=None, ge=0)
     current_raster_estimate_basis: str | None = None
+    sync_plan_sha256: Sha256Digest | None = None
+    approval_status: Literal["NOT_REQUIRED", "REQUIRED", "APPROVED", "STALE", "UNAVAILABLE"]
+    approval_id: str | None = None
     blockers: list[str]
     warnings: list[str]
     allowed: bool
     message: str | None = None
     technical_type: str | None = None
 
+    @model_validator(mode="after")
+    def validate_actionable_preview_identity(self) -> CloudSyncPlanData:
+        if self.approval_status == "UNAVAILABLE":
+            if self.allowed or not self.blockers:
+                raise ValueError("an unavailable cloud plan must be blocked with a finding")
+            detailed = self.destination is not None
+            if not detailed:
+                forbidden = {
+                    "entity": self.entity,
+                    "project": self.project,
+                    "external_project_id": self.external_project_id,
+                    "projections": self.projections,
+                    "model_revision_id": self.model_revision_id,
+                    "model_sha256": self.model_sha256,
+                    "input_bytes": self.input_bytes,
+                    "telemetry_inventory_sha256": self.telemetry_inventory_sha256,
+                    "telemetry_projected_bytes": self.telemetry_projected_bytes,
+                    "telemetry_artifact_count": self.telemetry_artifact_count,
+                    "approval_audit_reservation_bytes": self.approval_audit_reservation_bytes,
+                    "approval_audit_reservation_count": self.approval_audit_reservation_count,
+                    "operational_metadata_reservation_bytes": (
+                        self.operational_metadata_reservation_bytes
+                    ),
+                    "operational_metadata_reservation_count": (
+                        self.operational_metadata_reservation_count
+                    ),
+                }
+                if any(value is not None for value in forbidden.values()):
+                    raise ValueError("an unavailable fallback cannot contain a partial exact plan")
+                if (
+                    self.estimated_current_raster_bytes is not None
+                    or self.estimated_total_bytes is not None
+                    or self.current_raster_estimate_status != "UNAVAILABLE"
+                    or self.actual_retained_current_raster_bytes is None
+                    or self.pending_estimated_current_raster_bytes is not None
+                    or self.expected_current_raster_count is not None
+                    or self.retained_current_raster_count is None
+                    or not isinstance(self.current_raster_estimate_basis, str)
+                    or not self.current_raster_estimate_basis.strip()
+                    or self.sync_plan_sha256 is not None
+                    or self.approval_id is not None
+                    or not isinstance(self.message, str)
+                    or not self.message.strip()
+                    or not isinstance(self.technical_type, str)
+                    or not self.technical_type.strip()
+                ):
+                    raise ValueError("an unavailable cloud fallback has an invalid planning shape")
+                return self
+            if (
+                self.estimated_current_raster_bytes is not None
+                or self.estimated_total_bytes is not None
+                or self.current_raster_estimate_status != "UNAVAILABLE"
+                or self.pending_estimated_current_raster_bytes is not None
+                or self.approval_id is not None
+            ):
+                raise ValueError("a detailed unavailable plan must preserve its unknown estimate")
+        required = {
+            "destination": self.destination,
+            "entity": self.entity,
+            "project": self.project,
+            "external_project_id": self.external_project_id,
+            "projections": self.projections,
+            "model_revision_id": self.model_revision_id,
+            "model_sha256": self.model_sha256,
+            "input_bytes": self.input_bytes,
+            "telemetry_inventory_sha256": self.telemetry_inventory_sha256,
+            "telemetry_projected_bytes": self.telemetry_projected_bytes,
+            "telemetry_artifact_count": self.telemetry_artifact_count,
+            "approval_audit_reservation_bytes": self.approval_audit_reservation_bytes,
+            "approval_audit_reservation_count": self.approval_audit_reservation_count,
+            "operational_metadata_reservation_bytes": (self.operational_metadata_reservation_bytes),
+            "operational_metadata_reservation_count": (self.operational_metadata_reservation_count),
+            "current_raster_estimate_status": self.current_raster_estimate_status,
+            "actual_retained_current_raster_bytes": self.actual_retained_current_raster_bytes,
+            "retained_current_raster_count": self.retained_current_raster_count,
+            "current_raster_estimate_basis": self.current_raster_estimate_basis,
+            "sync_plan_sha256": self.sync_plan_sha256,
+        }
+        if self.approval_status != "UNAVAILABLE":
+            required.update(
+                {
+                    "estimated_current_raster_bytes": self.estimated_current_raster_bytes,
+                    "estimated_total_bytes": self.estimated_total_bytes,
+                    "pending_estimated_current_raster_bytes": (
+                        self.pending_estimated_current_raster_bytes
+                    ),
+                }
+            )
+        missing = sorted(key for key, value in required.items() if value is None)
+        if missing:
+            raise ValueError(
+                "an actionable cloud preview is missing exact identity fields: "
+                + ", ".join(missing)
+            )
+        for label, value in (
+            ("destination", self.destination),
+            ("entity", self.entity),
+            ("project", self.project),
+            ("external_project_id", self.external_project_id),
+            ("model_revision_id", self.model_revision_id),
+        ):
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"an actionable cloud preview has no {label} identity")
+        if self.approval_status == "APPROVED" and self.approval_id is None:
+            raise ValueError("an approved cloud preview requires approval identity")
+        if self.allowed and self.approval_status not in {"APPROVED", "NOT_REQUIRED"}:
+            raise ValueError("an allowed cloud preview requires resolved approval status")
+        if self.allowed and self.blockers:
+            raise ValueError("an allowed cloud preview cannot retain blocking findings")
+        assert self.approval_audit_reservation_bytes is not None
+        assert self.approval_audit_reservation_count is not None
+        assert self.operational_metadata_reservation_bytes is not None
+        assert self.operational_metadata_reservation_count is not None
+        assert self.telemetry_projected_bytes is not None
+        if self.approval_audit_reservation_bytes != (
+            self.approval_audit_reservation_count * APPROVAL_AUDIT_RESERVATION_BYTES_PER_PROJECTION
+        ):
+            raise ValueError("approval-audit reservation does not match its versioned bound")
+        if self.operational_metadata_reservation_bytes != (
+            self.operational_metadata_reservation_count
+            * OPERATIONAL_METADATA_RESERVATION_BYTES_PER_PROJECTION
+        ):
+            raise ValueError("operational-metadata reservation does not match its versioned bound")
+        if (
+            self.approval_audit_reservation_bytes + self.operational_metadata_reservation_bytes
+            > self.telemetry_projected_bytes
+        ):
+            raise ValueError("telemetry reservations exceed projected telemetry bytes")
+        if self.estimated_total_bytes is not None:
+            assert self.input_bytes is not None
+            assert self.pending_estimated_current_raster_bytes is not None
+            expected_total = (
+                self.input_bytes
+                + self.telemetry_projected_bytes
+                + self.pending_estimated_current_raster_bytes
+            )
+            if self.estimated_total_bytes != expected_total:
+                raise ValueError("cloud plan total does not match its exact byte inventory")
+        return self
+
 
 class ObservabilityBindingData(ContractModel):
-    state: str
+    state: Literal[
+        "PREFLIGHT_VERIFIED",
+        "CONNECTING",
+        "CONNECTED",
+        "SYNCING",
+        "SYNC_QUEUED_OFFLINE",
+        "BLOCKED_PROJECT_POLICY",
+        "AUTHENTICATION_REQUIRED",
+        "FAILED_RETRYING",
+        "BLOCKED",
+    ]
     binding_id: str | None = None
     entity: str | None = None
     project: str | None = None
     deployment: str | None = None
     api_base_url: str | None = None
     web_base_url: str | None = None
-    profile_namespace: str | None = None
+    profile_namespace: Literal["ecocorridor"] | None = None
     profile: str | None = None
-    scope_evidence: dict[str, Any] | None = None
+    scope_evidence: ProjectScopeEvidence | None = None
     verified: bool | None = None
     external_project_id: str | None = None
     estimated_current_raster_bytes: int | None = Field(default=None, ge=0)
-    oversize_approved_by: str | None = None
     last_sync: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def validate_bound_identity(self) -> ObservabilityBindingData:
+        bound_states = {
+            "CONNECTING",
+            "CONNECTED",
+            "SYNCING",
+            "SYNC_QUEUED_OFFLINE",
+            "BLOCKED_PROJECT_POLICY",
+            "FAILED_RETRYING",
+            "BLOCKED",
+        }
+        if self.state not in bound_states:
+            return self
+        required = {
+            "binding_id": self.binding_id,
+            "entity": self.entity,
+            "project": self.project,
+            "deployment": self.deployment,
+            "api_base_url": self.api_base_url,
+            "web_base_url": self.web_base_url,
+            "profile_namespace": self.profile_namespace,
+            "external_project_id": self.external_project_id,
+        }
+        missing = sorted(
+            key
+            for key, value in required.items()
+            if not isinstance(value, str) or not value.strip()
+        )
+        if missing or self.scope_evidence is None:
+            labels = [*missing, *(["scope_evidence"] if self.scope_evidence is None else [])]
+            raise ValueError(
+                "a bound observability state lacks exact identity: " + ", ".join(labels)
+            )
+        if self.verified is not True:
+            raise ValueError("a bound observability state requires verified exact scope")
+        scope = self.scope_evidence
+        assert scope is not None
+        if (
+            scope.entity != self.entity
+            or scope.project != self.project
+            or scope.external_project_id != self.external_project_id
+            or scope.deployment != self.deployment
+            or scope.api_base_url != self.api_base_url
+        ):
+            raise ValueError("binding identity differs from its exact Restricted-scope evidence")
+        return self
 
 
 class ObservabilityConnectData(ContractModel):
     binding: ObservabilityBindingData
     upload_preview: CloudSyncPlanData
 
+    @model_validator(mode="after")
+    def validate_binding_preview_parity(self) -> ObservabilityConnectData:
+        if self.binding.state in {"AUTHENTICATION_REQUIRED", "PREFLIGHT_VERIFIED", "CONNECTING"}:
+            raise ValueError("observability connect did not return a terminal bound state")
+        if (
+            self.upload_preview.approval_status == "UNAVAILABLE"
+            and self.upload_preview.destination is None
+        ):
+            return self
+        if (
+            self.upload_preview.entity != self.binding.entity
+            or self.upload_preview.project != self.binding.project
+            or self.upload_preview.external_project_id != self.binding.external_project_id
+            or self.upload_preview.destination != self.binding.deployment
+        ):
+            raise ValueError("upload preview identity differs from its exact project binding")
+        return self
+
+
+class OversizeApprovalData(ContractModel):
+    approval: OversizeSyncApproval
+    upload_preview: CloudSyncPlanData
+
+    @model_validator(mode="after")
+    def validate_approved_plan_parity(self) -> OversizeApprovalData:
+        approval = self.approval
+        preview = self.upload_preview
+        if preview.approval_status != "APPROVED" or not preview.allowed:
+            raise ValueError("oversize approval response requires an allowed approved plan")
+        pairs = (
+            ("approval identity", preview.approval_id, approval.approval_id),
+            ("plan digest", preview.sync_plan_sha256, approval.sync_plan_sha256),
+            ("destination", preview.destination, approval.destination),
+            ("entity", preview.entity, approval.entity),
+            ("project", preview.project, approval.project),
+            ("external project", preview.external_project_id, approval.external_project_id),
+            ("model revision", preview.model_revision_id, approval.model_revision_id),
+            ("model hash", preview.model_sha256, approval.model_sha256),
+            (
+                "telemetry inventory",
+                preview.telemetry_inventory_sha256,
+                approval.telemetry_inventory_sha256,
+            ),
+            ("input bytes", preview.input_bytes, approval.approved_input_bytes),
+            (
+                "current-raster bytes",
+                preview.estimated_current_raster_bytes,
+                approval.approved_current_raster_bytes,
+            ),
+            (
+                "pending current-raster bytes",
+                preview.pending_estimated_current_raster_bytes,
+                approval.approved_pending_current_raster_bytes,
+            ),
+            (
+                "telemetry bytes",
+                preview.telemetry_projected_bytes,
+                approval.approved_telemetry_projected_bytes,
+            ),
+            (
+                "telemetry count",
+                preview.telemetry_artifact_count,
+                approval.approved_telemetry_artifact_count,
+            ),
+            (
+                "approval-audit bytes",
+                preview.approval_audit_reservation_bytes,
+                approval.approved_approval_audit_reservation_bytes,
+            ),
+            (
+                "approval-audit count",
+                preview.approval_audit_reservation_count,
+                approval.approved_approval_audit_reservation_count,
+            ),
+            (
+                "operational-metadata bytes",
+                preview.operational_metadata_reservation_bytes,
+                approval.approved_operational_metadata_reservation_bytes,
+            ),
+            (
+                "operational-metadata count",
+                preview.operational_metadata_reservation_count,
+                approval.approved_operational_metadata_reservation_count,
+            ),
+            ("total bytes", preview.estimated_total_bytes, approval.approved_total_bytes),
+        )
+        mismatched = [label for label, actual, expected in pairs if actual != expected]
+        if mismatched:
+            raise ValueError(
+                "oversize approval differs from returned exact plan: " + ", ".join(mismatched)
+            )
+        return self
+
 
 class ObservabilityBindingResultData(ContractModel):
     binding: ObservabilityBindingData
 
 
+OutboxState = Literal["PENDING", "UPLOADING", "SYNCED", "FAILED", "BLOCKED"]
+ReceiptSyncState = Literal[
+    "CONNECTED",
+    "SYNCING",
+    "SYNC_QUEUED_OFFLINE",
+    "FAILED_RETRYING",
+    "AUTHENTICATION_REQUIRED",
+    "BLOCKED",
+]
+
+
+class ObservabilitySyncReceiptData(ContractModel):
+    online: bool
+    claimed: int = Field(ge=0)
+    synced: int = Field(ge=0)
+    failed: int = Field(ge=0)
+    blocked: int = Field(ge=0)
+    queued_offline: bool
+    remaining: int = Field(ge=0)
+    state_counts: dict[OutboxState, int]
+    sync_state: ReceiptSyncState
+
+    @model_validator(mode="after")
+    def validate_outbox_arithmetic(self) -> ObservabilitySyncReceiptData:
+        if any(value < 0 for value in self.state_counts.values()):
+            raise ValueError("outbox state counts cannot be negative")
+        if self.synced + self.failed + self.blocked > self.claimed:
+            raise ValueError("outbox terminal results cannot exceed claimed rows")
+        if self.queued_offline == self.online:
+            raise ValueError("queued-offline disposition must be the inverse of online execution")
+        if not self.online and any(
+            value for value in (self.claimed, self.synced, self.failed, self.blocked)
+        ):
+            raise ValueError("offline synchronization cannot claim or finish outbox rows")
+        counts = {
+            state: int(self.state_counts.get(state, 0))
+            for state in (
+                "PENDING",
+                "UPLOADING",
+                "SYNCED",
+                "FAILED",
+                "BLOCKED",
+            )
+        }
+        remaining = sum(value for state, value in counts.items() if state != "SYNCED")
+        if self.remaining != remaining:
+            raise ValueError("receipt remaining count differs from authoritative state counts")
+        if self.synced > counts["SYNCED"]:
+            raise ValueError("receipt synced count exceeds authoritative synced rows")
+        if self.failed > counts["FAILED"] or self.blocked > counts["BLOCKED"]:
+            raise ValueError("receipt failures exceed authoritative terminal state counts")
+        expected_state: ReceiptSyncState
+        if counts["BLOCKED"]:
+            expected_state = "BLOCKED"
+        elif counts["FAILED"]:
+            expected_state = "FAILED_RETRYING"
+        elif counts["UPLOADING"]:
+            expected_state = "SYNCING"
+        elif counts["PENDING"]:
+            expected_state = "SYNC_QUEUED_OFFLINE"
+        else:
+            expected_state = "CONNECTED"
+        if self.sync_state != expected_state:
+            raise ValueError("receipt sync state differs from authoritative outbox state counts")
+        return self
+
+
 class ObservabilitySyncData(ContractModel):
     binding: ObservabilityBindingData
-    receipt: dict[str, Any]
+    receipt: ObservabilitySyncReceiptData
+
+    @model_validator(mode="after")
+    def validate_binding_receipt_state(self) -> ObservabilitySyncData:
+        if self.binding.state != self.receipt.sync_state:
+            raise ValueError("binding state differs from synchronization receipt state")
+        return self
 
 
 class ObservabilityLinkData(ContractModel):
@@ -1044,6 +1425,7 @@ RPC_RESPONSE_DATA_CONTRACTS: dict[str, type[ContractModel]] = {
     "observability.validate_binding": ObservabilityBindingResultData,
     "observability.get_status": ObservabilityBindingData,
     "observability.preview_upload": CloudSyncPlanData,
+    "observability.approve_oversize": OversizeApprovalData,
     "observability.sync": ObservabilitySyncData,
     "observability.retry": ObservabilitySyncData,
     "observability.open_run": ObservabilityLinkData,

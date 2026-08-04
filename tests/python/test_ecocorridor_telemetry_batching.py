@@ -7,8 +7,15 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from ecocorridor_core.contracts import (
+    OPERATIONAL_METADATA_RESERVATION_BYTES_PER_PROJECTION,
+)
 from ecocorridor_core.observability import ECOCORRIDOR_APP_PROFILE
 from ecocorridor_core.project_store import EcoProjectStore
+from ecocorridor_core.telemetry import (
+    EcoTelemetryProjector,
+    validate_projection_operational_bound,
+)
 from scenario_platform.cloud_sync import (
     ArtifactProjection,
     CloudIntegrityError,
@@ -20,6 +27,7 @@ from scenario_platform.cloud_sync import (
     TelemetryProjection,
     WandbTarget,
 )
+from scenario_platform.contracts import canonical_json
 from scenario_platform.observability import (
     ProjectScope,
     ProjectScopeEvidence,
@@ -223,6 +231,191 @@ def test_ridgeway_1596_terminal_events_emit_thirteen_bounded_envelopes(
     rows = store.telemetry_rows(event_type="direct_job_terminal")
     assert all(row["state"] == "SYNCED" for row in rows)
     assert len({row["external_reference"]["envelope_id"] for row in rows}) == expected_envelopes
+    store.close()
+
+
+def test_batched_upload_projection_uses_sum_of_member_metadata_reservations(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "bounded-batch-envelope"
+    store = _seed_terminal_events(root, 3)
+    uploader = _RecordingUploader()
+
+    class BoundedProjector:
+        def __init__(self) -> None:
+            self.validated_member_counts: list[int] = []
+
+        def __call__(self, row: dict[str, Any], payload: dict[str, Any]) -> TelemetryProjection:
+            return _project_terminal(row, payload)
+
+        def validate_upload_projection(
+            self,
+            projection: TelemetryProjection,
+            *,
+            envelope_member_count: int,
+            member_stable_bytes: int,
+        ) -> None:
+            validate_projection_operational_bound(
+                projection,
+                reservation_count=envelope_member_count,
+                authorized_stable_bytes=member_stable_bytes,
+            )
+            self.validated_member_counts.append(envelope_member_count)
+
+        stable_projection_bytes = staticmethod(EcoTelemetryProjector.stable_projection_bytes)
+
+    projector = BoundedProjector()
+    report = _consumer(root, store, uploader, max_rows=3, projector=projector).drain(online=True)
+    assert (report.claimed, report.synced, report.failed, report.blocked) == (3, 3, 0, 0)
+    assert projector.validated_member_counts == [3]
+
+    member_stable_bytes = 0
+    for row in store.telemetry_rows(event_type="direct_job_terminal"):
+        _, stable = validate_projection_operational_bound(_project_terminal(row, row["payload"]))
+        member_stable_bytes += len(stable)
+    merged = uploader.uploads[0]["projection"]
+    merged_bytes = len((canonical_json(merged.model_dump(mode="json")) + "\n").encode())
+    assert merged_bytes <= member_stable_bytes + (
+        3 * OPERATIONAL_METADATA_RESERVATION_BYTES_PER_PROJECTION
+    )
+    store.close()
+
+
+def test_batched_retry_projects_one_failure_row_per_member(tmp_path: Path) -> None:
+    root = tmp_path / "bounded-batch-failures"
+    store = _seed_terminal_events(root, 3)
+    with store.transaction() as connection:
+        connection.execute(
+            "UPDATE eco_telemetry_outbox SET state='FAILED',attempt_count=1,"
+            "last_error_code='WANDB_RUN_INITIALIZATION_FAILED'"
+        )
+    expected_outbox_ids = [row["outbox_id"] for row in store.telemetry_rows()]
+
+    uploader = _RecordingUploader()
+
+    class BoundedProjector:
+        def __call__(self, row: dict[str, Any], payload: dict[str, Any]) -> TelemetryProjection:
+            projection = _project_terminal(row, payload)
+            failure = TableProjection(
+                logical_name="sync_failures",
+                columns=["outbox_id", "attempt_count", "error_code"],
+                rows=[
+                    [
+                        row["outbox_id"],
+                        row["attempt_count"],
+                        row["last_error_code"],
+                    ]
+                ],
+            )
+            value = projection.model_dump(mode="json")
+            value["tables"].append(failure.model_dump(mode="json"))
+            bounded = TelemetryProjection.model_validate(value)
+            validate_projection_operational_bound(bounded)
+            return bounded
+
+        def validate_upload_projection(
+            self,
+            projection: TelemetryProjection,
+            *,
+            envelope_member_count: int,
+            member_stable_bytes: int,
+        ) -> None:
+            validate_projection_operational_bound(
+                projection,
+                reservation_count=envelope_member_count,
+                authorized_stable_bytes=member_stable_bytes,
+            )
+
+        stable_projection_bytes = staticmethod(EcoTelemetryProjector.stable_projection_bytes)
+
+    report = _consumer(
+        root,
+        store,
+        uploader,
+        max_rows=3,
+        projector=BoundedProjector(),
+    ).drain(online=True)
+
+    assert (report.claimed, report.synced, report.failed, report.blocked) == (3, 3, 0, 0)
+    projection = uploader.uploads[0]["projection"]
+    table = next(item for item in projection.tables if item.logical_name == "sync_failures")
+    assert table.rows == [
+        [
+            outbox_id,
+            2,
+            "WANDB_RUN_INITIALIZATION_FAILED",
+        ]
+        for outbox_id in expected_outbox_ids
+    ]
+    store.close()
+
+
+def test_one_member_batch_framing_cannot_escape_inventoried_byte_bound(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "batch-framing-bound"
+    store = _seed_terminal_events(root, 1)
+    uploader = _RecordingUploader()
+
+    class NearReservationProjector:
+        stable_projection_bytes = staticmethod(EcoTelemetryProjector.stable_projection_bytes)
+        validate_upload_projection = staticmethod(EcoTelemetryProjector.validate_upload_projection)
+
+        def __call__(self, row: dict[str, Any], payload: dict[str, Any]) -> TelemetryProjection:
+            base = _project_terminal(row, payload)
+            references: list[str] = []
+            last_valid: TelemetryProjection | None = None
+            for index in range(1_000):
+                value = base.model_dump(mode="json")
+                value["input_artifact_refs"] = [
+                    *references,
+                    f"entity/project/ref-{index:04d}-{'r' * 110}:v1",
+                ]
+                candidate = TelemetryProjection.model_validate(value)
+                try:
+                    raw, stable = validate_projection_operational_bound(candidate)
+                except CloudIntegrityError:
+                    break
+                references = list(candidate.input_artifact_refs)
+                last_valid = candidate
+                remaining = (
+                    len(stable) + OPERATIONAL_METADATA_RESERVATION_BYTES_PER_PROJECTION - len(raw)
+                )
+                if remaining < 64:
+                    return candidate
+            if last_valid is None:
+                raise AssertionError("could not construct valid pinned references")
+            next_index = len(references)
+            for padding in range(1, 111):
+                value = base.model_dump(mode="json")
+                value["input_artifact_refs"] = [
+                    *references,
+                    f"entity/project/tail-{next_index:04d}-{'r' * padding}:v1",
+                ]
+                candidate = TelemetryProjection.model_validate(value)
+                try:
+                    raw, stable = validate_projection_operational_bound(candidate)
+                except CloudIntegrityError:
+                    continue
+                remaining = (
+                    len(stable) + OPERATIONAL_METADATA_RESERVATION_BYTES_PER_PROJECTION - len(raw)
+                )
+                if remaining < 64:
+                    return candidate
+            raise AssertionError("could not construct a near-reservation projection")
+
+    report = _consumer(
+        root,
+        store,
+        uploader,
+        projector=NearReservationProjector(),
+    ).drain(online=True)
+
+    assert (report.claimed, report.synced, report.failed, report.blocked) == (1, 0, 0, 1)
+    assert uploader.uploads == []
+    row = store.telemetry_rows()[0]
+    assert row["state"] == "BLOCKED"
+    assert row["last_error_code"] == "ECO_TELEMETRY_OPERATIONAL_METADATA_BOUND_EXCEEDED"
     store.close()
 
 

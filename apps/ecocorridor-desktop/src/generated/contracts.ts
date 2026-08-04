@@ -250,7 +250,7 @@ export const ConnectivityProjectBundleSchema = z.object({
   "max_current_raster_bytes": z.number().int().gt(0),
   "max_direct_jobs": z.number().int().gt(0),
   "max_wall_seconds_per_job": z.number().int().gt(0),
-  "require_explicit_oversize_approval": z.boolean().optional(),
+  "require_explicit_oversize_approval": z.literal(true).optional(),
 }).strict(),
 }).strict();
 export type ConnectivityProjectBundle = z.infer<typeof ConnectivityProjectBundleSchema>;
@@ -974,9 +974,42 @@ export const ResourcePolicySchema = z.object({
   "max_current_raster_bytes": z.number().int().gt(0),
   "max_direct_jobs": z.number().int().gt(0),
   "max_wall_seconds_per_job": z.number().int().gt(0),
-  "require_explicit_oversize_approval": z.boolean().optional(),
+  "require_explicit_oversize_approval": z.literal(true).optional(),
 }).strict();
 export type ResourcePolicy = z.infer<typeof ResourcePolicySchema>;
+
+export const OversizeSyncApprovalSchema = z.object({
+  "approval_id": z.string(),
+  "project_id": z.string(),
+  "binding_id": z.string(),
+  "destination": z.enum(["WANDB_CLOUD", "DEDICATED", "SELF_MANAGED"]),
+  "entity": z.string(),
+  "project": z.string(),
+  "external_project_id": z.string(),
+  "model_revision_id": z.string(),
+  "model_sha256": z.string().min(64).max(64).regex(new RegExp("^[0-9a-f]{64}$")),
+  "bundle_sha256": z.string().min(64).max(64).regex(new RegExp("^[0-9a-f]{64}$")),
+  "resource_policy_sha256": z.string().min(64).max(64).regex(new RegExp("^[0-9a-f]{64}$")),
+  "projection_sha256": z.string().min(64).max(64).regex(new RegExp("^[0-9a-f]{64}$")),
+  "current_raster_estimate_sha256": z.string().min(64).max(64).regex(new RegExp("^[0-9a-f]{64}$")),
+  "scope_evidence_sha256": z.string().min(64).max(64).regex(new RegExp("^[0-9a-f]{64}$")),
+  "telemetry_inventory_sha256": z.string().min(64).max(64).regex(new RegExp("^[0-9a-f]{64}$")),
+  "sync_plan_sha256": z.string().min(64).max(64).regex(new RegExp("^[0-9a-f]{64}$")),
+  "approved_input_bytes": z.number().int().min(0),
+  "approved_current_raster_bytes": z.number().int().min(0),
+  "approved_pending_current_raster_bytes": z.number().int().min(0),
+  "approved_telemetry_projected_bytes": z.number().int().min(0),
+  "approved_telemetry_artifact_count": z.number().int().min(0),
+  "approved_approval_audit_reservation_bytes": z.number().int().min(0),
+  "approved_approval_audit_reservation_count": z.number().int().min(0),
+  "approved_operational_metadata_reservation_bytes": z.number().int().min(0),
+  "approved_operational_metadata_reservation_count": z.number().int().min(0),
+  "approved_total_bytes": z.number().int().gt(0),
+  "reviewed_by": z.string().min(1).max(256),
+  "approved_at": z.string().refine((value) => !Number.isNaN(Date.parse(value)) && /(?:Z|[+-]\d{2}:\d{2})$/.test(value), "Expected timezone-aware ISO date-time"),
+  "acknowledgement": z.literal("I approve synchronization of the exact oversized evidence plan identified by this digest.").optional(),
+}).strict();
+export type OversizeSyncApproval = z.infer<typeof OversizeSyncApprovalSchema>;
 
 export const ConnectivityExportEligibilitySchema = z.object({
   "eligible": z.boolean(),
@@ -1050,6 +1083,7 @@ export const EcoCorridorContractSchemas = {
   SensitiveDataAuthorization: SensitiveDataAuthorizationSchema,
   EngineManifest: EngineManifestSchema,
   ResourcePolicy: ResourcePolicySchema,
+  OversizeSyncApproval: OversizeSyncApprovalSchema,
   ConnectivityExportEligibility: ConnectivityExportEligibilitySchema,
   ModelRevision: ModelRevisionSchema,
   SemanticModelDiff: SemanticModelDiffSchema,

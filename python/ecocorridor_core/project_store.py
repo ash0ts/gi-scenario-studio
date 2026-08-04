@@ -38,6 +38,7 @@ from .contracts import (
     EvidenceEdge,
     EvidenceNode,
     ModelRevision,
+    OversizeSyncApproval,
     PortfolioDecisionSummary,
     QAStatus,
     ReferenceComparisonPlan,
@@ -57,6 +58,7 @@ from .engine import (
     validate_effective_circuitscape_configuration,
 )
 from .footprints import ProfessionalFootprintProofDocument
+from .governance import oversize_sync_approval_event_payload
 from .interventions import canonicalize_portfolio
 from .metrics import (
     CONNECTIVITY_LIMITATION,
@@ -777,14 +779,16 @@ CREATE TRIGGER IF NOT EXISTS eco_outbox_event_type_insert
 BEFORE INSERT ON eco_telemetry_outbox
 WHEN NEW.event_type NOT IN (
   'bundle_import','semantic_revision','model_attestation','analysis_plan','guided_session','guided_checkpoint',
-  'direct_job_terminal','analysis_completion','reference_comparison','evidence_export'
+  'direct_job_terminal','analysis_completion','reference_comparison','evidence_export',
+  'oversize_sync_approval'
 )
 BEGIN SELECT RAISE(ABORT, 'unsupported telemetry event type'); END;
 CREATE TRIGGER IF NOT EXISTS eco_outbox_event_type_update
 BEFORE UPDATE OF event_type ON eco_telemetry_outbox
 WHEN NEW.event_type NOT IN (
   'bundle_import','semantic_revision','model_attestation','analysis_plan','guided_session','guided_checkpoint',
-  'direct_job_terminal','analysis_completion','reference_comparison','evidence_export'
+  'direct_job_terminal','analysis_completion','reference_comparison','evidence_export',
+  'oversize_sync_approval'
 )
 BEGIN SELECT RAISE(ABORT, 'unsupported telemetry event type'); END;
 COMMIT;
@@ -6496,6 +6500,67 @@ class EcoProjectStore:
                 (project_id, canonical_json(payload), _now()),
             )
 
+    def record_oversize_sync_approval(self, approval: OversizeSyncApproval) -> int:
+        """Persist consent and its cloud-lineage event in one transaction."""
+
+        project_id = self.project()["project_id"]
+        if approval.project_id != project_id:
+            raise ValueError("oversize approval belongs to another project")
+        now = _now()
+        with self.transaction() as connection:
+            active = self._active_revision_in_transaction(connection, project_id)
+            if (
+                approval.model_revision_id != active.revision_id
+                or approval.model_sha256 != active.model_sha256
+            ):
+                raise ValueError("oversize approval does not target the active model revision")
+            revision, _ = self._put_record_in_transaction(
+                connection,
+                project_id=project_id,
+                record_type="oversize_sync_approval",
+                record_id=approval.approval_id,
+                payload_json=canonical_json(approval.model_dump(mode="json")),
+                allow_update=False,
+                now=now,
+            )
+            self._enqueue_outbox(
+                connection,
+                project_id=project_id,
+                analysis_id=None,
+                event_type="oversize_sync_approval",
+                subject_id=approval.approval_id,
+                stream_id=f"release_gate:{approval.approval_id}",
+                payload=oversize_sync_approval_event_payload(approval),
+                idempotency_key=f"oversize_sync_approval:{approval.approval_id}",
+            )
+        return revision
+
+    def oversize_sync_approval(self, sync_plan_sha256: str) -> OversizeSyncApproval | None:
+        """Return consent only under the deterministic exact-plan identity."""
+
+        if not re.fullmatch(r"[0-9a-f]{64}", sync_plan_sha256):
+            raise ValueError("sync plan digest must be a lowercase SHA-256 digest")
+        approval_id = f"oversize_approval_{sync_plan_sha256}"
+        try:
+            payload = self.get_record("oversize_sync_approval", approval_id)
+        except KeyError:
+            return None
+        approval = OversizeSyncApproval.model_validate(payload)
+        if approval.sync_plan_sha256 != sync_plan_sha256:
+            raise ValueError("oversize approval record has inconsistent plan identity")
+        return approval
+
+    def oversize_sync_approvals(self) -> list[OversizeSyncApproval]:
+        """Return immutable approvals in deterministic record identity order."""
+
+        project_id = self.project()["project_id"]
+        rows = self._connection.execute(
+            "SELECT payload_json FROM eco_records WHERE project_id=? "
+            "AND record_type='oversize_sync_approval' ORDER BY record_id",
+            (project_id,),
+        ).fetchall()
+        return [OversizeSyncApproval.model_validate_json(str(row["payload_json"])) for row in rows]
+
     def observability(self) -> dict[str, Any] | None:
         project_id = self.project()["project_id"]
         row = self._connection.execute(
@@ -7481,6 +7546,89 @@ class EcoProjectStore:
                     "UPDATE eco_telemetry_outbox SET state='UPLOADING',attempt_count=attempt_count+1,"
                     "lease_token=?,lease_expires_at=?,updated_at=? WHERE outbox_id=? "
                     "AND state IN ('PENDING','FAILED')",
+                    (lease_token, lease_expires_at, now, row["outbox_id"]),
+                )
+                if cursor.rowcount == 1:
+                    claimed.append(
+                        {
+                            **dict(row),
+                            "state": "UPLOADING",
+                            "attempt_count": int(row["attempt_count"]) + 1,
+                            "lease_token": lease_token,
+                            "lease_expires_at": lease_expires_at,
+                            "updated_at": now,
+                        }
+                    )
+        return claimed
+
+    def claim_authorized_outbox(
+        self,
+        *,
+        authorized_outbox_ids: Sequence[str],
+        limit: int = 100,
+        lease_seconds: int = 300,
+    ) -> list[dict[str, Any]]:
+        """Claim only members present in one exact sync-inventory snapshot.
+
+        Rows committed after that snapshot remain pending for the next preview.
+        An unauthorized earlier member also prevents later members in its
+        ordered producer stream from being claimed under stale authority.
+        """
+
+        if limit < 1:
+            raise ValueError("outbox claim limit must be positive")
+        if lease_seconds < 1 or lease_seconds > 86_400:
+            raise ValueError("outbox lease must be between 1 second and 24 hours")
+        normalized = tuple(str(item) for item in authorized_outbox_ids)
+        if len(set(normalized)) != len(normalized) or any(not item for item in normalized):
+            raise ValueError("authorized outbox identities must be unique and non-empty")
+        authorized = set(normalized)
+        if not authorized:
+            return []
+
+        project_id = self.project()["project_id"]
+        with self.transaction() as connection:
+            claimed_at = datetime.now(UTC)
+            now = claimed_at.isoformat()
+            connection.execute(
+                "UPDATE eco_telemetry_outbox SET state='PENDING',lease_token=NULL,"
+                "lease_expires_at=NULL,last_error_code='UPLOAD_LEASE_EXPIRED',updated_at=? "
+                "WHERE project_id=? AND state='UPLOADING' AND lease_expires_at IS NOT NULL "
+                "AND lease_expires_at<=?",
+                (now, project_id, now),
+            )
+            rows = connection.execute(
+                "SELECT * FROM eco_telemetry_outbox WHERE project_id=? "
+                "AND state IN ('PENDING','FAILED') AND NOT EXISTS ("
+                "SELECT 1 FROM eco_telemetry_outbox AS prior "
+                "WHERE prior.project_id=eco_telemetry_outbox.project_id "
+                "AND prior.stream_id=eco_telemetry_outbox.stream_id "
+                "AND prior.stream_sequence<eco_telemetry_outbox.stream_sequence "
+                "AND prior.state IN ('UPLOADING','BLOCKED')) "
+                "ORDER BY outbox_sequence,outbox_id",
+                (project_id,),
+            ).fetchall()
+            selected: list[sqlite3.Row] = []
+            unauthorized_streams: set[str] = set()
+            for row in rows:
+                stream_id = str(row["stream_id"])
+                if stream_id in unauthorized_streams:
+                    continue
+                if str(row["outbox_id"]) not in authorized:
+                    unauthorized_streams.add(stream_id)
+                    continue
+                selected.append(row)
+                if len(selected) >= limit:
+                    break
+
+            claimed: list[dict[str, Any]] = []
+            for row in selected:
+                lease_token = secrets.token_urlsafe(24)
+                lease_expires_at = (claimed_at + timedelta(seconds=lease_seconds)).isoformat()
+                cursor = connection.execute(
+                    "UPDATE eco_telemetry_outbox SET state='UPLOADING',"
+                    "attempt_count=attempt_count+1,lease_token=?,lease_expires_at=?,updated_at=? "
+                    "WHERE outbox_id=? AND state IN ('PENDING','FAILED')",
                     (lease_token, lease_expires_at, now, row["outbox_id"]),
                 )
                 if cursor.rowcount == 1:

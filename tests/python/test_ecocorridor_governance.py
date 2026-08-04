@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import UTC, datetime
 
 from ecocorridor_core.contracts import CloudDisposition, ConnectivityProjectBundle
 from ecocorridor_core.governance import (
     CurrentRasterEstimate,
     CurrentRasterEstimateStatus,
     SyncDestination,
+    create_oversize_sync_approval,
     plan_cloud_sync,
     scientific_asset_ids,
 )
@@ -224,21 +226,100 @@ def test_explicit_oversize_approval_covers_current_and_total_materialized_limits
         destination=SyncDestination.WANDB_CLOUD,
         scope_evidence=_scope("wandb_cloud"),
         estimated_current_raster_bytes=estimate,
+        binding_id="binding-exact-plan",
     )
     assert not blocked.allowed
     assert any("current-raster evidence exceeds" in item for item in blocked.blockers)
     assert any("materialized policy" in item for item in blocked.blockers)
 
+    approval = create_oversize_sync_approval(
+        blocked,
+        reviewed_by="Dr. Ecologist",
+        approved_at=datetime(2026, 8, 4, tzinfo=UTC),
+    )
     approved = plan_cloud_sync(
         bundle,
         destination=SyncDestination.WANDB_CLOUD,
         scope_evidence=_scope("wandb_cloud"),
         estimated_current_raster_bytes=estimate,
-        oversize_approved_by="Dr. Ecologist",
+        binding_id="binding-exact-plan",
+        approval=approval,
     )
     assert approved.allowed
+    assert approved.approval_status == "APPROVED"
+    assert approved.approval_id == approval.approval_id
     assert any("oversized current-raster" in item for item in approved.warnings)
     assert any("oversized materialized" in item for item in approved.warnings)
+
+    changed_estimate = plan_cloud_sync(
+        bundle,
+        destination=SyncDestination.WANDB_CLOUD,
+        scope_evidence=_scope("wandb_cloud"),
+        estimated_current_raster_bytes=estimate + 1,
+        binding_id="binding-exact-plan",
+        approval=approval,
+    )
+    assert not changed_estimate.allowed
+    assert changed_estimate.approval_status == "STALE"
+    assert any("OVERSIZE_SYNC_APPROVAL_STALE" in item for item in changed_estimate.blockers)
+
+    changed_destination = plan_cloud_sync(
+        bundle,
+        destination=SyncDestination.DEDICATED,
+        scope_evidence=_scope("dedicated"),
+        estimated_current_raster_bytes=estimate,
+        binding_id="binding-exact-plan",
+        approval=approval,
+    )
+    assert not changed_destination.allowed
+    assert changed_destination.approval_status == "STALE"
+
+    revised_policy = bundle.model_copy(
+        update={
+            "resource_policy": bundle.resource_policy.model_copy(
+                update={"max_direct_jobs": bundle.resource_policy.max_direct_jobs + 1}
+            )
+        }
+    )
+    revised_asset = bundle.model_copy(
+        update={
+            "assets": [
+                bundle.assets[0].model_copy(update={"title": "Re-reviewed asset identity"}),
+                *bundle.assets[1:],
+            ]
+        }
+    )
+    revised_model = bundle.model_copy(
+        update={
+            "revision": bundle.revision.model_copy(
+                update={"revision_id": "revision-changed", "model_sha256": "f" * 64}
+            )
+        }
+    )
+    changed_scope = _scope("wandb_cloud").model_copy(
+        update={"external_project_id": "another-immutable-project-id"}
+    )
+    changed_entity = _scope("wandb_cloud").model_copy(update={"entity": "another-team"})
+    changed_project = _scope("wandb_cloud").model_copy(update={"project": "another-project"})
+    for changed_bundle, scope in (
+        (revised_policy, _scope("wandb_cloud")),
+        (revised_asset, _scope("wandb_cloud")),
+        (revised_model, _scope("wandb_cloud")),
+        (bundle, changed_scope),
+        (bundle, changed_entity),
+        (bundle, changed_project),
+    ):
+        stale = plan_cloud_sync(
+            changed_bundle,
+            destination=SyncDestination.WANDB_CLOUD,
+            scope_evidence=scope,
+            estimated_current_raster_bytes=estimate,
+            binding_id="binding-exact-plan",
+            approval=approval,
+        )
+        assert stale.approval_subject.sha256 != approval.sync_plan_sha256
+        assert stale.approval_status == "STALE"
+        assert not stale.allowed
 
 
 def test_scope_evidence_must_match_dedicated_or_self_managed_destination() -> None:

@@ -6,11 +6,302 @@ import { EcoApp } from "./App";
 import { Workspace } from "./components/Workspace";
 import { publicRidgewayFixture } from "./data/publicRidgeway";
 import { RIDGEWAY_HYPOTHESIS_RANKING_METRIC } from "./data/ridgeway";
+import { DetailedCloudUploadPreviewSchema, ObservabilityConnectResponseSchema, ObservabilitySyncResponseSchema } from "./lib/observabilityContracts";
 import { assetRequirements, buildAssetAddParams, buildAssetInspectParams, createAssetDraft, hydrateProfessionalProject } from "./lib/professional";
 import type { HostBridge, OpaqueFileHandle, ProfessionalProjectState, RasterInspection, RidgewayFixture } from "./types";
 
 function payload<T>(method: string, data: T) {
   return { api_version: "1.0", method, data, data_sha256: "a".repeat(64) };
+}
+
+const OVERSIZE_SYNC_ACKNOWLEDGEMENT = "I approve synchronization of the exact oversized evidence plan identified by this digest.";
+
+function cloudUploadPreview(
+  approvalStatus: "NOT_REQUIRED" | "REQUIRED" | "APPROVED" | "STALE",
+  digest: string,
+  modelRevisionId: string,
+  identity: {
+    destination: "WANDB_CLOUD" | "DEDICATED" | "SELF_MANAGED";
+    entity: string;
+    project: string;
+    externalProjectId: string;
+  } = {
+    destination: "DEDICATED",
+    entity: "wildlife-program",
+    project: "route-14-connectivity",
+    externalProjectId: "wb-external-project-4f9c",
+  },
+) {
+  const approvalReservationCount = approvalStatus === "NOT_REQUIRED" ? 0 : 1;
+  const approvalReservationBytes = approvalReservationCount * 16_384;
+  const operationalReservationCount = 1;
+  const operationalReservationBytes = operationalReservationCount * 65_536;
+  const telemetryProjectedBytes = 2_048 + approvalReservationBytes + operationalReservationBytes;
+  return {
+    destination: identity.destination,
+    entity: identity.entity,
+    project: identity.project,
+    external_project_id: identity.externalProjectId,
+    projections: [{ source_asset_id: "asset_reviewed_input", uploaded_asset_id: "asset_reviewed_input", representation: "RAW", bytes: 1_024 }],
+    input_bytes: 1_024,
+    estimated_current_raster_bytes: 2_560,
+    telemetry_projected_bytes: telemetryProjectedBytes,
+    telemetry_artifact_count: 4 + approvalReservationCount + operationalReservationCount,
+    approval_audit_reservation_bytes: approvalReservationBytes,
+    approval_audit_reservation_count: approvalReservationCount,
+    operational_metadata_reservation_bytes: operationalReservationBytes,
+    operational_metadata_reservation_count: operationalReservationCount,
+    estimated_total_bytes: 1_024 + telemetryProjectedBytes + 512,
+    current_raster_estimate_status: "ACTUAL_RECONCILED" as const,
+    actual_retained_current_raster_bytes: 2_048,
+    pending_estimated_current_raster_bytes: 512,
+    expected_current_raster_count: 2,
+    retained_current_raster_count: 2,
+    current_raster_estimate_basis: "Two retained current rasters plus the exact telemetry artifact inventory.",
+    model_revision_id: modelRevisionId,
+    model_sha256: "1".repeat(64),
+    telemetry_inventory_sha256: "2".repeat(64),
+    sync_plan_sha256: digest,
+    approval_status: approvalStatus,
+    approval_id: approvalStatus === "APPROVED" ? `oversize_approval_${digest}` : null,
+    blockers: approvalStatus === "REQUIRED"
+      ? ["OVERSIZE_SYNC_APPROVAL_REQUIRED: exact plan acknowledgement is required"]
+      : approvalStatus === "STALE" ? ["OVERSIZE_SYNC_APPROVAL_STALE: retained consent belongs to another exact plan"] : [],
+    warnings: ["The plan exceeds the reviewed materialized-evidence threshold."],
+    allowed: approvalStatus === "APPROVED" || approvalStatus === "NOT_REQUIRED",
+  };
+}
+
+function oversizeApprovalReceipt(
+  projectId: string,
+  reviewedPreview: ReturnType<typeof cloudUploadPreview>,
+  approvedPreview: ReturnType<typeof cloudUploadPreview>,
+  reviewer: string,
+) {
+  return {
+    approval_id: `oversize_approval_${reviewedPreview.sync_plan_sha256}`,
+    project_id: projectId,
+    binding_id: "binding_oversize_reviewed",
+    destination: reviewedPreview.destination,
+    entity: reviewedPreview.entity,
+    project: reviewedPreview.project,
+    external_project_id: reviewedPreview.external_project_id,
+    model_revision_id: reviewedPreview.model_revision_id,
+    model_sha256: reviewedPreview.model_sha256,
+    bundle_sha256: "3".repeat(64),
+    resource_policy_sha256: "4".repeat(64),
+    projection_sha256: "5".repeat(64),
+    current_raster_estimate_sha256: "6".repeat(64),
+    telemetry_inventory_sha256: approvedPreview.telemetry_inventory_sha256,
+    scope_evidence_sha256: "7".repeat(64),
+    sync_plan_sha256: reviewedPreview.sync_plan_sha256,
+    approved_input_bytes: approvedPreview.input_bytes,
+    approved_current_raster_bytes: approvedPreview.estimated_current_raster_bytes,
+    approved_pending_current_raster_bytes: approvedPreview.pending_estimated_current_raster_bytes,
+    approved_telemetry_projected_bytes: approvedPreview.telemetry_projected_bytes,
+    approved_telemetry_artifact_count: approvedPreview.telemetry_artifact_count,
+    approved_approval_audit_reservation_bytes: approvedPreview.approval_audit_reservation_bytes,
+    approved_approval_audit_reservation_count: approvedPreview.approval_audit_reservation_count,
+    approved_operational_metadata_reservation_bytes: approvedPreview.operational_metadata_reservation_bytes,
+    approved_operational_metadata_reservation_count: approvedPreview.operational_metadata_reservation_count,
+    approved_total_bytes: approvedPreview.estimated_total_bytes,
+    reviewed_by: reviewer,
+    approved_at: "2026-08-04T15:45:00Z",
+    acknowledgement: OVERSIZE_SYNC_ACKNOWLEDGEMENT,
+  };
+}
+
+function productionSyncReceipt() {
+  return {
+    online: true,
+    claimed: 1,
+    synced: 1,
+    failed: 0,
+    blocked: 0,
+    queued_offline: false,
+    remaining: 0,
+    state_counts: { SYNCED: 1 },
+    sync_state: "CONNECTED" as const,
+  };
+}
+
+function observabilityBinding(
+  state: "CONNECTED" | "BLOCKED_PROJECT_POLICY",
+  deployment: "DEDICATED" | "SELF_MANAGED",
+  entity = "team",
+  project = "eco",
+  externalProjectId = `wb-${entity}-${project}-immutable`,
+) {
+  const apiBaseUrl = deployment === "DEDICATED" ? "https://api.wandb.example.org" : "https://wandb.internal.example.org";
+  return {
+    state,
+    binding_id: `binding_${entity}_${project}`,
+    entity,
+    project,
+    deployment,
+    api_base_url: apiBaseUrl,
+    web_base_url: apiBaseUrl,
+    profile_namespace: "ecocorridor" as const,
+    scope_evidence: {
+      entity,
+      project,
+      external_project_id: externalProjectId,
+      deployment,
+      api_base_url: apiBaseUrl,
+      scope: "RESTRICTED" as const,
+      evidence_kind: "ADMIN_API_DOCUMENTED_EXACT" as const,
+      provider_field: "documented_exact_scope",
+    },
+    verified: true as const,
+    external_project_id: externalProjectId,
+  };
+}
+
+function productionSyncResponse(identity: {
+  deployment?: "DEDICATED" | "SELF_MANAGED";
+  entity?: string;
+  project?: string;
+  externalProjectId?: string;
+} = {}) {
+  const receipt = productionSyncReceipt();
+  const deployment = identity.deployment ?? "DEDICATED";
+  const entity = identity.entity ?? "wildlife-program";
+  const project = identity.project ?? "route-14-connectivity";
+  const externalProjectId = identity.externalProjectId ?? "wb-external-project-4f9c";
+  return {
+    binding: {
+      ...observabilityBinding("CONNECTED", deployment, entity, project, externalProjectId),
+      last_sync: receipt,
+    },
+    receipt,
+  };
+}
+
+function detailedUnavailableUploadPreview() {
+  return {
+    ...cloudUploadPreview("NOT_REQUIRED", "f".repeat(64), "revision_unavailable"),
+    estimated_current_raster_bytes: null,
+    estimated_total_bytes: null,
+    current_raster_estimate_status: "UNAVAILABLE" as const,
+    pending_estimated_current_raster_bytes: null,
+    approval_status: "UNAVAILABLE" as const,
+    approval_id: null,
+    allowed: false,
+    blockers: ["CURRENT_RASTER_ESTIMATE_UNAVAILABLE"],
+  };
+}
+
+it("rejects a production-shaped sync response whose binding and derived receipt states disagree", () => {
+  const response = productionSyncResponse();
+  expect(() => ObservabilitySyncResponseSchema.parse({
+    ...response,
+    binding: { ...response.binding, state: "SYNCING" },
+  })).toThrow(/binding state does not match the derived receipt state/i);
+});
+
+it.each([
+  {
+    name: "terminal results above claimed rows",
+    receipt: { claimed: 0 },
+    error: /terminal results cannot exceed claimed outbox rows/i,
+  },
+  {
+    name: "online work marked queued offline",
+    receipt: { queued_offline: true },
+    error: /queued-offline disposition must be the inverse/i,
+  },
+  {
+    name: "offline work that claims and completes rows",
+    receipt: { online: false, queued_offline: true },
+    error: /offline synchronization cannot claim or finish/i,
+  },
+  {
+    name: "terminal result above the authoritative state count",
+    receipt: { state_counts: { SYNCED: 0 } },
+    error: /synced count exceeds authoritative synced rows/i,
+  },
+  {
+    name: "CONNECTED receipt with an authoritative blocked row",
+    receipt: { state_counts: { SYNCED: 1, BLOCKED: 1 }, remaining: 1 },
+    error: /state differs from authoritative outbox-state counts/i,
+  },
+])("rejects sync receipt parity violation: $name", ({ receipt, error }) => {
+  const response = productionSyncResponse();
+  expect(() => ObservabilitySyncResponseSchema.parse({
+    ...response,
+    receipt: { ...response.receipt, ...receipt },
+  })).toThrow(error);
+});
+
+it.each([
+  {
+    name: "allowed plan retaining blockers",
+    preview: { ...cloudUploadPreview("NOT_REQUIRED", "a".repeat(64), "revision_blocked_allowed"), blockers: ["ASSET_POLICY_BLOCKED"] },
+    error: /allowed upload plan cannot retain blocking findings/i,
+  },
+  {
+    name: "unavailable plan without a blocking finding",
+    preview: { ...detailedUnavailableUploadPreview(), blockers: [] },
+    error: /unavailable upload plan must be blocked with a finding/i,
+  },
+  {
+    name: "unavailable plan carrying a known estimate",
+    preview: { ...detailedUnavailableUploadPreview(), estimated_current_raster_bytes: 1 },
+    error: /detailed unavailable plan must preserve its unknown estimate/i,
+  },
+  {
+    name: "actionable plan with a null exact estimate",
+    preview: { ...cloudUploadPreview("NOT_REQUIRED", "b".repeat(64), "revision_missing_estimate"), estimated_total_bytes: null },
+    error: /actionable upload plan requires complete exact byte estimates/i,
+  },
+])("rejects upload-preview parity violation: $name", ({ preview, error }) => {
+  expect(() => DetailedCloudUploadPreviewSchema.parse(preview)).toThrow(error);
+});
+
+it("rejects a detailed unavailable upload plan whose exact destination differs from its binding", () => {
+  expect(() => ObservabilityConnectResponseSchema.parse({
+    binding: observabilityBinding("CONNECTED", "DEDICATED"),
+    upload_preview: detailedUnavailableUploadPreview(),
+  })).toThrow(/destination-bearing upload plan belongs to another W&B destination/i);
+});
+
+function unavailableUploadPreview() {
+  return {
+    allowed: false as const,
+    blockers: ["PLANNING_MODEL_INCOMPLETE"],
+    warnings: [],
+    estimated_current_raster_bytes: null,
+    estimated_total_bytes: null,
+    current_raster_estimate_status: "UNAVAILABLE" as const,
+    actual_retained_current_raster_bytes: 0,
+    pending_estimated_current_raster_bytes: null,
+    expected_current_raster_count: null,
+    retained_current_raster_count: 0,
+    current_raster_estimate_basis: "The planning model is incomplete, so no authoritative run plan and grid estimate exists.",
+    sync_plan_sha256: null,
+    approval_status: "UNAVAILABLE" as const,
+    approval_id: null,
+    message: "The destination is bound, but synchronization remains blocked until the planning model and asset authorizations are complete.",
+    technical_type: "ValidationError",
+  };
+}
+
+function observabilityConnectResponse(
+  state: "CONNECTED" | "BLOCKED_PROJECT_POLICY",
+  deployment: "DEDICATED" | "SELF_MANAGED",
+) {
+  const binding = observabilityBinding(state, deployment);
+  return {
+    binding,
+    upload_preview: state === "BLOCKED_PROJECT_POLICY"
+      ? unavailableUploadPreview()
+      : cloudUploadPreview("NOT_REQUIRED", "d".repeat(64), "revision_connect", {
+        destination: deployment,
+        entity: binding.entity,
+        project: binding.project,
+        externalProjectId: binding.external_project_id,
+      }),
+  };
 }
 
 function projectState(
@@ -58,7 +349,7 @@ function projectState(
     max_current_raster_bytes: 4_294_967_296,
     max_direct_jobs: 5_000,
     max_wall_seconds_per_job: 3_600,
-    require_explicit_oversize_approval: true,
+    require_explicit_oversize_approval: true as const,
   };
   const base: ProfessionalProjectState = {
     project: { project_id: projectId, title, mode },
@@ -915,7 +1206,7 @@ describe("authoritative professional workspace", () => {
       validation: { status: "BLOCKED", findings: [] },
       sync_status: { state: "CONNECTED", deployment: "DEDICATED", message: "Exact-scope Restricted binding retained." },
     };
-    const request = vi.fn(async (method: string) => {
+    const request = vi.fn(async (method: string, _params: Record<string, unknown> = {}) => {
       if (method === "connectivity.project.get_state") return payload(method, savedState);
       if (method === "assistant.status") return payload(method, { configured: false, provider: null, project_id: "retained-editors", wandb_external_project_id: "wandb-retained-editors", trace_required: true });
       throw new Error(`Unexpected method ${method}`);
@@ -988,7 +1279,7 @@ describe("authoritative professional workspace", () => {
       max_current_raster_bytes: 1536 * mib,
       max_direct_jobs: 321,
       max_wall_seconds_per_job: 777,
-      require_explicit_oversize_approval: true,
+      require_explicit_oversize_approval: true as const,
     };
     const savedState: ProfessionalProjectState = {
       ...base,
@@ -999,11 +1290,25 @@ describe("authoritative professional workspace", () => {
       },
       resource_policy: retainedPolicy,
     };
+    let briefSaveCount = 0;
+    let policySaveCount = 0;
+    const firstBriefSave = { resolve: null as (() => void) | null };
+    const firstPolicySave = { resolve: null as (() => void) | null };
     const request = vi.fn(async (method: string, params: Record<string, unknown> = {}) => {
       if (method === "connectivity.project.get_state") return payload(method, savedState);
       if (method === "assistant.status") return payload(method, { configured: false, provider: null, project_id: "retained-contracts", wandb_external_project_id: "wandb-retained-contracts", trace_required: true });
-      if (method === "connectivity.decision_brief.save") return payload(method, { record_id: retainedBrief.brief_id, revision: 8 });
-      if (method === "connectivity.resource_policy.save") return payload(method, { record_id: "resource_policy", revision: 9 });
+      if (method === "connectivity.decision_brief.save") {
+        briefSaveCount += 1;
+        const response = payload(method, { record_id: retainedBrief.brief_id, revision: 7 + briefSaveCount });
+        if (briefSaveCount === 1) return await new Promise<typeof response>((resolve) => { firstBriefSave.resolve = () => resolve(response); });
+        return response;
+      }
+      if (method === "connectivity.resource_policy.save") {
+        policySaveCount += 1;
+        const response = payload(method, { record_id: "resource_policy", revision: 9 });
+        if (policySaveCount === 1) return await new Promise<typeof response>((resolve) => { firstPolicySave.resolve = () => resolve(response); });
+        return response;
+      }
       if (method === "connectivity.cost_basis.get") throw new Error("No reviewed cost basis in this focused fixture.");
       throw new Error(`Unexpected method ${method}: ${JSON.stringify(params)}`);
     });
@@ -1037,7 +1342,7 @@ describe("authoritative professional workspace", () => {
     await user.clear(question);
     await user.type(question, "Which reviewed package should advance to site diligence?");
     await user.click(brief.getByRole("button", { name: "Save decision brief" }));
-    await waitFor(() => expect(brief.getByRole("button", { name: "Save decision brief" })).toBeDisabled());
+    await waitFor(() => expect(request.mock.calls.filter(([method]) => method === "connectivity.decision_brief.save")).toHaveLength(1));
     const briefCall = request.mock.calls.find(([method]) => method === "connectivity.decision_brief.save");
     expect(briefCall?.[1]).toEqual({
       project_handle: "project_retained_contracts",
@@ -1046,6 +1351,14 @@ describe("authoritative professional workspace", () => {
         decision_question: "Which reviewed package should advance to site diligence?",
       },
     });
+    await user.type(question, " Newer field note");
+    expect(question).toHaveValue("Which reviewed package should advance to site diligence? Newer field note");
+    firstBriefSave.resolve?.();
+    expect(await screen.findByText(/Newer unsaved edits remain in this workspace/i)).toBeInTheDocument();
+    expect(question).toHaveValue("Which reviewed package should advance to site diligence? Newer field note");
+    expect(brief.getByRole("button", { name: "Save decision brief" })).toBeEnabled();
+    await user.click(brief.getByRole("button", { name: "Undo brief draft" }));
+    expect(question).toHaveValue("Which reviewed package should advance to site diligence?");
     await user.clear(brief.getByLabelText("Screening budget"));
     await user.click(brief.getByRole("button", { name: "Save decision brief" }));
     await waitFor(() => expect(request.mock.calls.filter(([method]) => method === "connectivity.decision_brief.save")).toHaveLength(2));
@@ -1076,7 +1389,7 @@ describe("authoritative professional workspace", () => {
     await user.clear(policy.getByLabelText("Per-job wall time (seconds)"));
     await user.type(policy.getByLabelText("Per-job wall time (seconds)"), "900");
     await user.click(policy.getByRole("button", { name: "Save resource policy" }));
-    await waitFor(() => expect(policy.getByRole("button", { name: "Save resource policy" })).toBeDisabled());
+    await waitFor(() => expect(request.mock.calls.filter(([method]) => method === "connectivity.resource_policy.save")).toHaveLength(1));
     const policyCall = request.mock.calls.find(([method]) => method === "connectivity.resource_policy.save");
     expect(policyCall?.[1]).toEqual({
       project_handle: "project_retained_contracts",
@@ -1085,6 +1398,145 @@ describe("authoritative professional workspace", () => {
         max_wall_seconds_per_job: 900,
       },
     });
+    await user.type(policy.getByLabelText("Per-job wall time (seconds)"), "1");
+    expect(policy.getByLabelText("Per-job wall time (seconds)")).toHaveValue("9001");
+    firstPolicySave.resolve?.();
+    expect(await screen.findByText(/Newer unsaved edits remain in this workspace/i)).toBeInTheDocument();
+    expect(policy.getByLabelText("Per-job wall time (seconds)")).toHaveValue("9001");
+    expect(policy.getByRole("button", { name: "Save resource policy" })).toBeEnabled();
+    await user.click(policy.getByRole("button", { name: "Undo policy draft" }));
+    expect(policy.getByLabelText("Per-job wall time (seconds)")).toHaveValue("900");
+  });
+
+  it("edits retained decision criteria without broadening their exact ecological scope", async () => {
+    const user = userEvent.setup();
+    const base = projectState("retained-rules", "Retained decision criteria", "IMPORTED");
+    const focalAlpha = {
+      focal_set_id: "focal_alpha", title: "Alpha habitat cores", asset_id: "asset_alpha", grid_id: "grid_reviewed", guild_id: "guild_alpha",
+      focal_ids: [1, 2], pairs: [{ pair_id: "pair_alpha", from_focal_id: 1, to_focal_id: 2, required: true }],
+      rationale: "Reviewed alpha-guild focal question.", reviewed_by: "Agency ecologist", reviewed_at: "2026-08-03T12:00:00Z",
+    };
+    const focalBeta = {
+      focal_set_id: "focal_beta", title: "Beta habitat cores", asset_id: "asset_beta", grid_id: "grid_reviewed", guild_id: "guild_beta",
+      focal_ids: [3, 4], pairs: [{ pair_id: "pair_beta", from_focal_id: 3, to_focal_id: 4, required: true }],
+      rationale: "Reviewed beta-guild focal question.", reviewed_by: "Agency ecologist", reviewed_at: "2026-08-03T12:00:00Z",
+    };
+    const scenario = (scenarioId: string, title: string, guildId: string, focalSetId: string, pairId: string, safeguard: boolean) => ({
+      scenario_id: scenarioId, title, guild_id: guildId, life_stage: "adult", resistance_hypothesis_id: `hypothesis_${guildId}`,
+      focal_set_id: focalSetId, future_condition: "present", maturity_horizon: "current", included_pair_ids: [pairId], safeguard,
+      grid_id: "grid_reviewed", engine_mode: "RASTER_PAIRWISE" as const, raster_semantics: "RESISTANCE" as const,
+      neighbor_rule: "EIGHT" as const, resistance_average: "ARITHMETIC" as const, precision: "double" as const, julia_threads: 1 as const, blas_threads: 1 as const,
+    });
+    const scenarioAlpha = scenario("scenario_alpha", "Alpha present condition", "guild_alpha", focalAlpha.focal_set_id, "pair_alpha", false);
+    const scenarioBeta = scenario("scenario_beta", "Beta safeguard condition", "guild_beta", focalBeta.focal_set_id, "pair_beta", true);
+    const alphaRule = {
+      rule_id: "rule_alpha_stable", title: "Alpha minimum reduction", metric: "MIN_RESISTANCE_REDUCTION_PERCENT" as const,
+      operator: "AT_LEAST" as const, threshold: 3, scenario_ids: [scenarioAlpha.scenario_id], pair_ids: ["pair_alpha"], required: true,
+      rationale: "Require a within-scenario reduction for the reviewed alpha focal pair.",
+    };
+    const betaRule = {
+      rule_id: "rule_beta_stable", title: "Beta safeguard review", metric: "REQUIRE_SAFEGUARD_NONREGRESSION" as const,
+      operator: "EQUALS" as const, threshold: true, scenario_ids: [scenarioBeta.scenario_id], pair_ids: ["pair_beta"], required: false,
+      rationale: "Retain the reviewed beta safeguard result as an optional diagnostic criterion.",
+    };
+    const savedState: ProfessionalProjectState = {
+      ...base,
+      effective_bundle: {
+        ...base.effective_bundle,
+        focal_area_sets: [focalAlpha, focalBeta],
+        scenarios: [scenarioAlpha, scenarioBeta],
+        decision_rules: [alphaRule, betaRule],
+      },
+    };
+    let ruleSaveCount = 0;
+    const firstRuleSave = { resolve: null as (() => void) | null };
+    const request = vi.fn(async (method: string, params: Record<string, unknown> = {}) => {
+      if (method === "connectivity.project.get_state") return payload(method, savedState);
+      if (method === "assistant.status") return payload(method, { configured: false, provider: null, project_id: "retained-rules", wandb_external_project_id: "wandb-retained-rules", trace_required: true });
+      if (method === "connectivity.decision_rule.save") {
+        ruleSaveCount += 1;
+        const response = payload(method, { record_id: (params.decision_rule as typeof alphaRule).rule_id, revision: 11 + ruleSaveCount });
+        if (ruleSaveCount === 1) return await new Promise<typeof response>((resolve) => { firstRuleSave.resolve = () => resolve(response); });
+        return response;
+      }
+      if (method === "connectivity.cost_basis.get") throw new Error("No reviewed cost basis in this focused rule fixture.");
+      throw new Error(`Unexpected method ${method}`);
+    });
+    window.__ECOCORRIDOR_HOST__ = { request: request as unknown as HostBridge["request"] };
+
+    render(<Workspace mode="desktop" path="existing" localPreview={false} preflight={null} reopenedProject={{ projectHandle: "project_retained_rules", lastModifiedMs: Date.now(), projectState: savedState }} />);
+    expect(await screen.findByText(/Authoritative records restored/i)).toBeInTheDocument();
+    await user.click(screen.getAllByRole("button", { name: "Rules and costs" })[0]);
+
+    expect(screen.getByRole("heading", { name: "2 retained criteria" })).toBeInTheDocument();
+    const editorNode = screen.getByRole("heading", { name: "Testable criterion" }).closest("article");
+    expect(editorNode).not.toBeNull();
+    const editor = within(editorNode as HTMLElement);
+    expect(editor.getByLabelText("Criterion to edit")).toHaveValue(alphaRule.rule_id);
+    expect(editor.getByLabelText("Rule title *")).toHaveValue(alphaRule.title);
+    expect(editor.getByLabelText("Metric *")).toHaveValue(alphaRule.metric);
+    expect(editor.getByLabelText("Operator *")).toHaveValue(alphaRule.operator);
+    expect(editor.getByLabelText("Threshold *")).toHaveValue("3");
+    expect(editor.getByRole("checkbox", { name: /Required for portfolio disposition/i })).toBeChecked();
+    expect(editor.getByRole("checkbox", { name: /Alpha present condition.*scenario_alpha/i })).toBeChecked();
+    expect(editor.getByRole("checkbox", { name: /Beta safeguard condition.*scenario_beta/i })).not.toBeChecked();
+    expect(editor.getByRole("checkbox", { name: /Alpha habitat cores.*pair_alpha/i })).toBeChecked();
+    expect(editor.getByRole("checkbox", { name: /Beta habitat cores.*pair_beta/i })).toBeDisabled();
+    expect(editor.getByRole("button", { name: "Save criterion revision" })).toBeDisabled();
+
+    await user.clear(editor.getByLabelText("Rule title *"));
+    await user.type(editor.getByLabelText("Rule title *"), "Alpha reviewed reduction");
+    await user.click(editor.getByRole("button", { name: "Save criterion revision" }));
+    await waitFor(() => expect(request.mock.calls.filter(([method]) => method === "connectivity.decision_rule.save")).toHaveLength(1));
+    const alphaSave = request.mock.calls.find(([method]) => method === "connectivity.decision_rule.save");
+    expect(alphaSave?.[1]).toEqual({ project_handle: "project_retained_rules", decision_rule: { ...alphaRule, title: "Alpha reviewed reduction" } });
+    await user.type(editor.getByLabelText("Rule title *"), " with newer draft");
+    expect(editor.getByLabelText("Rule title *")).toHaveValue("Alpha reviewed reduction with newer draft");
+    expect(editor.getByRole("button", { name: "Save criterion revision" })).toBeDisabled();
+    expect(firstRuleSave.resolve).not.toBeNull();
+    firstRuleSave.resolve?.();
+    expect(await screen.findByText(/Newer unsaved edits remain in this workspace/i)).toBeInTheDocument();
+    expect(editor.getByLabelText("Rule title *")).toHaveValue("Alpha reviewed reduction with newer draft");
+    expect(editor.getByRole("button", { name: "Save criterion revision" })).toBeEnabled();
+    await user.click(editor.getByRole("button", { name: "Undo criterion draft" }));
+    expect(editor.getByLabelText("Rule title *")).toHaveValue("Alpha reviewed reduction");
+
+    await user.click(editor.getByRole("checkbox", { name: /Beta safeguard condition.*scenario_beta/i }));
+    expect(editor.getByText(/pair_alpha/i, { selector: ".criterion-scope-issues li" })).toBeInTheDocument();
+    expect(editor.getByRole("button", { name: "Save criterion revision" })).toBeDisabled();
+    expect(request.mock.calls.filter(([method]) => method === "connectivity.decision_rule.save")).toHaveLength(1);
+    await user.click(editor.getByRole("button", { name: "Undo criterion draft" }));
+    expect(editor.getByRole("checkbox", { name: /Beta safeguard condition.*scenario_beta/i })).not.toBeChecked();
+    expect(editor.getByLabelText("Rule title *")).toHaveValue("Alpha reviewed reduction");
+
+    const betaLedgerRow = screen.getByRole("row", { name: /Beta safeguard review/i });
+    await user.click(within(betaLedgerRow).getByRole("button", { name: "Edit criterion" }));
+    expect(editor.getByLabelText("Criterion to edit")).toHaveFocus();
+    expect(editor.getByRole("status")).toHaveTextContent(`Editing criterion ${betaRule.rule_id}.`);
+    expect(editor.getByLabelText("Rule title *")).toHaveValue(betaRule.title);
+    expect(editor.getByLabelText("Operator *")).toHaveValue("EQUALS");
+    expect(editor.getByLabelText(/Threshold \*/)).toHaveValue("true");
+    expect(editor.getByRole("checkbox", { name: /Required for portfolio disposition/i })).not.toBeChecked();
+    expect(editor.getByRole("checkbox", { name: /Beta safeguard condition.*scenario_beta/i })).toBeChecked();
+    expect(editor.getByRole("checkbox", { name: /Beta habitat cores.*pair_beta/i })).toBeChecked();
+    await user.type(editor.getByLabelText("Rule title *"), " revised");
+    await user.click(editor.getByRole("button", { name: "Undo criterion draft" }));
+    expect(editor.getByLabelText("Rule title *")).toHaveValue(betaRule.title);
+
+    await user.click(editor.getByRole("button", { name: "Add criterion" }));
+    const newRuleId = String((editor.getByLabelText("Criterion to edit") as HTMLSelectElement).value);
+    expect(newRuleId).toMatch(/^rule_/);
+    expect(newRuleId).not.toBe(alphaRule.rule_id);
+    expect(newRuleId).not.toBe(betaRule.rule_id);
+    expect(editor.getByRole("button", { name: "Save new criterion" })).toBeDisabled();
+    await user.type(editor.getByLabelText("Rule title *"), "Complete direct-run QA");
+    await user.selectOptions(editor.getByLabelText("Metric *"), "REQUIRE_ACCEPTED_QA");
+    await user.type(editor.getByLabelText("Rationale *"), "Require accepted direct-run QA across the exact scenario ensemble.");
+    await user.click(editor.getByRole("button", { name: "Save new criterion" }));
+    await waitFor(() => expect(request.mock.calls.filter(([method]) => method === "connectivity.decision_rule.save")).toHaveLength(2));
+    const newRuleSave = request.mock.calls.filter(([method]) => method === "connectivity.decision_rule.save").at(-1);
+    expect(newRuleSave?.[1]).toMatchObject({ project_handle: "project_retained_rules", decision_rule: { rule_id: newRuleId, metric: "REQUIRE_ACCEPTED_QA", operator: "EQUALS", threshold: true, scenario_ids: [], pair_ids: [], required: true } });
+    expect(screen.getByRole("heading", { name: "3 retained criteria" })).toBeInTheDocument();
   });
 
   it("publishes one reviewed cost basis with exact coverage for every persisted option", async () => {
@@ -1145,13 +1597,14 @@ describe("authoritative professional workspace", () => {
         intervention_options: interventionOptions,
       },
     };
+    const costBasisSave = { resolve: null as (() => void) | null };
     const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
       if (method === "connectivity.project.get_state") return payload(method, savedState);
       if (method === "connectivity.cost_basis.get") return payload(method, { cost_basis: null, active_revision_id: base.active_revision.revision_id, confirmed: false, missing_requirements: ["A reviewed CostBasis has not been persisted for the active intervention catalog."] });
       if (method === "assistant.status") return payload(method, { configured: false, provider: null, project_id: "cost-ledger", wandb_external_project_id: "wandb-cost-ledger", trace_required: true });
       if (method === "connectivity.cost_basis.save") {
         const costBasis = (params?.cost_basis ?? {}) as Record<string, unknown>;
-        return payload(method, {
+        const response = payload(method, {
           record_id: costBasis.cost_basis_id,
           revision: 4,
           cost_basis: { ...costBasis, assumptions: [...(costBasis.assumptions as string[]), "Reviewer confirmation: Explicit confirmation retained by the worker."] },
@@ -1159,6 +1612,7 @@ describe("authoritative professional workspace", () => {
           cost_basis_sha256: "7".repeat(64),
           confirmed: true,
         });
+        return await new Promise<typeof response>((resolve) => { costBasisSave.resolve = () => resolve(response); });
       }
       throw new Error(`Unexpected method ${method}`);
     });
@@ -1197,9 +1651,18 @@ describe("authoritative professional workspace", () => {
         "CAPEX basis: 2026 planning quantities, mobilization, and 30% contingency; land purchase excluded.",
       ]),
     });
+    await user.type(screen.getByLabelText("Cost source or citation *"), " Newer reviewer note.");
+    expect(screen.getByLabelText("Cost source or citation *")).toHaveValue("State DOT planning estimate, revision 3, table 7. Newer reviewer note.");
+    costBasisSave.resolve?.();
     expect(await screen.findByText(/all 2 option costs remain traceable/i)).toBeInTheDocument();
+    expect(screen.getByText(/Newer unsaved edits remain in this workspace/i)).toBeInTheDocument();
+    expect(screen.getByLabelText("Cost source or citation *")).toHaveValue("State DOT planning estimate, revision 3, table 7. Newer reviewer note.");
+    expect(screen.getByRole("button", { name: "Save reviewed cost basis" })).toBeEnabled();
     expect(screen.getByText("Worker-confirmed basis")).toBeInTheDocument();
     expect(screen.getByText(/revalidate Model Fitness before attesting or running/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Undo cost-basis draft" }));
+    expect(screen.getByLabelText("Cost source or citation *")).toHaveValue("State DOT planning estimate, revision 3, table 7.");
+    expect(screen.getByRole("checkbox", { name: /I reviewed the source, present-value assumptions, and every exact option cost/i })).not.toBeChecked();
   });
 
   it("keeps an unbound or policy-blocked recent project behind exact-scope W&B verification", async () => {
@@ -1207,7 +1670,7 @@ describe("authoritative professional workspace", () => {
     const blockedState = projectState("blocked-project", "Blocked destination review", "IMPORTED", {
       sync_status: { state: "BLOCKED_PROJECT_POLICY", message: "No authoritative Restricted binding is retained." },
     });
-    const request = vi.fn(async (method: string) => {
+    const request = vi.fn(async (method: string, _params: Record<string, unknown> = {}) => {
       if (method === "connectivity.project.get_state") return payload(method, blockedState);
       throw new Error(`Unexpected method ${method}`);
     });
@@ -1453,7 +1916,7 @@ describe("authoritative professional workspace", () => {
         return payload(method, projectState("reviewed-project", "Reviewed corridor model", "IMPORTED"));
       }
       if (method === "observability.connect") {
-        return payload(method, { binding: { state: "CONNECTED" }, upload_preview: { allowed: true } });
+        return payload(method, observabilityConnectResponse("CONNECTED", "DEDICATED"));
       }
       throw new Error(`Unexpected method ${method}`);
     });
@@ -1488,7 +1951,7 @@ describe("authoritative professional workspace", () => {
         return payload(method, projectState("planning-project", "Route 14 screen"));
       }
       if (method === "observability.connect") {
-        return payload(method, { binding: { state: "BLOCKED_PROJECT_POLICY" }, upload_preview: { allowed: false, blockers: ["PLANNING_MODEL_INCOMPLETE"] } });
+        return payload(method, observabilityConnectResponse("BLOCKED_PROJECT_POLICY", "SELF_MANAGED"));
       }
       throw new Error(`Unexpected method ${method}`);
     });
@@ -1515,6 +1978,31 @@ describe("authoritative professional workspace", () => {
     const fitness = (createCall?.[1] as unknown as { fitness: { dimensions: Array<{ status: string }> } }).fitness;
     expect(fitness.dimensions).toHaveLength(12);
     expect(fitness.dimensions.filter((item) => item.status === "BLOCKING")).toHaveLength(11);
+  });
+
+  it("rejects a malformed connected receipt instead of accepting an under-specified W&B binding", async () => {
+    const user = userEvent.setup();
+    const request = vi.fn(async (method: string) => {
+      if (method === "connectivity.planning.create") return payload(method, { project_id: "malformed-binding", state: "PLANNING_DRAFT", next_action: "Add reviewed evidence." });
+      if (method === "connectivity.project.get_state") return payload(method, projectState("malformed-binding", "Malformed binding review"));
+      if (method === "observability.connect") {
+        const connected = observabilityConnectResponse("CONNECTED", "SELF_MANAGED");
+        const { external_project_id: _omittedExternalIdentity, ...malformedBinding } = connected.binding;
+        return payload(method, { ...connected, binding: malformedBinding });
+      }
+      throw new Error(`Unexpected method ${method}`);
+    });
+    window.__ECOCORRIDOR_HOST__ = {
+      request: request as unknown as HostBridge["request"],
+      createProjectWorkspace: async () => ({ handle: "project_malformed_binding" }),
+    };
+
+    render(<Workspace mode="desktop" path="planning" localPreview={false} preflight={{ preflightId: "preflight_malformed", entity: "team", project: "eco", deployment: "SELF_MANAGED" }} />);
+    await createPlanningRecord(user);
+
+    expect(await screen.findByRole("button", { name: "Retry destination binding" })).toBeInTheDocument();
+    expect(screen.queryByText("Restricted project connected")).not.toBeInTheDocument();
+    expect(request.mock.calls.filter(([method]) => method === "observability.connect")).toHaveLength(1);
   });
 
   it("keeps incomplete and inconsistent asset authorizations fail-closed", () => {
@@ -1586,7 +2074,7 @@ describe("authoritative professional workspace", () => {
         return payload(method, projectState("planning-assets", "Route 14 screen"));
       }
       if (method === "observability.connect") {
-        return payload(method, { binding: { state: "BLOCKED_PROJECT_POLICY" }, upload_preview: { allowed: false, blockers: ["PLANNING_MODEL_INCOMPLETE"] } });
+        return payload(method, observabilityConnectResponse("BLOCKED_PROJECT_POLICY", "SELF_MANAGED"));
       }
       if (method === "connectivity.asset.add") {
         revision += 1;
@@ -1643,7 +2131,7 @@ describe("authoritative professional workspace", () => {
     const request = vi.fn(async (method: string, params: Record<string, unknown>) => {
       if (method === "connectivity.planning.create") return payload(method, { project_id: "planning-provider", state: "PLANNING_DRAFT", next_action: "Add reviewed evidence." });
       if (method === "connectivity.project.get_state") return payload(method, projectState("planning-provider", "Route 14 screen"));
-      if (method === "observability.connect") return payload(method, { binding: { state: "BLOCKED_PROJECT_POLICY" }, upload_preview: { allowed: false, blockers: ["PLANNING_MODEL_INCOMPLETE"] } });
+      if (method === "observability.connect") return payload(method, observabilityConnectResponse("BLOCKED_PROJECT_POLICY", "SELF_MANAGED"));
       if (method === "connectivity.asset.download") {
         return payload(method, {
           asset: {
@@ -1720,7 +2208,7 @@ describe("authoritative professional workspace", () => {
         return payload(method, projectState("planning-raster", "Route 14 screen"));
       }
       if (method === "observability.connect") {
-        return payload(method, { binding: { state: "BLOCKED_PROJECT_POLICY" }, upload_preview: { allowed: false, blockers: ["PLANNING_MODEL_INCOMPLETE"] } });
+        return payload(method, observabilityConnectResponse("BLOCKED_PROJECT_POLICY", "SELF_MANAGED"));
       }
       if (method === "connectivity.asset.inspect") {
         const inspection: RasterInspection = {
@@ -1881,6 +2369,200 @@ describe("authoritative professional workspace", () => {
     });
     expect(JSON.stringify([inspectCall, addCall, previewCall, approveCall])).not.toContain("source_path");
     expect(JSON.stringify([inspectCall, addCall, previewCall, approveCall])).not.toContain("project_directory");
+  });
+
+  it("requires exact oversized-plan consent before re-previewing and synchronizing", async () => {
+    const user = userEvent.setup();
+    const savedState = projectState("oversize-reviewed", "Oversized reviewed evidence", "IMPORTED", {
+      sync_status: { state: "CONNECTED", deployment: "DEDICATED", message: "Exact-scope Restricted binding retained." },
+    });
+    const digest = "8".repeat(64);
+    const requiredPreview = cloudUploadPreview("REQUIRED", digest, savedState.active_revision.revision_id);
+    const approvedPreview = cloudUploadPreview("APPROVED", digest, savedState.active_revision.revision_id);
+    let previewCount = 0;
+    const request = vi.fn(async (method: string, _params: Record<string, unknown> = {}) => {
+      if (method === "connectivity.project.get_state") return payload(method, savedState);
+      if (method === "assistant.status") return payload(method, { configured: false, provider: null, project_id: savedState.project.project_id, wandb_external_project_id: "wandb-oversize-reviewed", trace_required: true });
+      if (method === "observability.preview_upload") return payload(method, previewCount++ === 0 ? requiredPreview : approvedPreview);
+      if (method === "observability.approve_oversize") return payload(method, { approval: oversizeApprovalReceipt(savedState.project.project_id, requiredPreview, approvedPreview, "Morgan Reviewer"), upload_preview: approvedPreview });
+      if (method === "observability.sync") return payload(method, productionSyncResponse());
+      throw new Error(`Unexpected method ${method}`);
+    });
+    window.__ECOCORRIDOR_HOST__ = { request: request as unknown as HostBridge["request"] };
+
+    const { container } = render(<Workspace mode="desktop" path="existing" localPreview={false} preflight={null} reopenedProject={{ projectHandle: "project_oversize_reviewed", lastModifiedMs: Date.now(), projectState: savedState }} />);
+    expect(await screen.findByText(/Authoritative records restored/i)).toBeInTheDocument();
+    await user.click(screen.getAllByRole("button", { name: "Evidence package" })[0]);
+    const syncTrigger = screen.getByRole("button", { name: "Preview and synchronize authorized evidence" });
+    await user.click(syncTrigger);
+
+    const syncPanel = screen.getByRole("heading", { name: "CONNECTED" }).closest("section");
+    expect(syncPanel).not.toBeNull();
+    const panel = within(syncPanel as HTMLElement);
+    const approvalHeading = await panel.findByRole("heading", { name: "Approve only this exact oversized plan" });
+    expect(approvalHeading).toHaveFocus();
+    expect(panel.getByText("DEDICATED")).toBeInTheDocument();
+    expect(panel.getByText("wildlife-program / route-14-connectivity")).toBeInTheDocument();
+    expect(panel.getByText("wb-external-project-4f9c")).toBeInTheDocument();
+    expect(panel.getByText(savedState.active_revision.revision_id)).toBeInTheDocument();
+    expect(panel.getByText(savedState.active_revision.model_sha256)).toBeInTheDocument();
+    expect(panel.getByText(digest)).toBeInTheDocument();
+    expect(panel.getByText("1.0 KiB")).toBeInTheDocument();
+    expect(panel.getByText("2.5 KiB")).toBeInTheDocument();
+    expect(panel.getByText("82.0 KiB")).toBeInTheDocument();
+    expect(panel.getByText("83.5 KiB")).toBeInTheDocument();
+    expect(panel.getByText(/6 projected items; retained current maps are included once/i)).toBeInTheDocument();
+    expect(panel.getByText(/1 projected item · 16.0 KiB within telemetry/i)).toBeInTheDocument();
+    expect(panel.getByText(/1 projected envelope · 64.0 KiB within telemetry.*64 KiB bound per envelope/i)).toBeInTheDocument();
+    expect(request.mock.calls.filter(([method]) => method === "observability.sync")).toHaveLength(0);
+    const axeResults = await axe.run(container, { resultTypes: ["violations"], rules: { "color-contrast": { enabled: false } } });
+    expect(axeResults.violations.filter((item) => item.impact === "serious" || item.impact === "critical")).toEqual([]);
+
+    const approval = panel.getByRole("region", { name: "Approve only this exact oversized plan" });
+    const approveButton = within(approval).getByRole("button", { name: "Approve exact plan and synchronize" });
+    const reviewerInput = within(approval).getByLabelText("Named reviewer *");
+    expect(reviewerInput).toHaveAttribute("maxlength", "256");
+    expect(within(approval).getByText(/accountable reviewer or role in 1–256 characters/i)).toBeInTheDocument();
+    expect(approveButton).toBeDisabled();
+    fireEvent.change(reviewerInput, { target: { value: "x".repeat(257) } });
+    await user.click(within(approval).getByRole("checkbox", { name: /I approve synchronization of the exact oversized evidence plan/i }));
+    expect(approveButton).toBeDisabled();
+    await user.clear(reviewerInput);
+    await user.type(reviewerInput, "Morgan Reviewer");
+    expect(approveButton).toBeEnabled();
+    await user.click(approveButton);
+
+    expect(await panel.findByText(/W&B accepted 1 envelope/i)).toBeInTheDocument();
+    expect(syncTrigger).toHaveFocus();
+    expect(request.mock.calls.map(([method]) => method).filter((method) => method.startsWith("observability."))).toEqual([
+      "observability.preview_upload",
+      "observability.approve_oversize",
+      "observability.preview_upload",
+      "observability.sync",
+    ]);
+    const approveCall = request.mock.calls.find(([method]) => method === "observability.approve_oversize");
+    expect(approveCall?.[1]).toEqual({
+      project_handle: "project_oversize_reviewed",
+      sync_plan_sha256: digest,
+      reviewed_by: "Morgan Reviewer",
+      acknowledgement: OVERSIZE_SYNC_ACKNOWLEDGEMENT,
+    });
+  });
+
+  it("omits approval-audit reservation copy when the exact plan does not reserve it", async () => {
+    const user = userEvent.setup();
+    const savedState = projectState("ordinary-sync", "Ordinary reviewed evidence", "IMPORTED", {
+      sync_status: { state: "CONNECTED", deployment: "DEDICATED", message: "Exact-scope Restricted binding retained." },
+    });
+    const preview = cloudUploadPreview("NOT_REQUIRED", "c".repeat(64), savedState.active_revision.revision_id);
+    const request = vi.fn(async (method: string) => {
+      if (method === "connectivity.project.get_state") return payload(method, savedState);
+      if (method === "assistant.status") return payload(method, { configured: false, provider: null, project_id: savedState.project.project_id, wandb_external_project_id: preview.external_project_id, trace_required: true });
+      if (method === "observability.preview_upload") return payload(method, preview);
+      if (method === "observability.sync") return payload(method, productionSyncResponse());
+      throw new Error(`Unexpected method ${method}`);
+    });
+    window.__ECOCORRIDOR_HOST__ = { request: request as unknown as HostBridge["request"] };
+
+    render(<Workspace mode="desktop" path="existing" localPreview={false} preflight={null} reopenedProject={{ projectHandle: "project_ordinary_sync", lastModifiedMs: Date.now(), projectState: savedState }} />);
+    expect(await screen.findByText(/Authoritative records restored/i)).toBeInTheDocument();
+    await user.click(screen.getAllByRole("button", { name: "Evidence package" })[0]);
+    await user.click(screen.getByRole("button", { name: "Preview and synchronize authorized evidence" }));
+    expect(await screen.findByText(/W&B accepted 1 envelope/i)).toBeInTheDocument();
+    expect(screen.queryByText("Approval-audit reservation")).not.toBeInTheDocument();
+    expect(screen.getByText("Bounded operational-metadata reservation")).toBeInTheDocument();
+    expect(screen.getByText(/1 projected envelope · 64.0 KiB within telemetry/i)).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Approve only this exact oversized plan" })).not.toBeInTheDocument();
+    expect(request.mock.calls.filter(([method]) => method === "observability.approve_oversize")).toHaveLength(0);
+  });
+
+  it("rejects a production-shaped synchronization receipt whose immutable W&B identity changed", async () => {
+    const user = userEvent.setup();
+    const savedState = projectState("sync-identity-change", "Immutable cloud identity", "IMPORTED", {
+      sync_status: { state: "CONNECTED", deployment: "DEDICATED", message: "Exact-scope Restricted binding retained." },
+    });
+    const preview = cloudUploadPreview("NOT_REQUIRED", "e".repeat(64), savedState.active_revision.revision_id);
+    const request = vi.fn(async (method: string) => {
+      if (method === "connectivity.project.get_state") return payload(method, savedState);
+      if (method === "assistant.status") return payload(method, { configured: false, provider: null, project_id: savedState.project.project_id, wandb_external_project_id: preview.external_project_id, trace_required: true });
+      if (method === "observability.preview_upload") return payload(method, preview);
+      if (method === "observability.sync") return payload(method, productionSyncResponse({ externalProjectId: "wb-rebound-project-unsafe" }));
+      throw new Error(`Unexpected method ${method}`);
+    });
+    window.__ECOCORRIDOR_HOST__ = { request: request as unknown as HostBridge["request"] };
+
+    render(<Workspace mode="desktop" path="existing" localPreview={false} preflight={null} reopenedProject={{ projectHandle: "project_sync_identity_change", lastModifiedMs: Date.now(), projectState: savedState }} />);
+    expect(await screen.findByText(/Authoritative records restored/i)).toBeInTheDocument();
+    await user.click(screen.getAllByRole("button", { name: "Evidence package" })[0]);
+    await user.click(screen.getByRole("button", { name: "Preview and synchronize authorized evidence" }));
+
+    expect(await screen.findByText("The synchronization receipt belongs to another W&B destination.")).toBeInTheDocument();
+    expect(screen.queryByText(/W&B accepted 1 envelope/i)).not.toBeInTheDocument();
+    expect(request.mock.calls.filter(([method]) => method === "observability.sync")).toHaveLength(1);
+  });
+
+  it("clears prior consent and requires a new named approval for the current stale plan", async () => {
+    const user = userEvent.setup();
+    const savedState = projectState("oversize-stale", "Changing upload plan", "IMPORTED", {
+      sync_status: { state: "CONNECTED", deployment: "DEDICATED", message: "Exact-scope Restricted binding retained." },
+    });
+    const reviewedDigest = "8".repeat(64);
+    const changedDigest = "9".repeat(64);
+    const requiredReviewed = cloudUploadPreview("REQUIRED", reviewedDigest, savedState.active_revision.revision_id);
+    const approvedReviewed = cloudUploadPreview("APPROVED", reviewedDigest, savedState.active_revision.revision_id);
+    const staleChanged = cloudUploadPreview("STALE", changedDigest, `${savedState.active_revision.revision_id}_changed`);
+    const approvedChanged = cloudUploadPreview("APPROVED", changedDigest, `${savedState.active_revision.revision_id}_changed`);
+    const previews = [requiredReviewed, staleChanged, approvedChanged];
+    let previewCount = 0;
+    let approvalCount = 0;
+    const request = vi.fn(async (method: string, params: Record<string, unknown> = {}) => {
+      if (method === "connectivity.project.get_state") return payload(method, savedState);
+      if (method === "assistant.status") return payload(method, { configured: false, provider: null, project_id: savedState.project.project_id, wandb_external_project_id: "wandb-oversize-stale", trace_required: true });
+      if (method === "observability.preview_upload") return payload(method, previews[Math.min(previewCount++, previews.length - 1)]);
+      if (method === "observability.approve_oversize") {
+        approvalCount += 1;
+        if (approvalCount === 1) return payload(method, { approval: oversizeApprovalReceipt(savedState.project.project_id, requiredReviewed, approvedReviewed, "Taylor Reviewer"), upload_preview: approvedReviewed });
+        expect(params.sync_plan_sha256).toBe(changedDigest);
+        return payload(method, { approval: oversizeApprovalReceipt(savedState.project.project_id, staleChanged, approvedChanged, "Jordan New Reviewer"), upload_preview: approvedChanged });
+      }
+      if (method === "observability.sync") return payload(method, productionSyncResponse());
+      throw new Error(`Unexpected method ${method}`);
+    });
+    window.__ECOCORRIDOR_HOST__ = { request: request as unknown as HostBridge["request"] };
+
+    render(<Workspace mode="desktop" path="existing" localPreview={false} preflight={null} reopenedProject={{ projectHandle: "project_oversize_stale", lastModifiedMs: Date.now(), projectState: savedState }} />);
+    expect(await screen.findByText(/Authoritative records restored/i)).toBeInTheDocument();
+    await user.click(screen.getAllByRole("button", { name: "Evidence package" })[0]);
+    await user.click(screen.getByRole("button", { name: "Preview and synchronize authorized evidence" }));
+
+    let approval = await screen.findByRole("region", { name: "Approve only this exact oversized plan" });
+    await user.type(within(approval).getByLabelText("Named reviewer *"), "Taylor Reviewer");
+    await user.click(within(approval).getByRole("checkbox", { name: /I approve synchronization of the exact oversized evidence plan/i }));
+    await user.click(within(approval).getByRole("button", { name: "Approve exact plan and synchronize" }));
+
+    expect(await screen.findByText(/changed after review.*no provider call was made/i)).toBeInTheDocument();
+    expect(screen.getByText(changedDigest)).toBeInTheDocument();
+    expect(screen.getByText("Exact-plan approval is stale.")).toBeInTheDocument();
+    expect(screen.getByText("Approval stale", { exact: true })).toBeInTheDocument();
+    expect(request.mock.calls.filter(([method]) => method === "observability.sync")).toHaveLength(0);
+    approval = await screen.findByRole("region", { name: "Approve only this exact oversized plan" });
+    expect(within(approval).getByRole("heading", { name: "Approve only this exact oversized plan" })).toHaveFocus();
+    expect(within(approval).getByLabelText("Named reviewer *")).toHaveValue("");
+    expect(within(approval).getByRole("checkbox", { name: /I approve synchronization of the exact oversized evidence plan/i })).not.toBeChecked();
+    const replaceButton = within(approval).getByRole("button", { name: "Replace stale approval and synchronize" });
+    expect(replaceButton).toBeDisabled();
+    await user.type(within(approval).getByLabelText("Named reviewer *"), "Jordan New Reviewer");
+    await user.click(within(approval).getByRole("checkbox", { name: /I approve synchronization of the exact oversized evidence plan/i }));
+    await user.click(replaceButton);
+    expect(await screen.findByText(/W&B accepted 1 envelope/i)).toBeInTheDocument();
+    expect(request.mock.calls.map(([method]) => method).filter((method) => method.startsWith("observability."))).toEqual([
+      "observability.preview_upload",
+      "observability.approve_oversize",
+      "observability.preview_upload",
+      "observability.approve_oversize",
+      "observability.preview_upload",
+      "observability.sync",
+    ]);
   });
 
   it("never presents Ridgeway fixture scenarios as a professional project's evidence", async () => {

@@ -34,8 +34,12 @@ Its earlier teaching outcomes are not promoted into the current projection.
 
 ### Current local Ridgeway reference package
 
-The active synthetic replay is now backed by a locally verified current
-package rather than an `ENGINE_RUN_REQUIRED` placeholder:
+The synthetic replay package remains backed by a checksum-intact local direct
+study rather than an `ENGINE_RUN_REQUIRED` placeholder. It was produced for the
+prior reviewed source snapshot; the current source-identity gate now reports
+`contracts` drift after this branch's decision-rule and synchronization-contract
+changes. A clean same-commit protected rerun and repack are therefore required
+before the package can be release evidence for this revision:
 
 - 128 fixed portfolios × 12 scenarios = 1,536 accepted direct matrix jobs;
 - baseline plus four evidence-selected teaching portfolios × 12 scenarios =
@@ -55,7 +59,7 @@ package rather than an `ENGINE_RUN_REQUIRED` placeholder:
 - evidence-index SHA-256:
   `ecb2c163b880d048372fd60a5e5e33b1a0d04295d22c4de2514e089c57c3f3ab`.
 
-The package reconciles all 120 teaching map-run pair values to their study
+At its reviewed source snapshot, the package reconciles all 120 teaching map-run pair values to their study
 matrix values with zero observed difference under the declared tolerances,
 and retains 60 current rasters. This establishes checksum-pinned local
 semantic reference evidence only. It is not an authenticated, clean,
@@ -126,6 +130,15 @@ current direct evidence.
   evidence now requires exact option coverage, lifecycle assumptions, named
   review, and explicit confirmation in one semantic revision; export
   eligibility and package creation remain evidence-derived and fail closed.
+- Professional validation and export eligibility now require every target
+  scenario and every included focal pair to be consumed by a required target
+  effective-resistance rule. A safeguard-only rule, a scenario-wide rule that
+  omits a required pair, or an optional criterion cannot make an incomplete
+  target ensemble appear decision-ready. The desktop edits retained criteria
+  by stable ID, exposes their exact scenario and focal-pair scope, blocks
+  incompatible scope, preserves operator and required status, and restores the
+  authoritative saved record on Undo. A save response cannot overwrite newer
+  edits made while that request was in flight.
 - Imported reference matrices can now be bound to exactly one ecological
   scenario, declared effective-resistance tolerances, reviewed basis, reviewer,
   and limitations. The pure comparison boundary reparses both retained matrices
@@ -170,6 +183,28 @@ current direct evidence.
   blocked. Explicit retry revalidates scope and asset policy before creating an
   immutable blocked-row requeue audit, and professional packages are stamped
   queued until their own atomic `evidence_export` envelope is confirmed.
+- Oversized full-evidence synchronization is governed by an immutable,
+  destination- and revision-bound approval rather than a mutable policy flag.
+  The reviewed plan identifies and deduplicates the input assets, retained
+  current rasters, and complete authoritative telemetry projection; binds their
+  byte total and inventory digest; and becomes stale when any projected upload
+  changes. A versioned 16 KiB approval-audit reservation is part of the plan
+  before review; the no-artifact audit projection must fit and replace that
+  same ordinal, so recording consent cannot silently increase the reviewed
+  total or change its digest. Every inventoried telemetry member also carries a
+  versioned 64 KiB operational-metadata bound. Final barrier batches are checked
+  against the sum of their inventoried member bytes—not the larger merged
+  envelope as a new source of authority. The worker claims only the exact
+  outbox identities in that inventory and revalidates payload, projection, and
+  artifact digests after claiming, so a producer event committed between plan
+  review and upload remains pending for a new preview. Approval is idempotent
+  across retries and restarts, is written atomically with its audit outbox
+  record, and is projected into W&B lineage.
+  The desktop shows the exact destination, revision/model identity, digest, and
+  byte breakdown before it accepts a named reviewer and fixed acknowledgement.
+  Online synchronization revalidates authoritative project scope immediately
+  before provider upload. None of these controls weaken the separate fail-closed
+  `Restricted`-scope or per-asset authorization gates.
 - Ecological validation now requires exact grid identity and geometry across
   scenario assets, focal assets, resistance hypotheses, action effects, and
   applicable review masks. A changed geometry cannot reuse a grid identity,

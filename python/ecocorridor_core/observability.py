@@ -41,6 +41,7 @@ from .assistants import (
     TraceReadback,
     validate_feedback_comment,
 )
+from .contracts import canonical_sha256
 from .telemetry import EcoTelemetryProjector
 
 ECOCORRIDOR_APP_PROFILE = AppProfile(
@@ -686,6 +687,14 @@ class EcoRpcObservabilityAdapter:
     ) -> dict[str, Any]:
         if sync_plan.get("allowed") is not True or sync_plan.get("blockers"):
             raise RuntimeError("BLOCKED_PROJECT_POLICY")
+        authorized_envelopes = sync_plan.get("_authorized_outbox_envelopes")
+        authority_sha256 = sync_plan.get("_telemetry_authority_sha256")
+        if (
+            not isinstance(authorized_envelopes, list)
+            or not isinstance(authority_sha256, str)
+            or canonical_sha256(authorized_envelopes) != authority_sha256
+        ):
+            raise RuntimeError("ECO_TELEMETRY_SYNC_AUTHORITY_INVALID")
         store = self.store_factory(project_directory)
         try:
             consumer = DurableOutboxConsumer(
@@ -701,6 +710,7 @@ class EcoRpcObservabilityAdapter:
                     profile=self.profile,
                 ),
                 batch_policy=OutboxBatchPolicy(event_type="direct_job_terminal"),
+                authorized_envelopes=authorized_envelopes,
             )
             if not online:
                 # A previously exact-scope-verified binding may continue

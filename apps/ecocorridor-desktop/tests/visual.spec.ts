@@ -4,13 +4,15 @@ import axe from "axe-core";
 interface ProfessionalVisualHostOptions {
   /** Browser-only RPC data for layout, keyboard, and axe checks; never engineering evidence. */
   referenceComparisonLayoutMock?: boolean;
+  decisionRuleLayoutMock?: boolean;
+  oversizeApprovalLayoutMock?: boolean;
 }
 
 async function installProfessionalVisualHost(
   page: import("@playwright/test").Page,
-  { referenceComparisonLayoutMock = false }: ProfessionalVisualHostOptions = {},
+  { referenceComparisonLayoutMock = false, decisionRuleLayoutMock = false, oversizeApprovalLayoutMock = false }: ProfessionalVisualHostOptions = {},
 ) {
-  await page.addInitScript(({ referenceComparisonLayoutMock }) => {
+  await page.addInitScript(({ referenceComparisonLayoutMock, decisionRuleLayoutMock, oversizeApprovalLayoutMock }) => {
     let credentialStored = false;
     const response = (method: string, data: unknown) => ({ api_version: "1.0", method, data, data_sha256: "a".repeat(64) });
     const sha = (character: string) => character.repeat(64);
@@ -55,6 +57,29 @@ async function installProfessionalVisualHost(
       reviewed_by: "Agency connectivity reviewer",
       reviewed_at: "2026-08-03T12:00:00Z",
       limitations: ["Reference reproduction does not establish ecological validity."],
+    };
+    const decisionRuleFocalSet = {
+      focal_set_id: referenceScenario.focal_set_id,
+      title: "Reviewed forest-guild focal cores",
+      asset_id: "asset-focal-reviewed",
+      grid_id: referenceScenario.grid_id,
+      guild_id: referenceScenario.guild_id,
+      focal_ids: [1, 2],
+      pairs: [{ pair_id: "pair-1-2", from_focal_id: 1, to_focal_id: 2, required: true }],
+      rationale: "Browser-only scope layout fixture; not ecological evidence.",
+      reviewed_by: "Agency connectivity reviewer",
+      reviewed_at: "2026-08-03T12:00:00Z",
+    };
+    const retainedDecisionRule = {
+      rule_id: "rule-reviewed-present",
+      title: "Reviewed present-condition reduction",
+      metric: "MIN_RESISTANCE_REDUCTION_PERCENT",
+      operator: "AT_LEAST",
+      threshold: 3,
+      scenario_ids: [referenceScenario.scenario_id],
+      pair_ids: ["pair-1-2"],
+      required: true,
+      rationale: "Exercise retained rule identity and exact scope in the browser-only layout fixture.",
     };
     let activeReferenceAnalysisId = "";
     const referenceCalls: string[] = [];
@@ -200,9 +225,9 @@ async function installProfessionalVisualHost(
               title: decisionBrief.title,
               revision,
               decision_brief: decisionBrief,
-              assets: [], resistance_hypotheses: [], focal_area_sets: [], scenarios: referenceComparisonLayoutMock ? [referenceScenario] : [],
+              assets: [], resistance_hypotheses: [], focal_area_sets: decisionRuleLayoutMock ? [decisionRuleFocalSet] : [], scenarios: referenceComparisonLayoutMock || decisionRuleLayoutMock ? [referenceScenario] : [],
               intervention_sites: [], intervention_options: [], cost_basis: null,
-              safeguards: [], review_masks: [], decision_rules: [], fitness,
+              safeguards: [], review_masks: [], decision_rules: decisionRuleLayoutMock ? [retainedDecisionRule] : [], fitness,
               reference_bindings: referenceComparisonLayoutMock ? [referenceBinding] : [],
               resource_policy: resourcePolicy,
             },
@@ -221,8 +246,94 @@ async function installProfessionalVisualHost(
           });
         }
         if (method === "observability.connect") return response(method, {
-          binding: { state: "CONNECTED" },
-          upload_preview: { allowed: true, blockers: [] },
+          binding: {
+            state: "CONNECTED",
+            binding_id: "binding_professional_visual",
+            entity: "wildlife-program",
+            project: "route-14-screening",
+            deployment: "DEDICATED",
+            api_base_url: "https://api.wandb.example.org",
+            web_base_url: "https://wandb.example.org",
+            profile_namespace: "ecocorridor",
+            scope_evidence: {
+              entity: "wildlife-program",
+              project: "route-14-screening",
+              external_project_id: "wb-professional-visual-immutable",
+              deployment: "DEDICATED",
+              api_base_url: "https://api.wandb.example.org",
+              scope: "RESTRICTED",
+              evidence_kind: "ADMIN_API_DOCUMENTED_EXACT",
+              provider_field: "documented_exact_scope",
+            },
+            verified: true,
+            external_project_id: "wb-professional-visual-immutable",
+          },
+          upload_preview: {
+            destination: "DEDICATED",
+            entity: "wildlife-program",
+            project: "route-14-screening",
+            external_project_id: "wb-professional-visual-immutable",
+            projections: [],
+            model_revision_id: "revision_professional_visual",
+            model_sha256: sha("1"),
+            input_bytes: 0,
+            estimated_current_raster_bytes: 0,
+            telemetry_inventory_sha256: sha("2"),
+            telemetry_projected_bytes: 65536,
+            telemetry_artifact_count: 1,
+            approval_audit_reservation_bytes: 0,
+            approval_audit_reservation_count: 0,
+            operational_metadata_reservation_bytes: 65536,
+            operational_metadata_reservation_count: 1,
+            estimated_total_bytes: 65536,
+            current_raster_estimate_status: "ACTUAL_RECONCILED",
+            actual_retained_current_raster_bytes: 0,
+            pending_estimated_current_raster_bytes: 0,
+            expected_current_raster_count: 0,
+            retained_current_raster_count: 0,
+            current_raster_estimate_basis: "Browser-only layout inventory; never engineering evidence.",
+            sync_plan_sha256: sha("3"),
+            approval_status: "NOT_REQUIRED",
+            approval_id: null,
+            blockers: [],
+            warnings: [],
+            allowed: true,
+            message: null,
+            technical_type: null,
+          },
+        });
+        if (oversizeApprovalLayoutMock && method === "observability.preview_upload") return response(method, {
+          destination: "DEDICATED",
+          entity: "wildlife-connectivity-program-with-a-long-reviewed-name",
+          project: "route-14-reviewed-connectivity-evidence",
+          external_project_id: "wb-external-project-immutable-4f9c6d7e8a90",
+          projections: [{ source_asset_id: "asset-reviewed-input", uploaded_asset_id: "asset-reviewed-input", representation: "RAW", bytes: 1048576 }],
+          model_revision_id: "revision_professional_visual_with_long_identity",
+          model_sha256: sha("1"),
+          input_bytes: 1048576,
+          estimated_current_raster_bytes: 2621440,
+          telemetry_inventory_sha256: sha("2"),
+          telemetry_projected_bytes: 2179072,
+          telemetry_artifact_count: 4,
+          approval_audit_reservation_bytes: 16384,
+          approval_audit_reservation_count: 1,
+          operational_metadata_reservation_bytes: 65536,
+          operational_metadata_reservation_count: 1,
+          estimated_total_bytes: 3751936,
+          current_raster_estimate_status: "ACTUAL_RECONCILED",
+          actual_retained_current_raster_bytes: 2097152,
+          pending_estimated_current_raster_bytes: 524288,
+          expected_current_raster_count: 2,
+          retained_current_raster_count: 2,
+          current_raster_estimate_basis: "Browser-only layout inventory; never engineering evidence.",
+          sync_plan_sha256: sha("8"),
+          approval_status: "REQUIRED",
+          approval_id: null,
+          blockers: ["OVERSIZE_SYNC_APPROVAL_REQUIRED: exact plan acknowledgement is required"],
+          warnings: ["Browser-only oversized-plan layout fixture."],
+          allowed: false,
+          message: null,
+          technical_type: null,
         });
         if (referenceComparisonLayoutMock && method === "connectivity.reference.plan") {
           activeReferenceAnalysisId = String(params.analysis_id ?? "");
@@ -307,7 +418,7 @@ async function installProfessionalVisualHost(
         throw new Error(`Unexpected professional visual-test RPC ${method}`);
       },
     };
-  }, { referenceComparisonLayoutMock });
+  }, { referenceComparisonLayoutMock, decisionRuleLayoutMock, oversizeApprovalLayoutMock });
 }
 
 async function assertNoBlockingAxeFindings(page: import("@playwright/test").Page) {
@@ -483,6 +594,40 @@ test("professional evidence package makes W&B synchronization consequences expli
   await expect(syncPanel).toHaveScreenshot(`professional-sync-${testInfo.project.name}.png`, { animations: "disabled" });
 });
 
+test("oversize approval plan stays readable without panel overflow", async ({ page }, testInfo) => {
+  test.skip(!["desktop-1440", "compact-760"].includes(testInfo.project.name), "The exact approval ledger is checked at desktop and compact boundaries.");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await openProfessionalPlanning(page, { oversizeApprovalLayoutMock: true });
+  await createProfessionalPlanningRecord(page);
+  await page.getByRole("navigation", { name: "Project workflow" }).getByRole("button", { name: "Evidence package" }).click();
+  const syncPanel = page.locator(".cloud-sync-panel");
+  await syncPanel.getByRole("button", { name: "Synchronize authorized evidence" }).click();
+
+  await expect(syncPanel.getByRole("heading", { name: "Approve only this exact oversized plan" })).toBeVisible();
+  await expect(syncPanel.getByText("wildlife-connectivity-program-with-a-long-reviewed-name / route-14-reviewed-connectivity-evidence", { exact: true })).toBeVisible();
+  await expect(syncPanel.getByText("wb-external-project-immutable-4f9c6d7e8a90", { exact: true })).toBeVisible();
+  await expect(syncPanel.getByText(/1 projected item · 16.0 KiB within telemetry/i)).toBeVisible();
+  await expect(syncPanel.getByText(/64 KiB bound per envelope/i)).toBeVisible();
+
+  const geometry = await syncPanel.evaluate((panel) => {
+    const ledger = panel.querySelector<HTMLElement>(".sync-plan-bytes");
+    const digestCells = [...panel.querySelectorAll<HTMLElement>(".sync-plan-identity .mono")];
+    if (!ledger) throw new Error("byte ledger unavailable");
+    const rows = [...ledger.children].map((item) => Math.round((item as HTMLElement).getBoundingClientRect().top));
+    return {
+      panelClientWidth: (panel as HTMLElement).clientWidth,
+      panelScrollWidth: (panel as HTMLElement).scrollWidth,
+      byteLedgerRowCount: new Set(rows).size,
+      digestOverflow: digestCells.some((item) => item.scrollWidth > item.clientWidth + 1),
+    };
+  });
+  expect(geometry.panelScrollWidth).toBeLessThanOrEqual(geometry.panelClientWidth + 1);
+  expect(geometry.digestOverflow).toBe(false);
+  expect(geometry.byteLedgerRowCount).toBe(testInfo.project.name === "desktop-1440" ? 1 : 2);
+  await assertNoBlockingAxeFindings(page);
+  await testInfo.attach(`oversize-approval-${testInfo.project.name}`, { body: await syncPanel.screenshot({ animations: "disabled" }), contentType: "image/png" });
+});
+
 test("browser-mocked reference comparison checks layout, axe, and keyboard only — not engineering evidence", async ({ page }, testInfo) => {
   test.skip(!["desktop-1440", "compact-760"].includes(testInfo.project.name), "The browser-only reference layout fixture is pinned at primary desktop and compact widths.");
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -593,7 +738,7 @@ test("every planning stage explains its evidence prerequisite", async ({ page },
 test("professional Rules and costs keeps the retained decision editor readable", async ({ page }, testInfo) => {
   test.skip(!["desktop-1440", "compact-760"].includes(testInfo.project.name), "The full-width and compact professional editor layouts are exercised at their boundary viewports.");
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await openProfessionalPlanning(page);
+  await openProfessionalPlanning(page, { decisionRuleLayoutMock: true });
   await createProfessionalPlanningRecord(page);
   await page.getByRole("navigation", { name: "Project workflow" }).getByRole("button", { name: "Rules and costs" }).click();
 
@@ -604,7 +749,13 @@ test("professional Rules and costs keeps the retained decision editor readable",
   await expect(layout.getByText("Authoritative decision brief loaded")).toBeVisible();
   await expect(layout.getByLabel("Decision question *")).toHaveValue("Which reviewed portfolio should advance to feasibility review?");
   await expect(layout.getByLabel("Maximum direct jobs")).toHaveValue("5000");
+  await expect(layout.getByRole("heading", { name: "Testable criterion" })).toBeVisible();
+  await expect(layout.getByLabel("Criterion to edit")).toHaveValue("rule-reviewed-present");
+  await expect(layout.getByLabel("Rule title *")).toHaveValue("Reviewed present-condition reduction");
+  await expect(layout.getByRole("checkbox", { name: /Forest guild · present-day reviewed hypothesis.*scenario-reviewed-present/i })).toBeChecked();
+  await expect(layout.getByRole("checkbox", { name: /Reviewed forest-guild focal cores.*pair-1-2/i })).toBeChecked();
   await expect(layout.getByRole("button", { name: "Save decision brief" })).toBeDisabled();
+  await expect(layout.getByRole("button", { name: "Save criterion revision" })).toBeDisabled();
   await expect(layout.getByRole("button", { name: "Save resource policy" })).toBeDisabled();
 
   const [decisionBox, criterionBox, resourcesBox] = await Promise.all([decision.boundingBox(), criterion.boundingBox(), resources.boundingBox()]);

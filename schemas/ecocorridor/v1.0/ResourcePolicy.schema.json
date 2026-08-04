@@ -29,6 +29,7 @@
       "type": "integer"
     },
     "require_explicit_oversize_approval": {
+      "const": true,
       "default": true,
       "title": "Require Explicit Oversize Approval",
       "type": "boolean"

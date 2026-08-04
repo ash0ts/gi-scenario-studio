@@ -151,6 +151,89 @@ def _duplicate_identities(values: list[str]) -> set[str]:
     return duplicates
 
 
+_TARGET_CONNECTIVITY_RULE_METRICS = {
+    RuleMetric.MIN_RESISTANCE_REDUCTION_PERCENT,
+    RuleMetric.MAX_RESISTANCE_INCREASE_PERCENT,
+}
+
+
+def target_connectivity_rule_coverage_findings(
+    bundle: ConnectivityProjectBundle,
+) -> list[ModelFinding]:
+    """Require a decision disposition for every required target observation.
+
+    Complete direct execution is necessary but not sufficient for a defensible
+    shortlist: a target scenario or required focal pair that no required
+    connectivity rule consumes could otherwise regress while the portfolio is
+    still labelled ``PASSES`` by unrelated cost, QA, or safeguard rules.
+    """
+
+    focal_sets = {item.focal_set_id: item for item in bundle.focal_area_sets}
+    target_scenarios = {item.scenario_id: item for item in bundle.scenarios if not item.safeguard}
+    required_target_rules = [
+        item
+        for item in bundle.decision_rules
+        if item.required and item.metric in _TARGET_CONNECTIVITY_RULE_METRICS
+    ]
+    if target_scenarios and not required_target_rules:
+        return [
+            _finding(
+                "TARGET_CONNECTIVITY_RULE_MISSING",
+                "decision_rules",
+                (
+                    "Author a required target resistance rule that covers every target "
+                    "scenario and every required included focal pair."
+                ),
+            )
+        ]
+
+    findings: list[ModelFinding] = []
+    for scenario_id, scenario in sorted(target_scenarios.items()):
+        applicable_rules = [
+            rule
+            for rule in required_target_rules
+            if not rule.scenario_ids or scenario_id in rule.scenario_ids
+        ]
+        if not applicable_rules:
+            findings.append(
+                _finding(
+                    "TARGET_RULE_SCENARIO_COVERAGE_INCOMPLETE",
+                    scenario_id,
+                    (
+                        "Add this target scenario to at least one required resistance-reduction "
+                        "or resistance-increase rule."
+                    ),
+                )
+            )
+            continue
+        focal_set = focal_sets.get(scenario.focal_set_id)
+        if focal_set is None:
+            # Missing references receive their own cross-contract finding. Avoid
+            # inventing pair scope when the reviewed focal set is unavailable.
+            continue
+        required_included_pairs = {
+            pair.pair_id
+            for pair in focal_set.pairs
+            if pair.required and pair.pair_id in scenario.included_pair_ids
+        }
+        covered_pairs: set[str] = set()
+        for rule in applicable_rules:
+            covered_pairs.update(rule.pair_ids or scenario.included_pair_ids)
+        uncovered_pairs = sorted(required_included_pairs - covered_pairs)
+        if uncovered_pairs:
+            findings.append(
+                _finding(
+                    "TARGET_RULE_PAIR_COVERAGE_INCOMPLETE",
+                    scenario_id,
+                    (
+                        "Add required target connectivity-rule coverage for focal pairs: "
+                        f"{', '.join(uncovered_pairs)}."
+                    ),
+                )
+            )
+    return findings
+
+
 def validate_professional_bundle(
     bundle: ConnectivityProjectBundle,
     *,
@@ -1137,6 +1220,7 @@ def validate_professional_bundle(
                 "Author at least one required, evidence-resolvable decision rule.",
             )
         )
+    findings.extend(target_connectivity_rule_coverage_findings(bundle))
     required_safeguard_rules = [
         item for item in required_rules if item.metric == RuleMetric.REQUIRE_SAFEGUARD_NONREGRESSION
     ]

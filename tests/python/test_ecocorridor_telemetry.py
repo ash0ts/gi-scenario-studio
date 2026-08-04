@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 from ecocorridor_core.analysis_executor import DurableAnalysisExecutor
 from ecocorridor_core.contracts import (
+    OPERATIONAL_METADATA_RESERVATION_BYTES_PER_PROJECTION,
     AssetKind,
     CloudDisposition,
     ComputationalResourceObservation,
@@ -52,12 +53,21 @@ from ecocorridor_core.footprints import (
     create_professional_footprint_proof_document,
     footprint_proof_set_sha256,
 )
+from ecocorridor_core.governance import (
+    SyncDestination,
+    create_oversize_sync_approval,
+    plan_cloud_sync,
+)
 from ecocorridor_core.interventions import canonicalize_portfolio, portfolio_cost
 from ecocorridor_core.metrics import build_pair_metric_claim
 from ecocorridor_core.observability import ECOCORRIDOR_APP_PROFILE
 from ecocorridor_core.project_store import EcoProjectStore
 from ecocorridor_core.ridgeway import build_ridgeway_fixture
-from ecocorridor_core.telemetry import EcoTelemetryProjector
+from ecocorridor_core.telemetry import (
+    EcoTelemetryProjector,
+    build_telemetry_projection_inventory,
+    validate_projection_operational_bound,
+)
 from scenario_platform.cloud_sync import (
     CloudArtifactReference,
     CloudIntegrityError,
@@ -65,6 +75,7 @@ from scenario_platform.cloud_sync import (
     CloudTransportError,
     CloudUploadReceipt,
     DurableOutboxConsumer,
+    TableProjection,
     TelemetryProjection,
     WandbTarget,
 )
@@ -78,6 +89,52 @@ from scenario_platform.storage import ContentAddressedStore
 
 def _json_bytes(value: object) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _bounded_projection(**updates: Any) -> TelemetryProjection:
+    values: dict[str, Any] = {
+        "profile_namespace": "ecocorridor",
+        "project_id": "project-bound-test",
+        "run_kind": "release_gate",
+        "run_subject_id": "subject-bound-test",
+        "event_type": "release_gate",
+        "event_sequence": 1,
+    }
+    values.update(updates)
+    return TelemetryProjection.model_validate(values)
+
+
+def test_operational_metadata_reservation_rejects_unbounded_refs_and_failures() -> None:
+    # Provider references and retry diagnostics are uploaded but normalized out
+    # of evidence identity. Their actual bytes must remain inside the fixed
+    # per-envelope reserve rather than becoming uncounted upload data.
+    reference_count = OPERATIONAL_METADATA_RESERVATION_BYTES_PER_PROJECTION // 80 + 100
+    references = [
+        f"entity/project/artifact-{index:05d}-{'x' * 60}:v1" for index in range(reference_count)
+    ]
+    with pytest.raises(
+        CloudIntegrityError, match="ECO_TELEMETRY_OPERATIONAL_METADATA_BOUND_EXCEEDED"
+    ):
+        validate_projection_operational_bound(_bounded_projection(input_artifact_refs=references))
+
+    failure_rows = [
+        [f"failure-{index:05d}-{'y' * 100}"]
+        for index in range(OPERATIONAL_METADATA_RESERVATION_BYTES_PER_PROJECTION // 100 + 100)
+    ]
+    with pytest.raises(
+        CloudIntegrityError, match="ECO_TELEMETRY_OPERATIONAL_METADATA_BOUND_EXCEEDED"
+    ):
+        validate_projection_operational_bound(
+            _bounded_projection(
+                tables=[
+                    TableProjection(
+                        logical_name="sync_failures",
+                        columns=["diagnostic"],
+                        rows=failure_rows,
+                    )
+                ]
+            )
+        )
 
 
 def _engine_manifest() -> EngineManifest:
@@ -609,6 +666,14 @@ def _seed_authoritative_project(
             "required": False,
         }
     )
+    required_target_rule = evidence_rule.model_copy(
+        update={
+            "rule_id": "rule-telemetry-required-target",
+            "title": "Required telemetry target coverage",
+            "pair_ids": list(scenario.included_pair_ids),
+            "required": True,
+        }
+    )
     bundle = fixture.bundle.model_copy(
         update={
             "decision_brief": fixture.bundle.decision_brief.model_copy(
@@ -622,7 +687,10 @@ def _seed_authoritative_project(
             "intervention_options": [no_action],
             "safeguards": [],
             "review_masks": [],
-            "decision_rules": [evidence_rule],
+            # Keep the claim-consumer rule optional for this fixture's
+            # cardinality assertions while satisfying the professional export
+            # invariant that every target scenario/pair has required coverage.
+            "decision_rules": [evidence_rule, required_target_rule],
             "cost_basis": fixture.bundle.cost_basis.model_copy(
                 update={
                     "option_costs": {no_action.option_id: no_action.cost},
@@ -1293,6 +1361,107 @@ def test_all_authoritative_producers_project_and_sync_idempotently(tmp_path: Pat
     assert "estimated_energy_kwh" not in completion.summary
     assert all("/Users/" not in item.model_dump_json() for item in uploader.projections)
     assert all(row["state"] == "SYNCED" for row in store.telemetry_rows())
+    store.close()
+
+
+def test_sync_authority_excludes_post_inventory_producer_race_and_stales_approval(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "inventory-race"
+    store, sync_plan = _seed_authoritative_project(project)
+    before = build_telemetry_projection_inventory(
+        store=store,
+        project_root=project,
+        sync_plan=sync_plan,
+        profile=ECOCORRIDOR_APP_PROFILE,
+        reserve_oversize_approval=True,
+    )
+    authorized_ids = {item.outbox_id for item in before.authorized_envelopes}
+
+    # Simulate a producer commit after the reviewed inventory but before the
+    # consumer claims rows. The new envelope is valid evidence, just not part
+    # of this exact synchronization authority.
+    store.set_guided(
+        "guided-post-inventory-race",
+        "VERIFIED_REPLAY",
+        {"verified_fixture_replay": True, "race_fixture": True},
+    )
+    late = store.telemetry_rows(
+        event_type="guided_session",
+        subject_id="guided-post-inventory-race",
+    )[0]
+    assert late["outbox_id"] not in authorized_ids
+
+    uploader = _HashVerifyingUploader()
+    consumer = DurableOutboxConsumer(
+        repository=store,
+        uploader=uploader,
+        profile=ECOCORRIDOR_APP_PROFILE,
+        target=_target(),
+        project_root=project,
+        projector=EcoTelemetryProjector(
+            store=store,
+            project_root=project,
+            sync_plan=sync_plan,
+            profile=ECOCORRIDOR_APP_PROFILE,
+        ),
+        authorized_envelopes=[item.as_dict() for item in before.authorized_envelopes],
+    )
+    report = consumer.drain(online=True, limit=100)
+
+    assert report.synced == len(authorized_ids)
+    assert all(
+        projection.run_subject_id != "guided-post-inventory-race"
+        for projection in uploader.projections
+    )
+    late_after = store.telemetry_rows(
+        event_type="guided_session",
+        subject_id="guided-post-inventory-race",
+    )[0]
+    assert late_after["state"] == "PENDING"
+    assert late_after["attempt_count"] == 0
+
+    after = build_telemetry_projection_inventory(
+        store=store,
+        project_root=project,
+        sync_plan=sync_plan,
+        profile=ECOCORRIDOR_APP_PROFILE,
+        reserve_oversize_approval=True,
+    )
+    assert after.sha256 != before.sha256
+    bundle = store.effective_bundle()
+    oversize_bundle = bundle.model_copy(
+        update={
+            "resource_policy": bundle.resource_policy.model_copy(
+                update={"max_materialized_bytes": 1}
+            )
+        }
+    )
+    scope = _target().scope_evidence
+    reviewed_plan = plan_cloud_sync(
+        oversize_bundle,
+        destination=SyncDestination.DEDICATED,
+        scope_evidence=scope,
+        estimated_current_raster_bytes=0,
+        binding_id="binding-inventory-race",
+        telemetry_inventory=before,
+    )
+    approval = create_oversize_sync_approval(
+        reviewed_plan,
+        reviewed_by="Inventory race reviewer",
+        approved_at=datetime(2026, 8, 4, tzinfo=UTC),
+    )
+    next_plan = plan_cloud_sync(
+        oversize_bundle,
+        destination=SyncDestination.DEDICATED,
+        scope_evidence=scope,
+        estimated_current_raster_bytes=0,
+        binding_id="binding-inventory-race",
+        telemetry_inventory=after,
+        approval=approval,
+    )
+    assert next_plan.approval_status == "STALE"
+    assert "OVERSIZE_SYNC_APPROVAL_STALE" in " ".join(next_plan.blockers)
     store.close()
 
 

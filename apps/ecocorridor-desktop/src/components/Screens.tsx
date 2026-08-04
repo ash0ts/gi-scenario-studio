@@ -1,10 +1,11 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { serializeRedactedRidgewayDecisionStory } from "@ecocorridor-scenario-studio/evidence";
 import { z } from "zod";
 import { ConnectivityCostBasisSchema, ConnectivityDecisionBriefSchema, ConnectivityDecisionRuleSchema, ConnectivityModelFitnessSchema, ConnectivityScenarioSchema, FocalAreaSetSchema, InterventionOptionSchema, InterventionSiteSchema, ResistanceHypothesisSchema, ResourcePolicySchema, RiskReviewMaskSchema, SafeguardRecordSchema, SensitiveDataAuthorizationSchema } from "../generated/contracts";
 import type { ConnectivityModelFitness, GridAlignmentPlan, PortfolioDecisionSummary } from "../generated/contracts";
 import { evidenceFor, formatUsd, hypothesisRankRange, mapEvidenceFor, pairEvidenceFor, scenarioFor } from "../data/ridgeway";
 import { chooseConnectivityAsset, chooseConnectivityBundle, createProjectWorkspace, hasNativeHost, hostErrorMessage, hostRequest, rpcData, saveExportCopy } from "../lib/host";
+import { DetailedCloudUploadPreviewSchema, ObservabilitySyncResponseSchema, Sha256Schema } from "../lib/observabilityContracts";
 import { guidedDispositionLabel } from "../lib/decisionCopy";
 import { AnalysisPlanReceiptSchema, AnalysisPrepareResponseSchema, AnalysisStateResponseSchema, AnalysisStatusResponseSchema, assetRequirements, assetUsesRasterGrid, buildAssetAddParams, buildAssetInspectParams, buildPlanningCreateParams, CostBasisGetResponseSchema, CostBasisSaveResponseSchema, createAssetDraft, DecisionBoardResponseSchema, DigitizationDraftSchema, DigitizationPreviewResponseSchema, DigitizationPublicationResponseSchema, ExportCreateResponseSchema, ExportEligibilityResponseSchema, GridApprovalResponseSchema, GridPreviewResponseSchema, GuidedControlResponseSchema, GuidedRerunStatusSchema, InterventionPreviewResponseSchema, InterventionSaveResponseSchema, ModelAttestResponseSchema, ModelValidationResponseSchema, planningRequirements, ProfessionalProjectStateSchema, ProviderDownloadResponseSchema, RasterInspectionSchema, RecordSaveResponseSchema, type AssetDraft } from "../lib/professional";
 import type { AssetDeployment, EntryPath, EvidenceSelection, GuidedDesktopSession, GuidedEventDraft, OpaqueFileHandle, PlanningState, ProfessionalAnalysisWorkspace, ProfessionalAssetRecord, ProfessionalGridApproval, ProfessionalModelRecords, ProfessionalProjectCandidate, ProfessionalProjectSession, RasterGrid, RasterInspection, RidgewayFixture, RidgewayPortfolio, RpcPayload, WorkflowStepId } from "../types";
@@ -52,33 +53,42 @@ interface PageIntroProps {
   badge?: ReactNode;
 }
 
-const ObservabilitySyncResponseSchema = z.object({
-  binding: z.object({ state: z.string().min(1) }).passthrough(),
-  receipt: z.object({
-    online: z.boolean(),
-    claimed: z.number().int().nonnegative(),
-    synced: z.number().int().nonnegative(),
-    failed: z.number().int().nonnegative(),
-    blocked: z.number().int().nonnegative(),
-    queued_offline: z.boolean(),
-  }).strict(),
-}).strict();
+const OVERSIZE_SYNC_ACKNOWLEDGEMENT = "I approve synchronization of the exact oversized evidence plan identified by this digest." as const;
 
-const CloudUploadPreviewSchema = z.object({
-  destination: z.string().min(1).optional(),
-  input_bytes: z.number().int().nonnegative().optional(),
-  estimated_current_raster_bytes: z.number().int().nonnegative().nullable(),
-  estimated_total_bytes: z.number().int().nonnegative().nullable(),
-  current_raster_estimate_status: z.enum(["NOT_REQUIRED", "PRE_RUN_ESTIMATE", "ACTUAL_RECONCILED", "PARTIALLY_RECONCILED", "UNAVAILABLE"]),
-  actual_retained_current_raster_bytes: z.number().int().nonnegative(),
-  pending_estimated_current_raster_bytes: z.number().int().nonnegative().nullable(),
-  expected_current_raster_count: z.number().int().nonnegative().nullable(),
-  retained_current_raster_count: z.number().int().nonnegative(),
-  current_raster_estimate_basis: z.string().min(1),
-  blockers: z.array(z.string()),
-  warnings: z.array(z.string()),
-  allowed: z.boolean(),
-}).passthrough();
+const OversizeSyncApprovalResponseSchema = z.object({
+  approval: z.object({
+    approval_id: z.string().min(1),
+    project_id: z.string().min(1),
+    binding_id: z.string().min(1),
+    destination: z.enum(["WANDB_CLOUD", "DEDICATED", "SELF_MANAGED"]),
+    entity: z.string().min(1),
+    project: z.string().min(1),
+    external_project_id: z.string().min(1),
+    model_revision_id: z.string().min(1),
+    model_sha256: Sha256Schema,
+    bundle_sha256: Sha256Schema,
+    resource_policy_sha256: Sha256Schema,
+    projection_sha256: Sha256Schema,
+    current_raster_estimate_sha256: Sha256Schema,
+    telemetry_inventory_sha256: Sha256Schema,
+    scope_evidence_sha256: Sha256Schema,
+    sync_plan_sha256: Sha256Schema,
+    approved_input_bytes: z.number().int().nonnegative(),
+    approved_current_raster_bytes: z.number().int().nonnegative(),
+    approved_pending_current_raster_bytes: z.number().int().nonnegative(),
+    approved_telemetry_projected_bytes: z.number().int().nonnegative(),
+    approved_telemetry_artifact_count: z.number().int().nonnegative(),
+    approved_approval_audit_reservation_bytes: z.number().int().nonnegative(),
+    approved_approval_audit_reservation_count: z.number().int().nonnegative(),
+    approved_operational_metadata_reservation_bytes: z.number().int().nonnegative(),
+    approved_operational_metadata_reservation_count: z.number().int().nonnegative(),
+    approved_total_bytes: z.number().int().positive(),
+    reviewed_by: z.string().min(1).max(256),
+    approved_at: z.string().datetime({ offset: true }),
+    acknowledgement: z.literal(OVERSIZE_SYNC_ACKNOWLEDGEMENT),
+  }).strict(),
+  upload_preview: DetailedCloudUploadPreviewSchema,
+}).strict();
 
 function PageIntro({ kicker, title, description, badge }: PageIntroProps) {
   return (
@@ -1494,7 +1504,9 @@ function SafeguardsScreen({ path, planning, onPlanning, projectSession, professi
 function RulesCostsScreen({ path, planning, onPlanning, fixture, guidedProjectionError, projectSession, professionalAssets, professionalRecords, onProfessionalRecords, observabilityDeployment }: Pick<ScreensProps, "path" | "planning" | "onPlanning" | "fixture" | "guidedProjectionError" | "projectSession" | "professionalAssets" | "professionalRecords" | "onProfessionalRecords" | "observabilityDeployment">) {
   const guided = path === "guided";
   type RuleMetric = "MIN_RESISTANCE_REDUCTION_PERCENT" | "MAX_RESISTANCE_INCREASE_PERCENT" | "MAX_REVIEW_MASK_CURRENT_INCREASE_PERCENT" | "MAX_COST" | "REQUIRE_ACCEPTED_QA" | "REQUIRE_SAFEGUARD_NONREGRESSION";
-  const [briefDraft, setBriefDraft, undoBriefDraft, briefDirty, commitBriefDraft] = useWorkspaceDraft(`decision-brief-editor:${projectSession?.projectId ?? "unbound"}:${professionalRecords.decisionBrief?.brief_id ?? "new"}`, () => {
+  type RuleOperator = "AT_LEAST" | "AT_MOST" | "EQUALS";
+  const expectedRuleOperator = (value: RuleMetric): RuleOperator => value === "MIN_RESISTANCE_REDUCTION_PERCENT" ? "AT_LEAST" : value === "REQUIRE_ACCEPTED_QA" || value === "REQUIRE_SAFEGUARD_NONREGRESSION" ? "EQUALS" : "AT_MOST";
+  const [briefDraft, setBriefDraft, undoBriefDraft, briefDirty, , commitBriefDraftIfUnchanged] = useWorkspaceDraft(`decision-brief-editor:${projectSession?.projectId ?? "unbound"}:${professionalRecords.decisionBrief?.brief_id ?? "new"}`, () => {
     const retained = professionalRecords.decisionBrief;
     return {
       briefId: retained?.brief_id ?? stableUiId("decision_brief"),
@@ -1512,8 +1524,33 @@ function RulesCostsScreen({ path, planning, onPlanning, fixture, guidedProjectio
       conceptual: retained?.conceptual ?? path === "planning",
     };
   });
-  const [ruleDraft, setRuleDraft, undoRuleDraft, ruleDirty, commitRuleDraft] = useWorkspaceDraft("decision-rule-editor", () => ({ ruleId: stableUiId("rule"), ruleTitle: "", metric: "MIN_RESISTANCE_REDUCTION_PERCENT" as RuleMetric, ruleThreshold: "", ruleRationale: "" }));
-  const [policyDraft, setPolicyDraft, undoPolicyDraft, policyDirty, commitPolicyDraft] = useWorkspaceDraft(`resource-policy-editor:${projectSession?.projectId ?? "unbound"}:${professionalRecords.resourcePolicy ? "retained" : "new"}`, () => {
+  const retainedRules = [...professionalRecords.decisionRules].sort((left, right) => left.title.localeCompare(right.title) || left.rule_id.localeCompare(right.rule_id));
+  const retainedRuleIds = retainedRules.map((item) => item.rule_id).join("|");
+  const [selectedRuleId, setSelectedRuleId] = useState<string | null>(() => retainedRules[0]?.rule_id ?? null);
+  const criterionSelectorRef = useRef<HTMLSelectElement | null>(null);
+  const [criterionSelectionAnnouncement, setCriterionSelectionAnnouncement] = useState("");
+  useEffect(() => {
+    if (selectedRuleId === null && retainedRules.length) setSelectedRuleId(retainedRules[0].rule_id);
+  }, [retainedRuleIds, selectedRuleId]);
+  const selectedRetainedRule = retainedRules.find((item) => item.rule_id === selectedRuleId) ?? null;
+  const [ruleDraft, setRuleDraft, undoRuleDraft, ruleDirty, , commitRuleDraftIfUnchanged] = useWorkspaceDraft(`decision-rule-editor:${projectSession?.projectId ?? "unbound"}:${selectedRuleId ?? "none"}`, () => {
+    const retained = professionalRecords.decisionRules.find((item) => item.rule_id === selectedRuleId);
+    const retainedMetric = retained?.metric ?? "MIN_RESISTANCE_REDUCTION_PERCENT";
+    return {
+      ruleId: retained?.rule_id ?? selectedRuleId ?? "",
+      ruleTitle: retained?.title ?? "",
+      metric: retainedMetric as RuleMetric,
+      operator: (retained?.operator ?? expectedRuleOperator(retainedMetric as RuleMetric)) as RuleOperator,
+      ruleThreshold: retained?.threshold === undefined ? "" : String(retained.threshold),
+      ruleRationale: retained?.rationale ?? "",
+      required: retained?.required ?? true,
+      scenarioScopeAll: !(retained?.scenario_ids?.length),
+      scenarioIds: [...(retained?.scenario_ids ?? [])],
+      pairScopeAll: !(retained?.pair_ids?.length),
+      pairIds: [...(retained?.pair_ids ?? [])],
+    };
+  });
+  const [policyDraft, setPolicyDraft, undoPolicyDraft, policyDirty, , commitPolicyDraftIfUnchanged] = useWorkspaceDraft(`resource-policy-editor:${projectSession?.projectId ?? "unbound"}:${professionalRecords.resourcePolicy ? "retained" : "new"}`, () => {
     const retained = professionalRecords.resourcePolicy;
     const mib = 1024 * 1024;
     return {
@@ -1525,7 +1562,7 @@ function RulesCostsScreen({ path, planning, onPlanning, fixture, guidedProjectio
       requireExplicitOversizeApproval: retained?.require_explicit_oversize_approval ?? true,
     };
   });
-  const [costBasisDraft, setCostBasisDraft, undoCostBasisDraft, costBasisDirty, commitCostBasisDraft] = useWorkspaceDraft("cost-basis-editor", () => {
+  const [costBasisDraft, setCostBasisDraft, undoCostBasisDraft, costBasisDirty, , commitCostBasisDraftIfUnchanged] = useWorkspaceDraft("cost-basis-editor", () => {
     const basis = professionalRecords.costBasis;
     return {
       costBasisId: basis?.cost_basis_id ?? stableUiId("cost_basis"),
@@ -1544,7 +1581,7 @@ function RulesCostsScreen({ path, planning, onPlanning, fixture, guidedProjectio
     };
   });
   const { briefId, briefTitle, decisionQuestion, decisionOwner, intendedUse, targetGuilds, safeguardGuilds, budgetAmount, currency, costVintage, nonGoals, nextAction, conceptual } = briefDraft;
-  const { ruleId, ruleTitle, metric, ruleThreshold, ruleRationale } = ruleDraft;
+  const { ruleId, ruleTitle, metric, operator, ruleThreshold, ruleRationale, required: ruleRequired, scenarioScopeAll, scenarioIds: selectedScenarioIds, pairScopeAll, pairIds: selectedPairIds } = ruleDraft;
   const { maxDirectJobs, maxInputMb, maxMaterializedMb, maxCurrentMb, maxWallSeconds, requireExplicitOversizeApproval } = policyDraft;
   const { costBasisId, source: costSource, currency: basisCurrency, vintage: basisVintage, analysisHorizonYears, realDiscountRatePercent, capexBasis, omAssumptions, replacementAssumptions, reviewer: costReviewer, reviewedAt: costReviewedAt, optionCosts, confirmed: costBasisConfirmed } = costBasisDraft;
   const setBriefField = <K extends keyof typeof briefDraft>(field: K, value: (typeof briefDraft)[K]) => setBriefDraft((current) => ({ ...current, [field]: value }));
@@ -1563,7 +1600,7 @@ function RulesCostsScreen({ path, planning, onPlanning, fixture, guidedProjectio
   const setNonGoals = (value: string) => setBriefField("nonGoals", value);
   const setNextAction = (value: string) => setBriefField("nextAction", value);
   const setRuleTitle = (value: string) => setRuleField("ruleTitle", value);
-  const setMetric = (value: RuleMetric) => setRuleField("metric", value);
+  const setMetric = (value: RuleMetric) => setRuleDraft((current) => ({ ...current, metric: value, operator: expectedRuleOperator(value), ruleThreshold: value.startsWith("REQUIRE_") && !["true", "false"].includes(current.ruleThreshold.toLowerCase()) ? "true" : !value.startsWith("REQUIRE_") && ["true", "false"].includes(current.ruleThreshold.toLowerCase()) ? "" : current.ruleThreshold }));
   const setRuleThreshold = (value: string) => setRuleField("ruleThreshold", value);
   const setRuleRationale = (value: string) => setRuleField("ruleRationale", value);
   const setMaxDirectJobs = (value: string) => setPolicyField("maxDirectJobs", value);
@@ -1571,6 +1608,40 @@ function RulesCostsScreen({ path, planning, onPlanning, fixture, guidedProjectio
   const setMaxMaterializedMb = (value: string) => setPolicyField("maxMaterializedMb", value);
   const setMaxCurrentMb = (value: string) => setPolicyField("maxCurrentMb", value);
   const setMaxWallSeconds = (value: string) => setPolicyField("maxWallSeconds", value);
+  const ruleEditorActive = Boolean(selectedRuleId);
+  const scenarioChoices = professionalRecords.scenarios.map((item) => ({ id: item.scenario_id, title: item.title, pairIds: item.included_pair_ids, missing: false }));
+  for (const scenarioId of selectedScenarioIds) {
+    if (!scenarioChoices.some((item) => item.id === scenarioId)) scenarioChoices.push({ id: scenarioId, title: "Missing retained scenario", pairIds: [], missing: true });
+  }
+  const pairChoiceMap = new Map<string, { id: string; title: string; missing: boolean }>();
+  for (const focalSet of professionalRecords.focalAreaSets) {
+    for (const pair of focalSet.pairs) pairChoiceMap.set(pair.pair_id, { id: pair.pair_id, title: `${focalSet.title} · ${pair.from_focal_id} → ${pair.to_focal_id}`, missing: false });
+  }
+  for (const pairId of selectedPairIds) {
+    if (!pairChoiceMap.has(pairId)) pairChoiceMap.set(pairId, { id: pairId, title: "Missing retained focal pair", missing: true });
+  }
+  const pairChoices = [...pairChoiceMap.values()].sort((left, right) => left.title.localeCompare(right.title) || left.id.localeCompare(right.id));
+  const scopedScenarioIds = scenarioScopeAll ? professionalRecords.scenarios.map((item) => item.scenario_id) : selectedScenarioIds;
+  const scopedScenarios = scopedScenarioIds.map((scenarioId) => professionalRecords.scenarios.find((item) => item.scenario_id === scenarioId)).filter((item): item is (typeof professionalRecords.scenarios)[number] => Boolean(item));
+  const pairCompatibleWithScope = (pairId: string) => Boolean(scopedScenarios.length) && scopedScenarios.every((scenario) => scenario.included_pair_ids.includes(pairId));
+  const ruleScopeIssues: string[] = [];
+  if (ruleEditorActive && !professionalRecords.scenarios.length) ruleScopeIssues.push("Persist at least one required ecological scenario before authoring a criterion.");
+  if (ruleEditorActive && operator !== expectedRuleOperator(metric)) ruleScopeIssues.push(`${metric.replaceAll("_", " ")} requires operator ${expectedRuleOperator(metric)}.`);
+  if (ruleEditorActive && !scenarioScopeAll && !selectedScenarioIds.length) ruleScopeIssues.push("Select at least one exact scenario or restore all-scenario scope.");
+  const unknownScenarioIds = selectedScenarioIds.filter((scenarioId) => !professionalRecords.scenarios.some((item) => item.scenario_id === scenarioId));
+  if (ruleEditorActive && !scenarioScopeAll && unknownScenarioIds.length) ruleScopeIssues.push(`Remove missing scenario IDs: ${unknownScenarioIds.join(", ")}.`);
+  if (ruleEditorActive && !pairScopeAll && !selectedPairIds.length) ruleScopeIssues.push("Select at least one exact focal pair or restore per-scenario included-pair scope.");
+  const unknownPairIds = selectedPairIds.filter((pairId) => !pairChoiceMap.get(pairId) || pairChoiceMap.get(pairId)?.missing);
+  if (ruleEditorActive && !pairScopeAll && unknownPairIds.length) ruleScopeIssues.push(`Remove missing focal-pair IDs: ${unknownPairIds.join(", ")}.`);
+  const incompatiblePairIds = selectedPairIds.filter((pairId) => !pairCompatibleWithScope(pairId));
+  if (ruleEditorActive && !pairScopeAll && incompatiblePairIds.length) ruleScopeIssues.push(`These focal pairs are not included in every scoped scenario: ${incompatiblePairIds.join(", ")}. Narrow the scenarios or remove the pairs.`);
+  const toggleRuleScopeId = (field: "scenarioIds" | "pairIds", id: string, checked: boolean) => setRuleDraft((current) => ({ ...current, [field]: checked ? [...new Set([...current[field], id])] : current[field].filter((item) => item !== id) }));
+  const selectCriterion = (ruleIdToSelect: string, focusEditor = false) => {
+    setSelectedRuleId(ruleIdToSelect);
+    setCriterionSelectionAnnouncement(`Editing criterion ${ruleIdToSelect}.`);
+    if (focusEditor) criterionSelectorRef.current?.focus();
+  };
+  const addCriterion = () => selectCriterion(stableUiId("rule"), true);
   const [state, setState] = useState<"idle" | "saving" | "error">("idle");
   const [message, setMessage] = useState("");
   const [costBasisState, setCostBasisState] = useState<"idle" | "saving" | "error">("idle");
@@ -1627,15 +1698,15 @@ function RulesCostsScreen({ path, planning, onPlanning, fixture, guidedProjectio
     const value = Number(optionCosts[option.option_id]);
     return optionCosts[option.option_id]?.trim() && Number.isFinite(value) && value >= 0;
   }).length;
-  const saveRecord = async (method: string, key: string, record: unknown, apply: (revision: number) => void, commitDraft: () => void) => {
+  const saveRecord = async (method: string, key: string, record: unknown, apply: (revision: number) => void, commitDraft: () => boolean | void) => {
     if (!projectSession) return;
     setState("saving"); setMessage("");
     try {
       const response = await hostRequest<RpcPayload<unknown>>(method, { project_handle: projectSession.projectHandle, [key]: record });
       const saved = RecordSaveResponseSchema.parse(rpcData(response));
       apply(saved.revision);
-      commitDraft();
-      setState("idle"); setMessage(`${saved.record_id} persisted at worker revision ${saved.revision}.`);
+      const committed = commitDraft();
+      setState("idle"); setMessage(committed === false ? `${saved.record_id} persisted at worker revision ${saved.revision}. Newer unsaved edits remain in this workspace.` : `${saved.record_id} persisted at worker revision ${saved.revision}.`);
     } catch (error) { setState("error"); setMessage(hostErrorMessage(error, "The reviewed decision contract could not be persisted.")); }
   };
   const saveBrief = () => {
@@ -1647,24 +1718,30 @@ function RulesCostsScreen({ path, planning, onPlanning, fixture, guidedProjectio
       const amount = budgetAmount.trim() ? Number(budgetAmount) : null;
       if (amount !== null && (!Number.isFinite(amount) || amount < 0 || !currency.trim() || !costVintage.trim())) throw new Error("A budget requires a nonnegative amount, currency, and cost vintage.");
       const brief = ConnectivityDecisionBriefSchema.parse({ brief_id: briefId, title: briefTitle.trim(), decision_question: decisionQuestion.trim(), decision_owner: decisionOwner.trim(), intended_use: intendedUse.trim(), target_guilds: targetGuildList, safeguard_guilds: safeguardGuildList, budget_amount: amount, currency: amount === null ? null : currency.trim(), cost_vintage: amount === null ? null : costVintage.trim(), non_goals: nonGoalList, required_next_action: nextAction.trim(), conceptual });
+      const submittedBriefDraft = briefDraft;
+      const committedBriefDraft = { briefId: brief.brief_id, briefTitle: brief.title, decisionQuestion: brief.decision_question, decisionOwner: brief.decision_owner, intendedUse: brief.intended_use, targetGuilds: brief.target_guilds.join("\n"), safeguardGuilds: (brief.safeguard_guilds ?? []).join("\n"), budgetAmount: brief.budget_amount == null ? "" : String(brief.budget_amount), currency: brief.currency ?? "", costVintage: brief.cost_vintage ?? "", nonGoals: (brief.non_goals ?? []).join("\n"), nextAction: brief.required_next_action, conceptual: brief.conceptual ?? false };
       void saveRecord("connectivity.decision_brief.save", "decision_brief", brief, () => {
-        setBriefDraft({ briefId: brief.brief_id, briefTitle: brief.title, decisionQuestion: brief.decision_question, decisionOwner: brief.decision_owner, intendedUse: brief.intended_use, targetGuilds: brief.target_guilds.join("\n"), safeguardGuilds: (brief.safeguard_guilds ?? []).join("\n"), budgetAmount: brief.budget_amount == null ? "" : String(brief.budget_amount), currency: brief.currency ?? "", costVintage: brief.cost_vintage ?? "", nonGoals: (brief.non_goals ?? []).join("\n"), nextAction: brief.required_next_action, conceptual: brief.conceptual ?? false });
         onProfessionalRecords({ ...professionalRecords, decisionBrief: brief });
         onPlanning({ ...planning, decisionQuestion: brief.decision_question, intendedUse: brief.intended_use, reviewer: brief.decision_owner, targetGuild: brief.target_guilds[0] ?? "", budgetUsd: brief.budget_amount == null ? "" : String(brief.budget_amount) });
-      }, commitBriefDraft);
+      }, () => commitBriefDraftIfUnchanged(submittedBriefDraft, committedBriefDraft));
     } catch (error) { setState("error"); setMessage(hostErrorMessage(error, "The decision brief is incomplete.")); }
   };
   const saveRule = () => {
     try {
+      if (!ruleEditorActive || !ruleId) throw new Error("Choose a retained criterion or explicitly add a new one.");
+      if (ruleScopeIssues.length) throw new Error(ruleScopeIssues[0]);
       if (!ruleTitle.trim() || !ruleRationale.trim() || !ruleThreshold.trim()) throw new Error("Complete rule title, threshold, and rationale.");
       const booleanMetric = metric === "REQUIRE_ACCEPTED_QA" || metric === "REQUIRE_SAFEGUARD_NONREGRESSION";
       if (booleanMetric && !["true", "false"].includes(ruleThreshold.trim().toLowerCase())) throw new Error("Boolean release rules require exactly true or false.");
-      const operator = metric === "MIN_RESISTANCE_REDUCTION_PERCENT" ? "AT_LEAST" : booleanMetric ? "EQUALS" : "AT_MOST";
       const thresholdValue = booleanMetric ? ruleThreshold.trim().toLowerCase() === "true" : Number(ruleThreshold);
       if (!booleanMetric && !Number.isFinite(thresholdValue)) throw new Error("Numeric rules require a finite threshold.");
-      const pairIds = [...new Set(professionalRecords.focalAreaSets.flatMap((item) => item.pairs.map((pair) => pair.pair_id)))];
-      const rule = ConnectivityDecisionRuleSchema.parse({ rule_id: ruleId, title: ruleTitle.trim(), metric, operator, threshold: thresholdValue, scenario_ids: professionalRecords.scenarios.map((item) => item.scenario_id), pair_ids: metric === "MIN_RESISTANCE_REDUCTION_PERCENT" || metric === "MAX_RESISTANCE_INCREASE_PERCENT" ? pairIds : [], required: true, rationale: ruleRationale.trim() });
-      void saveRecord("connectivity.decision_rule.save", "decision_rule", rule, () => onProfessionalRecords({ ...professionalRecords, decisionRules: [...professionalRecords.decisionRules.filter((item) => item.rule_id !== rule.rule_id), rule] }), commitRuleDraft);
+      const rule = ConnectivityDecisionRuleSchema.parse({ rule_id: ruleId, title: ruleTitle.trim(), metric, operator, threshold: thresholdValue, scenario_ids: scenarioScopeAll ? [] : [...new Set(selectedScenarioIds)], pair_ids: pairScopeAll ? [] : [...new Set(selectedPairIds)], required: ruleRequired, rationale: ruleRationale.trim() });
+      const submittedRuleDraft = ruleDraft;
+      const committedRuleDraft = { ruleId: rule.rule_id, ruleTitle: rule.title, metric: rule.metric, operator: rule.operator, ruleThreshold: String(rule.threshold), ruleRationale: rule.rationale, required: rule.required ?? true, scenarioScopeAll: !(rule.scenario_ids?.length), scenarioIds: [...(rule.scenario_ids ?? [])], pairScopeAll: !(rule.pair_ids?.length), pairIds: [...(rule.pair_ids ?? [])] };
+      void saveRecord("connectivity.decision_rule.save", "decision_rule", rule, () => {
+        const decisionRules = professionalRecords.decisionRules.some((item) => item.rule_id === rule.rule_id) ? professionalRecords.decisionRules.map((item) => item.rule_id === rule.rule_id ? rule : item) : [...professionalRecords.decisionRules, rule];
+        onProfessionalRecords({ ...professionalRecords, decisionRules });
+      }, () => commitRuleDraftIfUnchanged(submittedRuleDraft, committedRuleDraft));
     } catch (error) { setState("error"); setMessage(hostErrorMessage(error, "The decision rule is incomplete.")); }
   };
   const savePolicy = () => {
@@ -1672,10 +1749,11 @@ function RulesCostsScreen({ path, planning, onPlanning, fixture, guidedProjectio
       if (!requireExplicitOversizeApproval) throw new Error("Explicit oversize approval is a required fail-closed safety control.");
       const mib = 1024 * 1024;
       const policy = ResourcePolicySchema.parse({ max_input_bytes: Number(maxInputMb) * mib, max_materialized_bytes: Number(maxMaterializedMb) * mib, max_current_raster_bytes: Number(maxCurrentMb) * mib, max_direct_jobs: Number(maxDirectJobs), max_wall_seconds_per_job: Number(maxWallSeconds), require_explicit_oversize_approval: requireExplicitOversizeApproval });
+      const submittedPolicyDraft = policyDraft;
+      const committedPolicyDraft = { maxDirectJobs: String(policy.max_direct_jobs), maxInputMb: String(policy.max_input_bytes / mib), maxMaterializedMb: String(policy.max_materialized_bytes / mib), maxCurrentMb: String(policy.max_current_raster_bytes / mib), maxWallSeconds: String(policy.max_wall_seconds_per_job), requireExplicitOversizeApproval: policy.require_explicit_oversize_approval ?? true };
       void saveRecord("connectivity.resource_policy.save", "resource_policy", policy, () => {
-        setPolicyDraft({ maxDirectJobs: String(policy.max_direct_jobs), maxInputMb: String(policy.max_input_bytes / mib), maxMaterializedMb: String(policy.max_materialized_bytes / mib), maxCurrentMb: String(policy.max_current_raster_bytes / mib), maxWallSeconds: String(policy.max_wall_seconds_per_job), requireExplicitOversizeApproval: policy.require_explicit_oversize_approval ?? true });
         onProfessionalRecords({ ...professionalRecords, resourcePolicy: policy });
-      }, commitPolicyDraft);
+      }, () => commitPolicyDraftIfUnchanged(submittedPolicyDraft, committedPolicyDraft));
     } catch (error) { setState("error"); setMessage(hostErrorMessage(error, "Every resource limit must be a positive number.")); }
   };
   const saveCostBasis = async () => {
@@ -1705,6 +1783,7 @@ function RulesCostsScreen({ path, planning, onPlanning, fixture, guidedProjectio
         option_costs: Object.fromEntries(costOptions.map((option) => [option.option_id, Number(optionCosts[option.option_id])])),
         assumptions,
       });
+      const submittedCostBasisDraft = costBasisDraft;
       const confirmationStatement = "I reviewed the cited source, present-value assumptions, and exact costs for every retained intervention option; no ecological or feasibility benefit is implied.";
       const response = await hostRequest<RpcPayload<unknown>>("connectivity.cost_basis.save", {
         project_handle: projectSession.projectHandle,
@@ -1716,10 +1795,24 @@ function RulesCostsScreen({ path, planning, onPlanning, fixture, guidedProjectio
       onProfessionalRecords({ ...professionalRecords, costBasis: saved.cost_basis });
       setCostBasisAuthority({ cost_basis: saved.cost_basis, active_revision_id: saved.active_revision_id, confirmed: true, missing_requirements: [] });
       setCostBasisAuthorityState("idle");
-      setCostBasisDraft((current) => ({ ...current, confirmed: false }));
-      commitCostBasisDraft();
+      const committedCostBasisDraft = {
+        costBasisId: saved.cost_basis.cost_basis_id,
+        source: saved.cost_basis.source,
+        currency: saved.cost_basis.currency,
+        vintage: saved.cost_basis.vintage,
+        analysisHorizonYears: costAssumptionValue(saved.cost_basis.assumptions, COST_ASSUMPTION_PREFIXES.analysisHorizonYears),
+        realDiscountRatePercent: costAssumptionValue(saved.cost_basis.assumptions, COST_ASSUMPTION_PREFIXES.realDiscountRatePercent),
+        capexBasis: costAssumptionValue(saved.cost_basis.assumptions, COST_ASSUMPTION_PREFIXES.capexBasis),
+        omAssumptions: costAssumptionValue(saved.cost_basis.assumptions, COST_ASSUMPTION_PREFIXES.omAssumptions),
+        replacementAssumptions: costAssumptionValue(saved.cost_basis.assumptions, COST_ASSUMPTION_PREFIXES.replacementAssumptions),
+        reviewer: saved.cost_basis.reviewer,
+        reviewedAt: dateTimeLocalValue(saved.cost_basis.reviewed_at),
+        optionCosts: Object.fromEntries(costOptions.map((option) => [option.option_id, String(saved.cost_basis.option_costs[option.option_id])])),
+        confirmed: false,
+      };
+      const committed = commitCostBasisDraftIfUnchanged(submittedCostBasisDraft, committedCostBasisDraft);
       setCostBasisState("idle");
-      setCostBasisMessage(`Reviewed cost basis persisted at worker revision ${saved.revision}; all ${costOptions.length} option costs remain traceable. Semantic revision ${saved.active_revision_id} is now active, so revalidate Model Fitness before attesting or running.`);
+      setCostBasisMessage(`Reviewed cost basis persisted at worker revision ${saved.revision}; all ${costOptions.length} option costs remain traceable. Semantic revision ${saved.active_revision_id} is now active, so revalidate Model Fitness before attesting or running.${committed ? "" : " Newer unsaved edits remain in this workspace."}`);
     } catch (error) {
       setCostBasisState("error");
       setCostBasisMessage(hostErrorMessage(error, "The reviewed cost basis could not be persisted."));
@@ -1731,9 +1824,10 @@ function RulesCostsScreen({ path, planning, onPlanning, fixture, guidedProjectio
         <PageIntro kicker="Decision contract" title="Make acceptance testable before running." description="No Ridgeway threshold is reused. Project rules retain their scenario, pair, direction, reducer, threshold, rationale, and reviewed cost basis." badge={<StatusPill state={professionalRecords.decisionRules.length && professionalRecords.decisionBrief && professionalRecords.costBasis && professionalRecords.resourcePolicy ? "pass" : "fail"}>{professionalRecords.costBasis ? `${professionalRecords.decisionRules.length} rule${professionalRecords.decisionRules.length === 1 ? "" : "s"} · cost basis reviewed` : "Cost basis required"}</StatusPill>} />
         <div className="professional-rule-layout rule-cards">
           <article className="paper-panel"><span className="rule-type">BRIEF</span><h2>Decision boundary</h2><p>Revise the retained professional question without losing its stable record identity or silently replacing fields that are not on screen.</p><div className="draft-actions"><small>{briefDirty ? "Draft retained in workspace" : professionalRecords.decisionBrief ? "Authoritative decision brief loaded" : "No unsaved field changes"}</small><button className="text-action" type="button" disabled={!briefDirty} onClick={undoBriefDraft}>Undo brief draft</button></div><label><span>Brief title *</span><input value={briefTitle} onChange={(event) => setBriefTitle(event.target.value)} /></label><label><span>Decision question *</span><textarea rows={3} value={decisionQuestion} onChange={(event) => setDecisionQuestion(event.target.value)} /></label><label><span>Decision owner *</span><input value={decisionOwner} onChange={(event) => setDecisionOwner(event.target.value)} /></label><label><span>Intended use *</span><textarea rows={3} value={intendedUse} onChange={(event) => setIntendedUse(event.target.value)} /></label><div className="field-grid two-up"><label><span>Target guilds * · one per line</span><textarea rows={3} value={targetGuilds} onChange={(event) => setTargetGuilds(event.target.value)} /></label><label><span>Safeguard guilds · one per line</span><textarea rows={3} value={safeguardGuilds} onChange={(event) => setSafeguardGuilds(event.target.value)} /></label><label><span>Screening budget</span><input inputMode="decimal" value={budgetAmount} onChange={(event) => setBudgetAmount(event.target.value.replace(/[^0-9.]/g, ""))} /></label><label><span>Currency</span><input value={currency} onChange={(event) => setCurrency(event.target.value)} /></label><label><span>Cost vintage</span><input value={costVintage} onChange={(event) => setCostVintage(event.target.value)} /></label></div><label><span>Permanent non-goals * · one per line</span><textarea rows={3} value={nonGoals} onChange={(event) => setNonGoals(event.target.value)} /></label><label><span>Required next action *</span><textarea rows={2} value={nextAction} onChange={(event) => setNextAction(event.target.value)} /></label><p className="control-requirement"><strong>Record class:</strong> {conceptual ? "Conceptual planning screen" : "Reviewed-model screen"}. Saving retains <span className="mono">{briefId}</span>, publishes a semantic revision, and makes the prior fitness review stale.</p><button className="secondary-button" type="button" disabled={!projectSession || !briefDirty || state === "saving"} onClick={saveBrief}>Save decision brief</button></article>
-          <article className="paper-panel"><span className="rule-type safeguard">RULE</span><h2>Testable criterion</h2><div className="draft-actions"><small>{ruleDirty ? "Draft retained in workspace" : "No unsaved field changes"}</small><button className="text-action" type="button" disabled={!ruleDirty} onClick={undoRuleDraft}>Undo rule draft</button></div><label><span>Rule title *</span><input value={ruleTitle} onChange={(event) => setRuleTitle(event.target.value)} /></label><label><span>Metric *</span><select value={metric} onChange={(event) => setMetric(event.target.value as RuleMetric)}><option value="MIN_RESISTANCE_REDUCTION_PERCENT">Minimum within-scenario resistance reduction</option><option value="MAX_RESISTANCE_INCREASE_PERCENT">Maximum within-scenario resistance increase</option><option value="MAX_REVIEW_MASK_CURRENT_INCREASE_PERCENT">Maximum diagnostic mask redistribution</option><option value="MAX_COST">Maximum screening cost</option><option value="REQUIRE_ACCEPTED_QA">Require accepted QA</option><option value="REQUIRE_SAFEGUARD_NONREGRESSION">Require safeguard nonregression</option></select></label><label><span>Threshold * {metric.startsWith("REQUIRE_") ? "(true or false)" : ""}</span><input value={ruleThreshold} onChange={(event) => setRuleThreshold(event.target.value)} /></label><label><span>Rationale *</span><textarea rows={3} value={ruleRationale} onChange={(event) => setRuleRationale(event.target.value)} /></label><button className="secondary-button" type="button" disabled={!projectSession || !professionalRecords.scenarios.length || state === "saving"} onClick={saveRule}>Save required rule</button><small>Binds all currently persisted required scenarios and applicable focal pairs.</small></article>
+          <article id="criterion-editor" className="paper-panel rule-contract-editor"><span className="rule-type safeguard">RULE</span><h2>Testable criterion</h2><p>Edit one authoritative criterion at a time. Its stable ID, operator, required status, and exact scenario and focal-pair scope remain visible.</p><p className="sr-only" role="status" aria-live="polite">{criterionSelectionAnnouncement}</p><div className="criterion-picker"><label><span>Criterion to edit</span><select ref={criterionSelectorRef} value={selectedRuleId ?? ""} onChange={(event) => { if (event.target.value) selectCriterion(event.target.value); }}>{!retainedRules.length && !ruleEditorActive && <option value="">No retained criterion</option>}{retainedRules.map((item) => <option key={item.rule_id} value={item.rule_id}>{item.title} · {item.rule_id}</option>)}{ruleEditorActive && !selectedRetainedRule && <option value={selectedRuleId ?? ""}>New unsaved criterion · {selectedRuleId}</option>}</select></label><button className="secondary-button" type="button" disabled={!professionalRecords.scenarios.length || state === "saving"} onClick={addCriterion}>Add criterion</button></div>{!ruleEditorActive ? <div className="criterion-empty"><Icon name="info" /><p><strong>No criterion retained yet.</strong> Explicitly add a criterion after the required scenarios and focal sets are authoritative. Opening this screen never creates a hidden rule ID.</p></div> : <><div className="draft-actions"><small>{ruleDirty ? "Draft retained in workspace" : selectedRetainedRule ? "Authoritative criterion loaded" : "New criterion not yet authored"}</small><button className="text-action" type="button" disabled={!ruleDirty} onClick={undoRuleDraft}>Undo criterion draft</button></div><label><span>Rule title *</span><input value={ruleTitle} onChange={(event) => setRuleTitle(event.target.value)} /></label><label><span>Metric *</span><select value={metric} onChange={(event) => setMetric(event.target.value as RuleMetric)}><option value="MIN_RESISTANCE_REDUCTION_PERCENT">Minimum within-scenario resistance reduction</option><option value="MAX_RESISTANCE_INCREASE_PERCENT">Maximum within-scenario resistance increase</option><option value="MAX_REVIEW_MASK_CURRENT_INCREASE_PERCENT">Maximum diagnostic mask redistribution</option><option value="MAX_COST">Maximum screening cost</option><option value="REQUIRE_ACCEPTED_QA">Require accepted QA</option><option value="REQUIRE_SAFEGUARD_NONREGRESSION">Require safeguard nonregression</option></select></label><div className="field-grid two-up"><label><span>Operator *</span><select value={operator} onChange={(event) => setRuleField("operator", event.target.value as RuleOperator)}><option value="AT_LEAST">At least</option><option value="AT_MOST">At most</option><option value="EQUALS">Equals</option></select></label><label><span>Threshold * {metric.startsWith("REQUIRE_") ? "(true or false)" : ""}</span><input value={ruleThreshold} onChange={(event) => setRuleThreshold(event.target.value)} /></label></div><label><span>Rationale *</span><textarea rows={3} value={ruleRationale} onChange={(event) => setRuleRationale(event.target.value)} /></label><label className="confirmation-row"><input type="checkbox" checked={ruleRequired} onChange={(event) => setRuleField("required", event.target.checked)} /><span><strong>Required for portfolio disposition.</strong> Optional criteria remain visible but cannot satisfy required-rule coverage.</span></label><fieldset className="criterion-scope"><legend>Exact scenario scope *</legend><label className="checkbox-row"><input type="checkbox" checked={scenarioScopeAll} onChange={(event) => setRuleDraft((current) => ({ ...current, scenarioScopeAll: event.target.checked, scenarioIds: event.target.checked ? current.scenarioIds : current.scenarioIds.length ? current.scenarioIds : professionalRecords.scenarios.map((item) => item.scenario_id) }))} /><span><strong>Every persisted required scenario</strong><small>Stored as an all-scenario scope; future validation still applies.</small></span></label><div className="criterion-scope-options">{scenarioChoices.map((item) => <label className="checkbox-row" key={item.id}><input type="checkbox" checked={scenarioScopeAll || selectedScenarioIds.includes(item.id)} disabled={scenarioScopeAll} onChange={(event) => toggleRuleScopeId("scenarioIds", item.id, event.target.checked)} /><span><strong>{item.title}</strong><small className="mono">{item.id}{item.missing ? " · missing from current revision" : ""}</small></span></label>)}</div></fieldset><fieldset className="criterion-scope"><legend>Exact focal-pair scope *</legend><label className="checkbox-row"><input type="checkbox" checked={pairScopeAll} onChange={(event) => setRuleField("pairScopeAll", event.target.checked)} /><span><strong>Every included pair within each scoped scenario</strong><small>Stored as per-scenario included-pair scope; no cross-guild union is manufactured.</small></span></label>{!pairScopeAll && <div className="criterion-scope-options">{pairChoices.map((item) => { const compatible = pairCompatibleWithScope(item.id); const selected = selectedPairIds.includes(item.id); return <label className={`checkbox-row${compatible ? "" : " is-incompatible"}`} key={item.id}><input type="checkbox" checked={selected} disabled={!compatible && !selected} onChange={(event) => toggleRuleScopeId("pairIds", item.id, event.target.checked)} /><span><strong>{item.title}</strong><small className="mono">{item.id}{item.missing ? " · missing from current revision" : compatible ? "" : " · not included in every scoped scenario"}</small></span></label>; })}</div>}</fieldset>{ruleScopeIssues.length > 0 && <div className="criterion-scope-issues" role="alert"><strong>{ruleScopeIssues.length} scope item{ruleScopeIssues.length === 1 ? "" : "s"} prevent publication</strong><ul>{ruleScopeIssues.map((issue) => <li key={issue}>{issue}</li>)}</ul></div>}<p className="control-requirement"><strong>Stable criterion ID:</strong> <span className="mono">{ruleId}</span>. Saving this ID updates that retained contract; only Add criterion creates another identity.</p><button className="secondary-button" type="button" disabled={!projectSession || !ruleDirty || ruleScopeIssues.length > 0 || state === "saving"} onClick={saveRule}>{selectedRetainedRule ? "Save criterion revision" : "Save new criterion"}</button></>}</article>
           <article className="paper-panel"><span className="rule-type cost">RESOURCES</span><h2>Hard project policy</h2><div className="draft-actions"><small>{policyDirty ? "Draft retained in workspace" : professionalRecords.resourcePolicy ? "Authoritative resource policy loaded" : "No unsaved field changes"}</small><button className="text-action" type="button" disabled={!policyDirty} onClick={undoPolicyDraft}>Undo policy draft</button></div><label><span>Maximum direct jobs</span><input inputMode="numeric" value={maxDirectJobs} onChange={(event) => setMaxDirectJobs(event.target.value)} /></label><label><span>Maximum input (MiB)</span><input inputMode="numeric" value={maxInputMb} onChange={(event) => setMaxInputMb(event.target.value)} /></label><label><span>Maximum materialized (MiB)</span><input inputMode="numeric" value={maxMaterializedMb} onChange={(event) => setMaxMaterializedMb(event.target.value)} /></label><label><span>Maximum current rasters (MiB)</span><input inputMode="numeric" value={maxCurrentMb} onChange={(event) => setMaxCurrentMb(event.target.value)} /></label><label><span>Per-job wall time (seconds)</span><input inputMode="numeric" value={maxWallSeconds} onChange={(event) => setMaxWallSeconds(event.target.value)} /></label><label className="confirmation-row"><input type="checkbox" checked={requireExplicitOversizeApproval} disabled={requireExplicitOversizeApproval} onChange={(event) => { if (event.target.checked) setPolicyField("requireExplicitOversizeApproval", true); }} /><span><strong>Require explicit approval for every oversize run.</strong> This fail-closed control can be enabled here but cannot be weakened in the editor.</span></label><button className="secondary-button" type="button" disabled={!projectSession || !policyDirty || state === "saving"} onClick={savePolicy}>Save resource policy</button><small>No current raster is silently omitted while the application claims complete synchronization.</small></article>
         </div>
+        <section className="paper-panel criterion-ledger" aria-labelledby="criterion-ledger-heading"><div className="panel-heading"><div><span className="section-kicker">Authoritative acceptance contract</span><h2 id="criterion-ledger-heading">{retainedRules.length} retained criteria</h2></div><span className="mono">Stable IDs · explicit scope</span></div><p className="criterion-ledger-scroll-note">At compact widths, scroll the ledger horizontally to inspect every exact scope field.</p><div className="table-scroll" tabIndex={0} role="region" aria-label="Scrollable retained decision criteria"><table><thead><tr><th>Criterion</th><th>Edit</th><th>Condition</th><th>Scenario scope</th><th>Focal-pair scope</th><th>Disposition role</th></tr></thead><tbody>{retainedRules.length ? retainedRules.map((item) => <tr className={item.rule_id === selectedRuleId ? "is-selected" : ""} key={item.rule_id}><td><strong>{item.title}</strong><span className="table-subline mono">{item.rule_id}</span></td><td><button className="table-button" type="button" aria-controls="criterion-editor" onClick={() => selectCriterion(item.rule_id, true)}>{item.rule_id === selectedRuleId ? "Editing" : "Edit criterion"}</button></td><td><span className="mono">{item.metric}</span><span className="table-subline">{item.operator.replaceAll("_", " ")} · {String(item.threshold)}</span></td><td>{item.scenario_ids?.length ? `${item.scenario_ids.length} explicit` : "Every required scenario"}</td><td>{item.pair_ids?.length ? `${item.pair_ids.length} explicit` : "Each scenario's included pairs"}</td><td><StatusPill state={item.required === false ? "info" : "review"}>{item.required === false ? "Optional" : "Required"}</StatusPill></td></tr>) : <tr><td colSpan={6}>No criterion has been retained. Use Add criterion only after the required scenarios and focal sets are authoritative.</td></tr>}</tbody></table></div></section>
         <section className="paper-panel cost-basis-ledger" aria-labelledby="cost-basis-heading">
           <div className="cost-basis-heading">
             <div><span className="section-kicker">Evidence ledger</span><h2 id="cost-basis-heading">Reviewed present-value cost basis</h2><p>Record one sourced economic basis for the full intervention catalog. Costs affect portfolio ranking only; they never enter the Circuitscape model-run cache or imply ecological benefit. Publishing creates a semantic model revision and makes any earlier Model Fitness attestation stale.</p></div>
@@ -2173,10 +2267,31 @@ function EvidencePackageScreen({ path, publicMode, onEvidence, selectedPortfolio
   const [exportId] = useState(() => `export_${(crypto.randomUUID ? crypto.randomUUID() : String(Date.now())).replaceAll("-", "")}`);
   const [exportState, setExportState] = useState<"idle" | "validating" | "creating" | "copying" | "error">("idle");
   const [exportMessage, setExportMessage] = useState("");
-  const [syncState, setSyncState] = useState<"idle" | "syncing" | "error">("idle");
+  const [syncState, setSyncState] = useState<"idle" | "previewing" | "approval_required" | "approving" | "syncing" | "error">("idle");
   const [syncMessage, setSyncMessage] = useState("Synchronization has not been requested in this session.");
   const [syncReport, setSyncReport] = useState<ReturnType<typeof ObservabilitySyncResponseSchema.parse> | null>(null);
-  const [uploadPreview, setUploadPreview] = useState<ReturnType<typeof CloudUploadPreviewSchema.parse> | null>(null);
+  const [uploadPreview, setUploadPreview] = useState<ReturnType<typeof DetailedCloudUploadPreviewSchema.parse> | null>(null);
+  const [oversizeReviewer, setOversizeReviewer] = useState("");
+  const [oversizeAcknowledged, setOversizeAcknowledged] = useState(false);
+  const syncTriggerRef = useRef<HTMLButtonElement>(null);
+  const oversizeApprovalRegionRef = useRef<HTMLElement>(null);
+  const oversizeApprovalHeadingRef = useRef<HTMLHeadingElement>(null);
+  const priorApprovalFocusKeyRef = useRef<string | null>(null);
+  const restoreSyncTriggerFocusRef = useRef(false);
+  const approvalFocusKey = uploadPreview && ["REQUIRED", "STALE"].includes(uploadPreview.approval_status)
+    ? `${uploadPreview.approval_status}:${uploadPreview.sync_plan_sha256}`
+    : null;
+  useEffect(() => {
+    const priorKey = priorApprovalFocusKeyRef.current;
+    if (approvalFocusKey && approvalFocusKey !== priorKey) {
+      oversizeApprovalHeadingRef.current?.focus();
+    } else if (!approvalFocusKey && priorKey && restoreSyncTriggerFocusRef.current) {
+      if (["previewing", "approving", "syncing"].includes(syncState)) return;
+      syncTriggerRef.current?.focus();
+      restoreSyncTriggerFocusRef.current = false;
+    }
+    priorApprovalFocusKeyRef.current = approvalFocusKey;
+  }, [approvalFocusKey, syncState]);
   const selectedProfessionalPortfolio = professionalAnalysis.selectedPortfolioId;
   const canRequestProfessionalExport = Boolean(projectSession && professionalAnalysis.status?.state === "COMPLETED" && professionalAnalysis.decisionBoard && selectedProfessionalPortfolio);
   const exportParams = () => {
@@ -2214,34 +2329,168 @@ function EvidencePackageScreen({ path, publicMode, onEvidence, selectedPortfolio
       setExportState("idle"); setExportMessage(`Saved ${receipt.fileCount} hash-verified files (${formatBytes(receipt.byteSize)}) in ${receipt.destinationLabel}. No local path entered React or RPC logs.`);
     } catch (error) { setExportState("error"); setExportMessage(hostErrorMessage(error, "The native host could not save a verified copy.")); }
   };
+  const clearOversizeConsent = () => {
+    setOversizeReviewer("");
+    setOversizeAcknowledged(false);
+  };
+  const requestUploadPreview = async () => {
+    if (!projectSession) throw new Error("A bound professional project is required.");
+    const response = await hostRequest<RpcPayload<unknown>>("observability.preview_upload", {
+      project_handle: projectSession.projectHandle,
+    });
+    return DetailedCloudUploadPreviewSchema.parse(rpcData(response));
+  };
+  const retainUploadPreview = (preview: ReturnType<typeof DetailedCloudUploadPreviewSchema.parse>, priorDigest: string | null = uploadPreview?.sync_plan_sha256 ?? null) => {
+    if ((priorDigest && priorDigest !== preview.sync_plan_sha256) || preview.approval_status === "STALE") clearOversizeConsent();
+    setUploadPreview(preview);
+  };
+  const submitEvidenceSync = async (preview: ReturnType<typeof DetailedCloudUploadPreviewSchema.parse>) => {
+    if (!projectSession) throw new Error("A bound professional project is required.");
+    if (!preview.allowed || (preview.approval_status !== "APPROVED" && preview.approval_status !== "NOT_REQUIRED")) throw new Error("The exact upload plan is not approved for synchronization.");
+    setSyncState("syncing");
+    const response = await hostRequest<RpcPayload<unknown>>("observability.sync", {
+      project_handle: projectSession.projectHandle,
+      online: navigator.onLine,
+    });
+    const report = ObservabilitySyncResponseSchema.parse(rpcData(response));
+    if (report.binding.entity !== preview.entity || report.binding.project !== preview.project
+      || report.binding.external_project_id !== preview.external_project_id
+      || report.binding.deployment !== preview.destination) {
+      throw new Error("The synchronization receipt belongs to another W&B destination.");
+    }
+    setSyncReport(report);
+    setSyncState("idle");
+    setSyncMessage(report.receipt.queued_offline
+      ? "The verified binding remains authoritative and every upload stays queued locally; no provider call was attempted."
+      : `W&B accepted ${report.receipt.synced} envelope(s); ${report.receipt.failed} will retry and ${report.receipt.blocked} remain policy-blocked.`);
+  };
   const synchronizeEvidence = async () => {
     if (!projectSession) return;
-    setSyncState("syncing"); setSyncMessage("");
+    setSyncState("previewing"); setSyncMessage("");
     try {
-      const previewResponse = await hostRequest<RpcPayload<unknown>>("observability.preview_upload", {
-        project_handle: projectSession.projectHandle,
-      });
-      const preview = CloudUploadPreviewSchema.parse(rpcData(previewResponse));
-      setUploadPreview(preview);
-      if (!preview.allowed) {
+      const preview = await requestUploadPreview();
+      retainUploadPreview(preview);
+      if (preview.approval_status === "REQUIRED") {
+        setSyncState("approval_required");
+        setSyncMessage("This exact oversized plan requires a named reviewer and fixed acknowledgement before any provider call.");
+        return;
+      }
+      if (preview.approval_status === "STALE") {
+        clearOversizeConsent();
+        setSyncState("approval_required");
+        setSyncMessage("The prior approval was invalidated by a changed exact plan. Review this current destination, identity, digest, and byte inventory before naming a new approval; no provider call was made.");
+        return;
+      }
+      if (!preview.allowed || preview.approval_status === "UNAVAILABLE") {
         setSyncState("error");
         setSyncMessage(`Upload is blocked before any provider call: ${preview.blockers.join("; ") || "authoritative storage estimate unavailable"}.`);
         return;
       }
-      const online = navigator.onLine;
-      const response = await hostRequest<RpcPayload<unknown>>("observability.sync", {
-        project_handle: projectSession.projectHandle,
-        online,
-      });
-      const report = ObservabilitySyncResponseSchema.parse(rpcData(response));
-      setSyncReport(report);
-      setSyncState("idle");
-      setSyncMessage(report.receipt.queued_offline
-        ? "The verified binding remains authoritative and every upload stays queued locally; no provider call was attempted."
-        : `W&B accepted ${report.receipt.synced} envelope(s); ${report.receipt.failed} will retry and ${report.receipt.blocked} remain policy-blocked.`);
+      await submitEvidenceSync(preview);
     } catch (error) {
       setSyncState("error");
       setSyncMessage(hostErrorMessage(error, "W&B synchronization failed; local science and queued evidence are unchanged."));
+    }
+  };
+  const approveOversizeAndSynchronize = async () => {
+    if (!projectSession || !uploadPreview || !["REQUIRED", "STALE"].includes(uploadPreview.approval_status) || !oversizeReviewer.trim() || !oversizeAcknowledged) return;
+    const reviewedDigest = uploadPreview.sync_plan_sha256;
+    const reviewedPreview = uploadPreview;
+    setSyncState("approving"); setSyncMessage("");
+    try {
+      const response = await hostRequest<RpcPayload<unknown>>("observability.approve_oversize", {
+        project_handle: projectSession.projectHandle,
+        sync_plan_sha256: reviewedDigest,
+        reviewed_by: oversizeReviewer.trim(),
+        acknowledgement: OVERSIZE_SYNC_ACKNOWLEDGEMENT,
+      });
+      const approved = OversizeSyncApprovalResponseSchema.parse(rpcData(response));
+      const { approval, upload_preview: approvedPreview } = approved;
+      const responseMatchesReview = approval.project_id === projectSession.projectId
+        && approval.sync_plan_sha256 === reviewedDigest
+        && approval.destination === reviewedPreview.destination
+        && approval.entity === reviewedPreview.entity
+        && approval.project === reviewedPreview.project
+        && approval.external_project_id === reviewedPreview.external_project_id
+        && approval.model_revision_id === reviewedPreview.model_revision_id
+        && approval.model_sha256 === reviewedPreview.model_sha256
+        && approvedPreview.sync_plan_sha256 === reviewedDigest
+        && approvedPreview.destination === reviewedPreview.destination
+        && approvedPreview.entity === reviewedPreview.entity
+        && approvedPreview.project === reviewedPreview.project
+        && approvedPreview.external_project_id === reviewedPreview.external_project_id
+        && approvedPreview.model_revision_id === reviewedPreview.model_revision_id
+        && approvedPreview.model_sha256 === reviewedPreview.model_sha256
+        && approvedPreview.telemetry_inventory_sha256 === reviewedPreview.telemetry_inventory_sha256
+        && approvedPreview.input_bytes === reviewedPreview.input_bytes
+        && approvedPreview.estimated_current_raster_bytes === reviewedPreview.estimated_current_raster_bytes
+        && approvedPreview.pending_estimated_current_raster_bytes === reviewedPreview.pending_estimated_current_raster_bytes
+        && approvedPreview.telemetry_projected_bytes === reviewedPreview.telemetry_projected_bytes
+        && approvedPreview.telemetry_artifact_count === reviewedPreview.telemetry_artifact_count
+        && approvedPreview.approval_audit_reservation_bytes === reviewedPreview.approval_audit_reservation_bytes
+        && approvedPreview.approval_audit_reservation_count === reviewedPreview.approval_audit_reservation_count
+        && approvedPreview.operational_metadata_reservation_bytes === reviewedPreview.operational_metadata_reservation_bytes
+        && approvedPreview.operational_metadata_reservation_count === reviewedPreview.operational_metadata_reservation_count
+        && approvedPreview.estimated_total_bytes === reviewedPreview.estimated_total_bytes
+        && approval.telemetry_inventory_sha256 === approvedPreview.telemetry_inventory_sha256
+        && approval.approved_input_bytes === approvedPreview.input_bytes
+        && approval.approved_current_raster_bytes === approvedPreview.estimated_current_raster_bytes
+        && approval.approved_pending_current_raster_bytes === approvedPreview.pending_estimated_current_raster_bytes
+        && approval.approved_telemetry_projected_bytes === approvedPreview.telemetry_projected_bytes
+        && approval.approved_telemetry_artifact_count === approvedPreview.telemetry_artifact_count
+        && approval.approved_approval_audit_reservation_bytes === approvedPreview.approval_audit_reservation_bytes
+        && approval.approved_approval_audit_reservation_count === approvedPreview.approval_audit_reservation_count
+        && approval.approved_operational_metadata_reservation_bytes === approvedPreview.operational_metadata_reservation_bytes
+        && approval.approved_operational_metadata_reservation_count === approvedPreview.operational_metadata_reservation_count
+        && approval.approved_total_bytes === approvedPreview.estimated_total_bytes
+        && approval.reviewed_by === oversizeReviewer.trim()
+        && approvedPreview.approval_status === "APPROVED"
+        && approvedPreview.approval_id === approval.approval_id
+        && approvedPreview.allowed;
+      if (!responseMatchesReview) throw new Error("The approval receipt does not match the exact upload plan that was reviewed.");
+      restoreSyncTriggerFocusRef.current = Boolean(oversizeApprovalRegionRef.current?.contains(document.activeElement));
+      retainUploadPreview(approvedPreview, reviewedDigest);
+
+      const refreshedPreview = await requestUploadPreview();
+      retainUploadPreview(refreshedPreview, approvedPreview.sync_plan_sha256);
+      const refreshedPlanMatchesApproval = refreshedPreview.sync_plan_sha256 === approvedPreview.sync_plan_sha256
+        && refreshedPreview.approval_status === "APPROVED"
+        && refreshedPreview.approval_id === approval.approval_id
+        && refreshedPreview.allowed
+        && refreshedPreview.destination === approvedPreview.destination
+        && refreshedPreview.entity === approvedPreview.entity
+        && refreshedPreview.project === approvedPreview.project
+        && refreshedPreview.external_project_id === approvedPreview.external_project_id
+        && refreshedPreview.model_revision_id === approvedPreview.model_revision_id
+        && refreshedPreview.model_sha256 === approvedPreview.model_sha256
+        && refreshedPreview.telemetry_inventory_sha256 === approvedPreview.telemetry_inventory_sha256
+        && refreshedPreview.input_bytes === approvedPreview.input_bytes
+        && refreshedPreview.estimated_current_raster_bytes === approvedPreview.estimated_current_raster_bytes
+        && refreshedPreview.pending_estimated_current_raster_bytes === approvedPreview.pending_estimated_current_raster_bytes
+        && refreshedPreview.telemetry_projected_bytes === approvedPreview.telemetry_projected_bytes
+        && refreshedPreview.telemetry_artifact_count === approvedPreview.telemetry_artifact_count
+        && refreshedPreview.approval_audit_reservation_bytes === approvedPreview.approval_audit_reservation_bytes
+        && refreshedPreview.approval_audit_reservation_count === approvedPreview.approval_audit_reservation_count
+        && refreshedPreview.operational_metadata_reservation_bytes === approvedPreview.operational_metadata_reservation_bytes
+        && refreshedPreview.operational_metadata_reservation_count === approvedPreview.operational_metadata_reservation_count
+        && refreshedPreview.estimated_total_bytes === approvedPreview.estimated_total_bytes;
+      if (!refreshedPlanMatchesApproval) {
+        clearOversizeConsent();
+        setSyncState(["REQUIRED", "STALE"].includes(refreshedPreview.approval_status) ? "approval_required" : "error");
+        setSyncMessage("The destination, model revision, evidence inventory, or byte plan changed after review. Review and acknowledge the new exact plan; no provider call was made.");
+        return;
+      }
+      await submitEvidenceSync(refreshedPreview);
+    } catch (error) {
+      clearOversizeConsent();
+      try {
+        const refreshedPreview = await requestUploadPreview();
+        retainUploadPreview(refreshedPreview, null);
+      } catch {
+        // The original typed failure remains the user-facing authority.
+      }
+      setSyncState("error");
+      setSyncMessage(`${hostErrorMessage(error, "The exact oversized plan could not be approved.")} Review a fresh plan before trying again; no provider call was made.`);
     }
   };
   const downloadGuidedStory = async () => {
@@ -2260,13 +2509,47 @@ function EvidencePackageScreen({ path, publicMode, onEvidence, selectedPortfolio
     const eligibility = professionalAnalysis.exportEligibility;
     const record = professionalAnalysis.exportRecord;
     const blockers = [...(eligibility?.fitness_blockers ?? []), ...(eligibility?.authorization_blockers ?? []), ...(eligibility?.qa_blockers ?? [])];
+    const syncBusy = syncState === "previewing" || syncState === "approving" || syncState === "syncing";
+    const oversizeApprovalRequired = uploadPreview?.approval_status === "REQUIRED" || uploadPreview?.approval_status === "STALE";
+    const nonApprovalUploadBlockers = uploadPreview?.blockers.filter((item) => !item.startsWith("OVERSIZE_SYNC_APPROVAL_REQUIRED:") && !item.startsWith("OVERSIZE_SYNC_APPROVAL_STALE:")) ?? [];
+    const canApproveOversize = Boolean(projectSession
+      && oversizeApprovalRequired
+      && oversizeReviewer.trim()
+      && oversizeReviewer.trim().length <= 256
+      && oversizeAcknowledged
+      && uploadPreview?.estimated_current_raster_bytes !== null
+      && uploadPreview?.estimated_total_bytes !== null
+      && nonApprovalUploadBlockers.length === 0
+      && !syncBusy);
+    const syncActionLabel = syncState === "previewing" ? "Reading exact upload plan…"
+      : syncState === "syncing" ? "Synchronizing approved evidence…"
+        : uploadPreview?.approval_status === "STALE" || syncState === "error" ? "Review a fresh upload plan"
+          : oversizeApprovalRequired ? "Refresh exact upload plan"
+            : "Preview and synchronize authorized evidence";
     return (
       <>
         <PageIntro kicker="Evidence package" title="Export eligibility comes from repository evidence." description="The interface cannot override missing direct runs, QA, fitness, authorizations, cost basis, or cloud lineage. A copy is saved only by the native host from a committed package." badge={<StatusPill state={record ? "pass" : eligibility?.eligible ? "review" : "fail"}>{record ? "Authoritative package created" : eligibility?.eligible ? "Eligible · not created" : "Export blocked"}</StatusPill>} />
         <section className="paper-panel eligibility-panel"><div className="eligibility-seal"><Icon name={record ? "check" : eligibility?.eligible ? "document" : "lock"} /></div><div><span className="section-kicker">Selected professional portfolio</span><h2>{selectedProfessionalPortfolio ?? "Choose a portfolio on the Robustness Board."}</h2><p>{record ? `Committed at project-relative ${record.projectRelativeDirectory}. External paths remain host-owned.` : eligibility?.eligible ? "Every repository eligibility gate passed. Create the authoritative package before saving any copy." : "Required: a completed exact ensemble, selected decision summary, accepted QA, resolved fitness and authorization, cost basis, and connected lineage."}</p></div>{record ? <button className="primary-button" type="button" disabled={exportState === "copying"} onClick={() => void copyProfessionalExport()}><Icon name="download" /> {exportState === "copying" ? "Verifying and copying…" : record.copyReceipt ? "Save another verified copy…" : "Save a copy…"}</button> : eligibility?.eligible ? <button className="primary-button" type="button" disabled={exportState === "creating"} onClick={() => void createProfessionalExport()}>{exportState === "creating" ? "Committing package…" : "Create evidence package"}</button> : <button className="primary-button" type="button" disabled={!canRequestProfessionalExport || exportState === "validating"} onClick={() => void validateProfessionalExport()}>{exportState === "validating" ? "Checking repository evidence…" : "Check export eligibility"}</button>}</section>
         {eligibility && <div className="split-grid"><section className="paper-panel plan-details"><h2>Eligibility gates</h2><dl><div><dt>Complete ensemble</dt><dd>{eligibility.complete_ensemble ? "Pass" : "Blocked"}</dd></div><div><dt>Direct evidence only</dt><dd>{eligibility.exact_direct_evidence_only ? "Pass" : "Blocked"}</dd></div><div><dt>Professional package</dt><dd>{eligibility.professional ? "Yes" : "No"}</dd></div><div><dt>Cloud lineage</dt><dd>{eligibility.sync_state}</dd></div></dl></section><section className="paper-panel plan-details"><h2>Package boundary</h2><p>{eligibility.required_notice}</p>{blockers.length ? <ul>{blockers.map((blocker) => <li key={blocker}>{blocker}</li>)}</ul> : <p><strong>No repository blocker was returned.</strong> Field, ecological, engineering, cultural, ownership, and permitting feasibility review remain outside this export gate.</p>}</section></div>}
         {record && <section className="paper-panel package-list"><div className="panel-heading"><div><span className="section-kicker">Committed contents</span><h2>Auditable local record</h2></div><span className="mono">{record.exportId}</span></div><ul><li><Icon name="document" /><div><strong>Decision board and redacted static story</strong><span>Shareable story remains explicitly screening-only.</span></div></li><li><Icon name="grid" /><div><strong>Direct-run and evidence claim records</strong><span>Every reportable connectivity value resolves to exact Circuitscape evidence.</span></div></li><li><Icon name="shield" /><div><strong>Manifest, hashes, limitations, and authorization boundary</strong><span>The native copy is rehashed and rejects symlinks or changed files.</span></div></li></ul>{record.copyReceipt && <p className="operation-message success" role="status">Last native copy: {record.copyReceipt.destinationLabel} · {record.copyReceipt.fileCount} files · {formatBytes(record.copyReceipt.byteSize)}</p>}</section>}
-        <section className="paper-panel cloud-sync-panel" aria-labelledby="cloud-sync-heading"><div className="panel-heading"><div><span className="section-kicker">W&B lineage mirror</span><h2 id="cloud-sync-heading">{syncReport?.binding.state ?? projectSession?.bindingState ?? "Binding required"}</h2></div><StatusPill state={syncReport?.receipt.blocked || syncState === "error" ? "fail" : syncReport?.receipt.queued_offline || syncReport?.receipt.failed ? "review" : syncReport ? "pass" : "info"}>{syncState === "syncing" ? "Checking and synchronizing" : syncReport?.receipt.queued_offline ? "Queued offline" : syncReport ? `${syncReport.receipt.synced} synchronized` : uploadPreview ? uploadPreview.current_raster_estimate_status.replaceAll("_", " ") : "Not checked"}</StatusPill></div><p>{syncMessage}</p>{uploadPreview && <dl aria-label="Authoritative upload estimate"><div><dt>Reviewed input projection</dt><dd>{uploadPreview.input_bytes === undefined ? "Unavailable" : formatBytes(uploadPreview.input_bytes)}</dd></div><div><dt>Current-raster evidence</dt><dd>{uploadPreview.estimated_current_raster_bytes === null ? "Unknown — synchronization blocked" : formatBytes(uploadPreview.estimated_current_raster_bytes)}</dd></div><div><dt>Retained / expected maps</dt><dd>{uploadPreview.retained_current_raster_count} / {uploadPreview.expected_current_raster_count ?? "unknown"}</dd></div><div><dt>Total authorized evidence</dt><dd>{uploadPreview.estimated_total_bytes === null ? "Unknown — synchronization blocked" : formatBytes(uploadPreview.estimated_total_bytes)}</dd></div></dl>}{uploadPreview && <p className="control-requirement"><strong>{uploadPreview.current_raster_estimate_status.replaceAll("_", " ")}:</strong> {uploadPreview.current_raster_estimate_basis}</p>}{syncReport && <dl><div><dt>Claimed</dt><dd>{syncReport.receipt.claimed}</dd></div><div><dt>Synchronized</dt><dd>{syncReport.receipt.synced}</dd></div><div><dt>Retryable failures</dt><dd>{syncReport.receipt.failed}</dd></div><div><dt>Policy blocked</dt><dd>{syncReport.receipt.blocked}</dd></div></dl>}<button className="secondary-button" type="button" disabled={!projectSession || syncState === "syncing"} onClick={() => void synchronizeEvidence()}><Icon name="cloud" /> {syncState === "syncing" ? "Checking estimate and synchronizing…" : syncState === "error" || syncReport?.receipt.failed ? "Recheck upload policy" : "Preview and synchronize authorized evidence"}</button><small>The worker derives map count from immutable run plans and grids, then replaces estimates with exact retained bytes. Cloud failure cannot change direct results, QA, portfolio order, or local export contents.</small></section>
+        <section className="paper-panel cloud-sync-panel" aria-labelledby="cloud-sync-heading">
+          <div className="panel-heading"><div><span className="section-kicker">W&B lineage mirror</span><h2 id="cloud-sync-heading">{syncReport?.binding.state ?? projectSession?.bindingState ?? "Binding required"}</h2></div><StatusPill state={syncReport?.receipt.blocked || syncState === "error" ? "fail" : oversizeApprovalRequired || syncReport?.receipt.queued_offline || syncReport?.receipt.failed ? "review" : syncReport ? "pass" : "info"}>{syncState === "previewing" ? "Reading exact plan" : syncState === "approving" ? "Recording exact approval" : syncState === "syncing" ? "Synchronizing approved plan" : uploadPreview?.approval_status === "STALE" ? "Approval stale" : oversizeApprovalRequired ? "Approval required" : syncReport?.receipt.queued_offline ? "Queued offline" : syncReport ? `${syncReport.receipt.synced} synchronized` : uploadPreview ? uploadPreview.approval_status.replaceAll("_", " ") : "Not checked"}</StatusPill></div>
+          <p role={syncState === "error" ? "alert" : "status"}>{syncMessage}</p>
+          {uploadPreview && <div className="sync-plan-review" aria-label="Exact W&B upload plan">
+            <div className="sync-plan-identity"><div><span>Deployment</span><strong>{uploadPreview.destination.replaceAll("_", " ")}</strong></div><div><span>W&amp;B project</span><strong>{uploadPreview.entity} / {uploadPreview.project}</strong></div><div><span>Immutable external project ID</span><strong className="mono">{uploadPreview.external_project_id}</strong></div><div><span>Model revision</span><strong className="mono">{uploadPreview.model_revision_id}</strong></div><div><span>Model SHA-256</span><strong className="mono">{uploadPreview.model_sha256}</strong></div><div><span>Exact sync-plan digest</span><strong className="mono">{uploadPreview.sync_plan_sha256}</strong></div></div>
+            <dl className="sync-plan-bytes" aria-label="Authoritative upload byte inventory"><div><dt>Reviewed input projection</dt><dd>{formatBytes(uploadPreview.input_bytes)}</dd></div><div><dt>Current-raster evidence</dt><dd>{uploadPreview.estimated_current_raster_bytes === null ? "Unknown — blocked" : formatBytes(uploadPreview.estimated_current_raster_bytes)}<small>{formatBytes(uploadPreview.actual_retained_current_raster_bytes)} retained in telemetry + {uploadPreview.pending_estimated_current_raster_bytes === null ? "unknown" : formatBytes(uploadPreview.pending_estimated_current_raster_bytes)} pending</small></dd></div><div><dt>Telemetry and artifact projection</dt><dd>{formatBytes(uploadPreview.telemetry_projected_bytes)}<small>{uploadPreview.telemetry_artifact_count} projected items; retained current maps are included once</small></dd></div><div><dt>Deduplicated plan total</dt><dd>{uploadPreview.estimated_total_bytes === null ? "Unknown — blocked" : formatBytes(uploadPreview.estimated_total_bytes)}<small>Input + telemetry projection + pending maps; retained maps are not counted twice</small></dd></div></dl>
+            <div className="sync-plan-reservations" aria-label="Bounded telemetry reservations">{uploadPreview.approval_audit_reservation_count > 0 && <span><strong>Approval-audit reservation</strong>{uploadPreview.approval_audit_reservation_count} projected item{uploadPreview.approval_audit_reservation_count === 1 ? "" : "s"} · {formatBytes(uploadPreview.approval_audit_reservation_bytes)} within telemetry</span>}<span><strong>Bounded operational-metadata reservation</strong>{uploadPreview.operational_metadata_reservation_count > 0 ? `${uploadPreview.operational_metadata_reservation_count} projected envelope${uploadPreview.operational_metadata_reservation_count === 1 ? "" : "s"} · ${formatBytes(uploadPreview.operational_metadata_reservation_bytes)} within telemetry (64 KiB bound per envelope)` : "None in this exact plan"}</span></div>
+            <div className="sync-plan-support"><span><strong>Current maps</strong>{uploadPreview.retained_current_raster_count} retained / {uploadPreview.expected_current_raster_count ?? "unknown"} expected</span><span><strong>Telemetry inventory SHA-256</strong><span className="mono">{uploadPreview.telemetry_inventory_sha256}</span></span></div>
+            <p className="control-requirement"><strong>{uploadPreview.current_raster_estimate_status.replaceAll("_", " ")}:</strong> {uploadPreview.current_raster_estimate_basis}</p>
+            {uploadPreview.warnings.length > 0 && <div className="sync-plan-findings review"><strong>Plan warnings</strong><ul>{uploadPreview.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></div>}
+            {nonApprovalUploadBlockers.length > 0 && <div className="sync-plan-findings error" role="alert"><strong>Resolve before approval or synchronization</strong><ul>{nonApprovalUploadBlockers.map((blocker) => <li key={blocker}>{blocker}</li>)}</ul></div>}
+            {uploadPreview.approval_status === "STALE" && <div className="sync-plan-findings error" role="alert"><strong>Exact-plan approval is stale.</strong><p>The prior consent cannot follow a changed destination, model revision, evidence inventory, byte estimate, or plan digest. Review a fresh plan.</p></div>}
+            {oversizeApprovalRequired && <section ref={oversizeApprovalRegionRef} className="oversize-approval" aria-labelledby="oversize-approval-heading"><div><span className="section-kicker">Immutable consent</span><h3 ref={oversizeApprovalHeadingRef} id="oversize-approval-heading" tabIndex={-1}>Approve only this exact oversized plan</h3><p>{uploadPreview.approval_status === "STALE" ? "The earlier approval is invalid. The named reviewer must review this current plan as a new approval." : "The reviewer, fixed acknowledgement, plan digest, model identity, byte inventory, and destination are retained together. Any change requires review again."}</p></div><label htmlFor="oversize-reviewer"><span>Named reviewer *</span><input id="oversize-reviewer" autoComplete="off" maxLength={256} aria-describedby="oversize-reviewer-help" value={oversizeReviewer} onChange={(event) => setOversizeReviewer(event.target.value)} /></label><small id="oversize-reviewer-help" className="oversize-reviewer-help">Enter the accountable reviewer or role in 1–256 characters. This identity is retained with the exact approval.</small><label className="confirmation-row"><input type="checkbox" checked={oversizeAcknowledged} onChange={(event) => setOversizeAcknowledged(event.target.checked)} /><span><strong>{OVERSIZE_SYNC_ACKNOWLEDGEMENT}</strong><small>This acknowledgement cannot be edited or replaced by free-form approval text.</small></span></label><button className="primary-button" type="button" disabled={!canApproveOversize} onClick={() => void approveOversizeAndSynchronize()}>{syncState === "approving" ? "Recording approval…" : uploadPreview.approval_status === "STALE" ? "Replace stale approval and synchronize" : "Approve exact plan and synchronize"}</button>{nonApprovalUploadBlockers.length > 0 && <small>Oversize approval cannot override asset authorization, destination scope, missing estimates, or another resource-policy blocker.</small>}</section>}
+          </div>}
+          {syncReport && <dl><div><dt>Claimed</dt><dd>{syncReport.receipt.claimed}</dd></div><div><dt>Synchronized</dt><dd>{syncReport.receipt.synced}</dd></div><div><dt>Retryable failures</dt><dd>{syncReport.receipt.failed}</dd></div><div><dt>Policy blocked</dt><dd>{syncReport.receipt.blocked}</dd></div></dl>}
+          <button ref={syncTriggerRef} className="secondary-button" type="button" disabled={!projectSession || syncBusy} onClick={() => void synchronizeEvidence()}><Icon name="cloud" /> {syncActionLabel}</button>
+          <small>The worker derives the model, input, current-raster, and telemetry inventory from authoritative local evidence. Approval binds the exact digest. Cloud failure cannot change direct results, QA, portfolio order, or export contents.</small>
+        </section>
         {exportMessage && <p className={`operation-message ${exportState === "error" ? "error" : "success"}`} role={exportState === "error" ? "alert" : "status"}>{exportMessage}</p>}
       </>
     );

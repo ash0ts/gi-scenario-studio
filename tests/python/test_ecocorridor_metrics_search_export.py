@@ -663,6 +663,32 @@ def test_export_eligibility_is_derived_from_complete_exact_evidence(tmp_path: Pa
         professional=True,
     )
     assert eligibility.eligible is True
+    target_metrics = {
+        RuleMetric.MIN_RESISTANCE_REDUCTION_PERCENT,
+        RuleMetric.MAX_RESISTANCE_INCREASE_PERCENT,
+    }
+    uncovered_target_bundle = professional_bundle.model_copy(
+        update={
+            "decision_rules": [
+                rule
+                for rule in professional_bundle.decision_rules
+                if rule.metric not in target_metrics
+            ]
+        }
+    )
+    uncovered_target = compute_export_eligibility(
+        bundle=uncovered_target_bundle,
+        current_authorization_bundle=uncovered_target_bundle,
+        summaries=[summary],
+        runs=evidence_runs,
+        deployment="WANDB_CLOUD",
+        sync_state="CONNECTED",
+        professional=True,
+    )
+    assert uncovered_target.eligible is False
+    assert any(
+        "TARGET_CONNECTIVITY_RULE_MISSING" in item for item in uncovered_target.fitness_blockers
+    )
     mismatched_engine = compute_export_eligibility(
         bundle=professional_bundle,
         current_authorization_bundle=professional_bundle,

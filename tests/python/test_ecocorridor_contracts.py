@@ -35,6 +35,7 @@ from ecocorridor_core.contracts import (
     ReferenceScenarioComparison,
     ResourceObservationBoundary,
     ResourceObservationStatus,
+    ResourcePolicy,
     SensitiveDataAuthorization,
 )
 from ecocorridor_core.ridgeway import build_ridgeway_fixture
@@ -72,6 +73,7 @@ EXPECTED_PUBLIC_CONTRACTS = (
     "SensitiveDataAuthorization",
     "EngineManifest",
     "ResourcePolicy",
+    "OversizeSyncApproval",
     "ConnectivityExportEligibility",
     "ModelRevision",
     "SemanticModelDiff",
@@ -154,6 +156,20 @@ def test_generated_schemas_preserve_hash_time_and_engine_fail_closed_rules() -> 
     assert 'z.literal("RASTER_PAIRWISE")' in typescript
     assert 'new RegExp("^[0-9a-f]{64}$")' in typescript
     assert "Expected timezone-aware ISO date-time" in typescript
+
+    resource_policy = json.loads(schemas["ResourcePolicy.schema.json"])
+    assert resource_policy["properties"]["require_explicit_oversize_approval"]["const"] is True
+    with pytest.raises(ValidationError):
+        ResourcePolicy.model_validate(
+            {
+                "max_input_bytes": 1,
+                "max_materialized_bytes": 1,
+                "max_current_raster_bytes": 1,
+                "max_direct_jobs": 1,
+                "max_wall_seconds_per_job": 1,
+                "require_explicit_oversize_approval": False,
+            }
+        )
 
 
 def test_unsupported_modes_and_conductance_fail_closed() -> None:

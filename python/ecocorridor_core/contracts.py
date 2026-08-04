@@ -1506,7 +1506,115 @@ class ResourcePolicy(ContractModel):
     max_current_raster_bytes: int = Field(gt=0)
     max_direct_jobs: int = Field(gt=0)
     max_wall_seconds_per_job: int = Field(gt=0)
-    require_explicit_oversize_approval: bool = True
+    # Professional cloud synchronization is deliberately fail-closed.  This is
+    # a contract invariant, not a user-configurable preference: callers cannot
+    # disable exact-plan consent by sending ``false`` at an RPC boundary.
+    require_explicit_oversize_approval: Literal[True] = True
+
+
+OVERSIZE_SYNC_ACKNOWLEDGEMENT = (
+    "I approve synchronization of the exact oversized evidence plan identified by this digest."
+)
+APPROVAL_AUDIT_RESERVATION_BYTES_PER_PROJECTION = 16 * 1024
+OPERATIONAL_METADATA_RESERVATION_BYTES_PER_PROJECTION = 64 * 1024
+
+
+class OversizeSyncApproval(ContractModel):
+    """Immutable, exact-plan consent for one oversized cloud projection.
+
+    The approval intentionally repeats the important identities behind the
+    plan digest.  This makes an audit understandable without trusting a free-
+    form W&B binding field, while the digest prevents reuse after any model,
+    policy, asset, estimate, or destination change.
+    """
+
+    approval_id: str
+    project_id: str
+    binding_id: str
+    destination: Literal["WANDB_CLOUD", "DEDICATED", "SELF_MANAGED"]
+    entity: str
+    project: str
+    external_project_id: str
+    model_revision_id: str
+    model_sha256: Sha256Digest
+    bundle_sha256: Sha256Digest
+    resource_policy_sha256: Sha256Digest
+    projection_sha256: Sha256Digest
+    current_raster_estimate_sha256: Sha256Digest
+    scope_evidence_sha256: Sha256Digest
+    telemetry_inventory_sha256: Sha256Digest
+    sync_plan_sha256: Sha256Digest
+    approved_input_bytes: int = Field(ge=0)
+    approved_current_raster_bytes: int = Field(ge=0)
+    approved_pending_current_raster_bytes: int = Field(ge=0)
+    approved_telemetry_projected_bytes: int = Field(ge=0)
+    approved_telemetry_artifact_count: int = Field(ge=0)
+    approved_approval_audit_reservation_bytes: int = Field(ge=0)
+    approved_approval_audit_reservation_count: int = Field(ge=0)
+    approved_operational_metadata_reservation_bytes: int = Field(ge=0)
+    approved_operational_metadata_reservation_count: int = Field(ge=0)
+    approved_total_bytes: int = Field(gt=0)
+    reviewed_by: str = Field(min_length=1, max_length=256)
+    approved_at: AwareDatetime
+    acknowledgement: Literal[OVERSIZE_SYNC_ACKNOWLEDGEMENT] = OVERSIZE_SYNC_ACKNOWLEDGEMENT
+
+    @model_validator(mode="after")
+    def validate_exact_plan_identity(self) -> OversizeSyncApproval:
+        expected_id = f"oversize_approval_{self.sync_plan_sha256}"
+        if self.approval_id != expected_id:
+            raise ValueError("oversize approval ID must derive from the exact sync-plan digest")
+        if any(
+            not value.strip()
+            for value in (
+                self.project_id,
+                self.binding_id,
+                self.entity,
+                self.project,
+                self.external_project_id,
+                self.model_revision_id,
+                self.reviewed_by,
+            )
+        ):
+            raise ValueError("oversize approval identities and reviewer are required")
+        # Retained current rasters are exact telemetry artifacts.  Only the
+        # still-pending estimate is added separately, avoiding double counting.
+        if self.approved_total_bytes != (
+            self.approved_input_bytes
+            + self.approved_telemetry_projected_bytes
+            + self.approved_pending_current_raster_bytes
+        ):
+            raise ValueError("oversize approval byte totals must match the approved plan")
+        for label, byte_size, count in (
+            (
+                "approval audit",
+                self.approved_approval_audit_reservation_bytes,
+                self.approved_approval_audit_reservation_count,
+            ),
+            (
+                "operational metadata",
+                self.approved_operational_metadata_reservation_bytes,
+                self.approved_operational_metadata_reservation_count,
+            ),
+        ):
+            if (byte_size == 0) != (count == 0):
+                raise ValueError(f"{label} reservation bytes and count must agree")
+        if self.approved_approval_audit_reservation_bytes != (
+            self.approved_approval_audit_reservation_count
+            * APPROVAL_AUDIT_RESERVATION_BYTES_PER_PROJECTION
+        ):
+            raise ValueError("approval audit reservation does not match its versioned bound")
+        if self.approved_operational_metadata_reservation_bytes != (
+            self.approved_operational_metadata_reservation_count
+            * OPERATIONAL_METADATA_RESERVATION_BYTES_PER_PROJECTION
+        ):
+            raise ValueError("operational metadata reservation does not match its versioned bound")
+        if (
+            self.approved_approval_audit_reservation_bytes
+            + self.approved_operational_metadata_reservation_bytes
+            > self.approved_telemetry_projected_bytes
+        ):
+            raise ValueError("telemetry reservations exceed approved telemetry bytes")
+        return self
 
 
 class ConnectivityExportEligibility(ContractModel):
@@ -1734,6 +1842,7 @@ PUBLIC_CONTRACTS: tuple[type[ContractModel], ...] = (
     SensitiveDataAuthorization,
     EngineManifest,
     ResourcePolicy,
+    OversizeSyncApproval,
     ConnectivityExportEligibility,
     ModelRevision,
     SemanticModelDiff,

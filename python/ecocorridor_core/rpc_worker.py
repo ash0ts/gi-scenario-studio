@@ -72,6 +72,7 @@ from .claim_safety import (
     assert_strict_ecological_claim,
 )
 from .contracts import (
+    OVERSIZE_SYNC_ACKNOWLEDGEMENT,
     AssetKind,
     CloudDisposition,
     ConnectivityAsset,
@@ -131,10 +132,12 @@ from .export import (
     create_evidence_export,
 )
 from .governance import (
+    CloudSyncPlan,
     CurrentRasterEstimate,
     CurrentRasterEstimateStatus,
     SnapshotAssetAuthorizationError,
     SyncDestination,
+    create_oversize_sync_approval,
     plan_cloud_sync,
     reconcile_snapshot_assets,
     scientific_asset_ids,
@@ -197,6 +200,7 @@ from .rpc_response_contracts import (
     JsonRpcErrorBody,
     JsonRpcErrorFrame,
     JsonRpcSuccessFrame,
+    ObservabilitySyncReceiptData,
     SystemPingResult,
     response_contract_for,
 )
@@ -204,6 +208,7 @@ from .rpc_response_contracts import (
     RpcPayloadResult as PayloadResult,
 )
 from .search import make_search_plan
+from .telemetry import build_telemetry_projection_inventory
 
 API_VERSION = "1.0"
 if APP_PROFILE.api_version != API_VERSION:  # pragma: no cover - packaging invariant
@@ -573,11 +578,16 @@ class ObservabilityPreflightParams(PlatformContractModel):
 
 class ObservabilityConnectParams(ProjectParams):
     preflight_id: str
-    oversize_approved_by: str | None = None
 
 
 class ObservabilityPreviewParams(ProjectParams):
-    oversize_approved_by: str | None = None
+    pass
+
+
+class ObservabilityApproveOversizeParams(ProjectParams):
+    sync_plan_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    reviewed_by: str = Field(min_length=1, max_length=256)
+    acknowledgement: Literal[OVERSIZE_SYNC_ACKNOWLEDGEMENT]
 
 
 class ObservabilitySyncParams(ProjectParams):
@@ -1113,6 +1123,11 @@ class RPCDispatcher:
         self._register("observability.get_status", ProjectParams, self._observability_status)
         self._register(
             "observability.preview_upload", ObservabilityPreviewParams, self._observability_preview
+        )
+        self._register(
+            "observability.approve_oversize",
+            ObservabilityApproveOversizeParams,
+            self._observability_approve_oversize,
         )
         self._register("observability.sync", ObservabilitySyncParams, self._observability_sync)
         self._register("observability.retry", ProjectParams, self._observability_retry)
@@ -5871,11 +5886,7 @@ class RPCDispatcher:
                     ),
                 }
             )
-        binding = store.observability() or {}
-        _, upload_plan = self._sync_plan(
-            store,
-            oversize_approved_by=binding.get("oversize_approved_by"),
-        )
+        _, upload_plan = self._sync_plan(store)
         resource_blockers = [
             f"Cloud evidence resource policy: {item}" for item in upload_plan["blockers"]
         ]
@@ -6465,12 +6476,26 @@ class RPCDispatcher:
     def _scope_from_binding(binding: dict[str, Any]) -> ProjectScopeEvidence:
         return ProjectScopeEvidence.model_validate(binding["scope_evidence"])
 
-    def _sync_plan(
+    @staticmethod
+    def _validated_observability_sync_receipt(value: Any) -> dict[str, Any]:
+        try:
+            return ObservabilitySyncReceiptData.model_validate(value).model_dump(mode="json")
+        except ValidationError as exc:
+            raise _fault(
+                "OBSERVABILITY_SYNC_RECEIPT_INVALID",
+                "The cloud adapter returned an invalid synchronization receipt.",
+                category=ErrorCategory.DATA_PROVIDER,
+                severity=Severity.BLOCKING,
+                remediation="Retry with the supported W&B synchronization adapter.",
+                technical_message=type(exc).__name__,
+            ) from exc
+
+    def _cloud_sync_plan(
         self,
         store: EcoProjectStore,
         *,
-        oversize_approved_by: str | None,
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        use_persisted_approval: bool = True,
+    ) -> tuple[dict[str, Any], CloudSyncPlan]:
         binding = store.observability()
         if binding is None:
             raise _fault(
@@ -6479,18 +6504,126 @@ class RPCDispatcher:
                 category=ErrorCategory.SECURITY,
             )
         current_raster_estimate = self._authoritative_current_raster_estimate(store)
-        plan = plan_cloud_sync(
-            store.effective_bundle(),
+        bundle = store.effective_bundle()
+        base_plan = plan_cloud_sync(
+            bundle,
             destination=SyncDestination(binding["deployment"]),
             scope_evidence=self._scope_from_binding(binding),
             current_raster_estimate=current_raster_estimate,
-            oversize_approved_by=oversize_approved_by,
+            binding_id=str(binding.get("binding_id", "")),
+        )
+        projection_plan = {
+            "destination": base_plan.destination.value,
+            "projections": [asdict(item) for item in base_plan.projections],
+            # Projection performs its own authorization and integrity checks.
+            # Oversize consent is deliberately not a prerequisite for sizing
+            # the exact bytes that the reviewer must see.
+            "allowed": True,
+            "blockers": [],
+        }
+        try:
+            telemetry_inventory = build_telemetry_projection_inventory(
+                store=store,
+                project_root=store.root,
+                sync_plan=projection_plan,
+                profile=APP_PROFILE,
+            )
+        except Exception as exc:
+            raise _fault(
+                "CLOUD_EVIDENCE_INVENTORY_INVALID",
+                "The complete W&B evidence inventory could not be verified.",
+                category=ErrorCategory.SECURITY,
+                severity=Severity.BLOCKING,
+                remediation="Repair the retained telemetry or artifact integrity finding.",
+                technical_message=type(exc).__name__,
+            ) from exc
+        plan = plan_cloud_sync(
+            bundle,
+            destination=SyncDestination(binding["deployment"]),
+            scope_evidence=self._scope_from_binding(binding),
+            current_raster_estimate=current_raster_estimate,
+            binding_id=str(binding.get("binding_id", "")),
+            telemetry_inventory=telemetry_inventory,
+        )
+        candidates = store.oversize_sync_approvals()
+        candidates.sort(key=lambda item: (item.approved_at, item.approval_id))
+        matched_persisted = False
+        if use_persisted_approval and plan.approval_status == "REQUIRED":
+            for approval in candidates:
+                candidate = plan_cloud_sync(
+                    bundle,
+                    destination=SyncDestination(binding["deployment"]),
+                    scope_evidence=self._scope_from_binding(binding),
+                    current_raster_estimate=current_raster_estimate,
+                    binding_id=str(binding.get("binding_id", "")),
+                    approval=approval,
+                    telemetry_inventory=telemetry_inventory,
+                )
+                if candidate.approval_status == "APPROVED":
+                    plan = candidate
+                    matched_persisted = True
+                    break
+        if plan.approval_status == "REQUIRED" and not matched_persisted:
+            # Reserve a versioned upper bound for the approval's own audit
+            # projection before the reviewer sees the plan. The actual event
+            # replaces this slot, so consent never silently authorizes bytes
+            # that were absent from the reviewed subject.
+            telemetry_inventory = build_telemetry_projection_inventory(
+                store=store,
+                project_root=store.root,
+                sync_plan=projection_plan,
+                profile=APP_PROFILE,
+                reserve_oversize_approval=True,
+            )
+            plan = plan_cloud_sync(
+                bundle,
+                destination=SyncDestination(binding["deployment"]),
+                scope_evidence=self._scope_from_binding(binding),
+                current_raster_estimate=current_raster_estimate,
+                binding_id=str(binding.get("binding_id", "")),
+                telemetry_inventory=telemetry_inventory,
+            )
+            if candidates:
+                # Preserve the distinction between first consent and consent
+                # invalidated by changed evidence. The new audit reservation is
+                # already in this subject, so STALE can be approved directly.
+                plan = plan_cloud_sync(
+                    bundle,
+                    destination=SyncDestination(binding["deployment"]),
+                    scope_evidence=self._scope_from_binding(binding),
+                    current_raster_estimate=current_raster_estimate,
+                    binding_id=str(binding.get("binding_id", "")),
+                    approval=candidates[-1],
+                    telemetry_inventory=telemetry_inventory,
+                )
+        return binding, plan
+
+    def _sync_plan(
+        self,
+        store: EcoProjectStore,
+        *,
+        use_persisted_approval: bool = True,
+        include_outbox_authority: bool = False,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        binding, plan = self._cloud_sync_plan(
+            store,
+            use_persisted_approval=use_persisted_approval,
         )
         data = {
             "destination": plan.destination.value,
+            "entity": plan.approval_subject.entity,
+            "project": plan.approval_subject.project,
+            "external_project_id": plan.approval_subject.external_project_id,
             "projections": [asdict(item) for item in plan.projections],
             "input_bytes": plan.input_bytes,
             "estimated_current_raster_bytes": plan.estimated_current_raster_bytes,
+            "telemetry_inventory_sha256": plan.telemetry_inventory_sha256,
+            "telemetry_projected_bytes": plan.telemetry_projected_bytes,
+            "telemetry_artifact_count": plan.telemetry_artifact_count,
+            "approval_audit_reservation_bytes": plan.approval_audit_reservation_bytes,
+            "approval_audit_reservation_count": plan.approval_audit_reservation_count,
+            "operational_metadata_reservation_bytes": (plan.operational_metadata_reservation_bytes),
+            "operational_metadata_reservation_count": (plan.operational_metadata_reservation_count),
             "estimated_total_bytes": plan.estimated_total_bytes,
             "current_raster_estimate_status": plan.current_raster_estimate_status.value,
             "actual_retained_current_raster_bytes": (plan.actual_retained_current_raster_bytes),
@@ -6498,10 +6631,24 @@ class RPCDispatcher:
             "expected_current_raster_count": plan.expected_current_raster_count,
             "retained_current_raster_count": plan.retained_current_raster_count,
             "current_raster_estimate_basis": plan.current_raster_estimate_basis,
+            "model_revision_id": plan.approval_subject.model_revision_id,
+            "model_sha256": plan.approval_subject.model_sha256,
+            "sync_plan_sha256": (
+                plan.approval_id.removeprefix("oversize_approval_")
+                if plan.approval_status == "APPROVED" and plan.approval_id is not None
+                else plan.approval_subject.sha256
+            ),
+            "approval_status": plan.approval_status,
+            "approval_id": plan.approval_id,
             "blockers": list(plan.blockers),
             "warnings": list(plan.warnings),
             "allowed": plan.allowed,
         }
+        if include_outbox_authority:
+            data["_telemetry_authority_sha256"] = plan.telemetry_authority_sha256
+            data["_authorized_outbox_envelopes"] = [
+                item.as_dict() for item in plan.authorized_envelopes
+            ]
         return binding, data
 
     def _authoritative_current_raster_estimate(
@@ -6843,11 +6990,14 @@ class RPCDispatcher:
                 for key, value in preflight.items()
                 if key not in {"preflight_id", "verified_at"}
             }
+            # Schema v1.0 development builds briefly persisted a free-form
+            # reviewer name on the binding. It is never authority and must not
+            # survive revalidation into exact-plan approval semantics.
+            binding.pop("oversize_approved_by", None)
             binding.update(
                 {
                     "scope_evidence": scope.model_dump(mode="json"),
                     "state": "CONNECTING",
-                    "oversize_approved_by": params.oversize_approved_by,
                 }
             )
             try:
@@ -6876,10 +7026,7 @@ class RPCDispatcher:
             )[0]
             store.set_observability(binding)
             try:
-                _, sync_plan = self._sync_plan(
-                    store,
-                    oversize_approved_by=params.oversize_approved_by,
-                )
+                _, sync_plan = self._sync_plan(store)
             except (KeyError, ValidationError, ValueError) as exc:
                 sync_plan = {
                     "allowed": False,
@@ -6896,6 +7043,9 @@ class RPCDispatcher:
                         "The planning model is incomplete, so no authoritative run plan and "
                         "grid estimate exists."
                     ),
+                    "sync_plan_sha256": None,
+                    "approval_status": "UNAVAILABLE",
+                    "approval_id": None,
                     "message": (
                         "The destination is bound, but synchronization remains blocked "
                         "until the planning model and asset authorizations are complete."
@@ -6970,6 +7120,7 @@ class RPCDispatcher:
                     severity=Severity.BLOCKING,
                 )
             binding.update(validation)
+            binding.pop("oversize_approved_by", None)
             binding["state"] = derive_cloud_sync_state(
                 binding_state="CONNECTED",
                 telemetry_rows=store.telemetry_rows(),
@@ -6984,6 +7135,7 @@ class RPCDispatcher:
         try:
             binding = store.observability()
             if binding is not None:
+                binding.pop("oversize_approved_by", None)
                 state, _ = derive_cloud_sync_state(
                     binding_state=str(binding.get("state", "")),
                     telemetry_rows=store.telemetry_rows(),
@@ -6999,13 +7151,112 @@ class RPCDispatcher:
     def _observability_preview(self, params: ObservabilityPreviewParams) -> PayloadResult:
         store = self._store(params.project_directory)
         try:
-            _, plan = self._sync_plan(
-                store,
-                oversize_approved_by=params.oversize_approved_by,
-            )
+            _, plan = self._sync_plan(store)
         finally:
             store.close()
         return self._result("observability.preview_upload", plan)
+
+    def _observability_approve_oversize(
+        self, params: ObservabilityApproveOversizeParams
+    ) -> PayloadResult:
+        store = self._store(params.project_directory)
+        try:
+            retained = store.oversize_sync_approval(params.sync_plan_sha256)
+            if retained is not None:
+                if (
+                    retained.reviewed_by != params.reviewed_by
+                    or retained.acknowledgement != params.acknowledgement
+                ):
+                    raise _fault(
+                        "OVERSIZE_SYNC_APPROVAL_CONFLICT",
+                        "This exact upload plan already has immutable approval evidence.",
+                        category=ErrorCategory.SECURITY,
+                        severity=Severity.BLOCKING,
+                        remediation="Use the original reviewer identity or preview a new plan.",
+                    )
+                _, approved_plan = self._sync_plan(store)
+                if (
+                    approved_plan["approval_status"] != "APPROVED"
+                    or approved_plan["approval_id"] != retained.approval_id
+                    or not approved_plan["allowed"]
+                ):
+                    raise _fault(
+                        "OVERSIZE_SYNC_APPROVAL_STALE",
+                        "The upload evidence changed after this immutable approval was recorded.",
+                        category=ErrorCategory.SECURITY,
+                        severity=Severity.BLOCKING,
+                        remediation="Preview and approve the new exact evidence plan.",
+                    )
+                approval = retained
+                return self._result(
+                    "observability.approve_oversize",
+                    {
+                        "approval": approval.model_dump(mode="json"),
+                        "upload_preview": approved_plan,
+                    },
+                )
+
+            _, plan = self._cloud_sync_plan(store, use_persisted_approval=False)
+            if plan.approval_subject.sha256 != params.sync_plan_sha256:
+                raise _fault(
+                    "OVERSIZE_SYNC_PLAN_CHANGED",
+                    "The upload estimate changed after it was reviewed.",
+                    category=ErrorCategory.SECURITY,
+                    severity=Severity.BLOCKING,
+                    remediation="Preview the current upload plan and review its exact byte estimate.",
+                )
+            if plan.approval_status not in {"REQUIRED", "STALE"}:
+                raise _fault(
+                    "OVERSIZE_SYNC_APPROVAL_NOT_REQUIRED",
+                    "The current upload plan does not require a new oversize approval.",
+                    category=ErrorCategory.USER_FIXABLE,
+                )
+            approval_blocker_codes = {
+                "OVERSIZE_SYNC_APPROVAL_REQUIRED",
+                "OVERSIZE_SYNC_APPROVAL_STALE",
+            }
+            non_approval_blockers = [
+                item
+                for item in plan.blockers
+                if item.partition(":")[0] not in approval_blocker_codes
+            ]
+            if non_approval_blockers:
+                raise _fault(
+                    "OVERSIZE_SYNC_PLAN_BLOCKED",
+                    "Other asset, scope, or resource-policy findings block this upload plan.",
+                    category=ErrorCategory.SECURITY,
+                    severity=Severity.BLOCKING,
+                    remediation="Resolve every non-approval blocker before approving oversize evidence.",
+                    technical_message="; ".join(non_approval_blockers),
+                )
+            approval = create_oversize_sync_approval(
+                plan,
+                reviewed_by=params.reviewed_by,
+                approved_at=datetime.now(UTC),
+            )
+            store.record_oversize_sync_approval(approval)
+            _, approved_plan = self._sync_plan(store)
+            if (
+                approved_plan["approval_status"] != "APPROVED"
+                or approved_plan["approval_id"] != approval.approval_id
+                or not approved_plan["allowed"]
+            ):
+                raise _fault(
+                    "OVERSIZE_SYNC_APPROVAL_STALE",
+                    "The upload plan changed while approval was being recorded.",
+                    category=ErrorCategory.SECURITY,
+                    severity=Severity.BLOCKING,
+                    remediation="Preview and approve the current upload plan again.",
+                )
+        finally:
+            store.close()
+        return self._result(
+            "observability.approve_oversize",
+            {
+                "approval": approval.model_dump(mode="json"),
+                "upload_preview": approved_plan,
+            },
+        )
 
     def _observability_sync(self, params: ObservabilitySyncParams) -> PayloadResult:
         if self.observability_adapter is None:
@@ -7015,6 +7266,14 @@ class RPCDispatcher:
                 category=ErrorCategory.DATA_PROVIDER,
                 retryable=True,
             )
+        if params.online:
+            # Online upload authority must be refreshed immediately before the
+            # bytes leave the workstation. A destination can change scope or
+            # immutable project identity after binding or oversize approval;
+            # that revalidation deliberately changes the plan digest and makes
+            # any prior approval stale. Offline queuing may rely on the last
+            # verified binding because it performs no provider or upload call.
+            self._observability_validate(params)
         store = self._store(params.project_directory)
         try:
             binding = store.observability()
@@ -7024,10 +7283,7 @@ class RPCDispatcher:
                     "No verified W&B project binding exists.",
                     category=ErrorCategory.SECURITY,
                 )
-            binding, plan = self._sync_plan(
-                store,
-                oversize_approved_by=binding.get("oversize_approved_by"),
-            )
+            binding, plan = self._sync_plan(store, include_outbox_authority=True)
             if not plan["allowed"]:
                 raise _fault(
                     "BLOCKED_PROJECT_POLICY",
@@ -7040,13 +7296,15 @@ class RPCDispatcher:
                 # binding and every asset authorization were verified earlier;
                 # leave the transactional outbox pending and make no provider or
                 # credential call.
-                receipt = self.observability_adapter.sync(
-                    project_directory=store.root,
-                    binding=binding,
-                    sync_plan=plan,
-                    online=False,
+                receipt = self._validated_observability_sync_receipt(
+                    self.observability_adapter.sync(
+                        project_directory=store.root,
+                        binding=binding,
+                        sync_plan=plan,
+                        online=False,
+                    )
                 )
-                reported_state = str(receipt.get("sync_state") or "")
+                reported_state = receipt["sync_state"]
                 binding["state"] = derive_cloud_sync_state(
                     binding_state=reported_state or "CONNECTED",
                     telemetry_rows=store.telemetry_rows(),
@@ -7058,7 +7316,7 @@ class RPCDispatcher:
             binding["state"] = "SYNCING"
             store.set_observability(binding)
             try:
-                receipt = self.observability_adapter.sync(
+                raw_receipt = self.observability_adapter.sync(
                     project_directory=store.root,
                     binding=binding,
                     sync_plan=plan,
@@ -7074,26 +7332,13 @@ class RPCDispatcher:
                     retryable=True,
                     technical_message=type(exc).__name__,
                 ) from exc
-            reported_state = receipt.get("sync_state")
-            if reported_state is None:
-                # Compatibility for injected test adapters. The production
-                # adapter reports its authoritative outbox disposition.
-                reported_state = "CONNECTED" if receipt.get("synced") is True else "FAILED_RETRYING"
-            if reported_state not in {
-                "CONNECTED",
-                "SYNCING",
-                "SYNC_QUEUED_OFFLINE",
-                "FAILED_RETRYING",
-                "BLOCKED",
-            }:
+            try:
+                receipt = self._validated_observability_sync_receipt(raw_receipt)
+            except RPCFault:
                 binding["state"] = "FAILED_RETRYING"
                 store.set_observability(binding)
-                raise _fault(
-                    "OBSERVABILITY_SYNC_STATE_INVALID",
-                    "The cloud adapter returned no authoritative synchronization disposition.",
-                    category=ErrorCategory.DATA_PROVIDER,
-                    retryable=True,
-                )
+                raise
+            reported_state = receipt["sync_state"]
             binding["state"] = derive_cloud_sync_state(
                 binding_state=str(reported_state),
                 telemetry_rows=store.telemetry_rows(),
@@ -7119,10 +7364,7 @@ class RPCDispatcher:
                     "No verified W&B project binding exists.",
                     category=ErrorCategory.SECURITY,
                 )
-            binding, plan = self._sync_plan(
-                store,
-                oversize_approved_by=binding.get("oversize_approved_by"),
-            )
+            binding, plan = self._sync_plan(store)
             if not plan["allowed"]:
                 raise _fault(
                     "BLOCKED_PROJECT_POLICY",

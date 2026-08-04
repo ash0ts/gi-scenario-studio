@@ -25,7 +25,7 @@ export function WorkspaceDraftProvider({ children }: { children: ReactNode }) {
   return <DraftContext.Provider value={{ entries: entries.current, refresh }}>{children}</DraftContext.Provider>;
 }
 
-export function useWorkspaceDraft<T>(key: string, createInitial: () => T): [T, Dispatch<SetStateAction<T>>, () => void, boolean, () => void] {
+export function useWorkspaceDraft<T>(key: string, createInitial: () => T): [T, Dispatch<SetStateAction<T>>, () => void, boolean, () => void, (expected: T, committed?: T) => boolean] {
   const store = useContext(DraftContext);
   if (!store) throw new Error("useWorkspaceDraft must be used inside WorkspaceDraftProvider");
   let entry = store.entries.get(key);
@@ -54,5 +54,23 @@ export function useWorkspaceDraft<T>(key: string, createInitial: () => T): [T, D
     current.dirty = false;
     store.refresh();
   };
-  return [entry.value as T, setValue, undo, entry.dirty, commit];
+  const commitIfUnchanged = (expected: T, committed: T = expected) => {
+    const current = store.entries.get(key);
+    if (!current) return false;
+    const currentJson = JSON.stringify(current.value);
+    const committedJson = JSON.stringify(committed);
+    if (currentJson !== JSON.stringify(expected)) {
+      current.initial = committed;
+      current.dirty = currentJson !== committedJson;
+      if (!current.dirty) current.value = committed;
+      store.refresh();
+      return !current.dirty;
+    }
+    current.initial = committed;
+    current.value = committed;
+    current.dirty = false;
+    store.refresh();
+    return true;
+  };
+  return [entry.value as T, setValue, undo, entry.dirty, commit, commitIfUnchanged];
 }

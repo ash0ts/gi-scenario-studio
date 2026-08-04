@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import sqlite3
 import types
@@ -18,6 +19,7 @@ from ecocorridor_core.observability import (
 )
 from ecocorridor_core.project_store import EcoProjectStore
 from ecocorridor_core.ridgeway import build_ridgeway_fixture
+from ecocorridor_core.telemetry import build_telemetry_projection_inventory
 from scenario_platform.cloud_sync import (
     ArtifactProjection,
     CloudArtifactReference,
@@ -78,6 +80,50 @@ def _target() -> WandbTarget:
         web_base_url="https://wandb.example",
         scope_evidence=evidence,
     )
+
+
+def _authorized_sync_plan(root: Path) -> dict[str, Any]:
+    store = EcoProjectStore(root)
+    try:
+        bundle = store.effective_bundle()
+        fixture = build_ridgeway_fixture()
+        for asset in bundle.assets:
+            target = root / asset.relative_path
+            if not target.exists():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(
+                    json.dumps(
+                        fixture.rasters[asset.asset_id].values,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                )
+        plan = {
+            "allowed": True,
+            "blockers": [],
+            "projections": [
+                {
+                    "source_asset_id": asset.asset_id,
+                    "uploaded_asset_id": asset.asset_id,
+                    "representation": "RAW",
+                    "bytes": asset.byte_size,
+                }
+                for asset in bundle.assets
+            ],
+        }
+        inventory = build_telemetry_projection_inventory(
+            store=store,
+            project_root=root,
+            sync_plan=plan,
+            profile=ECOCORRIDOR_APP_PROFILE,
+        )
+    finally:
+        store.close()
+    return {
+        **plan,
+        "_telemetry_authority_sha256": inventory.authority_sha256,
+        "_authorized_outbox_envelopes": [item.as_dict() for item in inventory.authorized_envelopes],
+    }
 
 
 def test_cloud_sync_state_is_derived_from_authoritative_outbox_rows() -> None:
@@ -1243,7 +1289,7 @@ def test_rpc_adapter_drains_authoritative_store_and_rechecks_scope(tmp_path: Pat
     result = adapter.sync(
         project_directory=root,
         binding=binding,
-        sync_plan={"allowed": True, "blockers": [], "projections": []},
+        sync_plan=_authorized_sync_plan(root),
     )
     assert result["synced"] == 1
     assert result["remaining"] == 0
@@ -1290,7 +1336,7 @@ def test_rpc_adapter_offline_sync_never_claims_or_requires_credentials(tmp_path:
     report = adapter.sync(
         project_directory=root,
         binding=binding,
-        sync_plan={"allowed": True, "blockers": [], "projections": []},
+        sync_plan=_authorized_sync_plan(root),
         online=False,
     )
 
@@ -1353,7 +1399,7 @@ def test_rpc_adapter_offline_state_clears_a_stale_badge_when_outbox_is_synced(
     ).sync(
         project_directory=root,
         binding=binding,
-        sync_plan={"allowed": True, "blockers": [], "projections": []},
+        sync_plan=_authorized_sync_plan(root),
         online=False,
     )
 

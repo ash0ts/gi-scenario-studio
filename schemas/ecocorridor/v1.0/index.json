@@ -121,6 +121,10 @@
       "name": "ResourcePolicy"
     },
     {
+      "file": "OversizeSyncApproval.schema.json",
+      "name": "OversizeSyncApproval"
+    },
+    {
       "file": "ConnectivityExportEligibility.schema.json",
       "name": "ConnectivityExportEligibility"
     },

@@ -3,6 +3,7 @@ import { evidenceFor, fixtureIsManifestVerified, parseRidgewayFixture } from "..
 import { PUBLIC_RIDGEWAY_EVIDENCE_MANIFEST_SHA256 } from "../data/trustedManifests";
 import type { AppMode, EntryPath, EvidenceSelection, GuidedDesktopSession, GuidedEventDraft, GuidedOpenData, ObservabilityPreflight, PlanningState, ProfessionalAnalysisWorkspace, ProfessionalAssetRecord, ProfessionalGridApproval, ProfessionalModelRecords, ProfessionalProjectCandidate, ProfessionalProjectSession, ReopenableProject, RidgewayFixture, RidgewayPortfolio, RpcPayload, WorkflowStepId } from "../types";
 import { createProjectWorkspace, hasNativeHost, hostErrorMessage, hostRequest, rpcData } from "../lib/host";
+import { ObservabilityConnectResponseSchema } from "../lib/observabilityContracts";
 import { AnalysisStatusResponseSchema, DecisionBoardResponseSchema, hydrateProfessionalProject } from "../lib/professional";
 import { stepsFor } from "../workflow";
 import { EvidencePanel } from "./EvidencePanel";
@@ -359,18 +360,32 @@ export function Workspace({ mode, path, localPreview, preflight, reopenedProject
     }
     setProjectSession({ ...candidate, bindingState: "CONNECTING", bindingMessage: "Binding the verified destination to this local project…" });
     try {
-      const result = await hostRequest<RpcPayload<{ binding: { state: "CONNECTED" | "BLOCKED_PROJECT_POLICY" }; upload_preview: { allowed: boolean; blockers?: string[]; message?: string } }>>("observability.connect", {
+      const result = await hostRequest<RpcPayload<unknown>>("observability.connect", {
         project_handle: candidate.projectHandle,
         preflight_id: preflight.preflightId,
       });
-      const data = rpcData(result);
-      const blocked = data.binding.state === "BLOCKED_PROJECT_POLICY" || !data.upload_preview.allowed;
+      const data = ObservabilityConnectResponseSchema.parse(rpcData(result));
+      if (data.binding.entity !== preflight.entity || data.binding.project !== preflight.project || data.binding.deployment !== preflight.deployment) {
+        throw new Error("The bound W&B destination differs from the exact destination preflight.");
+      }
+      const bindingState: ProfessionalProjectSession["bindingState"] = data.binding.state === "BLOCKED" || data.binding.state === "BLOCKED_PROJECT_POLICY"
+        ? "BLOCKED_PROJECT_POLICY"
+        : data.binding.state;
+      const blocked = bindingState === "BLOCKED_PROJECT_POLICY" || !data.upload_preview.allowed;
       setProjectSession({
         ...candidate,
-        bindingState: blocked ? "BLOCKED_PROJECT_POLICY" : "CONNECTED",
+        bindingState: blocked ? "BLOCKED_PROJECT_POLICY" : bindingState,
         bindingMessage: blocked
           ? data.upload_preview.message ?? `Destination bound; synchronization is blocked by: ${(data.upload_preview.blockers ?? ["incomplete asset policy"]).join(", ")}.`
-          : "Restricted destination bound. Local evidence remains authoritative.",
+          : bindingState === "SYNC_QUEUED_OFFLINE"
+            ? "Restricted destination bound. Committed evidence remains queued locally until synchronization resumes."
+            : bindingState === "SYNCING"
+              ? "Restricted destination bound. Committed evidence synchronization is active."
+              : bindingState === "FAILED_RETRYING"
+                ? "Restricted destination bound. A committed upload failed and remains queued for retry."
+                : bindingState === "AUTHENTICATION_REQUIRED"
+                  ? "Restricted destination identity is retained, but synchronization requires authentication."
+                  : "Restricted destination bound. Local evidence remains authoritative.",
       });
     } catch (reason) {
       setProjectSession({ ...candidate, bindingState: "FAILED", bindingMessage: hostErrorMessage(reason, "The local project was created, but its W&B destination could not be bound.") });

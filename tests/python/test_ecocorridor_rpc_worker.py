@@ -19,6 +19,7 @@ from ecocorridor_core.analysis_executor import (
 )
 from ecocorridor_core.claim_safety import assert_safe_rendered_ecological_copy
 from ecocorridor_core.contracts import (
+    OVERSIZE_SYNC_ACKNOWLEDGEMENT,
     AssetKind,
     ConnectivityAsset,
     ConnectivityRunPlan,
@@ -32,9 +33,14 @@ from ecocorridor_core.contracts import (
     RasterGrid,
     RasterValueKind,
 )
+from ecocorridor_core.governance import create_oversize_sync_approval
 from ecocorridor_core.interventions import canonicalize_portfolio
 from ecocorridor_core.metrics import build_pair_metric_claim
-from ecocorridor_core.observability import EcoRpcObservabilityAdapter
+from ecocorridor_core.observability import (
+    ECOCORRIDOR_APP_PROFILE,
+    EcoRpcObservabilityAdapter,
+    derive_cloud_sync_state,
+)
 from ecocorridor_core.project_store import EcoProjectStore
 from ecocorridor_core.ridgeway import build_public_ui_projection, build_ridgeway_fixture
 from ecocorridor_core.rpc_worker import (
@@ -43,7 +49,9 @@ from ecocorridor_core.rpc_worker import (
     RPCFault,
     run_jsonl_worker,
 )
+from ecocorridor_core.telemetry import EcoTelemetryProjector
 from scenario_platform.cloud_sync import InMemoryCredentialSession
+from scenario_platform.contracts import canonical_json
 from scenario_platform.observability import (
     ProjectScopeEvidence,
     ProjectScopeResolver,
@@ -147,6 +155,11 @@ def _create_resource_estimate_project(project: Path) -> tuple[ConnectivityRunPla
             mode="IMPORTED",
             skeleton={"test": "authoritative resource estimate"},
         )
+        payloads = _fixture_asset_payloads()
+        for asset in fixture.bundle.assets:
+            destination = project / asset.relative_path
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(payloads[asset.asset_id])
         store.store_bundle(fixture.bundle)
         store.create_analysis(plan, bundle=fixture.bundle)
     finally:
@@ -161,6 +174,32 @@ def _create_resource_estimate_project(project: Path) -> tuple[ConnectivityRunPla
         assert grid is not None
         expected += grid.width * grid.height * 32 + 4_096
     return plan, expected
+
+
+def _make_oversized_resource_project(project: Path) -> int:
+    _, expected_bytes = _create_resource_estimate_project(project)
+    store = EcoProjectStore(project)
+    try:
+        bundle = store.effective_bundle()
+        policy = bundle.resource_policy.model_copy(
+            update={"max_current_raster_bytes": max(1, expected_bytes - 1)}
+        )
+        store.publish_semantic_change(
+            [("resource_policy", "current", policy.model_dump(mode="json"))],
+            created_by="Resource reviewer",
+            reason="Exercise exact-plan oversize approval.",
+        )
+        _set_verified_binding(store)
+    finally:
+        store.close()
+    return expected_bytes
+
+
+def _test_wandb_credentials() -> InMemoryCredentialSession:
+    credentials = InMemoryCredentialSession(environment_key="WANDB_API_KEY")
+    with credentials.candidate("not-a-real-wandb-key-value"):
+        pass
+    return credentials
 
 
 def _response(dispatcher: RPCDispatcher, method: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -289,7 +328,7 @@ def test_candidate_only_export_selection_retains_baseline_qa_claims(
     monkeypatch.setattr(
         dispatcher,
         "_sync_plan",
-        lambda _store, *, oversize_approved_by: ({}, {"blockers": []}),
+        lambda _store: ({}, {"blockers": []}),
     )
     _, _, selected_summaries, selected_runs, selected_claims, _ = dispatcher._eligibility(
         AuthoritativeStore(),  # type: ignore[arg-type]
@@ -1742,16 +1781,38 @@ class _ObservabilityAdapter:
         self.sync_result: dict[str, Any] | None = None
 
     def validate(self, *, binding: dict[str, Any]) -> dict[str, Any]:
-        return {"external_project_id": binding["scope_evidence"]["external_project_id"]}
+        return {
+            "external_project_id": binding["scope_evidence"]["external_project_id"],
+            "profile_namespace": "ecocorridor",
+            "verified": True,
+        }
 
     def sync(self, **request: Any) -> dict[str, Any]:
         self.sync_requests.append(request)
         self.sync_plans.append(request["sync_plan"])
-        return (
-            dict(self.sync_result)
-            if self.sync_result is not None
-            else {"synced": request.get("online", True)}
+        if self.sync_result is not None:
+            return dict(self.sync_result)
+        store = EcoProjectStore(Path(request["project_directory"]))
+        try:
+            rows = store.telemetry_rows()
+        finally:
+            store.close()
+        sync_state, state_counts = derive_cloud_sync_state(
+            binding_state="CONNECTED",
+            telemetry_rows=rows,
         )
+        online = bool(request.get("online", True))
+        return {
+            "online": online,
+            "claimed": 0,
+            "synced": 0,
+            "failed": 0,
+            "blocked": 0,
+            "queued_offline": not online,
+            "remaining": sum(count for state, count in state_counts.items() if state != "SYNCED"),
+            "state_counts": state_counts,
+            "sync_state": sync_state,
+        }
 
     def open_link(self, **_: Any) -> dict[str, Any]:
         return {"url": "https://example.invalid"}
@@ -1904,7 +1965,8 @@ def test_observability_retry_keeps_verified_scope_and_resource_estimate(tmp_path
         blocked_store.close()
     retried = dispatcher.dispatch("observability.retry", {"project_directory": str(project)})
     assert retried["method"] == "observability.retry"
-    assert retried["data"]["receipt"] == {"synced": True}
+    assert retried["data"]["receipt"]["online"] is True
+    assert retried["data"]["receipt"]["remaining"] >= 1
     assert adapter.sync_plans[-1]["estimated_current_raster_bytes"] == expected_bytes
     assert adapter.sync_requests[-1]["online"] is True
     authoritative = EcoProjectStore(project)
@@ -1924,9 +1986,15 @@ def test_observability_retry_keeps_verified_scope_and_resource_estimate(tmp_path
     assert export_sync_state == "SYNC_QUEUED_OFFLINE"
 
     adapter.sync_result = {
+        "online": True,
+        "claimed": 1,
+        "synced": 0,
+        "failed": 0,
         "sync_state": "BLOCKED",
         "blocked": 1,
         "remaining": 1,
+        "queued_offline": False,
+        "state_counts": {"BLOCKED": 1},
     }
     blocked = dispatcher.dispatch("observability.retry", {"project_directory": str(project)})[
         "data"
@@ -1982,11 +2050,425 @@ def test_observability_sync_queues_offline_without_online_adapter_path(tmp_path:
     )["data"]
 
     assert queued["binding"]["state"] == "SYNC_QUEUED_OFFLINE"
-    assert queued["receipt"] == {"synced": False}
+    assert queued["receipt"]["online"] is False
+    assert queued["receipt"]["queued_offline"] is True
+    assert queued["receipt"]["remaining"] >= 1
     assert adapter.sync_requests[-1]["online"] is False
     assert (
         adapter.sync_requests[-1]["sync_plan"]["estimated_current_raster_bytes"] == expected_bytes
     )
+
+
+def test_oversize_approval_is_immutable_plan_bound_and_survives_restart(tmp_path: Path) -> None:
+    class StableScopeProvider:
+        def __init__(self, external_project_id: str = "external-project-1") -> None:
+            self.external_project_id = external_project_id
+            self.calls = 0
+
+        def resolve_exact_scope(self, **request: str) -> ProjectScopeEvidence:
+            self.calls += 1
+            return ProjectScopeEvidence(
+                entity=request["entity"],
+                project=request["project"],
+                external_project_id=self.external_project_id,
+                deployment=request["deployment"],
+                api_base_url=request["api_base_url"],
+                scope="RESTRICTED",
+                evidence_kind=ScopeEvidenceKind.ADMIN_API_DOCUMENTED_EXACT,
+                provider_field="admin.project.scope",
+            )
+
+    project = tmp_path / "oversize-plan-bound"
+    expected_bytes = _make_oversized_resource_project(project)
+    provider = StableScopeProvider()
+    adapter = _ObservabilityAdapter()
+    dispatcher = RPCDispatcher(
+        data_root=tmp_path,
+        observability_adapter=adapter,
+        scope_resolver=ProjectScopeResolver(provider),
+        observability_credentials=_test_wandb_credentials(),
+    )
+
+    preview = dispatcher.dispatch(
+        "observability.preview_upload", {"project_directory": str(project)}
+    )["data"]
+    assert preview["estimated_current_raster_bytes"] == expected_bytes
+    assert preview["approval_status"] == "REQUIRED"
+    assert preview["allowed"] is False
+
+    approved = dispatcher.dispatch(
+        "observability.approve_oversize",
+        {
+            "project_directory": str(project),
+            "sync_plan_sha256": preview["sync_plan_sha256"],
+            "reviewed_by": "Dr. Ecologist",
+            "acknowledgement": OVERSIZE_SYNC_ACKNOWLEDGEMENT,
+        },
+    )["data"]
+    assert approved["upload_preview"]["allowed"] is True
+    assert approved["upload_preview"]["approval_status"] == "APPROVED"
+    assert approved["approval"]["sync_plan_sha256"] == preview["sync_plan_sha256"]
+    invariant_fields = {
+        "sync_plan_sha256",
+        "model_revision_id",
+        "model_sha256",
+        "entity",
+        "project",
+        "external_project_id",
+        "input_bytes",
+        "estimated_current_raster_bytes",
+        "telemetry_inventory_sha256",
+        "telemetry_projected_bytes",
+        "telemetry_artifact_count",
+        "approval_audit_reservation_bytes",
+        "approval_audit_reservation_count",
+        "operational_metadata_reservation_bytes",
+        "operational_metadata_reservation_count",
+        "estimated_total_bytes",
+    }
+    assert preview["telemetry_projected_bytes"] >= 16 * 1024
+    assert {key: preview[key] for key in invariant_fields} == {
+        key: approved["upload_preview"][key] for key in invariant_fields
+    }
+
+    # A lost response can be retried without changing reviewer/time or adding
+    # another audit event. A different payload cannot mutate that evidence.
+    retry = dispatcher.dispatch(
+        "observability.approve_oversize",
+        {
+            "project_directory": str(project),
+            "sync_plan_sha256": preview["sync_plan_sha256"],
+            "reviewed_by": "Dr. Ecologist",
+            "acknowledgement": OVERSIZE_SYNC_ACKNOWLEDGEMENT,
+        },
+    )["data"]
+    assert retry["approval"] == approved["approval"]
+    assert {key: retry["upload_preview"][key] for key in invariant_fields} == {
+        key: preview[key] for key in invariant_fields
+    }
+    with pytest.raises(RPCFault) as conflicting_retry:
+        dispatcher.dispatch(
+            "observability.approve_oversize",
+            {
+                "project_directory": str(project),
+                "sync_plan_sha256": preview["sync_plan_sha256"],
+                "reviewed_by": "Another reviewer",
+                "acknowledgement": OVERSIZE_SYNC_ACKNOWLEDGEMENT,
+            },
+        )
+    assert conflicting_retry.value.error.code == "OVERSIZE_SYNC_APPROVAL_CONFLICT"
+
+    store = EcoProjectStore(project)
+    try:
+        retained = store.oversize_sync_approval(preview["sync_plan_sha256"])
+        assert retained is not None
+        assert retained.reviewed_by == "Dr. Ecologist"
+        approval_events = store.telemetry_rows(event_type="oversize_sync_approval")
+        assert len(approval_events) == 1
+        assert approval_events[0]["subject_id"] == retained.approval_id
+        assert approval_events[0]["payload"]["reviewed_by"] == "Dr. Ecologist"
+        assert "acknowledgement" not in approval_events[0]["payload"]
+        audit_projection = EcoTelemetryProjector(
+            store=store,
+            project_root=project,
+            sync_plan=approved["upload_preview"],
+            profile=ECOCORRIDOR_APP_PROFILE,
+        )(approval_events[0], approval_events[0]["payload"])
+        assert audit_projection.event_type == "oversize_sync_approval"
+        assert {table.logical_name for table in audit_projection.tables} >= {
+            "oversize_sync_approvals"
+        }
+        assert (
+            len((canonical_json(audit_projection.model_dump(mode="json")) + "\n").encode())
+            <= 16 * 1024
+        )
+        with pytest.raises(ValueError, match="immutable oversize_sync_approval"):
+            store.record_oversize_sync_approval(
+                retained.model_copy(update={"reviewed_by": "Another reviewer"})
+            )
+    finally:
+        store.close()
+
+    # A new worker reads the immutable approval and stable exact-scope evidence.
+    restarted = RPCDispatcher(
+        data_root=tmp_path,
+        observability_adapter=adapter,
+        scope_resolver=ProjectScopeResolver(provider),
+        observability_credentials=_test_wandb_credentials(),
+    )
+    restarted.dispatch("observability.validate_binding", {"project_directory": str(project)})
+    after_restart = restarted.dispatch(
+        "observability.preview_upload", {"project_directory": str(project)}
+    )["data"]
+    assert after_restart["sync_plan_sha256"] == preview["sync_plan_sha256"]
+    assert after_restart["approval_status"] == "APPROVED"
+    synced = restarted.dispatch(
+        "observability.sync", {"project_directory": str(project), "online": True}
+    )["data"]
+    assert synced["receipt"]["online"] is True
+    assert synced["receipt"]["remaining"] >= 1
+    assert provider.calls >= 1
+
+
+def test_oversize_approval_record_and_outbox_are_producer_atomic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "oversize-atomic"
+    _make_oversized_resource_project(project)
+    dispatcher = RPCDispatcher(data_root=tmp_path, observability_adapter=_ObservabilityAdapter())
+    store = EcoProjectStore(project)
+    try:
+        _, plan = dispatcher._cloud_sync_plan(store, use_persisted_approval=False)
+        approval = create_oversize_sync_approval(
+            plan,
+            reviewed_by="Atomic reviewer",
+            approved_at=datetime.now(UTC),
+        )
+
+        def fail_outbox(*_args: Any, **_kwargs: Any) -> str:
+            raise RuntimeError("simulated outbox failure")
+
+        monkeypatch.setattr(EcoProjectStore, "_enqueue_outbox", staticmethod(fail_outbox))
+        with pytest.raises(RuntimeError, match="simulated outbox failure"):
+            store.record_oversize_sync_approval(approval)
+        assert store.oversize_sync_approval(plan.approval_subject.sha256) is None
+        assert store.telemetry_rows(event_type="oversize_sync_approval") == []
+    finally:
+        store.close()
+
+
+def test_operational_retry_metadata_stays_inside_approved_reservation(tmp_path: Path) -> None:
+    project = tmp_path / "oversize-operational-reserve"
+    _make_oversized_resource_project(project)
+    dispatcher = RPCDispatcher(data_root=tmp_path, observability_adapter=_ObservabilityAdapter())
+    reviewed = dispatcher.dispatch(
+        "observability.preview_upload", {"project_directory": str(project)}
+    )["data"]
+    dispatcher.dispatch(
+        "observability.approve_oversize",
+        {
+            "project_directory": str(project),
+            "sync_plan_sha256": reviewed["sync_plan_sha256"],
+            "reviewed_by": "Retry reviewer",
+            "acknowledgement": OVERSIZE_SYNC_ACKNOWLEDGEMENT,
+        },
+    )
+
+    store = EcoProjectStore(project)
+    try:
+        bundle_row = store._connection.execute(
+            "SELECT outbox_id FROM eco_telemetry_outbox "
+            "WHERE event_type='bundle_import' ORDER BY outbox_sequence LIMIT 1"
+        ).fetchone()
+        assert bundle_row is not None
+        store._connection.execute(
+            "UPDATE eco_telemetry_outbox SET state='FAILED',attempt_count=1,"
+            "last_error_code='PROVIDER_RETRY',updated_at=? WHERE outbox_id=?",
+            (datetime.now(UTC).isoformat(), str(bundle_row["outbox_id"])),
+        )
+    finally:
+        store.close()
+    failed_preview = dispatcher.dispatch(
+        "observability.preview_upload", {"project_directory": str(project)}
+    )["data"]
+    assert failed_preview["approval_status"] == "APPROVED"
+    assert failed_preview["sync_plan_sha256"] == reviewed["sync_plan_sha256"]
+    assert (
+        failed_preview["operational_metadata_reservation_bytes"]
+        == reviewed["operational_metadata_reservation_bytes"]
+    )
+
+    store = EcoProjectStore(project)
+    try:
+        store._connection.execute(
+            "UPDATE eco_telemetry_outbox SET state='SYNCED',last_error_code=NULL,"
+            "external_reference_json=?,updated_at=? WHERE outbox_id=?",
+            (
+                canonical_json(
+                    {
+                        "run_id": "provider-run",
+                        "envelope_id": "provider-envelope",
+                        "artifacts": [
+                            {"provider_artifact_ref": "entity/project/connectivity-project:v1"}
+                        ],
+                    }
+                ),
+                datetime.now(UTC).isoformat(),
+                str(bundle_row["outbox_id"]),
+            ),
+        )
+    finally:
+        store.close()
+    synced_preview = dispatcher.dispatch(
+        "observability.preview_upload", {"project_directory": str(project)}
+    )["data"]
+    assert synced_preview["approval_status"] == "APPROVED"
+    assert synced_preview["sync_plan_sha256"] == reviewed["sync_plan_sha256"]
+    assert synced_preview["telemetry_inventory_sha256"] == reviewed["telemetry_inventory_sha256"]
+
+
+def test_stale_approval_cannot_hide_a_nonapproval_resource_blocker(tmp_path: Path) -> None:
+    project = tmp_path / "oversize-stale-resource-blocker"
+    _make_oversized_resource_project(project)
+    dispatcher = RPCDispatcher(data_root=tmp_path, observability_adapter=_ObservabilityAdapter())
+    reviewed = dispatcher.dispatch(
+        "observability.preview_upload", {"project_directory": str(project)}
+    )["data"]
+    dispatcher.dispatch(
+        "observability.approve_oversize",
+        {
+            "project_directory": str(project),
+            "sync_plan_sha256": reviewed["sync_plan_sha256"],
+            "reviewed_by": "Resource reviewer",
+            "acknowledgement": OVERSIZE_SYNC_ACKNOWLEDGEMENT,
+        },
+    )
+    store = EcoProjectStore(project)
+    try:
+        policy = store.effective_bundle().resource_policy.model_copy(update={"max_input_bytes": 1})
+        store.publish_semantic_change(
+            [("resource_policy", "current", policy.model_dump(mode="json"))],
+            created_by="Resource reviewer",
+            reason="Exercise a non-approval resource blocker.",
+        )
+    finally:
+        store.close()
+
+    stale = dispatcher.dispatch(
+        "observability.preview_upload", {"project_directory": str(project)}
+    )["data"]
+    assert stale["approval_status"] == "STALE"
+    assert any("policy permits" in blocker for blocker in stale["blockers"])
+    with pytest.raises(RPCFault) as blocked:
+        dispatcher.dispatch(
+            "observability.approve_oversize",
+            {
+                "project_directory": str(project),
+                "sync_plan_sha256": stale["sync_plan_sha256"],
+                "reviewed_by": "Resource reviewer",
+                "acknowledgement": OVERSIZE_SYNC_ACKNOWLEDGEMENT,
+            },
+        )
+    assert blocked.value.error.code == "OVERSIZE_SYNC_PLAN_BLOCKED"
+
+
+def test_oversize_approval_fails_closed_after_policy_or_scope_identity_change(
+    tmp_path: Path,
+) -> None:
+    class ScopeProvider:
+        def __init__(self) -> None:
+            self.external_project_id = "external-project-1"
+
+        def resolve_exact_scope(self, **request: str) -> ProjectScopeEvidence:
+            return ProjectScopeEvidence(
+                entity=request["entity"],
+                project=request["project"],
+                external_project_id=self.external_project_id,
+                deployment=request["deployment"],
+                api_base_url=request["api_base_url"],
+                scope="RESTRICTED",
+                evidence_kind=ScopeEvidenceKind.ADMIN_API_DOCUMENTED_EXACT,
+                provider_field="admin.project.scope",
+            )
+
+    project = tmp_path / "oversize-stale"
+    expected_bytes = _make_oversized_resource_project(project)
+    provider = ScopeProvider()
+    adapter = _ObservabilityAdapter()
+    dispatcher = RPCDispatcher(
+        data_root=tmp_path,
+        observability_adapter=adapter,
+        scope_resolver=ProjectScopeResolver(provider),
+        observability_credentials=_test_wandb_credentials(),
+    )
+    preview = dispatcher.dispatch(
+        "observability.preview_upload", {"project_directory": str(project)}
+    )["data"]
+    dispatcher.dispatch(
+        "observability.approve_oversize",
+        {
+            "project_directory": str(project),
+            "sync_plan_sha256": preview["sync_plan_sha256"],
+            "reviewed_by": "Dr. Ecologist",
+            "acknowledgement": OVERSIZE_SYNC_ACKNOWLEDGEMENT,
+        },
+    )
+
+    store = EcoProjectStore(project)
+    try:
+        bundle = store.effective_bundle()
+        changed_policy = bundle.resource_policy.model_copy(
+            update={"max_current_raster_bytes": max(1, expected_bytes - 2)}
+        )
+        store.publish_semantic_change(
+            [("resource_policy", "current", changed_policy.model_dump(mode="json"))],
+            created_by="Resource reviewer",
+            reason="Change the reviewed resource ceiling.",
+        )
+    finally:
+        store.close()
+
+    changed = dispatcher.dispatch(
+        "observability.preview_upload", {"project_directory": str(project)}
+    )["data"]
+    assert changed["sync_plan_sha256"] != preview["sync_plan_sha256"]
+    assert changed["approval_status"] == "STALE"
+    assert changed["telemetry_artifact_count"] >= preview["telemetry_artifact_count"] + 2
+    assert changed["telemetry_projected_bytes"] > preview["telemetry_projected_bytes"]
+    with pytest.raises(RPCFault) as stale_plan:
+        dispatcher.dispatch(
+            "observability.approve_oversize",
+            {
+                "project_directory": str(project),
+                "sync_plan_sha256": preview["sync_plan_sha256"],
+                "reviewed_by": "Dr. Ecologist",
+                "acknowledgement": OVERSIZE_SYNC_ACKNOWLEDGEMENT,
+            },
+        )
+    assert stale_plan.value.error.code == "OVERSIZE_SYNC_APPROVAL_STALE"
+    with pytest.raises(RPCFault) as blocked_sync:
+        dispatcher.dispatch(
+            "observability.sync", {"project_directory": str(project), "online": False}
+        )
+    assert blocked_sync.value.error.code == "BLOCKED_PROJECT_POLICY"
+
+    # Reapprove the new policy, then prove an authoritative destination identity
+    # change produces a different digest and cannot reuse either approval.
+    reapproved = dispatcher.dispatch(
+        "observability.approve_oversize",
+        {
+            "project_directory": str(project),
+            "sync_plan_sha256": changed["sync_plan_sha256"],
+            "reviewed_by": "Dr. Ecologist",
+            "acknowledgement": OVERSIZE_SYNC_ACKNOWLEDGEMENT,
+        },
+    )["data"]
+    assert reapproved["upload_preview"]["sync_plan_sha256"] == changed["sync_plan_sha256"]
+    assert (
+        reapproved["upload_preview"]["telemetry_inventory_sha256"]
+        == changed["telemetry_inventory_sha256"]
+    )
+    store = EcoProjectStore(project)
+    try:
+        assert len(store.telemetry_rows(event_type="oversize_sync_approval")) == 2
+    finally:
+        store.close()
+    provider.external_project_id = "external-project-2"
+    with pytest.raises(RPCFault) as online_scope_blocked:
+        dispatcher.dispatch(
+            "observability.sync", {"project_directory": str(project), "online": True}
+        )
+    assert online_scope_blocked.value.error.code == "BLOCKED_PROJECT_POLICY"
+    changed_scope = dispatcher.dispatch(
+        "observability.preview_upload", {"project_directory": str(project)}
+    )["data"]
+    assert changed_scope["sync_plan_sha256"] != changed["sync_plan_sha256"]
+    assert changed_scope["approval_status"] == "STALE"
+    with pytest.raises(RPCFault) as scope_blocked_sync:
+        dispatcher.dispatch(
+            "observability.sync", {"project_directory": str(project), "online": False}
+        )
+    assert scope_blocked_sync.value.error.code == "BLOCKED_PROJECT_POLICY"
 
 
 def test_upload_preview_never_turns_an_unknown_plan_into_renderer_zero(tmp_path: Path) -> None:
@@ -2000,6 +2482,11 @@ def test_upload_preview_never_turns_an_unknown_plan_into_renderer_zero(tmp_path:
             mode="IMPORTED",
             skeleton={"test": "unknown current-raster plan"},
         )
+        payloads = _fixture_asset_payloads()
+        for asset in fixture.bundle.assets:
+            destination = project / asset.relative_path
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(payloads[asset.asset_id])
         store.store_bundle(fixture.bundle)
         _set_verified_binding(store)
     finally:

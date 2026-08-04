@@ -50,7 +50,10 @@ from .metrics import (
     validate_portfolio_disposition_support,
     verify_direct_claim_against_retained_evidence,
 )
-from .professional_validation import reference_scientific_fingerprints
+from .professional_validation import (
+    reference_scientific_fingerprints,
+    target_connectivity_rule_coverage_findings,
+)
 from .reference_matrix_parser import (
     REFERENCE_MATRIX_PARSER_SHA256,
     parse_reference_matrix_bytes,
@@ -644,6 +647,12 @@ def compute_export_eligibility(
         for item in bundle.fitness.dimensions
         if item.status == "BLOCKING"
     ]
+    if professional:
+        fitness_blockers.extend(
+            (f"Decision rules: {item.code} [{item.object_reference}]: {item.remediation}")
+            for item in target_connectivity_rule_coverage_findings(bundle)
+            if item.severity == "BLOCKING"
+        )
     authorization_blockers = (
         _deployment_authorized(bundle, current_authorization_bundle, deployment)
         if professional

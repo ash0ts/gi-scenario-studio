@@ -520,6 +520,7 @@ class DurableOutboxConsumer:
         project_root: str | Path,
         projector: TelemetryProjector | None = None,
         batch_policy: OutboxBatchPolicy | None = None,
+        authorized_envelopes: Sequence[dict[str, Any]] | None = None,
     ) -> None:
         self.repository = repository
         self.uploader = uploader
@@ -529,6 +530,23 @@ class DurableOutboxConsumer:
         self.directories = ProjectCloudDirectories.create(self.project_root, profile)
         self.projector = projector
         self.batch_policy = batch_policy
+        self._outbox_authority: dict[str, dict[str, Any]] | None = None
+        if authorized_envelopes is not None:
+            authority: dict[str, dict[str, Any]] = {}
+            for item in authorized_envelopes:
+                if not isinstance(item, dict):
+                    raise TypeError("outbox authorization members must be mappings")
+                outbox_id = item.get("outbox_id")
+                if not isinstance(outbox_id, str) or not outbox_id or outbox_id in authority:
+                    raise ValueError("outbox authorization identities must be unique and non-empty")
+                authority[outbox_id] = dict(item)
+            if not callable(getattr(repository, "claim_authorized_outbox", None)):
+                raise TypeError("authorized outbox repository is missing claim_authorized_outbox()")
+            if not callable(getattr(projector, "validate_authorized_projection", None)):
+                raise TypeError(
+                    "authorized telemetry projector is missing validate_authorized_projection()"
+                )
+            self._outbox_authority = authority
         if batch_policy is not None:
             for method_name in (
                 "mark_outbox_batch_synced",
@@ -555,7 +573,13 @@ class DurableOutboxConsumer:
         claim_limit = (
             limit if self.batch_policy is None else min(limit * self.batch_policy.max_rows, 4096)
         )
-        rows = self.repository.claim_outbox(limit=claim_limit)
+        if self._outbox_authority is None:
+            rows = self.repository.claim_outbox(limit=claim_limit)
+        else:
+            rows = self.repository.claim_authorized_outbox(  # type: ignore[attr-defined]
+                authorized_outbox_ids=tuple(self._outbox_authority),
+                limit=claim_limit,
+            )
         synced = failed = blocked = 0
         halted_streams: set[str] = set()
         index = 0
@@ -693,6 +717,22 @@ class DurableOutboxConsumer:
             cursor += 1
 
         projection = _merge_telemetry_projections(selected_rows, projections)
+        upload_validator = getattr(self.projector, "validate_upload_projection", None)
+        if callable(upload_validator):
+            stable_sizer = getattr(self.projector, "stable_projection_bytes", None)
+            if not callable(stable_sizer):
+                raise CloudIntegrityError("CLOUD_UPLOAD_BOUND_SIZER_REQUIRED")
+            member_stable_sizes = [stable_sizer(item) for item in projections]
+            if any(
+                isinstance(value, bool) or not isinstance(value, int) or value < 0
+                for value in member_stable_sizes
+            ):
+                raise CloudIntegrityError("CLOUD_UPLOAD_BOUND_SIZE_INVALID")
+            upload_validator(
+                projection,
+                envelope_member_count=len(selected_rows),
+                member_stable_bytes=sum(member_stable_sizes),
+            )
         batch_identity = {
             "schema_version": "scenario-platform-outbox-batch/v1.0",
             "profile_namespace": self.profile.namespace,
@@ -774,6 +814,15 @@ class DurableOutboxConsumer:
                 raise CloudPolicyError("CLOUD_ARTIFACT_TYPE_UNSUPPORTED")
             if artifact.registry_alias is not None:
                 self.profile.registry_name(artifact.registry_alias)
+        if self._outbox_authority is not None:
+            outbox_id = str(row.get("outbox_id", ""))
+            authorization = self._outbox_authority.get(outbox_id)
+            if authorization is None:
+                raise CloudPolicyError("CLOUD_OUTBOX_MEMBER_NOT_AUTHORIZED")
+            validator = getattr(self.projector, "validate_authorized_projection", None)
+            if not callable(validator):
+                raise CloudIntegrityError("CLOUD_OUTBOX_AUTHORITY_VALIDATOR_MISSING")
+            validator(row, projection, authorization)
         return projection
 
 

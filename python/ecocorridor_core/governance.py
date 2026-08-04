@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import hashlib
+from dataclasses import asdict, dataclass
+from datetime import datetime
 from enum import Enum
 
 from scenario_platform.observability import ProjectScope, ProjectScopeEvidence
 
 from .contracts import (
+    APPROVAL_AUDIT_RESERVATION_BYTES_PER_PROJECTION,
+    OPERATIONAL_METADATA_RESERVATION_BYTES_PER_PROJECTION,
     CloudDisposition,
     ConnectivityAsset,
     ConnectivityProjectBundle,
+    OversizeSyncApproval,
     SensitivityClass,
+    canonical_sha256,
 )
 
 
@@ -82,11 +88,217 @@ class AssetProjection:
 
 
 @dataclass(frozen=True, slots=True)
+class TelemetryEnvelopeAuthorization:
+    """Exact committed outbox member authorized by one inventory snapshot."""
+
+    outbox_id: str
+    project_id: str
+    event_type: str
+    subject_id: str
+    stream_id: str
+    stream_sequence: int
+    payload_sha256: str
+    stable_projection_sha256: str
+    stable_projection_bytes: int
+    artifacts_sha256: str
+    artifact_count: int
+
+    def __post_init__(self) -> None:
+        identities = (
+            self.outbox_id,
+            self.project_id,
+            self.event_type,
+            self.subject_id,
+            self.stream_id,
+        )
+        if any(not value for value in identities) or self.stream_sequence < 1:
+            raise ValueError("telemetry authorization requires exact outbox identity")
+        for label, digest in (
+            ("payload", self.payload_sha256),
+            ("stable projection", self.stable_projection_sha256),
+            ("artifact set", self.artifacts_sha256),
+        ):
+            if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+                raise ValueError(f"telemetry authorization {label} requires a SHA-256 digest")
+        if self.stable_projection_bytes < 0 or self.artifact_count < 0:
+            raise ValueError("telemetry authorization counts cannot be negative")
+
+    def as_dict(self) -> dict[str, str | int]:
+        return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
+class TelemetryProjectionInventory:
+    """Integrity-checked cloud evidence projected from committed outbox rows.
+
+    ``projected_bytes`` excludes exact input assets already counted by
+    ``CloudSyncPlan.input_bytes``.  It includes canonical telemetry envelopes
+    and every other unique artifact by content hash and byte size.
+    """
+
+    sha256: str
+    projected_bytes: int
+    artifact_count: int
+    approval_audit_reservation_bytes: int = 0
+    approval_audit_reservation_count: int = 0
+    operational_metadata_reservation_bytes: int = 0
+    operational_metadata_reservation_count: int = 0
+    authority_sha256: str = canonical_sha256([])
+    authorized_envelopes: tuple[TelemetryEnvelopeAuthorization, ...] = ()
+
+    def __post_init__(self) -> None:
+        if len(self.sha256) != 64 or any(c not in "0123456789abcdef" for c in self.sha256):
+            raise ValueError("telemetry inventory requires a lowercase SHA-256 digest")
+        numeric = (
+            self.projected_bytes,
+            self.artifact_count,
+            self.approval_audit_reservation_bytes,
+            self.approval_audit_reservation_count,
+            self.operational_metadata_reservation_bytes,
+            self.operational_metadata_reservation_count,
+        )
+        if any(value < 0 for value in numeric):
+            raise ValueError("telemetry inventory values cannot be negative")
+        if (self.approval_audit_reservation_bytes == 0) != (
+            self.approval_audit_reservation_count == 0
+        ):
+            raise ValueError("approval-audit reservation bytes and count must agree")
+        if (self.operational_metadata_reservation_bytes == 0) != (
+            self.operational_metadata_reservation_count == 0
+        ):
+            raise ValueError("operational-metadata reservation bytes and count must agree")
+        if self.approval_audit_reservation_bytes != (
+            self.approval_audit_reservation_count * APPROVAL_AUDIT_RESERVATION_BYTES_PER_PROJECTION
+        ):
+            raise ValueError("approval-audit reservation does not match its versioned bound")
+        if self.operational_metadata_reservation_bytes != (
+            self.operational_metadata_reservation_count
+            * OPERATIONAL_METADATA_RESERVATION_BYTES_PER_PROJECTION
+        ):
+            raise ValueError("operational-metadata reservation does not match its versioned bound")
+        if (
+            self.approval_audit_reservation_bytes + self.operational_metadata_reservation_bytes
+            > self.projected_bytes
+        ):
+            raise ValueError("telemetry reservations exceed projected telemetry bytes")
+        authorization_payload = [item.as_dict() for item in self.authorized_envelopes]
+        if self.authority_sha256 != canonical_sha256(authorization_payload):
+            raise ValueError("telemetry authorization digest does not match its exact members")
+        outbox_ids = [item.outbox_id for item in self.authorized_envelopes]
+        if len(set(outbox_ids)) != len(outbox_ids):
+            raise ValueError("telemetry authorization contains duplicate outbox identities")
+
+
+EMPTY_TELEMETRY_INVENTORY = TelemetryProjectionInventory(
+    sha256=canonical_sha256([]),
+    projected_bytes=0,
+    artifact_count=0,
+)
+
+
+def oversize_sync_approval_event_payload(approval: OversizeSyncApproval) -> dict[str, str]:
+    """Return the stable, non-secret approval event projected into W&B lineage."""
+
+    return {
+        "approval_id": approval.approval_id,
+        "project_id": approval.project_id,
+        "binding_id_sha256": hashlib.sha256(approval.binding_id.encode("utf-8")).hexdigest(),
+        "destination": approval.destination,
+        "entity": approval.entity,
+        "project": approval.project,
+        "external_project_id": approval.external_project_id,
+        "model_revision_id": approval.model_revision_id,
+        "model_sha256": approval.model_sha256,
+        "reviewed_sync_plan_sha256": approval.sync_plan_sha256,
+        "reviewed_by": approval.reviewed_by,
+        "approved_at": approval.approved_at.isoformat(),
+        "acknowledgement_sha256": hashlib.sha256(
+            approval.acknowledgement.encode("utf-8")
+        ).hexdigest(),
+    }
+
+
+@dataclass(frozen=True, slots=True)
+class CloudSyncApprovalSubject:
+    project_id: str
+    binding_id: str
+    destination: SyncDestination
+    entity: str
+    project: str
+    external_project_id: str
+    model_revision_id: str
+    model_sha256: str
+    bundle_sha256: str
+    resource_policy_sha256: str
+    projection_sha256: str
+    current_raster_estimate_sha256: str
+    scope_evidence_sha256: str
+    telemetry_inventory_sha256: str
+    input_bytes: int
+    estimated_current_raster_bytes: int | None
+    pending_estimated_current_raster_bytes: int | None
+    telemetry_projected_bytes: int
+    telemetry_artifact_count: int
+    approval_audit_reservation_bytes: int
+    approval_audit_reservation_count: int
+    operational_metadata_reservation_bytes: int
+    operational_metadata_reservation_count: int
+    estimated_total_bytes: int | None
+
+    @property
+    def sha256(self) -> str:
+        return canonical_sha256(
+            {
+                "schema_version": "ecocorridor-cloud-sync-approval-subject/v1.1",
+                "project_id": self.project_id,
+                "binding_id": self.binding_id,
+                "destination": self.destination.value,
+                "entity": self.entity,
+                "project": self.project,
+                "external_project_id": self.external_project_id,
+                "model_revision_id": self.model_revision_id,
+                "model_sha256": self.model_sha256,
+                "bundle_sha256": self.bundle_sha256,
+                "resource_policy_sha256": self.resource_policy_sha256,
+                "projection_sha256": self.projection_sha256,
+                "current_raster_estimate_sha256": self.current_raster_estimate_sha256,
+                "scope_evidence_sha256": self.scope_evidence_sha256,
+                "telemetry_inventory_sha256": self.telemetry_inventory_sha256,
+                "input_bytes": self.input_bytes,
+                "estimated_current_raster_bytes": self.estimated_current_raster_bytes,
+                "pending_estimated_current_raster_bytes": (
+                    self.pending_estimated_current_raster_bytes
+                ),
+                "telemetry_projected_bytes": self.telemetry_projected_bytes,
+                "telemetry_artifact_count": self.telemetry_artifact_count,
+                "approval_audit_reservation_bytes": (self.approval_audit_reservation_bytes),
+                "approval_audit_reservation_count": (self.approval_audit_reservation_count),
+                "operational_metadata_reservation_bytes": (
+                    self.operational_metadata_reservation_bytes
+                ),
+                "operational_metadata_reservation_count": (
+                    self.operational_metadata_reservation_count
+                ),
+                "estimated_total_bytes": self.estimated_total_bytes,
+            }
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class CloudSyncPlan:
     destination: SyncDestination
     projections: tuple[AssetProjection, ...]
     input_bytes: int
     estimated_current_raster_bytes: int | None
+    telemetry_inventory_sha256: str
+    telemetry_projected_bytes: int
+    telemetry_artifact_count: int
+    approval_audit_reservation_bytes: int
+    approval_audit_reservation_count: int
+    operational_metadata_reservation_bytes: int
+    operational_metadata_reservation_count: int
+    telemetry_authority_sha256: str
+    authorized_envelopes: tuple[TelemetryEnvelopeAuthorization, ...]
     estimated_total_bytes: int | None
     current_raster_estimate_status: CurrentRasterEstimateStatus
     actual_retained_current_raster_bytes: int
@@ -94,12 +306,82 @@ class CloudSyncPlan:
     expected_current_raster_count: int | None
     retained_current_raster_count: int
     current_raster_estimate_basis: str
+    approval_subject: CloudSyncApprovalSubject
+    approval_status: str
+    approval_id: str | None
     blockers: tuple[str, ...]
     warnings: tuple[str, ...]
 
     @property
     def allowed(self) -> bool:
         return not self.blockers
+
+
+def create_oversize_sync_approval(
+    plan: CloudSyncPlan,
+    *,
+    reviewed_by: str,
+    approved_at: datetime,
+) -> OversizeSyncApproval:
+    """Create consent only for the exact oversized plan shown to the reviewer."""
+
+    subject = plan.approval_subject
+    if plan.approval_status not in {"REQUIRED", "STALE"}:
+        raise ValueError("the sync plan does not require a new oversize approval")
+    if (
+        subject.destination == SyncDestination.LOCAL_ONLY
+        or subject.estimated_current_raster_bytes is None
+        or subject.estimated_total_bytes is None
+    ):
+        raise ValueError("oversize approval requires a complete cloud sync estimate")
+    inventory = TelemetryProjectionInventory(
+        sha256=subject.telemetry_inventory_sha256,
+        projected_bytes=subject.telemetry_projected_bytes,
+        artifact_count=subject.telemetry_artifact_count,
+        approval_audit_reservation_bytes=subject.approval_audit_reservation_bytes,
+        approval_audit_reservation_count=subject.approval_audit_reservation_count,
+        operational_metadata_reservation_bytes=subject.operational_metadata_reservation_bytes,
+        operational_metadata_reservation_count=subject.operational_metadata_reservation_count,
+    )
+    if subject.estimated_total_bytes is None:
+        raise ValueError("oversize approval requires a complete synchronized-evidence estimate")
+    pending_bytes = subject.pending_estimated_current_raster_bytes
+    if pending_bytes is None:
+        raise ValueError("oversize approval requires a complete pending-raster estimate")
+    return OversizeSyncApproval(
+        approval_id=f"oversize_approval_{subject.sha256}",
+        project_id=subject.project_id,
+        binding_id=subject.binding_id,
+        destination=subject.destination.value,
+        entity=subject.entity,
+        project=subject.project,
+        external_project_id=subject.external_project_id,
+        model_revision_id=subject.model_revision_id,
+        model_sha256=subject.model_sha256,
+        bundle_sha256=subject.bundle_sha256,
+        resource_policy_sha256=subject.resource_policy_sha256,
+        projection_sha256=subject.projection_sha256,
+        current_raster_estimate_sha256=subject.current_raster_estimate_sha256,
+        scope_evidence_sha256=subject.scope_evidence_sha256,
+        telemetry_inventory_sha256=inventory.sha256,
+        sync_plan_sha256=subject.sha256,
+        approved_input_bytes=subject.input_bytes,
+        approved_current_raster_bytes=subject.estimated_current_raster_bytes,
+        approved_pending_current_raster_bytes=pending_bytes,
+        approved_telemetry_projected_bytes=inventory.projected_bytes,
+        approved_telemetry_artifact_count=inventory.artifact_count,
+        approved_approval_audit_reservation_bytes=(inventory.approval_audit_reservation_bytes),
+        approved_approval_audit_reservation_count=(inventory.approval_audit_reservation_count),
+        approved_operational_metadata_reservation_bytes=(
+            inventory.operational_metadata_reservation_bytes
+        ),
+        approved_operational_metadata_reservation_count=(
+            inventory.operational_metadata_reservation_count
+        ),
+        approved_total_bytes=subject.estimated_total_bytes,
+        reviewed_by=reviewed_by,
+        approved_at=approved_at,
+    )
 
 
 def scientific_asset_ids(bundle: ConnectivityProjectBundle) -> set[str]:
@@ -190,7 +472,9 @@ def plan_cloud_sync(
     scope_evidence: ProjectScopeEvidence | None,
     estimated_current_raster_bytes: int | None = None,
     current_raster_estimate: CurrentRasterEstimate | None = None,
-    oversize_approved_by: str | None = None,
+    binding_id: str = "UNBOUND",
+    approval: OversizeSyncApproval | None = None,
+    telemetry_inventory: TelemetryProjectionInventory = EMPTY_TELEMETRY_INVENTORY,
 ) -> CloudSyncPlan:
     if current_raster_estimate is not None and estimated_current_raster_bytes is not None:
         raise ValueError("provide one authoritative current-raster estimate")
@@ -293,7 +577,13 @@ def plan_cloud_sync(
     unique_uploaded: dict[str, AssetProjection] = {}
     for projection in projections:
         unique_uploaded.setdefault(projection.uploaded_asset_id, projection)
-    input_bytes = sum(item.bytes for item in unique_uploaded.values())
+    # W&B stores immutable evidence by content. Count identical uploaded bytes
+    # once even when multiple reviewed asset records intentionally reference
+    # the same derivative or exact file content.
+    unique_input_content = {
+        (assets[item.uploaded_asset_id].sha256, item.bytes) for item in unique_uploaded.values()
+    }
+    input_bytes = sum(byte_size for _, byte_size in unique_input_content)
     policy = bundle.resource_policy
     if input_bytes > policy.max_input_bytes:
         blockers.append(
@@ -305,7 +595,72 @@ def plan_cloud_sync(
         )
         estimated_total: int | None = None
     else:
-        estimated_total = input_bytes + estimate.estimated_bytes
+        pending_bytes = estimate.pending_estimated_bytes
+        if pending_bytes is None:
+            estimated_total = None
+        else:
+            estimated_total = input_bytes + telemetry_inventory.projected_bytes + pending_bytes
+    projection_sha256 = canonical_sha256(
+        [
+            {
+                "source_asset_id": item.source_asset_id,
+                "uploaded_asset_id": item.uploaded_asset_id,
+                "representation": item.representation,
+                "bytes": item.bytes,
+            }
+            for item in sorted(
+                projections,
+                key=lambda value: (
+                    value.source_asset_id,
+                    value.uploaded_asset_id,
+                    value.representation,
+                ),
+            )
+        ]
+    )
+    estimate_sha256 = canonical_sha256(
+        {
+            "status": estimate.status.value,
+            "estimated_bytes": estimate.estimated_bytes,
+            "actual_retained_bytes": estimate.actual_retained_bytes,
+            "pending_estimated_bytes": estimate.pending_estimated_bytes,
+            "expected_raster_count": estimate.expected_raster_count,
+            "retained_raster_count": estimate.retained_raster_count,
+            "basis": estimate.basis,
+        }
+    )
+    approval_subject = CloudSyncApprovalSubject(
+        project_id=bundle.project_id,
+        binding_id=binding_id,
+        destination=destination,
+        entity=(scope_evidence.entity if scope_evidence else ""),
+        project=(scope_evidence.project if scope_evidence else ""),
+        external_project_id=(scope_evidence.external_project_id if scope_evidence else ""),
+        model_revision_id=bundle.revision.revision_id,
+        model_sha256=bundle.revision.model_sha256,
+        bundle_sha256=canonical_sha256(bundle.model_dump(mode="json")),
+        resource_policy_sha256=canonical_sha256(policy.model_dump(mode="json")),
+        projection_sha256=projection_sha256,
+        current_raster_estimate_sha256=estimate_sha256,
+        scope_evidence_sha256=canonical_sha256(
+            scope_evidence.model_dump(mode="json") if scope_evidence else None
+        ),
+        telemetry_inventory_sha256=telemetry_inventory.sha256,
+        input_bytes=input_bytes,
+        estimated_current_raster_bytes=estimate.estimated_bytes,
+        pending_estimated_current_raster_bytes=estimate.pending_estimated_bytes,
+        telemetry_projected_bytes=telemetry_inventory.projected_bytes,
+        telemetry_artifact_count=telemetry_inventory.artifact_count,
+        approval_audit_reservation_bytes=(telemetry_inventory.approval_audit_reservation_bytes),
+        approval_audit_reservation_count=(telemetry_inventory.approval_audit_reservation_count),
+        operational_metadata_reservation_bytes=(
+            telemetry_inventory.operational_metadata_reservation_bytes
+        ),
+        operational_metadata_reservation_count=(
+            telemetry_inventory.operational_metadata_reservation_count
+        ),
+        estimated_total_bytes=estimated_total,
+    )
     exceeds_current = (
         estimate.estimated_bytes is not None
         and estimate.estimated_bytes > policy.max_current_raster_bytes
@@ -313,30 +668,109 @@ def plan_cloud_sync(
     exceeds_materialized = (
         estimated_total is not None and estimated_total > policy.max_materialized_bytes
     )
+    oversize = exceeds_current or exceeds_materialized
+    approval_matches = bool(
+        approval is not None
+        and approval.project_id == approval_subject.project_id
+        and approval.binding_id == approval_subject.binding_id
+        and approval.destination == approval_subject.destination.value
+        and approval.entity == approval_subject.entity
+        and approval.project == approval_subject.project
+        and approval.external_project_id == approval_subject.external_project_id
+        and approval.model_revision_id == approval_subject.model_revision_id
+        and approval.model_sha256 == approval_subject.model_sha256
+        and approval.bundle_sha256 == approval_subject.bundle_sha256
+        and approval.resource_policy_sha256 == approval_subject.resource_policy_sha256
+        and approval.projection_sha256 == approval_subject.projection_sha256
+        and approval.current_raster_estimate_sha256
+        == approval_subject.current_raster_estimate_sha256
+        and approval.scope_evidence_sha256 == approval_subject.scope_evidence_sha256
+        and approval.telemetry_inventory_sha256 == approval_subject.telemetry_inventory_sha256
+        and approval.sync_plan_sha256 == approval_subject.sha256
+        and approval.approved_input_bytes == approval_subject.input_bytes
+        and approval.approved_current_raster_bytes
+        == approval_subject.estimated_current_raster_bytes
+        and approval.approved_pending_current_raster_bytes
+        == approval_subject.pending_estimated_current_raster_bytes
+        and approval.approved_telemetry_projected_bytes
+        == approval_subject.telemetry_projected_bytes
+        and approval.approved_telemetry_artifact_count == approval_subject.telemetry_artifact_count
+        and approval.approved_approval_audit_reservation_bytes
+        == approval_subject.approval_audit_reservation_bytes
+        and approval.approved_approval_audit_reservation_count
+        == approval_subject.approval_audit_reservation_count
+        and approval.approved_operational_metadata_reservation_bytes
+        == approval_subject.operational_metadata_reservation_bytes
+        and approval.approved_operational_metadata_reservation_count
+        == approval_subject.operational_metadata_reservation_count
+        and approval.approved_total_bytes == approval_subject.estimated_total_bytes
+    )
+    approval_status = "NOT_REQUIRED"
+    approval_id: str | None = None
+    if estimate.estimated_bytes is None or estimated_total is None:
+        # A missing authoritative storage estimate is a blocked, unavailable
+        # plan—not a zero-byte or approval-free plan. This distinct state lets
+        # strict RPC/rendering contracts preserve ``None`` without weakening
+        # the resource boundary.
+        approval_status = "UNAVAILABLE"
+    elif oversize and policy.require_explicit_oversize_approval:
+        if approval is None:
+            approval_status = "REQUIRED"
+        elif not approval_matches:
+            approval_status = "STALE"
+        else:
+            approval_status = "APPROVED"
+            approval_id = approval.approval_id
     if exceeds_current:
-        if policy.require_explicit_oversize_approval and not (oversize_approved_by or "").strip():
+        if policy.require_explicit_oversize_approval and approval_status == "REQUIRED":
             blockers.append(
-                "estimated current-raster evidence exceeds policy and has no explicit approval"
+                "OVERSIZE_SYNC_APPROVAL_REQUIRED: estimated current-raster evidence exceeds "
+                "policy and has no exact-plan approval"
+            )
+        elif policy.require_explicit_oversize_approval and approval_status == "STALE":
+            blockers.append(
+                "OVERSIZE_SYNC_APPROVAL_STALE: current-raster approval does not match this exact plan"
             )
         else:
             warnings.append(
-                f"{oversize_approved_by or 'project policy'} approved oversized current-raster evidence"
+                f"{approval.reviewed_by if approval_matches and approval else 'project policy'} "
+                "approved oversized current-raster evidence"
             )
     if exceeds_materialized:
-        if policy.require_explicit_oversize_approval and not (oversize_approved_by or "").strip():
+        if policy.require_explicit_oversize_approval and approval_status == "REQUIRED":
             blockers.append(
-                f"estimated synchronized evidence is {estimated_total} bytes; materialized policy "
-                f"permits {policy.max_materialized_bytes} and no explicit approval is recorded"
+                "OVERSIZE_SYNC_APPROVAL_REQUIRED: estimated synchronized evidence is "
+                f"{estimated_total} bytes; materialized policy permits "
+                f"{policy.max_materialized_bytes} and no exact-plan approval is recorded"
+            )
+        elif policy.require_explicit_oversize_approval and approval_status == "STALE":
+            blockers.append(
+                "OVERSIZE_SYNC_APPROVAL_STALE: materialized-evidence approval does not match "
+                "this exact plan"
             )
         else:
             warnings.append(
-                f"{oversize_approved_by or 'project policy'} approved oversized materialized evidence"
+                f"{approval.reviewed_by if approval_matches and approval else 'project policy'} "
+                "approved oversized materialized evidence"
             )
     return CloudSyncPlan(
         destination=destination,
         projections=tuple(projections),
         input_bytes=input_bytes,
         estimated_current_raster_bytes=estimate.estimated_bytes,
+        telemetry_inventory_sha256=telemetry_inventory.sha256,
+        telemetry_projected_bytes=telemetry_inventory.projected_bytes,
+        telemetry_artifact_count=telemetry_inventory.artifact_count,
+        approval_audit_reservation_bytes=(telemetry_inventory.approval_audit_reservation_bytes),
+        approval_audit_reservation_count=(telemetry_inventory.approval_audit_reservation_count),
+        operational_metadata_reservation_bytes=(
+            telemetry_inventory.operational_metadata_reservation_bytes
+        ),
+        operational_metadata_reservation_count=(
+            telemetry_inventory.operational_metadata_reservation_count
+        ),
+        telemetry_authority_sha256=telemetry_inventory.authority_sha256,
+        authorized_envelopes=telemetry_inventory.authorized_envelopes,
         estimated_total_bytes=estimated_total,
         current_raster_estimate_status=estimate.status,
         actual_retained_current_raster_bytes=estimate.actual_retained_bytes,
@@ -344,6 +778,9 @@ def plan_cloud_sync(
         expected_current_raster_count=estimate.expected_raster_count,
         retained_current_raster_count=estimate.retained_raster_count,
         current_raster_estimate_basis=estimate.basis,
+        approval_subject=approval_subject,
+        approval_status=approval_status,
+        approval_id=approval_id,
         blockers=tuple(sorted(set(blockers))),
         warnings=tuple(sorted(set(warnings))),
     )

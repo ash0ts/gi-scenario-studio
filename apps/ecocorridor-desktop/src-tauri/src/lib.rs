@@ -119,6 +119,7 @@ fn application_profile() -> AppProfile {
             "connectivity.results.decision_board".into(),
             "connectivity.results.scenario_detail".into(),
             "observability.connect".into(),
+            "observability.approve_oversize".into(),
             "observability.get_status".into(),
             "observability.open_artifact".into(),
             "observability.open_run".into(),
