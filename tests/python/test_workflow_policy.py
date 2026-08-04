@@ -495,12 +495,20 @@ jobs:
 def test_eco_pr_ci_validates_the_built_public_replay() -> None:
     root = Path(__file__).resolve().parents[2]
     workflow = (root / ".github" / "workflows" / "ecocorridor-ci.yml").read_text(encoding="utf-8")
+    frontend_job = workflow.split("  eco-frontend:", 1)[1].split("\n  native-host:", 1)[0]
 
-    assert "python3 scripts/check_ecocorridor_public_replay.py" in workflow
-    assert '--source-sha "${GITHUB_SHA}"' in workflow
-    assert "--root apps/ecocorridor-replay/dist" in workflow
-    assert "--trust-record apps/ecocorridor-desktop/src/data/ridgewayReleaseTrust.json" in workflow
-    assert "--require-verified-evidence" not in workflow
+    assert "astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b" in frontend_job
+    assert "uv sync --locked --no-dev --no-install-project" in frontend_job
+    assert "uv run --no-sync python scripts/check_ecocorridor_public_replay.py" in frontend_job
+    assert "python3 scripts/check_ecocorridor_public_replay.py" not in frontend_job
+    assert "--extra" not in frontend_job
+    assert "PYTHONPATH: python" in frontend_job
+    assert '--source-sha "${GITHUB_SHA}"' in frontend_job
+    assert "--root apps/ecocorridor-replay/dist" in frontend_job
+    assert (
+        "--trust-record apps/ecocorridor-desktop/src/data/ridgewayReleaseTrust.json" in frontend_job
+    )
+    assert "--require-verified-evidence" not in frontend_job
 
 
 def _ecocorridor_workflows() -> dict[str, str]:

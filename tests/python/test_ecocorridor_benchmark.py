@@ -331,6 +331,41 @@ def test_committed_historical_resource_sidecar_uses_frozen_sources_not_current_c
         )
 
 
+def test_committed_verify_cli_requires_explicit_historical_provenance() -> None:
+    root = Path(__file__).resolve().parents[2]
+    search_root = root / "benchmarks/ecocorridor/search"
+    arguments = [
+        "verify",
+        "--report",
+        str(search_root / "release-gate.json"),
+        "--resource-report",
+        str(search_root / "release-gate.resources.json"),
+        "--manifest",
+        str(search_root / "manifest.json"),
+    ]
+    for dataset_name in (
+        "h1_low_barrier.json",
+        "h2_moderate_barrier.json",
+        "h3_high_barrier.json",
+        "h4_future_pressure.json",
+    ):
+        arguments.extend(("--dataset", str(search_root / dataset_name)))
+
+    with pytest.raises(ValueError, match="declared observation sources"):
+        benchmark.main(arguments)
+
+    assert (
+        benchmark.main(
+            [
+                *arguments,
+                "--historical-provenance",
+                str(search_root / "historical-provenance.json"),
+            ]
+        )
+        == 0
+    )
+
+
 def test_historical_provenance_rejects_production_even_for_an_enabled_report(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

@@ -289,7 +289,8 @@ impl PathHandleRegistry {
         &self,
         app_data_root: &Path,
     ) -> Result<Vec<RecentProjectHandle>, HostError> {
-        let canonical_app_root = fs::canonicalize(app_data_root).map_err(|_| HostError::staging())?;
+        let canonical_app_root =
+            fs::canonicalize(app_data_root).map_err(|_| HostError::staging())?;
         let projects_root = app_data_root.join("projects");
         fs::create_dir_all(&projects_root).map_err(|_| HostError::staging())?;
         let canonical_projects_root =
@@ -310,7 +311,10 @@ impl PathHandleRegistry {
             let canonical_path = match fs::canonicalize(&path) {
                 Ok(value)
                     if value.parent() == Some(canonical_projects_root.as_path())
-                        && value.starts_with(&canonical_projects_root) => value,
+                        && value.starts_with(&canonical_projects_root) =>
+                {
+                    value
+                }
                 _ => continue,
             };
             let authority = canonical_path.join("project.sqlite");
@@ -366,7 +370,8 @@ impl PathHandleRegistry {
                 false,
             )
         })?;
-        let canonical_app_root = fs::canonicalize(app_data_root).map_err(|_| HostError::staging())?;
+        let canonical_app_root =
+            fs::canonicalize(app_data_root).map_err(|_| HostError::staging())?;
         let projects_root = app_data_root.join("projects");
         let canonical_projects_root =
             contained_directory(&projects_root, app_data_root, &canonical_app_root)?;
@@ -1473,7 +1478,11 @@ mod tests {
         let first_registry = PathHandleRegistry::new();
         let created = first_registry.create_project(&root).unwrap();
         let project_root = first_registry.resolve_project(&created.handle).unwrap();
-        fs::write(project_root.join("project.sqlite"), b"sqlite authority fixture").unwrap();
+        fs::write(
+            project_root.join("project.sqlite"),
+            b"sqlite authority fixture",
+        )
+        .unwrap();
         drop(first_registry);
 
         let reopened_registry = PathHandleRegistry::new();
@@ -1547,28 +1556,27 @@ mod tests {
         fs::write(outside.join("project.sqlite"), b"outside").unwrap();
         symlink(
             &outside,
-            root.join("projects").join("0123456789abcdef0123456789abcdef"),
+            root.join("projects")
+                .join("0123456789abcdef0123456789abcdef"),
         )
         .unwrap();
         let second = root
             .join("projects")
             .join("fedcba9876543210fedcba9876543210");
         fs::create_dir_all(&second).unwrap();
-        symlink(outside.join("project.sqlite"), second.join("project.sqlite")).unwrap();
+        symlink(
+            outside.join("project.sqlite"),
+            second.join("project.sqlite"),
+        )
+        .unwrap();
 
         let registry = PathHandleRegistry::new();
         assert!(registry.list_projects(&root).unwrap().is_empty());
         assert!(registry
-            .open_project(
-                &root,
-                "project_0123456789abcdef0123456789abcdef"
-            )
+            .open_project(&root, "project_0123456789abcdef0123456789abcdef")
             .is_err());
         assert!(registry
-            .open_project(
-                &root,
-                "project_fedcba9876543210fedcba9876543210"
-            )
+            .open_project(&root, "project_fedcba9876543210fedcba9876543210")
             .is_err());
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(outside).unwrap();

@@ -144,8 +144,8 @@ pub fn run_release_health_check(receipt_path: &Path) -> Result<(), ()> {
         return Err(());
     }
     let resource_root = installed_release_resource_root()?;
-    let receipt = run_installed_health_check(&profile, &resource_root, &app_data_root)
-        .map_err(|_| ())?;
+    let receipt =
+        run_installed_health_check(&profile, &resource_root, &app_data_root).map_err(|_| ())?;
     let mut bytes = serde_json::to_vec_pretty(&receipt).map_err(|_| ())?;
     bytes.push(b'\n');
     if bytes.len() > 16 * 1024 {
@@ -156,7 +156,11 @@ pub fn run_release_health_check(receipt_path: &Path) -> Result<(), ()> {
         .create_new(true)
         .open(&receipt_path)
         .map_err(|_| ())?;
-    if output.write_all(&bytes).and_then(|_| output.sync_all()).is_err() {
+    if output
+        .write_all(&bytes)
+        .and_then(|_| output.sync_all())
+        .is_err()
+    {
         let _ = std::fs::remove_file(&receipt_path);
         return Err(());
     }
@@ -171,9 +175,9 @@ fn validate_health_receipt_path(value: &Path) -> Result<PathBuf, ()> {
     if filename.len() > 128
         || !filename.starts_with("ecocorridor-installed-health-")
         || !filename.ends_with(".json")
-        || !filename.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')
-        })
+        || !filename
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
     {
         return Err(());
     }
@@ -533,7 +537,10 @@ mod tests {
             "javascript:alert(1)",
             "https://wandb.example/run-1#credential",
         ] {
-            assert!(validated_provider_url(blocked).is_err(), "accepted {blocked}");
+            assert!(
+                validated_provider_url(blocked).is_err(),
+                "accepted {blocked}"
+            );
         }
     }
 
@@ -544,10 +551,10 @@ mod tests {
             uuid::Uuid::new_v4()
         ));
         assert_eq!(validate_health_receipt_path(&accepted).unwrap(), accepted);
-        assert!(validate_health_receipt_path(
-            &std::env::temp_dir().join("untrusted-health.json")
-        )
-        .is_err());
+        assert!(
+            validate_health_receipt_path(&std::env::temp_dir().join("untrusted-health.json"))
+                .is_err()
+        );
         assert!(validate_health_receipt_path(std::path::Path::new(
             "ecocorridor-installed-health-relative.json"
         ))

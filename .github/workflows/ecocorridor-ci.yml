@@ -69,6 +69,7 @@ jobs:
           uv run --no-sync ecocorridor-benchmark verify
           --report benchmarks/ecocorridor/search/release-gate.json
           --resource-report benchmarks/ecocorridor/search/release-gate.resources.json
+          --historical-provenance benchmarks/ecocorridor/search/historical-provenance.json
           --manifest benchmarks/ecocorridor/search/manifest.json
           --dataset benchmarks/ecocorridor/search/h1_low_barrier.json
           --dataset benchmarks/ecocorridor/search/h2_moderate_barrier.json
@@ -366,6 +367,16 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
 
+      - name: Set up Python and uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install minimal locked replay-policy dependencies
+        run: uv sync --locked --no-dev --no-install-project
+
       - name: Install locked frontend dependencies
         run: pnpm install --frozen-lockfile
 
@@ -375,8 +386,10 @@ jobs:
           pnpm build:eco
 
       - name: Enforce the synthetic public-replay boundary
+        env:
+          PYTHONPATH: python
         run: >-
-          python3 scripts/check_ecocorridor_public_replay.py
+          uv run --no-sync python scripts/check_ecocorridor_public_replay.py
           --root apps/ecocorridor-replay/dist
           --source-sha "${GITHUB_SHA}"
           --fixture apps/ecocorridor-desktop/src/data/ridgewayFixture.json
