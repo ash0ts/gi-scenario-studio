@@ -3,9 +3,11 @@ from __future__ import annotations
 import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from ecocorridor_core import rpc_worker as rpc_worker_module
 from ecocorridor_core.contracts import (
     ConnectivityEvidenceClaim,
     ConnectivityRunPlan,
@@ -124,6 +126,8 @@ class _ScenarioDetailStore:
         self._summaries = summaries
         self._claims = claims
         self._artifacts = artifacts
+        self.verification_calls: list[str] = []
+        self.invalid_run_id: str | None = None
 
     def analysis(self, analysis_id: str) -> dict[str, Any]:
         assert analysis_id == self._plan.analysis_id
@@ -139,6 +143,17 @@ class _ScenarioDetailStore:
 
     def run_artifacts(self, direct_run_id: str) -> list[dict[str, Any]]:
         return self._artifacts[direct_run_id]
+
+    def verify_authoritative_direct_run(
+        self, direct_run_id: str, *, expected_analysis_id: str
+    ) -> Any:
+        self.verification_calls.append(direct_run_id)
+        if direct_run_id == self.invalid_run_id:
+            raise ValueError("retained result protocol failed its checksum")
+        run = next(item for item in self._runs if item.direct_run_id == direct_run_id)
+        if run.analysis_id != expected_analysis_id:
+            raise ValueError("direct evidence belongs to a different analysis")
+        return SimpleNamespace(run=run)
 
     def close(self) -> None:
         return None
@@ -328,6 +343,14 @@ def _authoritative_store(
     )
 
 
+def _accept_minimal_fake_decision_claims(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        rpc_worker_module,
+        "validate_portfolio_disposition_support",
+        lambda **_kwargs: None,
+    )
+
+
 def test_scenario_detail_returns_one_exact_ecological_scope_and_rehashed_maps(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -366,6 +389,150 @@ def test_scenario_detail_returns_one_exact_ecological_scope_and_rehashed_maps(
     assert result["map_evidence"]["evidence_claim_ids"] == ["claim-map-diagnostic"]
     assert result["baseline_run"]["matrix_sha256"] != result["portfolio_run"]["matrix_sha256"]
     assert CURRENT_MAP_LIMITATION in result["limitations"]
+    assert len(store.verification_calls) == 2
+    assert len(set(store.verification_calls)) == 2
+
+
+def test_decision_board_verifies_selected_and_baseline_direct_evidence_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _accept_minimal_fake_decision_claims(monkeypatch)
+    store, identity = _authoritative_store(tmp_path, retain_maps=True)
+    dispatcher = RPCDispatcher(data_root=tmp_path / "app-data")
+    monkeypatch.setattr(dispatcher, "_store", lambda _directory: store)
+
+    result = dispatcher.dispatch(
+        "connectivity.results.decision_board",
+        {
+            "project_directory": str(store.root),
+            "analysis_id": identity["analysis_id"],
+            "portfolio_ids": [identity["portfolio_id"]],
+        },
+    )["data"]
+
+    expected_ids = {
+        item.direct_run_id
+        for item in store._runs
+        if item.portfolio_id in {identity["portfolio_id"], store._plan.baseline_portfolio_id}
+    }
+    assert set(result["direct_run_ids"]) == expected_ids
+    assert set(store.verification_calls) == expected_ids
+    assert len(store.verification_calls) == len(expected_ids)
+
+
+def test_decision_board_blocks_when_a_baseline_evidence_chain_is_invalid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _accept_minimal_fake_decision_claims(monkeypatch)
+    store, identity = _authoritative_store(tmp_path, retain_maps=True)
+    store.invalid_run_id = next(
+        item.direct_run_id
+        for item in store._runs
+        if item.portfolio_id == store._plan.baseline_portfolio_id
+    )
+    dispatcher = RPCDispatcher(data_root=tmp_path / "app-data")
+    monkeypatch.setattr(dispatcher, "_store", lambda _directory: store)
+
+    with pytest.raises(RPCFault) as raised:
+        dispatcher.dispatch(
+            "connectivity.results.decision_board",
+            {
+                "project_directory": str(store.root),
+                "analysis_id": identity["analysis_id"],
+                "portfolio_ids": [identity["portfolio_id"]],
+            },
+        )
+
+    assert raised.value.error.code == "DECISION_BOARD_DIRECT_EVIDENCE_INVALID"
+    assert raised.value.error.category.value == "SECURITY"
+
+
+def test_decision_board_blocks_an_incomplete_verified_baseline_ensemble(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _accept_minimal_fake_decision_claims(monkeypatch)
+    store, identity = _authoritative_store(tmp_path, retain_maps=True)
+    store._runs = [
+        item
+        for item in store._runs
+        if not (
+            item.portfolio_id == store._plan.baseline_portfolio_id
+            and item.scenario_id == identity["other_scenario_id"]
+        )
+    ]
+    dispatcher = RPCDispatcher(data_root=tmp_path / "app-data")
+    monkeypatch.setattr(dispatcher, "_store", lambda _directory: store)
+
+    with pytest.raises(RPCFault) as raised:
+        dispatcher.dispatch(
+            "connectivity.results.decision_board",
+            {
+                "project_directory": str(store.root),
+                "analysis_id": identity["analysis_id"],
+                "portfolio_ids": [identity["portfolio_id"]],
+            },
+        )
+
+    assert raised.value.error.code == "DECISION_BOARD_INCOMPLETE_BASELINE"
+    assert raised.value.error.category.value == "MODEL_QUALITY"
+
+
+def test_decision_board_blocks_a_summary_that_no_longer_reduces_its_direct_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, identity = _authoritative_store(tmp_path, retain_maps=True)
+
+    def reject_inconsistent_derivation(**_kwargs: Any) -> None:
+        raise ValueError("worst-case aggregate does not equal its direct argmin")
+
+    monkeypatch.setattr(
+        rpc_worker_module,
+        "validate_portfolio_disposition_support",
+        reject_inconsistent_derivation,
+    )
+    dispatcher = RPCDispatcher(data_root=tmp_path / "app-data")
+    monkeypatch.setattr(dispatcher, "_store", lambda _directory: store)
+
+    with pytest.raises(RPCFault) as raised:
+        dispatcher.dispatch(
+            "connectivity.results.decision_board",
+            {
+                "project_directory": str(store.root),
+                "analysis_id": identity["analysis_id"],
+                "portfolio_ids": [identity["portfolio_id"]],
+            },
+        )
+
+    assert raised.value.error.code == "DECISION_BOARD_DERIVATION_EVIDENCE_INVALID"
+    assert raised.value.error.category.value == "SECURITY"
+
+
+def test_scenario_detail_blocks_when_the_result_protocol_chain_is_invalid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, identity = _authoritative_store(tmp_path, retain_maps=True)
+    store.invalid_run_id = next(
+        item.direct_run_id
+        for item in store._runs
+        if item.portfolio_id == identity["portfolio_id"]
+        and item.scenario_id == identity["scenario_id"]
+    )
+    dispatcher = RPCDispatcher(data_root=tmp_path / "app-data")
+    monkeypatch.setattr(dispatcher, "_store", lambda _directory: store)
+
+    with pytest.raises(RPCFault) as raised:
+        dispatcher.dispatch(
+            "connectivity.results.scenario_detail",
+            {
+                "project_directory": str(store.root),
+                "analysis_id": identity["analysis_id"],
+                "portfolio_id": identity["portfolio_id"],
+                "scenario_id": identity["scenario_id"],
+            },
+        )
+
+    assert raised.value.error.code == "SCENARIO_DETAIL_DIRECT_EVIDENCE_INVALID"
+    assert raised.value.error.category.value == "SECURITY"
 
 
 def test_scenario_detail_keeps_pair_evidence_and_reports_map_absence(

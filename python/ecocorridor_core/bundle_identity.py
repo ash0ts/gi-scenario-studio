@@ -21,6 +21,8 @@ def _require_unique(label: str, identities: Sequence[str]) -> None:
 def assert_unique_bundle_identities(bundle: ConnectivityProjectBundle) -> None:
     """Reject ambiguous stable IDs before preflight, persistence, or execution."""
 
+    effects = [effect for option in bundle.intervention_options for effect in option.effects]
+
     collections = (
         ("asset", [item.asset_id for item in bundle.assets]),
         (
@@ -32,6 +34,8 @@ def assert_unique_bundle_identities(bundle: ConnectivityProjectBundle) -> None:
         ("reference binding", [item.binding_id for item in bundle.reference_bindings]),
         ("intervention site", [item.site_id for item in bundle.intervention_sites]),
         ("intervention option", [item.option_id for item in bundle.intervention_options]),
+        ("action effect", [item.effect_id for item in effects]),
+        ("action-effect basis", [item.basis.basis_id for item in effects]),
         ("safeguard", [item.safeguard_id for item in bundle.safeguards]),
         ("review mask", [item.mask_id for item in bundle.review_masks]),
         ("decision rule", [item.rule_id for item in bundle.decision_rules]),

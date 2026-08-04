@@ -142,7 +142,9 @@ code, .mono { font-family: "IBM Plex Mono", monospace; overflow-wrap: anywhere; 
 .replay-chain li span { color: var(--graphite); }
 .replay-chain li strong { overflow-wrap: anywhere; }
 .replay-package { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.replay-package .replay-primary { min-width: 12rem; }
 .replay-package p, .replay-lineage p { color: var(--graphite); }
+.replay-download-error { margin: .75rem 0 0; padding: .75rem 1rem; color: #6f1830; background: #f7e7ec; border-left: 4px solid var(--berry); font-weight: 700; }
 .replay-lineage ol { display: grid; grid-template-columns: repeat(3, 1fr); gap: .8rem; list-style: none; padding: 0; }
 .replay-lineage li { display: flex; gap: .7rem; padding: .8rem; background: var(--mist); }
 .replay-lineage li span { font: 600 .8rem "IBM Plex Mono", monospace; color: var(--cyan-ink); }

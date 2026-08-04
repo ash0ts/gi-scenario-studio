@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { serializeRedactedRidgewayDecisionStory } from "@ecocorridor-scenario-studio/evidence";
 
 import {
   RIDGEWAY_HYPOTHESIS_IDS,
@@ -287,28 +288,32 @@ function Board({ fixture }: { fixture: RidgewayFixture }) {
 }
 
 function EvidencePackage({ fixture }: { fixture: RidgewayFixture }) {
-  const download = () => {
-    const payload = {
-      schema_version: "ecocorridor-public-decision-story/v1.0",
-      fixture_id: fixture.fixtureId,
-      evidence_manifest_sha256: fixture.manifestSha256,
-      evidence_state: fixture.evidenceState,
-      limitation: fixture.disclaimer,
-      portfolios: fixture.portfolios.map(({ id, name, role, costUsd, ruleStatus, worstResistanceChangePct, worstScenarioId, roadMaskFlag, nextAction }) => ({ id, name, role, costUsd, ruleStatus, worstResistanceChangePct, worstScenarioId, roadMaskFlag, nextAction })),
-    };
-    const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }));
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = "ridgeway-crossing-static-decision-story.json";
-    anchor.hidden = true;
-    document.body.append(anchor);
-    anchor.click();
-    anchor.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  const [downloadError, setDownloadError] = useState("");
+  const [downloading, setDownloading] = useState(false);
+  const download = async () => {
+    setDownloading(true);
+    setDownloadError("");
+    try {
+      const serialized = await serializeRedactedRidgewayDecisionStory(fixture);
+      const url = URL.createObjectURL(new Blob([serialized], { type: "application/json" }));
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = "ridgeway-crossing-static-decision-story.json";
+      anchor.hidden = true;
+      document.body.append(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    } catch {
+      setDownloadError("The evidence JSON did not pass its local integrity check. No partial file was downloaded.");
+    } finally {
+      setDownloading(false);
+    }
   };
   return <>
-    <PanelIntro eyebrow="Shareable synthetic record" title="Evidence package"><p>The public replay can export only its redacted static teaching story. It cannot open professional projects or contact cloud services.</p></PanelIntro>
-    <section className="replay-package"><div><span>LOCAL STATIC EXPORT</span><h2>{fixture.releaseReplayEligible ? "Verified synthetic decision story" : "Projection is not release-eligible"}</h2><p>{fixture.disclaimer}</p></div><button type="button" className="replay-primary" disabled={!fixture.releaseReplayEligible} onClick={download}>Download redacted JSON</button></section>
+    <PanelIntro eyebrow="Shareable synthetic record" title="Evidence package"><p>The public replay exports one redacted teaching record with its scenario ensemble, direct-run IDs, artifact hashes, reducers, QA disposition, and permanent limitations. It cannot open professional projects or contact cloud services.</p></PanelIntro>
+    <section className="replay-package"><div><span>LOCAL STATIC EXPORT</span><h2>{fixture.releaseReplayEligible ? "Verified synthetic decision story" : "Projection is not release-eligible"}</h2><p>{fixture.disclaimer}</p></div><button type="button" className="replay-primary" disabled={!fixture.releaseReplayEligible || downloading} onClick={download}>{downloading ? "Checking evidence…" : "Download evidence JSON"}</button></section>
+    {downloadError && <p className="replay-download-error" role="alert">{downloadError}</p>}
     <section className="replay-lineage"><h2>What this package can establish</h2><ol><li><span>01</span><p>Which fixed portfolios were evaluated under the documented synthetic scenario ensemble.</p></li><li><span>02</span><p>Which baseline-relative effective-resistance and road-mask diagnostics came from retained direct Circuitscape runs.</p></li><li><span>03</span><p>Why a portfolio may be carried forward for ecological, field, and engineering feasibility review.</p></li></ol><h2>What it cannot establish</h2><p>This is not observed animal movement. This is not crossing use evidence. This is not collision reduction evidence. This is not population benefit evidence. This is not biodiversity benefit evidence. This is not an optimal or approved corridor. This is not regulatory evidence. This is not a design-ready crossing.</p></section>
   </>;
 }

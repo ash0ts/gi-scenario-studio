@@ -160,6 +160,7 @@ from .metrics import (
     CURRENT_MAP_LIMITATION,
     validate_complete_ensemble,
     validate_evidence_claim,
+    validate_portfolio_disposition_support,
 )
 from .observability import ECOCORRIDOR_APP_PROFILE as APP_PROFILE
 from .observability import EcoRpcObservabilityAdapter, derive_cloud_sync_state
@@ -4648,6 +4649,53 @@ class RPCDispatcher:
             },
         )
 
+    @staticmethod
+    def _verify_authoritative_result_runs(
+        store: EcoProjectStore,
+        *,
+        analysis_id: str,
+        loaded_runs: Sequence[DirectConnectivityRun],
+        direct_run_ids: set[str],
+        error_code: str,
+        user_message: str,
+    ) -> dict[str, DirectConnectivityRun]:
+        """Revalidate durable evidence before a reportable result leaves the worker."""
+
+        loaded_by_id = {item.direct_run_id: item for item in loaded_runs}
+        try:
+            if len(loaded_by_id) != len(loaded_runs):
+                raise ValueError("analysis results contain duplicate direct-run identities")
+            verified: dict[str, DirectConnectivityRun] = {}
+            for direct_run_id in sorted(direct_run_ids):
+                loaded = loaded_by_id.get(direct_run_id)
+                if loaded is None:
+                    raise ValueError(
+                        f"reportable evidence references an unavailable run: {direct_run_id}"
+                    )
+                evidence = store.verify_authoritative_direct_run(
+                    direct_run_id,
+                    expected_analysis_id=analysis_id,
+                )
+                if evidence.run != loaded:
+                    raise ValueError(
+                        f"verified run differs from the analysis result: {direct_run_id}"
+                    )
+                verified[direct_run_id] = evidence.run
+            return verified
+        except (KeyError, OSError, TypeError, ValueError) as exc:
+            raise _fault(
+                error_code,
+                user_message,
+                category=ErrorCategory.SECURITY,
+                severity=Severity.BLOCKING,
+                object_reference=analysis_id,
+                technical_message=f"{type(exc).__name__}: {exc}",
+                remediation=(
+                    "Restore the complete immutable direct-run artifacts from an authorized "
+                    "source or rerun the affected scenario ensemble before using these results."
+                ),
+            ) from exc
+
     def _decision_board(self, params: DecisionBoardParams) -> PayloadResult:
         store = self._store(params.project_directory)
         try:
@@ -4658,11 +4706,11 @@ class RPCDispatcher:
                     "The decision board requires a completed direct scenario ensemble.",
                     category=ErrorCategory.MODEL_QUALITY,
                 )
-            runs, summaries, claims = store.analysis_results(params.analysis_id)
+            plan = ConnectivityRunPlan.model_validate(status["plan"])
+            all_runs, summaries, claims = store.analysis_results(params.analysis_id)
             if params.portfolio_ids:
                 selected = set(params.portfolio_ids)
                 summaries = [item for item in summaries if item.portfolio_id in selected]
-                runs = [item for item in runs if item.portfolio_id in selected]
                 claims = [item for item in claims if item.portfolio_id in selected]
             if not summaries:
                 raise _fault(
@@ -4671,13 +4719,73 @@ class RPCDispatcher:
                     category=ErrorCategory.MODEL_QUALITY,
                 )
             bundle = store.analysis_bundle(params.analysis_id)
+            scenario_by_id = {item.scenario_id: item for item in bundle.scenarios}
+            if any(item not in scenario_by_id for item in plan.scenario_ids):
+                raise _fault(
+                    "DECISION_BOARD_MODEL_SNAPSHOT_INVALID",
+                    "The immutable analysis model omits a planned ecological scenario.",
+                    category=ErrorCategory.SECURITY,
+                    severity=Severity.BLOCKING,
+                    object_reference=params.analysis_id,
+                )
+            planned_scenarios = [scenario_by_id[item] for item in plan.scenario_ids]
+            selected_portfolio_ids = {item.portfolio_id for item in summaries}
+            selected_run_ids = {
+                item.direct_run_id
+                for item in all_runs
+                if item.portfolio_id in selected_portfolio_ids
+            }
+            baseline_run_ids = {
+                item.direct_run_id
+                for item in all_runs
+                if item.portfolio_id == plan.baseline_portfolio_id
+            }
+            claim_run_ids = {
+                direct_run_id for claim in claims for direct_run_id in claim.direct_run_ids
+            }
+            required_run_ids = selected_run_ids | baseline_run_ids | claim_run_ids
+            verified_by_id = self._verify_authoritative_result_runs(
+                store,
+                analysis_id=params.analysis_id,
+                loaded_runs=all_runs,
+                direct_run_ids=required_run_ids,
+                error_code="DECISION_BOARD_DIRECT_EVIDENCE_INVALID",
+                user_message=(
+                    "The decision board cannot verify its complete retained direct-run evidence."
+                ),
+            )
+            baseline_complete, baseline_errors = validate_complete_ensemble(
+                [verified_by_id[item] for item in sorted(baseline_run_ids)],
+                planned_scenarios,
+                portfolio_id=plan.baseline_portfolio_id,
+            )
+            if not baseline_complete:
+                raise _fault(
+                    "DECISION_BOARD_INCOMPLETE_BASELINE",
+                    "The decision board requires a complete accepted baseline scenario ensemble.",
+                    category=ErrorCategory.MODEL_QUALITY,
+                    severity=Severity.BLOCKING,
+                    object_reference=plan.baseline_portfolio_id,
+                    technical_message="; ".join(baseline_errors),
+                )
             for summary in summaries:
-                portfolio_runs = [
-                    item for item in runs if item.portfolio_id == summary.portfolio_id
-                ]
+                expected_summary_run_ids = {
+                    item.direct_run_id
+                    for item in all_runs
+                    if item.portfolio_id == summary.portfolio_id
+                }
+                if set(summary.direct_run_ids) != expected_summary_run_ids:
+                    raise _fault(
+                        "DECISION_BOARD_DIRECT_EVIDENCE_INVALID",
+                        "A portfolio summary is detached from its direct scenario ensemble.",
+                        category=ErrorCategory.SECURITY,
+                        severity=Severity.BLOCKING,
+                        object_reference=summary.portfolio_id,
+                    )
+                portfolio_runs = [verified_by_id[item] for item in sorted(expected_summary_run_ids)]
                 complete, errors = validate_complete_ensemble(
                     portfolio_runs,
-                    bundle.scenarios,
+                    planned_scenarios,
                     portfolio_id=summary.portfolio_id,
                 )
                 if not complete:
@@ -4689,6 +4797,25 @@ class RPCDispatcher:
                         object_reference=summary.portfolio_id,
                         technical_message="; ".join(errors),
                     )
+            try:
+                validate_portfolio_disposition_support(
+                    summaries=summaries,
+                    runs=verified_by_id.values(),
+                    claims=claims,
+                )
+            except (KeyError, TypeError, ValueError) as exc:
+                raise _fault(
+                    "DECISION_BOARD_DERIVATION_EVIDENCE_INVALID",
+                    "The decision board values do not reconcile with their direct evidence.",
+                    category=ErrorCategory.SECURITY,
+                    severity=Severity.BLOCKING,
+                    object_reference=params.analysis_id,
+                    technical_message=f"{type(exc).__name__}: {exc}",
+                    remediation=(
+                        "Restore the authoritative analysis completion record from an authorized "
+                        "source or rerun the complete scenario ensemble before comparison."
+                    ),
+                ) from exc
         finally:
             store.close()
         return self._result(
@@ -4696,7 +4823,7 @@ class RPCDispatcher:
             {
                 "analysis_id": params.analysis_id,
                 "summaries": [item.model_dump(mode="json") for item in summaries],
-                "direct_run_ids": sorted(item.direct_run_id for item in runs),
+                "direct_run_ids": sorted(verified_by_id),
                 "evidence_claim_ids": sorted(item.claim_id for item in claims),
                 "claim_language": "Direct Circuitscape result under documented assumptions.",
             },
@@ -5175,6 +5302,18 @@ class RPCDispatcher:
                 )
             baseline_run = baseline_matches[0]
             portfolio_run = portfolio_matches[0]
+            verified_by_id = self._verify_authoritative_result_runs(
+                store,
+                analysis_id=params.analysis_id,
+                loaded_runs=runs,
+                direct_run_ids={baseline_run.direct_run_id, portfolio_run.direct_run_id},
+                error_code="SCENARIO_DETAIL_DIRECT_EVIDENCE_INVALID",
+                user_message=(
+                    "The scenario detail cannot verify its retained baseline and portfolio runs."
+                ),
+            )
+            baseline_run = verified_by_id[baseline_run.direct_run_id]
+            portfolio_run = verified_by_id[portfolio_run.direct_run_id]
             if baseline_run.engine_manifest_sha256 != portfolio_run.engine_manifest_sha256:
                 raise _fault(
                     "SCENARIO_DETAIL_ENGINE_MISMATCH",

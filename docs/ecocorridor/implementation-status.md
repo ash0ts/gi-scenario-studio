@@ -167,6 +167,25 @@ current direct evidence.
   execution can resolve them differently. The same per-array identity rule is
   emitted in public JSON Schema and generated Zod validators, while the worker
   remains the authoritative import boundary.
+- Nested action-effect and action-effect-basis IDs are also globally unique.
+  Professional preflight and intervention preview now block modeled actions
+  whose site, option, external feasibility evidence, reviewer, source,
+  citation, assumptions, cost vintage, maintenance, or land-access basis is
+  blank—even when the effect raster has a legitimate recomputed hash.
+- Decision Board and Scenario Detail reads now re-verify the complete
+  authoritative direct-run chain before reporting a value: successful job,
+  immutable request/result bytes, artifacts, model-run cache identity, QA, and
+  evidence graph. Stored summary, aggregate, safeguard, review-mask, cost, QA,
+  feasibility, and disposition claims are then reconciled with those verified
+  primitives. A stored summary cannot bypass that derivation, and both selected
+  and baseline ensembles are verified once per unique run before comparison.
+- The desktop and no-login replay share one fail-closed redacted Ridgeway
+  decision-story builder. Its output carries scenario reducers, focal-pair
+  claim IDs, direct matrix and map run IDs, retained artifact hashes, QA,
+  review-mask provenance, cost-basis identity, and permanent limitations while
+  omitting raster cells, local paths, credentials, and professional data. The
+  builder is pinned to the exact reviewed projection and direct-evidence
+  manifest bytes.
 - Circuitscape startup and packaging now require the exact package UUID,
   version `5.17.1`, and source-tree hash recorded in the committed Julia
   manifest, reject path/repository-tracked substitutions, and verify the loaded

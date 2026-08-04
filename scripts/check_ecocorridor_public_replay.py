@@ -57,6 +57,24 @@ PUBLIC_REPLAY_SOURCE = (
     / "PublicReplayApp.tsx"
 )
 PUBLIC_REPLAY_APP = PUBLIC_REPLAY_SOURCE.parents[1]
+REDACTED_STORY_SOURCE = (
+    Path(__file__).resolve().parents[1] / "packages" / "ecocorridor-evidence" / "src" / "index.ts"
+)
+RIDGEWAY_DIRECT_EVIDENCE_MANIFEST = (
+    Path(__file__).resolve().parents[1]
+    / "benchmarks"
+    / "ecocorridor"
+    / "ridgeway"
+    / "direct-evidence-manifest.json"
+)
+RIDGEWAY_PUBLIC_PROJECTION = (
+    Path(__file__).resolve().parents[1]
+    / "apps"
+    / "ecocorridor-desktop"
+    / "src"
+    / "data"
+    / "ridgewayFixture.json"
+)
 PROCESS_INTERVAL_OVERLAP_KEYS = frozenset(
     {
         "schema_version",
@@ -160,19 +178,66 @@ def _regular(path: Path, *, label: str) -> Path:
     return resolved
 
 
-def validate_public_replay_source_copy(source_path: Path = PUBLIC_REPLAY_SOURCE) -> None:
+def validate_public_replay_source_copy(source_path: Path | None = None) -> None:
     """Apply the production claim policy to all hard-coded public replay UI copy."""
 
-    source = _regular(source_path, label="public replay UI source")
-    if source.stat().st_size > MAX_SOURCE_COPY_BYTES:
-        raise ValueError("public replay UI source exceeds its claim-audit size limit")
+    sources = (
+        (source_path,)
+        if source_path is not None
+        else (
+            PUBLIC_REPLAY_SOURCE,
+            REDACTED_STORY_SOURCE,
+        )
+    )
+    audited: dict[str, str] = {}
     try:
-        text = source.read_text(encoding="utf-8")
-        assert_safe_rendered_ecological_copy({"publicReplaySource": text})
+        for candidate in sources:
+            source = _regular(candidate, label="public replay UI source")
+            if source.stat().st_size > MAX_SOURCE_COPY_BYTES:
+                raise ValueError("public replay UI source exceeds its claim-audit size limit")
+            audited[source.as_posix()] = source.read_text(encoding="utf-8")
+        assert_safe_rendered_ecological_copy(audited)
     except UnicodeDecodeError as exc:
         raise ValueError("public replay UI source is not UTF-8") from exc
     except ValueError as exc:
         raise ValueError("public replay source copy violates ecological claim policy") from exc
+
+
+def validate_redacted_story_source_binding(
+    source_path: Path = REDACTED_STORY_SOURCE,
+    manifest_path: Path = RIDGEWAY_DIRECT_EVIDENCE_MANIFEST,
+    projection_path: Path = RIDGEWAY_PUBLIC_PROJECTION,
+) -> None:
+    """Require export code to pin the exact reviewed evidence and projection bytes."""
+
+    source = _regular(source_path, label="redacted decision-story source")
+    text = source.read_text(encoding="utf-8")
+    expected = {
+        "PINNED_MANIFEST_SHA256": digest(
+            _regular(manifest_path, label="Ridgeway direct-evidence manifest")
+        ),
+        "PINNED_PROJECTION_SHA256": digest(
+            _regular(projection_path, label="Ridgeway public projection")
+        ),
+    }
+    for constant, expected_digest in expected.items():
+        match = re.search(rf'const {constant} = "([0-9a-f]{{64}})";', text)
+        if match is None or match.group(1) != expected_digest:
+            raise ValueError(
+                f"redacted decision-story {constant} is not bound to the reviewed bytes"
+            )
+    canonical_match = re.search(r'const PINNED_PROJECTION_VALUE_SHA256 = "([0-9a-f]{64})";', text)
+    if canonical_match is None:
+        raise ValueError("redacted decision-story omits its canonical projection-value digest")
+    required_runtime_bindings = (
+        "globalThis.crypto?.subtle",
+        "await sha256(stableJson(fixture)) !== PINNED_PROJECTION_VALUE_SHA256",
+    )
+    if any(binding not in text for binding in required_runtime_bindings):
+        raise ValueError(
+            "redacted decision-story runtime does not compare the active fixture with the "
+            "reviewed projection values"
+        )
 
 
 def _json_object(path: Path, *, label: str) -> dict[str, object]:
@@ -309,6 +374,7 @@ def validate_and_inventory(
     require_verified_evidence: bool = False,
 ) -> dict[str, object]:
     validate_public_replay_source_copy()
+    validate_redacted_story_source_binding()
     supplied_root = root
     if supplied_root.is_symlink():
         raise ValueError("public replay root may not be a symlink")

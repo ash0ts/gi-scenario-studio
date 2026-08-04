@@ -840,6 +840,21 @@ def validate_professional_bundle(
     occupied: dict[tuple[str, int, int], tuple[str, str]] = {}
     referenced_option_ids: set[str] = set()
     for site in bundle.intervention_sites:
+        if (
+            not site.title.strip()
+            or not site.reviewed_by.strip()
+            or any(not item.strip() for item in site.known_constraints)
+        ):
+            findings.append(
+                _finding(
+                    "INTERVENTION_SITE_REVIEW_MISSING",
+                    site.site_id,
+                    (
+                        "Enter a named site, accountable reviewer, and nonblank known-constraint "
+                        "records before using its intervention catalog."
+                    ),
+                )
+            )
         footprint = assets.get(site.footprint_asset_id)
         if footprint is None or footprint.kind not in {
             AssetKind.ACTION_EFFECT,
@@ -896,6 +911,43 @@ def validate_professional_bundle(
                 )
             )
         for option in site_options:
+            option_text_incomplete = any(
+                not value.strip()
+                for value in (
+                    option.title,
+                    option.currency,
+                    option.cost_vintage,
+                    option.land_access,
+                    option.maintenance,
+                    option.reviewed_by,
+                )
+            )
+            option_list_incomplete = any(
+                not item.strip()
+                for values in (
+                    option.dependencies,
+                    option.exclusions,
+                    option.external_feasibility_evidence,
+                    option.unresolved_concerns,
+                )
+                for item in values
+            )
+            modeled_evidence_missing = (
+                option.kind not in {InterventionKind.NO_ACTION, InterventionKind.SURVEY_FIRST}
+                and not option.external_feasibility_evidence
+            )
+            if option_text_incomplete or option_list_incomplete or modeled_evidence_missing:
+                findings.append(
+                    _finding(
+                        "INTERVENTION_OPTION_REVIEW_MISSING",
+                        option.option_id,
+                        (
+                            "Document the option title, cost basis, land access, maintenance, "
+                            "accountable reviewer, and nonblank feasibility evidence before "
+                            "using a modeled action."
+                        ),
+                    )
+                )
             if option.kind not in {InterventionKind.NO_ACTION, InterventionKind.SURVEY_FIRST}:
                 covered = {effect.scenario_id for effect in option.effects}
                 missing = sorted(set(scenarios) - covered)
@@ -908,6 +960,37 @@ def validate_professional_bundle(
                         )
                     )
             for effect in option.effects:
+                basis = effect.basis
+                basis_text_incomplete = any(
+                    not value.strip()
+                    for value in (
+                        basis.basis_id,
+                        basis.purpose,
+                        basis.evidence_source,
+                        basis.citation,
+                        basis.reviewer,
+                    )
+                )
+                basis_assumptions_incomplete = not basis.assumptions or any(
+                    not item.strip() for item in basis.assumptions
+                )
+                basis_limitations_incomplete = any(not item.strip() for item in basis.limitations)
+                if (
+                    basis_text_incomplete
+                    or basis_assumptions_incomplete
+                    or basis_limitations_incomplete
+                ):
+                    findings.append(
+                        _finding(
+                            "ACTION_EFFECT_BASIS_INCOMPLETE",
+                            effect.effect_id,
+                            (
+                                "Document the effect purpose, evidence source, citation, named "
+                                "reviewer, and at least one explicit nonblank assumption before "
+                                "the replacement resistance values can be analyzed."
+                            ),
+                        )
+                    )
                 scenario = scenarios.get(effect.scenario_id)
                 if scenario is None:
                     continue

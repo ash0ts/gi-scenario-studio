@@ -6,6 +6,7 @@ import pytest
 from ecocorridor_core.contracts import (
     ActionCellReplacement,
     ConnectivityRunPlan,
+    InterventionKind,
 )
 from ecocorridor_core.interventions import action_effect_sha256
 from ecocorridor_core.professional_validation import (
@@ -108,6 +109,164 @@ def test_professional_preflight_stops_before_resolving_duplicate_scientific_ids(
     assert findings[0].code == "DUPLICATE_STABLE_ID"
     assert findings[0].severity == "BLOCKING"
     assert "resistance hypothesis IDs must be unique" in findings[0].remediation
+
+
+@pytest.mark.parametrize(
+    ("identity_kind", "expected_label"),
+    (("effect", "action effect"), ("basis", "action-effect basis")),
+)
+def test_professional_preflight_rejects_duplicate_nested_action_evidence_ids(
+    identity_kind: str,
+    expected_label: str,
+) -> None:
+    bundle = build_ridgeway_fixture().bundle
+    modeled = next(item for item in bundle.intervention_options if len(item.effects) >= 2)
+    first, second, *remaining = modeled.effects
+    if identity_kind == "effect":
+        duplicate = second.model_copy(update={"effect_id": first.effect_id})
+    else:
+        duplicate = second.model_copy(
+            update={"basis": second.basis.model_copy(update={"basis_id": first.basis.basis_id})}
+        )
+    ambiguous_option = modeled.model_copy(update={"effects": [first, duplicate, *remaining]})
+    ambiguous = bundle.model_copy(
+        update={
+            "intervention_options": [
+                ambiguous_option if item.option_id == modeled.option_id else item
+                for item in bundle.intervention_options
+            ]
+        }
+    )
+
+    findings = validate_professional_bundle(ambiguous)
+
+    assert len(findings) == 1
+    assert findings[0].code == "DUPLICATE_STABLE_ID"
+    assert findings[0].severity == "BLOCKING"
+    assert f"{expected_label} IDs must be unique" in findings[0].remediation
+
+
+def test_professional_preflight_requires_reviewed_action_effect_evidence() -> None:
+    fixture = build_ridgeway_fixture()
+    modeled = next(item for item in fixture.bundle.intervention_options if item.effects)
+    effect = modeled.effects[0]
+    incomplete_basis = effect.basis.model_copy(
+        update={
+            "purpose": " ",
+            "evidence_source": "",
+            "citation": " ",
+            "reviewer": "",
+            "assumptions": [],
+            "limitations": [" "],
+        }
+    )
+    incomplete_effect = effect.model_copy(update={"basis": incomplete_basis})
+    incomplete_effect = incomplete_effect.model_copy(
+        update={"sha256": action_effect_sha256(incomplete_effect)}
+    )
+    incomplete_option = modeled.model_copy(
+        update={
+            "reviewed_by": " ",
+            "external_feasibility_evidence": [],
+            "effects": [
+                incomplete_effect if item.effect_id == effect.effect_id else item
+                for item in modeled.effects
+            ],
+        }
+    )
+    incomplete_site = next(
+        item for item in fixture.bundle.intervention_sites if item.site_id == modeled.site_id
+    ).model_copy(update={"reviewed_by": ""})
+    bundle = fixture.bundle.model_copy(
+        update={
+            "intervention_sites": [
+                incomplete_site if item.site_id == incomplete_site.site_id else item
+                for item in fixture.bundle.intervention_sites
+            ],
+            "intervention_options": [
+                incomplete_option if item.option_id == incomplete_option.option_id else item
+                for item in fixture.bundle.intervention_options
+            ],
+        }
+    )
+
+    findings = validate_professional_bundle(bundle)
+    codes = _codes(findings)
+
+    assert action_effect_sha256(incomplete_effect) == incomplete_effect.sha256
+    assert "ACTION_EFFECT_HASH_MISMATCH" not in codes
+    assert "ACTION_EFFECT_BASIS_INCOMPLETE" in codes
+    assert "INTERVENTION_OPTION_REVIEW_MISSING" in codes
+    assert "INTERVENTION_SITE_REVIEW_MISSING" in codes
+
+
+def test_intervention_preview_cannot_save_an_undocumented_modeled_effect(
+    tmp_path: Path,
+) -> None:
+    fixture = build_ridgeway_fixture()
+    site = fixture.bundle.intervention_sites[0]
+    options = [item for item in fixture.bundle.intervention_options if item.site_id == site.site_id]
+    modeled = next(
+        item
+        for item in options
+        if item.kind not in {InterventionKind.NO_ACTION, InterventionKind.SURVEY_FIRST}
+    )
+    first_effect = modeled.effects[0]
+    incomplete_basis = first_effect.basis.model_copy(
+        update={
+            "purpose": "",
+            "evidence_source": "",
+            "citation": "",
+            "reviewer": "",
+            "assumptions": [],
+        }
+    )
+    incomplete_effect = first_effect.model_copy(update={"basis": incomplete_basis})
+    incomplete_modeled = modeled.model_copy(
+        update={
+            "reviewed_by": "",
+            "external_feasibility_evidence": [],
+            "effects": [
+                incomplete_effect if item.effect_id == first_effect.effect_id else item
+                for item in modeled.effects
+            ],
+        }
+    )
+    preview_options = [
+        incomplete_modeled if item.option_id == modeled.option_id else item for item in options
+    ]
+    project = tmp_path / "undocumented-effect"
+    store = EcoProjectStore(project)
+    try:
+        store.initialize(
+            project_id=fixture.bundle.project_id,
+            title=fixture.bundle.title,
+            mode="PLANNING",
+            skeleton={"test": "undocumented modeled effect"},
+        )
+        store.store_bundle(fixture.bundle)
+    finally:
+        store.close()
+
+    option_drafts = []
+    for option in preview_options:
+        payload = option.model_dump(mode="json")
+        for effect_payload in payload["effects"]:
+            effect_payload.pop("sha256")
+        option_drafts.append(payload)
+    response = RPCDispatcher(data_root=tmp_path).dispatch(
+        "connectivity.intervention.preview",
+        {
+            "project_directory": str(project),
+            "site": site.model_dump(mode="json"),
+            "options": option_drafts,
+        },
+    )["data"]
+
+    assert response["can_save"] is False
+    codes = {item["code"] for item in response["findings"]}
+    assert "ACTION_EFFECT_BASIS_INCOMPLETE" in codes
+    assert "INTERVENTION_OPTION_REVIEW_MISSING" in codes
 
 
 @pytest.mark.parametrize(

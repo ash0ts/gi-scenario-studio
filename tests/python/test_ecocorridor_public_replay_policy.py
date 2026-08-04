@@ -328,10 +328,47 @@ def test_public_replay_source_graph_excludes_desktop_application_and_host_bridge
 def test_public_replay_source_copy_passes_the_strict_ecological_claim_policy(
     checker: ModuleType,
 ) -> None:
-    repository = Path(__file__).resolve().parents[2]
-    checker.validate_public_replay_source_copy(
-        repository / "apps/ecocorridor-replay/src/PublicReplayApp.tsx"
+    checker.validate_public_replay_source_copy()
+
+
+def test_redacted_story_source_is_bound_to_the_reviewed_manifest_and_projection(
+    checker: ModuleType,
+) -> None:
+    checker.validate_redacted_story_source_binding()
+
+
+def test_redacted_story_source_binding_rejects_a_stale_projection_digest(
+    checker: ModuleType,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "index.ts"
+    source.write_text(checker.REDACTED_STORY_SOURCE.read_text(encoding="utf-8"), encoding="utf-8")
+    altered_projection = tmp_path / "ridgewayFixture.json"
+    altered_projection.write_text('{"fixtureId":"altered"}\n', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="PINNED_PROJECTION_SHA256"):
+        checker.validate_redacted_story_source_binding(
+            source,
+            checker.RIDGEWAY_DIRECT_EVIDENCE_MANIFEST,
+            altered_projection,
+        )
+
+
+def test_redacted_story_source_binding_requires_runtime_projection_comparison(
+    checker: ModuleType,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "index.ts"
+    source.write_text(
+        checker.REDACTED_STORY_SOURCE.read_text(encoding="utf-8").replace(
+            "await sha256(stableJson(fixture)) !== PINNED_PROJECTION_VALUE_SHA256",
+            "false",
+        ),
+        encoding="utf-8",
     )
+
+    with pytest.raises(ValueError, match="runtime does not compare"):
+        checker.validate_redacted_story_source_binding(source)
 
 
 @pytest.mark.parametrize(

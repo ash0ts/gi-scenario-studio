@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { serializeRedactedRidgewayDecisionStory } from "@ecocorridor-scenario-studio/evidence";
 import { z } from "zod";
 import { ConnectivityCostBasisSchema, ConnectivityDecisionBriefSchema, ConnectivityDecisionRuleSchema, ConnectivityModelFitnessSchema, ConnectivityScenarioSchema, FocalAreaSetSchema, InterventionOptionSchema, InterventionSiteSchema, ResistanceHypothesisSchema, ResourcePolicySchema, RiskReviewMaskSchema, SafeguardRecordSchema, SensitiveDataAuthorizationSchema } from "../generated/contracts";
 import type { ConnectivityModelFitness, GridAlignmentPlan, PortfolioDecisionSummary } from "../generated/contracts";
@@ -2109,18 +2110,10 @@ function RobustnessScreen({ path, selectedPortfolio, onPortfolio, onEvidence, fi
   );
 }
 
-function downloadSyntheticStory(fixture: RidgewayFixture, verified: boolean) {
-  const payload = {
-    fixture: fixture.fixtureId,
-    manifest_sha256: fixture.manifestSha256,
-    baseline_portfolio_id: fixture.baselinePortfolioId,
-    status: verified ? "VERIFIED_SYNTHETIC_REPLAY" : "PROJECTION_PENDING_MANIFEST",
-    limitation: fixture.disclaimer,
-    resource_observability: fixture.resourceObservability,
-    hypothesis_ranking_metric: fixture.study.hypothesisRankingMetric,
-    portfolios: fixture.portfolios.map(({ id, name, role, costUsd, ruleStatus, worstResistanceChangePct, worstScenarioId, roadMaskFlag, nextAction, hypothesisRanks }) => ({ id, name, role, costUsd, ruleStatus, worstResistanceChangePct, worstScenarioId, roadMaskFlag, nextAction, hypothesisRanks })),
-  };
-  const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }));
+async function downloadSyntheticStory(fixture: RidgewayFixture, verified: boolean) {
+  if (!verified) throw new Error("Verified direct Ridgeway evidence is required before export.");
+  const serialized = await serializeRedactedRidgewayDecisionStory(fixture);
+  const url = URL.createObjectURL(new Blob([serialized], { type: "application/json" }));
   const link = document.createElement("a");
   link.href = url;
   link.download = "ridgeway-crossing-static-decision-story.json";
@@ -2204,6 +2197,18 @@ function EvidencePackageScreen({ path, publicMode, onEvidence, selectedPortfolio
       setSyncMessage(hostErrorMessage(error, "W&B synchronization failed; local science and queued evidence are unchanged."));
     }
   };
+  const downloadGuidedStory = async () => {
+    if (!fixture) return;
+    setExportState("creating"); setExportMessage("");
+    try {
+      await downloadSyntheticStory(fixture, fixtureVerified);
+      setExportState("idle");
+      setExportMessage("The synthetic story passed its local integrity check and the evidence-linked JSON download was requested.");
+    } catch (error) {
+      setExportState("error");
+      setExportMessage(hostErrorMessage(error, "The synthetic story did not pass its local integrity check, so no file was downloaded."));
+    }
+  };
   if (!guided) {
     const eligibility = professionalAnalysis.exportEligibility;
     const record = professionalAnalysis.exportRecord;
@@ -2223,7 +2228,8 @@ function EvidencePackageScreen({ path, publicMode, onEvidence, selectedPortfolio
   return (
     <>
       <PageIntro kicker="Decision record" title="Evidence and feasibility package" description="Export eligibility comes from repository evidence. A label, user preference, or assistant cannot override a missing run, QA finding, authorization, or limitation." badge={<StatusPill state={fixtureVerified ? "pass" : "review"}>{fixtureVerified ? "Synthetic export eligible" : "Projection export blocked"}</StatusPill>} />
-      <section className="paper-panel eligibility-panel"><div className="eligibility-seal"><Icon name="document" /></div><div><span className="section-kicker">Export eligibility</span><h2>{fixtureVerified ? "A redacted synthetic decision story can be downloaded." : "The evidence manifest has not been verified."}</h2><p>The file contains no professional or sensitive data and carries the permanent ecological limitations. It does not claim approval, design readiness, animal use, or collision reduction.</p></div><button className="primary-button" type="button" disabled={!fixtureVerified} onClick={() => downloadSyntheticStory(fixture, fixtureVerified)}><Icon name="download" /> Download static story</button></section>
+      <section className="paper-panel eligibility-panel"><div className="eligibility-seal"><Icon name="document" /></div><div><span className="section-kicker">Export eligibility</span><h2>{fixtureVerified ? "A redacted synthetic decision story can be downloaded." : "The evidence manifest has not been verified."}</h2><p>The file contains no professional or sensitive data and carries the permanent ecological limitations. It does not claim approval, design readiness, animal use, or collision reduction.</p></div><button className="primary-button" type="button" disabled={!fixtureVerified || exportState === "creating"} onClick={() => { void downloadGuidedStory(); }}><Icon name="download" /> {exportState === "creating" ? "Checking story…" : "Download static story"}</button></section>
+      {exportMessage && <p className={`operation-message ${exportState === "error" ? "error" : "success"}`} role={exportState === "error" ? "alert" : "status"}>{exportMessage}</p>}
       <div className="evidence-package-grid">
         <section className="paper-panel package-list"><div className="panel-heading"><div><span className="section-kicker">Package contents</span><h2>What travels with the decision</h2></div></div><ul><li><Icon name="document" /><div><strong>Decision brief and rule matrix</strong><span>Question, thresholds, reducer definitions, cost basis, and non-goals</span></div></li><li><Icon name="grid" /><div><strong>Direct result projection</strong><span>Portfolio × scenario rows, QA dispositions, map-summary values, and IDs</span></div></li><li><Icon name="layers" /><div><strong>Model revision and semantic diff</strong><span>Source assets, approved transforms, resistance/focal meanings, and action rasters</span></div></li><li><Icon name="shield" /><div><strong>Fitness, safeguards, and authorizations</strong><span>Unresolved assumptions remain visible</span></div></li></ul></section>
         <section className="paper-panel lineage-panel"><span className="section-kicker">Selected claim</span><h2>{selectedPortfolio.name}</h2><p>{selectedPortfolio.nextAction}</p><button className="secondary-button" type="button" onClick={() => onEvidence(evidenceFor(fixture, selectedPortfolio, fixtureVerified))}><Icon name="evidence" /> Inspect local evidence chain</button><button className="secondary-button" type="button" disabled title={publicMode ? "The public replay makes no cloud calls." : "No confirmed synchronized W&B artifact reference has been returned by the worker."}><Icon name="external" /> Open W&B artifact lineage</button><small>{publicMode ? "No login and no W&B connection in public replay." : "Cloud links supplement the local Evidence Rail; they never replace it."}</small></section>

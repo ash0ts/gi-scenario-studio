@@ -12,6 +12,7 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@ecocorridor-scenario-studio/evidence": "workspace:*",
     "@scenario-platform/ui-foundations": "workspace:*",
     "@fontsource/atkinson-hyperlegible": "5.3.0",
     "@fontsource/barlow-condensed": "5.3.0",

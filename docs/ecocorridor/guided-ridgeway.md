@@ -54,3 +54,15 @@ Windows launcher owns a native Job Object and proves active-process zero; a
 direct-child exit or `taskkill` result cannot satisfy the whole-tree evidence
 contract. Signed release independently resolves the same protected producer
 identity rather than trusting a local package or copied artifact.
+
+The **Evidence package** action downloads a synthetic-only redacted decision
+story, not a naked table of teaching numbers. For every displayed focal-pair
+value it includes the claim ID, baseline and portfolio direct matrix job IDs,
+matrix artifact hashes, scenario reducer, accepted-fixture QA disposition, and
+the controlling claim. Diagnostic map entries carry the baseline and portfolio
+map job IDs, current-raster hashes, and road-review-mask hash. Costs are marked
+as non-engine outputs and bound to the pinned cost-basis hash. The JSON contains
+no raster cells, local filesystem paths, credentials, professional project
+content, real locations, or species information. Both desktop and public replay
+use the same byte-identity checks and serializer so their evidence story cannot
+drift independently.
