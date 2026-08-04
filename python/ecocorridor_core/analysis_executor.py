@@ -30,6 +30,7 @@ from scenario_platform.storage import (
     contained_path,
 )
 
+from .bundle_identity import assert_unique_bundle_identities
 from .contracts import (
     ConnectivityAsset,
     ConnectivityDecisionRule,
@@ -631,6 +632,10 @@ class DurableAnalysisExecutor:
         engine_sha256: str,
     ) -> dict[str, Any]:
         project_directory = project_directory.resolve()
+        try:
+            assert_unique_bundle_identities(bundle)
+        except ValueError as exc:
+            raise DurableAnalysisError(str(exc)) from exc
         self._validate_engine(engine_executable, engine_sha256)
         self._configured_engine = engine_executable.resolve()
         self._configured_engine_sha256 = engine_sha256
@@ -685,6 +690,10 @@ class DurableAnalysisExecutor:
         """
 
         project_directory = project_directory.resolve()
+        try:
+            assert_unique_bundle_identities(bundle)
+        except ValueError as exc:
+            raise DurableAnalysisError(str(exc)) from exc
         self._validate_engine(engine_executable, engine_sha256)
         self._configured_engine = engine_executable.resolve()
         self._configured_engine_sha256 = engine_sha256
@@ -1393,6 +1402,7 @@ class DurableAnalysisExecutor:
             # immutable run plan. Project edits made after planning must never
             # alter a queued, resumed, or recovered scientific execution.
             bundle = store.analysis_bundle(control.analysis_id)
+            assert_unique_bundle_identities(bundle)
             adapter = CircuitscapeAdapter(executable, self.engine_manifest)
             while True:
                 state = AnalysisState(store.analysis(control.analysis_id)["state"])

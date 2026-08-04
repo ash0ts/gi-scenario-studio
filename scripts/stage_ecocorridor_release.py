@@ -234,10 +234,15 @@ def main() -> int:
         for name in (
             "geopandas",
             "numpy",
+            "pydantic",
             "pyogrio",
             "pyinstaller",
             "rasterio",
+            "scikit-learn",
+            "scipy",
             "shapely",
+            "wandb",
+            "weave",
         )
     }
     inventory = {

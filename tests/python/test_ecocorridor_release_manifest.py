@@ -107,6 +107,45 @@ def test_worker_packaging_uses_only_worktree_local_caches_and_defensive_environm
             command[index : index + 2] == ["--collect-all", package]
             for index in range(len(command) - 1)
         )
+    for option, package in builder.PROFESSIONAL_RUNTIME_COLLECTIONS:
+        assert any(
+            command[index : index + 2] == [option, package] for index in range(len(command) - 1)
+        )
+
+
+@pytest.mark.parametrize(
+    "required_pair",
+    [
+        ("--collect-all", "wandb"),
+        ("--collect-all", "weave"),
+        ("--hidden-import", "pydantic"),
+        ("--hidden-import", "scipy.stats.qmc"),
+        ("--hidden-import", "sklearn.ensemble"),
+    ],
+)
+def test_worker_packaging_policy_rejects_professional_runtime_collection_mutation(
+    required_pair: tuple[str, str],
+) -> None:
+    builder = _load_script("build_ecocorridor_worker.py")
+    command = [value for pair in builder.PROFESSIONAL_RUNTIME_COLLECTIONS for value in pair]
+    builder.validate_professional_runtime_collection(command)
+
+    index = next(
+        index
+        for index in range(len(command) - 1)
+        if tuple(command[index : index + 2]) == required_pair
+    )
+    mutated = [*command[:index], *command[index + 2 :]]
+    with pytest.raises(ValueError, match="collection is incomplete"):
+        builder.validate_professional_runtime_collection(mutated)
+
+
+def test_worker_packaging_policy_rejects_collecting_all_of_sklearn() -> None:
+    builder = _load_script("build_ecocorridor_worker.py")
+    command = [value for pair in builder.PROFESSIONAL_RUNTIME_COLLECTIONS for value in pair]
+    command.extend(["--collect-all", "sklearn"])
+    with pytest.raises(ValueError, match="not all of sklearn"):
+        builder.validate_professional_runtime_collection(command)
 
 
 def test_packaged_engine_smoke_requires_hand_calculated_series_result() -> None:
@@ -264,10 +303,15 @@ def test_packaged_worker_inventory_must_match_declared_native_runtime() -> None:
         "python_packages": {
             "geopandas": "1.1.4",
             "numpy": "2.4.1",
+            "pydantic": "2.13.4",
             "pyogrio": "0.13.0",
             "pyinstaller": "6.21.0",
             "rasterio": "1.5.0",
+            "scikit-learn": "1.9.0",
+            "scipy": "1.18.0",
             "shapely": "2.1.2",
+            "wandb": "0.28.1",
+            "weave": "0.53.4",
         },
         "gdal_version": "3.12.1",
         "pyogrio_gdal_version": "3.11.4",
@@ -278,10 +322,252 @@ def test_packaged_worker_inventory_must_match_declared_native_runtime() -> None:
     packaged["python_packages"] = {
         key: value for key, value in declared["python_packages"].items() if key != "pyinstaller"
     }
+    packaged["capabilities"] = {
+        "pydantic_contracts": True,
+        "scipy_sobol": True,
+        "sklearn_extratrees": True,
+        "wandb_offline_table_artifact": True,
+        "weave_entrypoint_redaction": True,
+    }
     smoke.validate_packaged_runtime_inventory(packaged, declared)
+    packaged["python_packages"]["wandb"] = "0.0.0"
+    with pytest.raises(SystemExit, match="dependency differs from staging: wandb"):
+        smoke.validate_packaged_runtime_inventory(packaged, declared)
+    packaged["python_packages"]["wandb"] = declared["python_packages"]["wandb"]
     packaged["gdal_version"] = "0.0.0"
     with pytest.raises(SystemExit, match="native runtime differs"):
         smoke.validate_packaged_runtime_inventory(packaged, declared)
+
+
+@pytest.mark.parametrize(
+    "package",
+    ["pydantic", "scikit-learn", "scipy", "wandb", "weave"],
+)
+def test_packaged_worker_inventory_rejects_missing_professional_dependency(
+    package: str,
+) -> None:
+    smoke = _load_script("smoke_ecocorridor_release_bundle.py")
+    declared_packages = {name: "1.0.0" for name in smoke.STAGED_RUNTIME_PACKAGES}
+    packaged_packages = {name: "1.0.0" for name in smoke.PACKAGED_RUNTIME_PACKAGES}
+    packaged_packages.pop(package)
+    declared = {
+        "python_version": "3.12.11",
+        "python_packages": declared_packages,
+        "gdal_version": "3.12.1",
+        "pyogrio_gdal_version": "3.11.4",
+        "proj_version": "9.7.1",
+        "geos_version": "3.13.1",
+    }
+    packaged = {
+        **declared,
+        "schema_version": "1.0",
+        "python_packages": packaged_packages,
+        "capabilities": dict.fromkeys(smoke.PACKAGED_RUNTIME_CAPABILITIES, True),
+    }
+    with pytest.raises(SystemExit, match="invalid package set"):
+        smoke.validate_packaged_runtime_inventory(packaged, declared)
+
+
+@pytest.mark.parametrize(
+    "capability",
+    [
+        "pydantic_contracts",
+        "scipy_sobol",
+        "sklearn_extratrees",
+        "wandb_offline_table_artifact",
+        "weave_entrypoint_redaction",
+    ],
+)
+def test_packaged_worker_inventory_rejects_unproven_professional_capability(
+    capability: str,
+) -> None:
+    smoke = _load_script("smoke_ecocorridor_release_bundle.py")
+    declared = {
+        "python_version": "3.12.11",
+        "python_packages": {name: "1.0.0" for name in smoke.STAGED_RUNTIME_PACKAGES},
+        "gdal_version": "3.12.1",
+        "pyogrio_gdal_version": "3.11.4",
+        "proj_version": "9.7.1",
+        "geos_version": "3.13.1",
+    }
+    packaged = {
+        **declared,
+        "schema_version": "1.0",
+        "python_packages": {name: "1.0.0" for name in smoke.PACKAGED_RUNTIME_PACKAGES},
+        "capabilities": dict.fromkeys(smoke.PACKAGED_RUNTIME_CAPABILITIES, True),
+    }
+    packaged["capabilities"][capability] = False
+    with pytest.raises(SystemExit, match="professional runtime capability"):
+        smoke.validate_packaged_runtime_inventory(packaged, declared)
+
+
+def test_professional_runtime_probe_is_offline_credential_free_and_deterministic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entrypoint = _load_script("ecocorridor_worker_entry.py")
+    monkeypatch.setenv("WANDB_MODE", "offline")
+    for name in entrypoint.FORBIDDEN_PROBE_CREDENTIALS:
+        monkeypatch.delenv(name, raising=False)
+    for name in ("WANDB_ARTIFACT_DIR", "WANDB_CACHE_DIR", "WANDB_DATA_DIR", "WANDB_DIR"):
+        directory = tmp_path / name.lower()
+        directory.mkdir()
+        monkeypatch.setenv(name, str(directory))
+
+    inventory = entrypoint.packaged_runtime_inventory()
+
+    assert set(inventory["python_packages"]) == set(entrypoint.PACKAGED_RUNTIME_PACKAGES)
+    assert inventory["capabilities"] == dict.fromkeys(
+        entrypoint.PACKAGED_RUNTIME_CAPABILITIES, True
+    )
+
+
+def test_worker_entrypoint_emits_one_credential_free_professional_runtime_record(
+    tmp_path: Path,
+) -> None:
+    smoke = _load_script("smoke_ecocorridor_release_bundle.py")
+    environment = smoke.clean_environment()
+    for name in ("WANDB_ARTIFACT_DIR", "WANDB_CACHE_DIR", "WANDB_DATA_DIR", "WANDB_DIR"):
+        directory = tmp_path / name.lower()
+        directory.mkdir()
+        environment[name] = str(directory)
+    environment.update(
+        {
+            "WANDB_CONSOLE": "off",
+            "WANDB_DISABLE_CODE": "true",
+            "WANDB_DISABLE_GIT": "true",
+            "WANDB_ERROR_REPORTING": "false",
+            "WANDB_SHOW_RUN": "false",
+            "WANDB_SILENT": "true",
+        }
+    )
+    entrypoint = Path(__file__).resolve().parents[2] / "scripts/ecocorridor_worker_entry.py"
+
+    completed = subprocess.run(
+        [sys.executable, str(entrypoint), "--packaged-runtime-inventory"],
+        env=environment,
+        capture_output=True,
+        timeout=60,
+        check=False,
+    )
+
+    assert completed.returncode == 0
+    assert completed.stderr == b""
+    lines = [line for line in completed.stdout.decode("utf-8").splitlines() if line]
+    assert len(lines) == 1
+    record = json.loads(lines[0])
+    assert set(record["python_packages"]) == smoke.PACKAGED_RUNTIME_PACKAGES
+    assert record["capabilities"] == dict.fromkeys(smoke.PACKAGED_RUNTIME_CAPABILITIES, True)
+
+
+@pytest.mark.parametrize(
+    ("environment_name", "environment_value", "message"),
+    [
+        ("WANDB_MODE", "online", "requires W&B offline mode"),
+        ("WANDB_API_KEY", "must-not-reach-probe", "refuses cloud or provider credentials"),
+    ],
+)
+def test_professional_runtime_probe_rejects_online_or_credentialed_execution(
+    environment_name: str,
+    environment_value: str,
+    message: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entrypoint = _load_script("ecocorridor_worker_entry.py")
+    monkeypatch.setenv("WANDB_MODE", "offline")
+    for name in entrypoint.FORBIDDEN_PROBE_CREDENTIALS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv(environment_name, environment_value)
+
+    with pytest.raises(RuntimeError, match=message):
+        entrypoint._require_offline_credential_free_probe()
+
+
+def test_packaged_runtime_smoke_passes_no_keys_and_uses_isolated_offline_storage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    smoke = _load_script("smoke_ecocorridor_release_bundle.py")
+    declared = {
+        "schema_version": "1.0",
+        "python_version": "3.12.11",
+        "python_packages": {name: "1.0.0" for name in smoke.STAGED_RUNTIME_PACKAGES},
+        "gdal_version": "3.12.1",
+        "pyogrio_gdal_version": "3.11.4",
+        "proj_version": "9.7.1",
+        "geos_version": "3.13.1",
+    }
+    packaged = {
+        **declared,
+        "python_packages": {name: "1.0.0" for name in smoke.PACKAGED_RUNTIME_PACKAGES},
+        "capabilities": dict.fromkeys(smoke.PACKAGED_RUNTIME_CAPABILITIES, True),
+    }
+    inventory = tmp_path / "dependency-inventory.json"
+    inventory.write_text(json.dumps(declared), encoding="utf-8")
+    monkeypatch.setenv("WANDB_API_KEY", "must-not-reach-runtime-probe")
+    monkeypatch.setenv("OPENAI_API_KEY", "must-not-reach-runtime-probe")
+
+    def fake_run(command: list[str], **values: object) -> object:
+        assert command == [str(tmp_path / "worker"), "--packaged-runtime-inventory"]
+        environment = values["env"]
+        assert isinstance(environment, dict)
+        assert environment["WANDB_MODE"] == "offline"
+        assert "WANDB_API_KEY" not in environment
+        assert "OPENAI_API_KEY" not in environment
+        for name in ("WANDB_ARTIFACT_DIR", "WANDB_CACHE_DIR", "WANDB_DATA_DIR", "WANDB_DIR"):
+            directory = Path(environment[name])
+            assert directory.is_dir()
+            assert "ecocorridor-professional-runtime-" in str(directory.parent)
+        return type(
+            "Completed",
+            (),
+            {
+                "returncode": 0,
+                "stderr": b"",
+                "stdout": (json.dumps(packaged) + "\n").encode("utf-8"),
+            },
+        )()
+
+    monkeypatch.setattr(smoke.subprocess, "run", fake_run)
+    smoke.run_packaged_runtime_inventory(tmp_path / "worker", inventory)
+
+
+def test_staged_dependency_inventory_requires_exact_professional_runtime_set(
+    tmp_path: Path,
+) -> None:
+    smoke = _load_script("smoke_ecocorridor_release_bundle.py")
+    payload = {
+        "schema_version": "1.0",
+        "application_id": "org.ecocorridor.scenariostudio",
+        "application_version": "0.1.0",
+        "source_commit_sha": "a" * 40,
+        "target": "macos-arm64",
+        "julia_version": "1.12.6",
+        "circuitscape_version": "5.17.1",
+        "connectivity_mode": "raster_pairwise_resistance",
+        "python_version": "3.12.11",
+        "python_packages": {name: "1.0.0" for name in smoke.STAGED_RUNTIME_PACKAGES},
+        "gdal_version": "3.12.1",
+        "pyogrio_gdal_version": "3.11.4",
+        "proj_version": "9.7.1",
+        "geos_version": "3.13.1",
+    }
+    inventory = tmp_path / "dependency-inventory.json"
+    inventory.write_text(json.dumps(payload), encoding="utf-8")
+    smoke.validate_dependency_inventory(
+        inventory,
+        expected_version="0.1.0",
+        expected_source_commit="a" * 40,
+        expected_target="macos-arm64",
+    )
+
+    del payload["python_packages"]["weave"]
+    inventory.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(SystemExit, match="dependency inventory is incomplete"):
+        smoke.validate_dependency_inventory(
+            inventory,
+            expected_version="0.1.0",
+            expected_source_commit="a" * 40,
+            expected_target="macos-arm64",
+        )
 
 
 def test_engine_stage_dereferences_only_contained_regular_file_symlinks(
@@ -864,7 +1150,19 @@ def test_full_release_sbom_requires_and_covers_each_native_target(tmp_path: Path
                     "pyogrio_gdal_version": "3.11.4",
                     "proj_version": "9.6.0",
                     "geos_version": "3.13.1",
-                    "python_packages": {"pyinstaller": "6.16.0"},
+                    "python_packages": {
+                        "geopandas": "1.1.4",
+                        "numpy": "2.4.1",
+                        "pydantic": "2.13.4",
+                        "pyogrio": "0.13.0",
+                        "pyinstaller": "6.16.0",
+                        "rasterio": "1.5.0",
+                        "scikit-learn": "1.9.0",
+                        "scipy": "1.18.0",
+                        "shapely": "2.1.2",
+                        "wandb": "0.28.1",
+                        "weave": "0.53.4",
+                    },
                 }
             ),
             encoding="utf-8",

@@ -9,7 +9,11 @@ from pathlib import Path
 from typing import Any
 
 from ecocorridor_core.contracts import PUBLIC_CONTRACTS
-from ecocorridor_core.schema import render_public_schemas, write_public_schemas
+from ecocorridor_core.schema import (
+    annotate_bundle_identity_schema,
+    render_public_schemas,
+    write_public_schemas,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_DIRECTORY = ROOT / "schemas" / "ecocorridor" / "v1.0"
@@ -102,6 +106,15 @@ def _zod(schema: dict[str, Any], definitions: dict[str, Any], stack: tuple[str, 
                 ".refine((items) => new Set(items.map((item) => "
                 'JSON.stringify(item))).size === items.length, "Expected unique items")'
             )
+        if unique_by := schema.get("x-uniqueBy"):
+            if not isinstance(unique_by, str) or not unique_by:
+                raise ValueError("x-uniqueBy must name one non-empty stable-ID property")
+            encoded_property = json.dumps(unique_by)
+            encoded_message = json.dumps(f"Expected unique {unique_by} values")
+            result += (
+                ".refine((items) => new Set(items.map((item) => "
+                f"item[{encoded_property}])).size === items.length, {encoded_message})"
+            )
         return result
     if schema_type == "object" or "properties" in schema or "additionalProperties" in schema:
         properties = schema.get("properties", {})
@@ -140,6 +153,8 @@ def render_typescript() -> str:
     for contract in PUBLIC_CONTRACTS:
         schema = contract.model_json_schema(mode="validation")
         name = contract.__name__
+        if name == "ConnectivityProjectBundle":
+            annotate_bundle_identity_schema(schema)
         names.append(name)
         validator = _zod(schema, schema.get("$defs", {}), (name,))
         lines.extend(

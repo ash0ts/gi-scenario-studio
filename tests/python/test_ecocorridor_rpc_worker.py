@@ -631,6 +631,31 @@ def test_bundle_transport_keeps_unknown_malformed_modes_manifest_invalid(tmp_pat
     assert raised.value.error.code == "BUNDLE_MANIFEST_INVALID"
 
 
+def test_bundle_import_rejects_duplicate_scientific_identity(tmp_path: Path) -> None:
+    payload = build_ridgeway_fixture().bundle.model_dump(mode="json")
+    duplicate = dict(payload["resistance_hypotheses"][0])
+    duplicate["title"] = "Conflicting duplicate resistance hypothesis"
+    payload["resistance_hypotheses"].append(duplicate)
+    archive = tmp_path / "duplicate-hypothesis.zip"
+    project = tmp_path / "duplicate-hypothesis-project"
+    _write_fixture_bundle_with_manifest(archive, payload)
+    dispatcher = RPCDispatcher(data_root=tmp_path)
+
+    with pytest.raises(RPCFault) as raised:
+        dispatcher.dispatch(
+            "connectivity.bundle.import",
+            {
+                "bundle_path": str(archive),
+                "project_directory": str(project),
+            },
+        )
+
+    assert raised.value.error.code == "BUNDLE_MANIFEST_INVALID"
+    assert raised.value.error.category.value == "MODEL_QUALITY"
+    assert "resistance hypothesis IDs must be unique" in raised.value.error.technical_message
+    assert not project.exists()
+
+
 def test_planning_grid_and_validation_state_persist_in_project_sqlite(tmp_path: Path) -> None:
     fixture = build_ridgeway_fixture()
     project = tmp_path / "planning-project"

@@ -93,6 +93,23 @@ def test_cross_contract_validation_covers_effect_bounds_overlap_and_safeguards()
     assert "SAFEGUARD_COVERAGE_INCOMPLETE" in codes
 
 
+def test_professional_preflight_stops_before_resolving_duplicate_scientific_ids() -> None:
+    bundle = build_ridgeway_fixture().bundle
+    duplicate = bundle.resistance_hypotheses[0].model_copy(
+        update={"title": "Conflicting duplicate definition"}
+    )
+    ambiguous = bundle.model_copy(
+        update={"resistance_hypotheses": [*bundle.resistance_hypotheses, duplicate]}
+    )
+
+    findings = validate_professional_bundle(ambiguous)
+
+    assert len(findings) == 1
+    assert findings[0].code == "DUPLICATE_STABLE_ID"
+    assert findings[0].severity == "BLOCKING"
+    assert "resistance hypothesis IDs must be unique" in findings[0].remediation
+
+
 @pytest.mark.parametrize(
     "grid_change",
     [

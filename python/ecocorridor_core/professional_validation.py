@@ -13,6 +13,7 @@ from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from typing import Literal
 
+from .bundle_identity import assert_unique_bundle_identities
 from .claim_safety import assert_strict_ecological_claim
 from .contracts import (
     AssetKind,
@@ -164,6 +165,16 @@ def validate_professional_bundle(
     """
 
     findings: list[ModelFinding] = []
+    try:
+        assert_unique_bundle_identities(bundle)
+    except ValueError as exc:
+        return [
+            _finding(
+                "DUPLICATE_STABLE_ID",
+                bundle.project_id,
+                f"{exc}. Give every model object one stable identity before analysis.",
+            )
+        ]
     assets = {item.asset_id: item for item in bundle.assets}
     hypotheses = {item.hypothesis_id: item for item in bundle.resistance_hypotheses}
     focal_sets = {item.focal_set_id: item for item in bundle.focal_area_sets}

@@ -1109,7 +1109,11 @@ def verify_dataset_manifest(
         set(),
         "search benchmark manifest",
     )
-    if payload["schema_version"] != "ecocorridor-search-manifest/v1.0":
+    manifest_schema = payload["schema_version"]
+    if manifest_schema not in {
+        "ecocorridor-search-manifest/v1.0",
+        "ecocorridor-search-manifest/v1.1",
+    }:
         raise ValueError("unexpected search benchmark manifest schema")
     expected_manifest_sha = _canonical_sha256(
         {key: value for key, value in payload.items() if key != "manifest_sha256"}
@@ -1120,6 +1124,14 @@ def verify_dataset_manifest(
         payload["source_evidence_index_sha256"], "manifest evidence index digest"
     )
     datasets = {Path(path).name: load_benchmark_dataset(path) for path in dataset_paths}
+    if manifest_schema == "ecocorridor-search-manifest/v1.1" and any(
+        not dataset.dataset_id.endswith("_direct_v2") for dataset in datasets.values()
+    ):
+        raise ValueError("current search manifest requires v2 direct Ridgeway tables")
+    if manifest_schema == "ecocorridor-search-manifest/v1.0" and any(
+        dataset.dataset_id.endswith("_direct_v2") for dataset in datasets.values()
+    ):
+        raise ValueError("v2 direct Ridgeway tables cannot use the historical manifest schema")
     if any(dataset.source_evidence_index_sha256 != index_sha for dataset in datasets.values()):
         raise ValueError("search benchmark tables do not share the manifest evidence index")
     records = payload["files"]
@@ -1299,8 +1311,13 @@ def derive_ridgeway_benchmark_tables(
 
     evidence_path = Path(evidence_index_path)
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
-    if evidence.get("schema_version") != "ridgeway-evidence-index/v1.0":
+    evidence_schema = evidence.get("schema_version")
+    if evidence_schema not in {
+        "ridgeway-evidence-index/v1.0",
+        "ridgeway-evidence-index/v1.1",
+    }:
         raise ValueError("Ridgeway evidence index has an unexpected schema")
+    current_evidence = evidence_schema == "ridgeway-evidence-index/v1.1"
     fixture = build_ridgeway_fixture()
     if evidence.get("model_sha256") != fixture.bundle.revision.model_sha256:
         raise ValueError("Ridgeway evidence index belongs to another model revision")
@@ -1308,11 +1325,44 @@ def derive_ridgeway_benchmark_tables(
     workflow_sha = _require_sha256(
         evidence.get("workflow_manifest_sha256"), "workflow manifest digest"
     )
+    physics_model_sha: str | None = None
+    engine_environment_sha: str | None = None
+    decision_snapshot_sha: str | None = None
+    if current_evidence:
+        physics_model_sha = _require_sha256(
+            evidence.get("physics_model_sha256"), "physics model digest"
+        )
+        engine_environment_sha = _require_sha256(
+            evidence.get("engine_environment_sha256"), "engine environment digest"
+        )
+        decision_snapshot_sha = _require_sha256(
+            evidence.get("decision_snapshot_sha256"), "decision snapshot digest"
+        )
+        process_summary = evidence.get("process_tree_exit_evidence")
+        expected_complete_job_count = (
+            fixture.direct_matrix_job_count + fixture.teaching_map_job_count
+        )
+        if (
+            not isinstance(process_summary, dict)
+            or process_summary.get("jobs_with_confirmed_tree_exit") != expected_complete_job_count
+            or process_summary.get("jobs_without_confirmed_tree_exit") != 0
+            or process_summary.get("unique_process_identities") != expected_complete_job_count
+            or process_summary.get("confirmation_methods")
+            != {"POSIX_PROCESS_GROUP_ABSENT_AFTER_NATURAL_EXIT": expected_complete_job_count}
+        ):
+            raise ValueError(
+                "current Ridgeway evidence requires complete confirmed process-tree exits"
+            )
+        map_jobs = evidence.get("map_jobs")
+        if not isinstance(map_jobs, list) or len(map_jobs) != fixture.teaching_map_job_count:
+            raise ValueError("current Ridgeway evidence requires all 60 retained map jobs")
     index_sha = _file_sha256(evidence_path)
     raw_jobs = evidence.get("matrix_jobs")
     if not isinstance(raw_jobs, list) or len(raw_jobs) != fixture.direct_matrix_job_count:
         raise ValueError("Ridgeway benchmark derivation requires all 1,536 matrix jobs")
     jobs: dict[tuple[str, str], dict[str, Any]] = {}
+    direct_run_ids: set[str] = set()
+    process_identities: set[str] = set()
     for raw in raw_jobs:
         if not isinstance(raw, dict):
             raise TypeError("Ridgeway matrix job must be an object")
@@ -1328,9 +1378,74 @@ def derive_ridgeway_benchmark_tables(
             or raw.get("engine_manifest_sha256") != engine_sha
         ):
             raise ValueError("Ridgeway benchmark source contains non-release direct evidence")
+        direct_run_id = str(raw.get("direct_run_id", ""))
+        if not direct_run_id or direct_run_id in direct_run_ids:
+            raise ValueError("Ridgeway evidence requires unique direct-run identities")
+        direct_run_ids.add(direct_run_id)
+        if current_evidence:
+            process_exit = raw.get("process_exit_evidence")
+            if (
+                raw.get("phase") != "matrix"
+                or raw.get("workflow_manifest_sha256") != workflow_sha
+                or raw.get("physics_model_sha256") != physics_model_sha
+                or raw.get("engine_environment_sha256") != engine_environment_sha
+                or raw.get("decision_snapshot_sha256") != decision_snapshot_sha
+                or not isinstance(process_exit, dict)
+                or process_exit.get("tree_exit_confirmed") is not True
+                or process_exit.get("confirmation_method")
+                != "POSIX_PROCESS_GROUP_ABSENT_AFTER_NATURAL_EXIT"
+                or process_exit.get("termination_reason") != "natural_exit"
+            ):
+                raise ValueError(
+                    "current Ridgeway benchmark source lacks bound execution provenance"
+                )
+            process_identity = str(process_exit.get("process_identity", ""))
+            _require_sha256(process_identity, "direct process identity")
+            if process_identity in process_identities:
+                raise ValueError("current Ridgeway evidence reuses a process identity")
+            process_identities.add(process_identity)
         _require_sha256(raw.get("result_sha256"), "direct result digest")
         _require_sha256(raw.get("matrix_sha256"), "direct matrix digest")
         jobs[identity] = raw
+    if current_evidence:
+        assert isinstance(map_jobs, list)
+        for raw in map_jobs:
+            if not isinstance(raw, dict):
+                raise TypeError("Ridgeway map job must be an object")
+            direct_run_id = str(raw.get("direct_run_id", ""))
+            process_exit = raw.get("process_exit_evidence")
+            if (
+                not direct_run_id
+                or direct_run_id in direct_run_ids
+                or raw.get("state") != "SUCCEEDED"
+                or raw.get("exact") is not True
+                or raw.get("engine_name") != "Circuitscape"
+                or raw.get("qa_status") not in {"ACCEPTED", "WARNING_ACCEPTED"}
+                or raw.get("test_only") is True
+                or raw.get("phase") != "map"
+                or raw.get("engine_manifest_sha256") != engine_sha
+                or raw.get("workflow_manifest_sha256") != workflow_sha
+                or raw.get("physics_model_sha256") != physics_model_sha
+                or raw.get("engine_environment_sha256") != engine_environment_sha
+                or raw.get("decision_snapshot_sha256") != decision_snapshot_sha
+                or not isinstance(process_exit, dict)
+                or process_exit.get("tree_exit_confirmed") is not True
+                or process_exit.get("confirmation_method")
+                != "POSIX_PROCESS_GROUP_ABSENT_AFTER_NATURAL_EXIT"
+                or process_exit.get("termination_reason") != "natural_exit"
+            ):
+                raise ValueError("current Ridgeway map evidence is incomplete or unbound")
+            direct_run_ids.add(direct_run_id)
+            process_identity = str(process_exit.get("process_identity", ""))
+            _require_sha256(process_identity, "map process identity")
+            if process_identity in process_identities:
+                raise ValueError("current Ridgeway evidence reuses a process identity")
+            process_identities.add(process_identity)
+            _require_sha256(raw.get("result_sha256"), "map result digest")
+            _require_sha256(raw.get("matrix_sha256"), "map matrix digest")
+            _require_sha256(raw.get("current_map_sha256"), "current-map digest")
+        if len(process_identities) != fixture.direct_matrix_job_count + len(map_jobs):
+            raise ValueError("current Ridgeway execution identities are incomplete")
     expected = {
         (portfolio.portfolio_id, scenario.scenario_id)
         for portfolio in fixture.portfolios
@@ -1457,7 +1572,11 @@ def derive_ridgeway_benchmark_tables(
         payload = finalize_dataset_payload(
             {
                 "schema_version": BENCHMARK_SCHEMA_VERSION,
-                "dataset_id": f"ridgeway_{hypothesis.hypothesis_id}_direct_v1",
+                "dataset_id": (
+                    f"ridgeway_{hypothesis.hypothesis_id}_direct_v2"
+                    if current_evidence
+                    else f"ridgeway_{hypothesis.hypothesis_id}_direct_v1"
+                ),
                 "landscape_id": f"ridgeway_{hypothesis.hypothesis_id}",
                 "title": f"Ridgeway {hypothesis.title} direct search table",
                 "license": "CC0-1.0",
@@ -1517,7 +1636,11 @@ def derive_ridgeway_benchmark_tables(
             }
         )
     manifest_payload = {
-        "schema_version": "ecocorridor-search-manifest/v1.0",
+        "schema_version": (
+            "ecocorridor-search-manifest/v1.1"
+            if current_evidence
+            else "ecocorridor-search-manifest/v1.0"
+        ),
         "intended_use": "ALGORITHM_RELEASE_GATE_ONLY",
         "source_evidence_index_sha256": index_sha,
         "files": manifest_files,

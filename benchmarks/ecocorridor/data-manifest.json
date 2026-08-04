@@ -37,7 +37,7 @@
     },
     {
       "path": "apps/ecocorridor-desktop/tests/__screenshots__/current-map-desktop-1280.png",
-      "sha256": "a2a44ad55ad4fbfaf3f909e99f3e8b5f1cfc0b0132c0db3064e774c965f7f2ae",
+      "sha256": "33aa4b47322f84b312651b23dbbf5d20a0f78abb74567ba8ddeed89c55c0365c",
       "byte_size": 67569,
       "media_type": "image/png",
       "asset_role": "SCREENSHOT",
@@ -53,8 +53,8 @@
     },
     {
       "path": "apps/ecocorridor-desktop/tests/__screenshots__/current-map-desktop-1440.png",
-      "sha256": "26657e9f576c4bf86368fbe86892ed53f3b8943846c62a2910ad3328e220b0f3",
-      "byte_size": 68021,
+      "sha256": "716175fe59b109a588037071a233c2e37a5357b96759d6579c4c8e0717771cba",
+      "byte_size": 68009,
       "media_type": "image/png",
       "asset_role": "SCREENSHOT",
       "repository_use": "VERIFICATION_EVIDENCE",
@@ -405,8 +405,8 @@
     },
     {
       "path": "apps/ecocorridor-desktop/tests/__screenshots__/robustness-compact-760.png",
-      "sha256": "9a7b21777ef570d0c5527e0cda6ff1e3c021ad072e6be46da13ef6b94ef0bf14",
-      "byte_size": 125601,
+      "sha256": "c0bfa9f47190e7fc8706f7b99984356e0969aa1417d3a16f7f5090dbba1aa277",
+      "byte_size": 131270,
       "media_type": "image/png",
       "asset_role": "SCREENSHOT",
       "repository_use": "VERIFICATION_EVIDENCE",
@@ -421,8 +421,8 @@
     },
     {
       "path": "apps/ecocorridor-desktop/tests/__screenshots__/robustness-desktop-1280.png",
-      "sha256": "82418a140cc31e35ca5b2a075f3cc9cb4fe3658a19d3bd28fbd74667cb7f5293",
-      "byte_size": 159418,
+      "sha256": "eb3ddec5627b0b82993d8b6bee717df9e80720f50581d53c5212704843501f9a",
+      "byte_size": 158693,
       "media_type": "image/png",
       "asset_role": "SCREENSHOT",
       "repository_use": "VERIFICATION_EVIDENCE",
@@ -437,8 +437,8 @@
     },
     {
       "path": "apps/ecocorridor-desktop/tests/__screenshots__/robustness-desktop-1440.png",
-      "sha256": "20edc25365440a18c1fdb77af18998b7df7a5eefdd7c0831bde36cb819834626",
-      "byte_size": 188958,
+      "sha256": "56a8208186f3418852a5fdaed0f24a3e3817a042d8f1ee07374defddfc205202",
+      "byte_size": 207757,
       "media_type": "image/png",
       "asset_role": "SCREENSHOT",
       "repository_use": "VERIFICATION_EVIDENCE",

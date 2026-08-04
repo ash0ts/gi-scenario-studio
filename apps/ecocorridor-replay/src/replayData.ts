@@ -75,6 +75,15 @@ export interface RidgewayPortfolio {
   scenarioResults: RidgewayScenarioResult[];
 }
 
+export const RIDGEWAY_HYPOTHESIS_IDS = [
+  "h1_low_barrier",
+  "h2_moderate_barrier",
+  "h3_high_barrier",
+  "h4_future_pressure",
+] as const;
+
+export const RIDGEWAY_HYPOTHESIS_RANKING_METRIC = "Minimum required target-pair resistance reduction (%) within each resistance hypothesis; rank 1 is the highest score among the 128 directly evaluated portfolios.";
+
 export interface RidgewayFixture {
   schemaVersion: "ecocorridor-replay/v1.1" | "ecocorridor-replay/v1.2";
   fixtureId: "ridgeway_crossing";
@@ -204,6 +213,23 @@ function parseResult(value: unknown, label: string): RidgewayScenarioResult {
   };
 }
 
+function parseHypothesisRanks(value: unknown, label: string): RidgewayPortfolio["hypothesisRanks"] {
+  if (value === null) return null;
+  const ranks = record(value, label);
+  const observedIds = Object.keys(ranks).sort();
+  const expectedIds = [...RIDGEWAY_HYPOTHESIS_IDS].sort();
+  if (observedIds.length !== expectedIds.length || observedIds.some((id, index) => id !== expectedIds[index])) {
+    throw new Error(`${label} must contain the four pinned Ridgeway resistance hypotheses.`);
+  }
+  return Object.fromEntries(RIDGEWAY_HYPOTHESIS_IDS.map((hypothesisId) => {
+    const observation = record(ranks[hypothesisId], `${label} ${hypothesisId}`);
+    return [hypothesisId, {
+      rank: integer(observation.rank, `${label} ${hypothesisId} rank`, 1),
+      score: finite(observation.score, `${label} ${hypothesisId} score`),
+    }];
+  }));
+}
+
 function parsePortfolio(value: unknown, index: number): RidgewayPortfolio {
   const item = record(value, `portfolio ${index + 1}`);
   const role = string(item.role, `portfolio ${index + 1} role`);
@@ -215,7 +241,7 @@ function parsePortfolio(value: unknown, index: number): RidgewayPortfolio {
     throw new Error(`portfolio ${index + 1} has an unsupported rule status.`);
   }
   if (item.roadMaskFlag !== null && typeof item.roadMaskFlag !== "boolean") throw new Error(`portfolio ${index + 1} has an invalid road-mask flag.`);
-  const hypothesisRanks = item.hypothesisRanks === null ? null : record(item.hypothesisRanks, `portfolio ${index + 1} hypothesis ranks`) as RidgewayPortfolio["hypothesisRanks"];
+  const hypothesisRanks = parseHypothesisRanks(item.hypothesisRanks, `portfolio ${index + 1} hypothesis ranks`);
   return {
     projectionKey: string(item.projectionKey, `portfolio ${index + 1} projection key`),
     id: nullableString(item.id, `portfolio ${index + 1} id`),
@@ -363,6 +389,7 @@ function validateVerifiedFixture(fixture: RidgewayFixture): void {
     || fixture.study.scenarioCount !== 12
     || fixture.study.matrixJobCount !== 1_536
     || fixture.study.mapJobCount !== 60
+    || fixture.study.hypothesisRankingMetric !== RIDGEWAY_HYPOTHESIS_RANKING_METRIC
     || !fixture.reviewMask
     || fixture.currentRasters.length !== 60
     || fixture.resourceObservability?.jobsWithObservations !== 1_596
@@ -376,6 +403,7 @@ function validateVerifiedFixture(fixture: RidgewayFixture): void {
     if (!portfolio.id || !PORTFOLIO_ID.test(portfolio.id) || portfolio.id === fixture.baselinePortfolioId || portfolioIds.has(portfolio.id)) throw new Error("Verified Ridgeway teaching portfolio identities must be unique and non-baseline.");
     portfolioIds.add(portfolio.id);
     if (portfolio.costUsd === null || portfolio.worstResistanceChangePct === null || !portfolio.worstScenarioId || !portfolio.hypothesisRanks || portfolio.scenarioResults.length !== 12) throw new Error(`${portfolio.id} does not retain a complete teaching result.`);
+    if (Object.values(portfolio.hypothesisRanks).some((observation) => observation.rank > fixture.study.portfolioCount)) throw new Error(`${portfolio.id} has a hypothesis rank outside the pinned direct-study universe.`);
     const resultScenarioIds = new Set<string>();
     for (const result of portfolio.scenarioResults) {
       const scenario = scenarioById.get(result.scenarioId);

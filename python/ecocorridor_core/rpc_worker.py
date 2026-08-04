@@ -66,6 +66,7 @@ from .assistants import (
     validate_assistant_limitation,
     validate_feedback_comment,
 )
+from .bundle_identity import assert_unique_bundle_identities
 from .claim_safety import (
     assert_safe_rendered_ecological_copy,
     assert_strict_ecological_claim,
@@ -1471,7 +1472,8 @@ class RPCDispatcher:
             )
         try:
             bundle = ConnectivityProjectBundle.model_validate(raw)
-        except ValidationError as exc:
+            assert_unique_bundle_identities(bundle)
+        except (ValidationError, ValueError) as exc:
             raise _fault(
                 "BUNDLE_MANIFEST_INVALID",
                 "The project manifest is not a valid EcoCorridor v1.0 contract.",

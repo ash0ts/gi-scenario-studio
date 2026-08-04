@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import stat
@@ -36,6 +37,18 @@ MAX_TOTAL_BYTES = 40 * 1024 * 1024
 MAX_SOURCE_COPY_BYTES = 2 * 1024 * 1024
 SOURCE_SHA = re.compile(r"[0-9a-f]{40}\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+RIDGEWAY_HYPOTHESIS_IDS = frozenset(
+    {
+        "h1_low_barrier",
+        "h2_moderate_barrier",
+        "h3_high_barrier",
+        "h4_future_pressure",
+    }
+)
+RIDGEWAY_HYPOTHESIS_RANKING_METRIC = (
+    "Minimum required target-pair resistance reduction (%) within each resistance "
+    "hypothesis; rank 1 is the highest score among the 128 directly evaluated portfolios."
+)
 PUBLIC_REPLAY_SOURCE = (
     Path(__file__).resolve().parents[1]
     / "apps"
@@ -346,6 +359,7 @@ def validate_and_inventory(
             or study.get("scenarioCount") != 12
             or study.get("matrixJobCount") != 1536
             or study.get("mapJobCount") != 60
+            or study.get("hypothesisRankingMetric") != RIDGEWAY_HYPOTHESIS_RANKING_METRIC
             or not isinstance(portfolios, list)
             or len(portfolios) != 4
             or not isinstance(scenarios, list)
@@ -394,11 +408,26 @@ def validate_and_inventory(
                 not isinstance(portfolio, dict)
                 or not isinstance(portfolio.get("id"), str)
                 or not isinstance(portfolio.get("hypothesisRanks"), dict)
-                or len(portfolio["hypothesisRanks"]) != 4
+                or set(portfolio["hypothesisRanks"]) != RIDGEWAY_HYPOTHESIS_IDS
                 or not isinstance(portfolio.get("scenarioResults"), list)
                 or len(portfolio["scenarioResults"]) != 12
             ):
                 raise ValueError("Ridgeway verified replay has incomplete teaching evidence")
+            for hypothesis_id, observation in portfolio["hypothesisRanks"].items():
+                rank = observation.get("rank") if isinstance(observation, dict) else None
+                score = observation.get("score") if isinstance(observation, dict) else None
+                if (
+                    hypothesis_id not in RIDGEWAY_HYPOTHESIS_IDS
+                    or not isinstance(rank, int)
+                    or isinstance(rank, bool)
+                    or not 1 <= rank <= study["portfolioCount"]
+                    or not isinstance(score, (int, float))
+                    or isinstance(score, bool)
+                    or not math.isfinite(score)
+                ):
+                    raise ValueError(
+                        "Ridgeway verified replay has invalid hypothesis-rank evidence"
+                    )
             portfolio_id = portfolio["id"]
             for result in portfolio["scenarioResults"]:
                 if not isinstance(result, dict):

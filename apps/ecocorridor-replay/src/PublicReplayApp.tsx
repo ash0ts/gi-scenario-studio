@@ -1,12 +1,43 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
-import type {
-  RidgewayCurrentRaster,
-  RidgewayFixture,
-  RidgewayPairResult,
-  RidgewayPortfolio,
-  RidgewayScenarioResult,
+import {
+  RIDGEWAY_HYPOTHESIS_IDS,
+  type RidgewayCurrentRaster,
+  type RidgewayFixture,
+  type RidgewayPairResult,
+  type RidgewayPortfolio,
+  type RidgewayScenarioResult,
 } from "./replayData";
+
+/*
+ * These labels describe the four pinned synthetic resistance hypotheses. They
+ * do not name species, places, or ecological outcomes.
+ */
+const HYPOTHESIS_LABELS: Record<(typeof RIDGEWAY_HYPOTHESIS_IDS)[number], string> = {
+  h1_low_barrier: "Low highway penalty",
+  h2_moderate_barrier: "Moderate highway penalty",
+  h3_high_barrier: "High highway penalty",
+  h4_future_pressure: "Future pressure",
+};
+
+interface HypothesisRankObservation {
+  hypothesisId: (typeof RIDGEWAY_HYPOTHESIS_IDS)[number];
+  label: string;
+  rank: number;
+  score: number;
+}
+
+function hypothesisRankRange(portfolio: RidgewayPortfolio): { best: HypothesisRankObservation; worst: HypothesisRankObservation } | null {
+  const ranks = portfolio.hypothesisRanks;
+  if (!ranks) return null;
+  const observations = RIDGEWAY_HYPOTHESIS_IDS.map((hypothesisId) => ({
+    hypothesisId,
+    label: HYPOTHESIS_LABELS[hypothesisId],
+    ...ranks[hypothesisId],
+  }));
+  const ordered = [...observations].sort((left, right) => left.rank - right.rank || left.hypothesisId.localeCompare(right.hypothesisId));
+  return { best: ordered[0], worst: ordered[ordered.length - 1] };
+}
 
 type ReplayStep = "overview" | "fitness" | "scenarios" | "board" | "evidence";
 
@@ -46,6 +77,8 @@ function isPublished(fixture: RidgewayFixture, portfolio: RidgewayPortfolio): bo
     && portfolio.costUsd != null
     && portfolio.worstResistanceChangePct != null
     && portfolio.worstScenarioId
+    && portfolio.hypothesisRanks
+    && fixture.study.hypothesisRankingMetric
     && portfolio.scenarioResults.length === fixture.scenarios.length,
   );
 }
@@ -235,6 +268,7 @@ function Board({ fixture }: { fixture: RidgewayFixture }) {
   const [evidence, setEvidence] = useState<EvidenceSelection | null>(null);
   const result = portfolio?.scenarioResults.find((item) => item.scenarioId === scenarioId) ?? portfolio?.scenarioResults.find((item) => item.scenarioId === portfolio.worstScenarioId) ?? portfolio?.scenarioResults[0] ?? null;
   const selectedSafeguard = portfolio ? safeguardDisposition(fixture, portfolio) : null;
+  const selectedRankRange = portfolio ? hypothesisRankRange(portfolio) : null;
   useEffect(() => { setScenarioId(null); }, [portfolioId]);
   if (!fixture.releaseReplayEligible || !portfolio || !result) return <>
     <PanelIntro eyebrow="Decision-first comparison" title="Robustness Board"><p>Outcomes remain unpublished until the complete pinned direct Circuitscape package passes QA and manifest verification.</p></PanelIntro>
@@ -244,8 +278,8 @@ function Board({ fixture }: { fixture: RidgewayFixture }) {
   const scenario = fixture.scenarios.find((item) => item.id === result.scenarioId)!;
   return <>
     <PanelIntro eyebrow="Decision-first comparison" title="Robustness Board"><p>Start with every rule, the weakest scenario, safeguards, cost, and feasibility. Maps support the decision; they do not lead it.</p></PanelIntro>
-    <section className="replay-table-panel"><div className="replay-panel-heading"><div><span>ACCEPTANCE MATRIX FIRST</span><h2>Four observed teaching roles</h2></div><code>internal precision · rounded display</code></div><p className="replay-caption">A negative percentage means lower modeled effective resistance than that same scenario's direct baseline. Cost comes from the versioned synthetic screening basis, not Circuitscape.</p><p className="replay-scroll-hint" aria-hidden="true">Scroll horizontally to inspect safeguard, road-mask, cost, and disposition evidence →</p><div className="replay-table-scroll" tabIndex={0} role="region" aria-label="Scrollable portfolio acceptance matrix"><table><thead><tr><th>Inspect</th><th>Portfolio</th><th>Direct ensemble</th><th>Weakest change</th><th>Safeguard pairs</th><th>Road mask</th><th>Cost</th><th>Disposition</th></tr></thead><tbody>{published.map((item) => { const safeguard = safeguardDisposition(fixture, item); return <tr className={item.id === portfolio.id ? "selected" : ""} key={item.id!}><td><input type="radio" name="public-portfolio" checked={item.id === portfolio.id} onChange={() => setPortfolioId(item.id)} aria-label={`Inspect ${item.name}`} /></td><td><strong>{item.name}</strong><code>{item.id}</code></td><td>{item.scenarioResults.length}/{item.requiredCount} direct</td><td className={(item.worstResistanceChangePct ?? 0) > 0 ? "adverse" : "good"}>{signed(item.worstResistanceChangePct)}</td><td><span className={`replay-pill ${safeguard.status}`}>{safeguard.label}</span></td><td><span className={`replay-pill ${item.roadMaskFlag ? "review" : "pass"}`}>{item.roadMaskFlag ? "Review" : "Below threshold"}</span></td><td>{money(item.costUsd)}</td><td><span className={`replay-pill ${item.ruleStatus}`}>{statusLabel(item)}</span></td></tr>; })}</tbody></table></div></section>
-    <section className={`replay-verdict ${portfolio.ruleStatus}`}><div><span>SELECTED EVIDENCE ROLE · {portfolio.id}</span><h2>{portfolio.name}</h2><p>{portfolio.nextAction}</p></div><dl><div><dt>Weakest scenario</dt><dd><code>{portfolio.worstScenarioId}</code></dd></div><div><dt>Weakest change</dt><dd>{signed(portfolio.worstResistanceChangePct)}</dd></div><div><dt>Safeguard rule</dt><dd><span className={`replay-pill ${selectedSafeguard!.status}`}>{selectedSafeguard!.label}</span></dd></div><div><dt>Screening cost</dt><dd>{money(portfolio.costUsd)}</dd></div><div><dt>Disposition</dt><dd>{statusLabel(portfolio)}</dd></div></dl><button type="button" className="replay-secondary" onClick={() => setEvidence({ title: `Controlling direct result · ${portfolio.name}`, portfolio, result })}>Trace controlling result</button></section>
+    <section className="replay-table-panel"><div className="replay-panel-heading"><div><span>ACCEPTANCE MATRIX FIRST</span><h2>Four observed teaching roles</h2></div><code>internal precision · rounded display</code></div><p className="replay-caption">A negative percentage means lower modeled effective resistance than that same scenario's direct baseline. Computed rank compares the complete pinned 128-portfolio direct study; it is a study diagnostic, not an ecological value or animal-use prediction. Cost comes from the versioned synthetic screening basis, not Circuitscape.</p><p className="replay-scroll-hint" aria-hidden="true">Scroll horizontally to inspect rank sensitivity, safeguard, road-mask, cost, and disposition evidence →</p><div className="replay-table-scroll" tabIndex={0} role="region" aria-label="Scrollable portfolio acceptance matrix"><table><thead><tr><th>Inspect</th><th>Portfolio</th><th>Direct ensemble</th><th>Weakest change</th><th>Hypothesis rank range</th><th>Safeguard pairs</th><th>Road mask</th><th>Cost</th><th>Disposition</th></tr></thead><tbody>{published.map((item) => { const safeguard = safeguardDisposition(fixture, item); const rankRange = hypothesisRankRange(item); return <tr className={item.id === portfolio.id ? "selected" : ""} key={item.id!}><td><input type="radio" name="public-portfolio" checked={item.id === portfolio.id} onChange={() => setPortfolioId(item.id)} aria-label={`Inspect ${item.name}`} /></td><td><strong>{item.name}</strong><code>{item.id}</code></td><td>{item.scenarioResults.length}/{item.requiredCount} direct</td><td className={(item.worstResistanceChangePct ?? 0) > 0 ? "adverse" : "good"}>{signed(item.worstResistanceChangePct)}</td><td>{rankRange ? <><strong>#{rankRange.best.rank} → #{rankRange.worst.rank}</strong><small className="replay-table-subline">{rankRange.best.score.toFixed(1)}% → {rankRange.worst.score.toFixed(1)}% study score</small></> : "Withheld"}</td><td><span className={`replay-pill ${safeguard.status}`}>{safeguard.label}</span></td><td><span className={`replay-pill ${item.roadMaskFlag ? "review" : "pass"}`}>{item.roadMaskFlag ? "Review" : "Below threshold"}</span></td><td>{money(item.costUsd)}</td><td><span className={`replay-pill ${item.ruleStatus}`}>{statusLabel(item)}</span></td></tr>; })}</tbody></table></div><p className="replay-rank-basis"><strong>Computed rank basis:</strong> {fixture.study.hypothesisRankingMetric}</p></section>
+    <section className={`replay-verdict ${portfolio.ruleStatus}`}><div className="replay-verdict-summary"><span>SELECTED EVIDENCE ROLE · {portfolio.id}</span><h2>{portfolio.name}</h2><p>{portfolio.nextAction}</p>{portfolio.role === "brittle" && selectedRankRange && <p className="replay-sensitivity-note"><strong>Why this option is shown:</strong> its computed position shifts from #{selectedRankRange.best.rank} under {selectedRankRange.best.label} to #{selectedRankRange.worst.rank} under {selectedRankRange.worst.label}. This direct-study sensitivity is not an animal-behavior prediction.</p>}</div><dl><div><dt>Weakest scenario</dt><dd><code>{portfolio.worstScenarioId}</code></dd></div><div><dt>Weakest change</dt><dd>{signed(portfolio.worstResistanceChangePct)}</dd></div><div><dt>Computed hypothesis rank</dt><dd><strong>{selectedRankRange ? `#${selectedRankRange.best.rank} → #${selectedRankRange.worst.rank}` : "Withheld"}</strong>{selectedRankRange && <small>{selectedRankRange.best.label} best · {selectedRankRange.worst.label} weakest</small>}</dd></div><div><dt>Safeguard rule</dt><dd><span className={`replay-pill ${selectedSafeguard!.status}`}>{selectedSafeguard!.label}</span></dd></div><div><dt>Screening cost</dt><dd>{money(portfolio.costUsd)}</dd></div><div><dt>Disposition</dt><dd>{statusLabel(portfolio)}</dd></div></dl><button type="button" className="replay-secondary" onClick={() => setEvidence({ title: `Controlling direct result · ${portfolio.name}`, portfolio, result })}>Trace controlling result</button></section>
     <RasterView fixture={fixture} portfolio={portfolio} result={result} />
     <section className="replay-table-panel"><div className="replay-panel-heading replay-pair-heading"><div><span>FOCAL-PAIR MATRIX</span><h2>{scenario.guild} · {scenario.hypothesis}</h2></div><label><span>Scenario shown in matrix and map</span><select value={result.scenarioId} onChange={(event) => setScenarioId(event.target.value)}>{portfolio.scenarioResults.map((item) => { const scope = fixture.scenarios.find((candidate) => candidate.id === item.scenarioId)!; return <option key={item.scenarioId} value={item.scenarioId}>{scope.guild} · {scope.hypothesis} · {signed(item.resistanceChangePct)}</option>; })}</select></label></div><p className="replay-caption">Pair values compare only this scenario with its own baseline. Raw effective resistance remains in model units and is never aggregated across scenarios.</p><div className="replay-table-scroll" tabIndex={0} role="region" aria-label={`Scrollable focal-pair evidence for ${result.scenarioId}`}><table><thead><tr><th>Required pair</th><th>Baseline resistance</th><th>Portfolio resistance</th><th>Change</th><th>Rule</th><th>Direct identity</th><th>Evidence</th></tr></thead><tbody>{result.pairResults.map((pair) => <tr key={pair.pairId}><td><code>{pair.pairId}</code></td><td><code>{pair.baselineEffectiveResistance.toPrecision(7)}</code></td><td><code>{pair.portfolioEffectiveResistance.toPrecision(7)}</code></td><td className={pair.baselineRelativeChangePct > 0 ? "adverse" : "good"}>{signed(pair.baselineRelativeChangePct)}</td><td><span className={`replay-pill ${pair.passed ? "pass" : "fail"}`}>{pair.passed ? "Pass" : "Fail"}</span></td><td><details><summary>Runs and hashes</summary><code>{pair.baselineRunId}</code><code>{pair.portfolioRunId}</code></details></td><td><button type="button" className="replay-text-button" onClick={() => setEvidence({ title: `Focal pair ${pair.pairId}`, portfolio, result, pair })}>Trace pair</button></td></tr>)}</tbody></table></div></section>
     {evidence && <EvidenceDialog selection={evidence} onClose={() => setEvidence(null)} />}

@@ -15,6 +15,21 @@ from pathlib import Path
 from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parents[1]
+NATIVE_RUNTIME_PACKAGES = frozenset(
+    {
+        "geopandas",
+        "numpy",
+        "pydantic",
+        "pyogrio",
+        "pyinstaller",
+        "rasterio",
+        "scikit-learn",
+        "scipy",
+        "shapely",
+        "wandb",
+        "weave",
+    }
+)
 
 
 @dataclass(frozen=True, order=True, slots=True)
@@ -89,9 +104,14 @@ def native_inventory_components(directory: Path) -> tuple[set[Component], list[P
             or target not in {"macos-arm64", "macos-x64", "windows-x64"}
             or target in targets
             or not isinstance(packages, dict)
+            or set(packages) != NATIVE_RUNTIME_PACKAGES
         ):
             raise SystemExit(f"Invalid or duplicate native dependency inventory: {path.name}")
         targets.add(target)
+        for name, version in packages.items():
+            if not isinstance(version, str) or not version:
+                raise SystemExit(f"Native dependency inventory omits a {name} version: {path.name}")
+            components.add(Component("pypi", name, version))
         for name, version in (
             ("Python", payload.get("python_version")),
             ("GDAL", payload.get("gdal_version")),

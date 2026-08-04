@@ -355,6 +355,31 @@ def _create_ready_analysis(project: Path, plan: ConnectivityRunPlan) -> None:
         store.close()
 
 
+def test_direct_executor_rejects_ambiguous_bundle_before_engine_or_repository_use(
+    tmp_path: Path,
+) -> None:
+    bundle = build_ridgeway_fixture().bundle
+    duplicate = bundle.resistance_hypotheses[0].model_copy(
+        update={"title": "Conflicting duplicate definition"}
+    )
+    ambiguous = bundle.model_copy(
+        update={"resistance_hypotheses": [*bundle.resistance_hypotheses, duplicate]}
+    )
+    manifest = _engine_manifest()
+    executor = DurableAnalysisExecutor(manifest, lock_root=tmp_path / "analysis-locks")
+
+    with pytest.raises(DurableAnalysisError, match="resistance hypothesis IDs must be unique"):
+        executor.start(
+            project_directory=tmp_path / "never-opened-project",
+            bundle=ambiguous,
+            plan=_plan(ambiguous, manifest, "analysis-ambiguous"),
+            engine_executable=tmp_path / "never-launched-engine",
+            engine_sha256="0" * 64,
+        )
+
+    assert not (tmp_path / "never-opened-project").exists()
+
+
 def _wait_for_state(project: Path, analysis_id: str, states: set[str], timeout: float = 30) -> str:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:

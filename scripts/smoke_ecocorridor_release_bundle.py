@@ -32,6 +32,30 @@ SEMVER = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\Z"
 TARGETS = {"linux-x64", "macos-arm64", "macos-x64", "windows-x64"}
 MAX_SIGNED_RESOURCES = 100_000
 MAX_MANIFEST_BYTES = 32 * 1024 * 1024
+PACKAGED_RUNTIME_PACKAGES = frozenset(
+    {
+        "geopandas",
+        "numpy",
+        "pydantic",
+        "pyogrio",
+        "rasterio",
+        "scikit-learn",
+        "scipy",
+        "shapely",
+        "wandb",
+        "weave",
+    }
+)
+STAGED_RUNTIME_PACKAGES = PACKAGED_RUNTIME_PACKAGES | {"pyinstaller"}
+PACKAGED_RUNTIME_CAPABILITIES = frozenset(
+    {
+        "pydantic_contracts",
+        "scipy_sobol",
+        "sklearn_extratrees",
+        "wandb_offline_table_artifact",
+        "weave_entrypoint_redaction",
+    }
+)
 
 
 def digest(path: Path) -> str:
@@ -209,10 +233,8 @@ def validate_dependency_inventory(
         or inventory.get("circuitscape_version") != "5.17.1"
         or inventory.get("connectivity_mode") != "raster_pairwise_resistance"
         or not isinstance(packages, dict)
-        or any(
-            not isinstance(packages.get(name), str) or not packages[name]
-            for name in ("geopandas", "numpy", "pyogrio", "pyinstaller", "rasterio", "shapely")
-        )
+        or set(packages) != STAGED_RUNTIME_PACKAGES
+        or any(not isinstance(value, str) or not value for value in packages.values())
         or any(
             not isinstance(inventory.get(name), str) or not inventory[name]
             for name in (
@@ -237,11 +259,22 @@ def validate_packaged_runtime_inventory(
         raise SystemExit("The packaged worker returned an invalid runtime inventory.")
     packaged_packages = packaged.get("python_packages")
     declared_packages = declared.get("python_packages")
+    capabilities = packaged.get("capabilities")
     if not isinstance(packaged_packages, dict) or not isinstance(declared_packages, dict):
         raise SystemExit("The packaged worker runtime inventory omits Python packages.")
-    for package in ("geopandas", "numpy", "pyogrio", "rasterio", "shapely"):
+    if set(packaged_packages) != PACKAGED_RUNTIME_PACKAGES:
+        raise SystemExit("The packaged worker runtime inventory has an invalid package set.")
+    if set(declared_packages) != STAGED_RUNTIME_PACKAGES:
+        raise SystemExit("The staged worker runtime inventory has an invalid package set.")
+    for package in sorted(PACKAGED_RUNTIME_PACKAGES):
         if packaged_packages.get(package) != declared_packages.get(package):
             raise SystemExit(f"The packaged worker dependency differs from staging: {package}")
+    if (
+        not isinstance(capabilities, dict)
+        or set(capabilities) != PACKAGED_RUNTIME_CAPABILITIES
+        or any(value is not True for value in capabilities.values())
+    ):
+        raise SystemExit("The packaged worker did not prove every professional runtime capability.")
     for field in (
         "python_version",
         "gdal_version",
@@ -254,15 +287,44 @@ def validate_packaged_runtime_inventory(
 
 
 def run_packaged_runtime_inventory(worker: Path, dependency_inventory: Path) -> None:
-    completed = subprocess.run(
-        [str(worker), "--packaged-runtime-inventory"],
-        env=clean_environment(),
-        capture_output=True,
-        timeout=60,
-        check=False,
-    )
+    with tempfile.TemporaryDirectory(prefix="ecocorridor-professional-runtime-") as temporary:
+        root = Path(temporary)
+        environment = clean_environment()
+        environment.update(
+            {
+                "TMPDIR": str(root),
+                "TEMP": str(root),
+                "TMP": str(root),
+                "WANDB_ARTIFACT_DIR": str(root / "wandb-artifacts"),
+                "WANDB_CACHE_DIR": str(root / "wandb-cache"),
+                "WANDB_CONSOLE": "off",
+                "WANDB_DATA_DIR": str(root / "wandb-data"),
+                "WANDB_DIR": str(root / "wandb-runs"),
+                "WANDB_DISABLE_CODE": "true",
+                "WANDB_DISABLE_GIT": "true",
+                "WANDB_ERROR_REPORTING": "false",
+                "WANDB_SHOW_RUN": "false",
+                "WANDB_SILENT": "true",
+            }
+        )
+        for directory in (
+            root / "wandb-artifacts",
+            root / "wandb-cache",
+            root / "wandb-data",
+            root / "wandb-runs",
+        ):
+            directory.mkdir()
+        completed = subprocess.run(
+            [str(worker), "--packaged-runtime-inventory"],
+            env=environment,
+            capture_output=True,
+            timeout=60,
+            check=False,
+        )
     if completed.returncode or completed.stderr.strip():
-        raise SystemExit("The packaged worker could not import its planning dependencies.")
+        raise SystemExit(
+            "The packaged worker could not prove its professional runtime capabilities."
+        )
     lines = [line for line in completed.stdout.decode("utf-8").splitlines() if line.strip()]
     if len(lines) != 1:
         raise SystemExit("The packaged worker runtime inventory is not one JSON record.")
@@ -391,6 +453,7 @@ def write_success_disposition(
         "checks": [
             "SIGNED_RESOURCE_INVENTORY_VERIFIED",
             "PACKAGED_RUNTIME_INVENTORY_MATCHED",
+            "PACKAGED_PROFESSIONAL_RUNTIME_CAPABILITIES_VERIFIED",
             "SIGNED_DESKTOP_BUNDLE_AUTHORIZATION_VERIFIED",
             "ENGINE_MANIFEST_TREE_MATCHED",
             "HAND_CALCULATED_CIRCUITSCAPE_RESULT_REPRODUCED",

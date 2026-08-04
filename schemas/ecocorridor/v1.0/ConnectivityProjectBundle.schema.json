@@ -1636,7 +1636,8 @@
         "$ref": "#/$defs/ConnectivityAsset"
       },
       "title": "Assets",
-      "type": "array"
+      "type": "array",
+      "x-uniqueBy": "asset_id"
     },
     "cost_basis": {
       "anyOf": [
@@ -1657,7 +1658,8 @@
         "$ref": "#/$defs/ConnectivityDecisionRule"
       },
       "title": "Decision Rules",
-      "type": "array"
+      "type": "array",
+      "x-uniqueBy": "rule_id"
     },
     "fitness": {
       "$ref": "#/$defs/ConnectivityModelFitness"
@@ -1667,21 +1669,24 @@
         "$ref": "#/$defs/FocalAreaSet"
       },
       "title": "Focal Area Sets",
-      "type": "array"
+      "type": "array",
+      "x-uniqueBy": "focal_set_id"
     },
     "intervention_options": {
       "items": {
         "$ref": "#/$defs/InterventionOption"
       },
       "title": "Intervention Options",
-      "type": "array"
+      "type": "array",
+      "x-uniqueBy": "option_id"
     },
     "intervention_sites": {
       "items": {
         "$ref": "#/$defs/InterventionSite"
       },
       "title": "Intervention Sites",
-      "type": "array"
+      "type": "array",
+      "x-uniqueBy": "site_id"
     },
     "project_id": {
       "title": "Project Id",
@@ -1692,14 +1697,16 @@
         "$ref": "#/$defs/ReferenceScenarioBinding"
       },
       "title": "Reference Bindings",
-      "type": "array"
+      "type": "array",
+      "x-uniqueBy": "binding_id"
     },
     "resistance_hypotheses": {
       "items": {
         "$ref": "#/$defs/ResistanceHypothesis"
       },
       "title": "Resistance Hypotheses",
-      "type": "array"
+      "type": "array",
+      "x-uniqueBy": "hypothesis_id"
     },
     "resource_policy": {
       "$ref": "#/$defs/ResourcePolicy"
@@ -1709,7 +1716,8 @@
         "$ref": "#/$defs/RiskReviewMask"
       },
       "title": "Review Masks",
-      "type": "array"
+      "type": "array",
+      "x-uniqueBy": "mask_id"
     },
     "revision": {
       "$ref": "#/$defs/ModelRevision"
@@ -1719,14 +1727,16 @@
         "$ref": "#/$defs/SafeguardRecord"
       },
       "title": "Safeguards",
-      "type": "array"
+      "type": "array",
+      "x-uniqueBy": "safeguard_id"
     },
     "scenarios": {
       "items": {
         "$ref": "#/$defs/ConnectivityScenario"
       },
       "title": "Scenarios",
-      "type": "array"
+      "type": "array",
+      "x-uniqueBy": "scenario_id"
     },
     "schema_version": {
       "const": "1.0",

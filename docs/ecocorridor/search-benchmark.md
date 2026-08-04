@@ -24,14 +24,21 @@ campaign:
 ```bash
 ecocorridor-benchmark derive-ridgeway \
   --evidence-index /approved/ridgeway/evidence-index.json \
-  --output-directory benchmarks/ecocorridor/search
+  --output-directory /approved/current-search-v1
 ```
 
-The command refuses partial, test-only, QA-rejected, non-Circuitscape, or
-wrong-engine jobs. Each derived row retains the three direct target/safeguard
-run IDs and immutable result hashes used for that resistance landscape. The
-tables are CC0 synthetic algorithm-test data and are explicitly not ecological
-decision evidence.
+The command accepts the current `ridgeway-evidence-index/v1.1` only when all
+1,536 matrix jobs and all 60 retained map jobs are present. It checks the bound
+physics, decision, workflow, engine-environment, and engine-manifest hashes,
+unique confirmed process identities, natural process-tree exit evidence, QA,
+and direct-result hashes before deriving anything. Partial, test-only,
+QA-rejected, non-Circuitscape, or cross-revision inputs fail closed. Each
+derived row retains the three direct target/safeguard run IDs and immutable
+result hashes used for that resistance landscape. The resulting v2 tables are
+CC0 synthetic algorithm-test data and are explicitly not ecological decision
+evidence. Keep them outside the historical `benchmarks/ecocorridor/search`
+directory until their separate campaign, resource sidecar, central data
+classification, and immutable W&B lineage are complete.
 
 ## Inspect one replay
 

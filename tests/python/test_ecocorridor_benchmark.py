@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -451,3 +452,40 @@ def test_ridgeway_derivation_requires_and_preserves_direct_evidence(tmp_path: Pa
     derived = [load_benchmark_dataset(path) for path in paths]
     assert len({item.landscape_sha256 for item in derived}) == 4
     assert all(len(item.rows) == 128 and item.scenario_count == 3 for item in derived)
+
+
+def test_current_ridgeway_archive_derives_only_with_bound_execution_provenance(
+    tmp_path: Path,
+) -> None:
+    root = Path(__file__).resolve().parents[2]
+    archive = (
+        root / "benchmarks/ecocorridor/ridgeway" / "ridgeway-direct-evidence-a0dc6b763347.tar.gz"
+    )
+    with tarfile.open(archive, "r:gz") as bundle:
+        member = bundle.extractfile("evidence-index.json")
+        assert member is not None
+        evidence = json.loads(member.read().decode("utf-8"))
+
+    evidence_path = tmp_path / "evidence-index.json"
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+    output = tmp_path / "current-search"
+    paths = derive_ridgeway_benchmark_tables(evidence_path, output)
+    assert len(paths) == 4
+    verify_dataset_manifest(output / "manifest.json", paths)
+    derived = [load_benchmark_dataset(path) for path in paths]
+    assert all(item.dataset_id.endswith("_direct_v2") for item in derived)
+    manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["schema_version"] == "ecocorridor-search-manifest/v1.1"
+    downgraded = {**manifest, "schema_version": "ecocorridor-search-manifest/v1.0"}
+    downgraded["manifest_sha256"] = benchmark._canonical_sha256(
+        {key: value for key, value in downgraded.items() if key != "manifest_sha256"}
+    )
+    downgraded_path = tmp_path / "downgraded-manifest.json"
+    downgraded_path.write_text(json.dumps(downgraded), encoding="utf-8")
+    with pytest.raises(ValueError, match="cannot use the historical manifest schema"):
+        verify_dataset_manifest(downgraded_path, paths)
+
+    evidence["matrix_jobs"][0]["decision_snapshot_sha256"] = "0" * 64
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+    with pytest.raises(ValueError, match="bound execution provenance"):
+        derive_ridgeway_benchmark_tables(evidence_path, tmp_path / "rejected-search")

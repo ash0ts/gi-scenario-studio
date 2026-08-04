@@ -66,7 +66,7 @@ export const ConnectivityProjectBundleSchema = z.object({
   "generalized_asset_id": z.union([z.string(), z.null()]).optional(),
   "notes": z.string().optional(),
 }).strict(),
-}).strict()),
+}).strict()).refine((items) => new Set(items.map((item) => item["asset_id"])).size === items.length, "Expected unique asset_id values"),
   "resistance_hypotheses": z.array(z.object({
   "hypothesis_id": z.string(),
   "title": z.string(),
@@ -82,7 +82,7 @@ export const ConnectivityProjectBundleSchema = z.object({
   "confidence": z.enum(["CONFIRMED", "INFERRED", "ASSUMED"]),
   "reviewed_by": z.string(),
   "reviewed_at": z.string().refine((value) => !Number.isNaN(Date.parse(value)) && /(?:Z|[+-]\d{2}:\d{2})$/.test(value), "Expected timezone-aware ISO date-time"),
-}).strict()),
+}).strict()).refine((items) => new Set(items.map((item) => item["hypothesis_id"])).size === items.length, "Expected unique hypothesis_id values"),
   "focal_area_sets": z.array(z.object({
   "focal_set_id": z.string(),
   "title": z.string(),
@@ -99,7 +99,7 @@ export const ConnectivityProjectBundleSchema = z.object({
   "rationale": z.string(),
   "reviewed_by": z.string(),
   "reviewed_at": z.string().refine((value) => !Number.isNaN(Date.parse(value)) && /(?:Z|[+-]\d{2}:\d{2})$/.test(value), "Expected timezone-aware ISO date-time"),
-}).strict()),
+}).strict()).refine((items) => new Set(items.map((item) => item["focal_set_id"])).size === items.length, "Expected unique focal_set_id values"),
   "scenarios": z.array(z.object({
   "scenario_id": z.string(),
   "title": z.string(),
@@ -119,7 +119,7 @@ export const ConnectivityProjectBundleSchema = z.object({
   "precision": z.literal("double").optional(),
   "julia_threads": z.literal(1).optional(),
   "blas_threads": z.literal(1).optional(),
-}).strict()),
+}).strict()).refine((items) => new Set(items.map((item) => item["scenario_id"])).size === items.length, "Expected unique scenario_id values"),
   "reference_bindings": z.array(z.object({
   "binding_id": z.string().min(1),
   "scenario_id": z.string().min(1),
@@ -139,7 +139,7 @@ export const ConnectivityProjectBundleSchema = z.object({
   "reviewed_by": z.string().min(1),
   "reviewed_at": z.string().refine((value) => !Number.isNaN(Date.parse(value)) && /(?:Z|[+-]\d{2}:\d{2})$/.test(value), "Expected timezone-aware ISO date-time"),
   "limitations": z.array(z.string()).min(1),
-}).strict()).optional(),
+}).strict()).refine((items) => new Set(items.map((item) => item["binding_id"])).size === items.length, "Expected unique binding_id values").optional(),
   "intervention_sites": z.array(z.object({
   "site_id": z.string(),
   "title": z.string(),
@@ -148,7 +148,7 @@ export const ConnectivityProjectBundleSchema = z.object({
   "known_constraints": z.array(z.string()).optional(),
   "reviewed_by": z.string(),
   "reviewed_at": z.string().refine((value) => !Number.isNaN(Date.parse(value)) && /(?:Z|[+-]\d{2}:\d{2})$/.test(value), "Expected timezone-aware ISO date-time"),
-}).strict()),
+}).strict()).refine((items) => new Set(items.map((item) => item["site_id"])).size === items.length, "Expected unique site_id values"),
   "intervention_options": z.array(z.object({
   "option_id": z.string(),
   "site_id": z.string(),
@@ -188,7 +188,7 @@ export const ConnectivityProjectBundleSchema = z.object({
   "unresolved_concerns": z.array(z.string()).optional(),
   "reviewed_by": z.string(),
   "reviewed_at": z.string().refine((value) => !Number.isNaN(Date.parse(value)) && /(?:Z|[+-]\d{2}:\d{2})$/.test(value), "Expected timezone-aware ISO date-time"),
-}).strict()),
+}).strict()).refine((items) => new Set(items.map((item) => item["option_id"])).size === items.length, "Expected unique option_id values"),
   "cost_basis": z.union([z.object({
   "cost_basis_id": z.string(),
   "source": z.string(),
@@ -207,7 +207,7 @@ export const ConnectivityProjectBundleSchema = z.object({
   "concerns": z.array(z.string()).optional(),
   "reviewed_by": z.string(),
   "reviewed_at": z.string().refine((value) => !Number.isNaN(Date.parse(value)) && /(?:Z|[+-]\d{2}:\d{2})$/.test(value), "Expected timezone-aware ISO date-time"),
-}).strict()).optional(),
+}).strict()).refine((items) => new Set(items.map((item) => item["safeguard_id"])).size === items.length, "Expected unique safeguard_id values").optional(),
   "review_masks": z.array(z.object({
   "mask_id": z.string(),
   "title": z.string(),
@@ -216,7 +216,7 @@ export const ConnectivityProjectBundleSchema = z.object({
   "review_trigger_percent": z.number().min(0),
   "interpretation": z.string(),
   "not_an_objective_notice": z.literal("Current redistribution is a diagnostic review signal, not predicted animal use.").optional(),
-}).strict()).optional(),
+}).strict()).refine((items) => new Set(items.map((item) => item["mask_id"])).size === items.length, "Expected unique mask_id values").optional(),
   "decision_rules": z.array(z.object({
   "rule_id": z.string(),
   "title": z.string(),
@@ -227,7 +227,7 @@ export const ConnectivityProjectBundleSchema = z.object({
   "pair_ids": z.array(z.string()).optional(),
   "required": z.boolean().optional(),
   "rationale": z.string(),
-}).strict()).optional(),
+}).strict()).refine((items) => new Set(items.map((item) => item["rule_id"])).size === items.length, "Expected unique rule_id values").optional(),
   "fitness": z.object({
   "passport_id": z.string(),
   "revision_id": z.string(),

@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from ecocorridor_core.bundle_identity import assert_unique_bundle_identities
 from ecocorridor_core.contracts import (
     CURRENT_RASTER_LIMITATION,
     FITNESS_LIMITATION,
@@ -89,6 +90,22 @@ def test_public_contracts_emit_deterministic_draft_2020_schemas() -> None:
         '"$schema": "https://json-schema.org/draft/2020-12/schema"'
         in rendered["ConnectivityScenario.schema.json"]
     )
+    bundle_schema = json.loads(rendered["ConnectivityProjectBundle.schema.json"])
+    expected_unique_keys = {
+        "assets": "asset_id",
+        "resistance_hypotheses": "hypothesis_id",
+        "focal_area_sets": "focal_set_id",
+        "scenarios": "scenario_id",
+        "reference_bindings": "binding_id",
+        "intervention_sites": "site_id",
+        "intervention_options": "option_id",
+        "safeguards": "safeguard_id",
+        "review_masks": "mask_id",
+        "decision_rules": "rule_id",
+    }
+    assert {
+        name: bundle_schema["properties"][name]["x-uniqueBy"] for name in expected_unique_keys
+    } == expected_unique_keys
     assert rendered == render_public_schemas()
 
 
@@ -158,6 +175,37 @@ def test_unsupported_modes_and_conductance_fail_closed() -> None:
         ConnectivityScenario.model_validate(
             {**base, "raster_semantics": RasterSemantics.CONDUCTANCE}
         )
+
+
+@pytest.mark.parametrize(
+    ("collection", "identity", "error"),
+    [
+        (
+            "resistance_hypotheses",
+            "hypothesis_id",
+            "resistance hypothesis IDs must be unique",
+        ),
+        ("focal_area_sets", "focal_set_id", "focal-area set IDs must be unique"),
+        ("intervention_sites", "site_id", "intervention site IDs must be unique"),
+        ("safeguards", "safeguard_id", "safeguard IDs must be unique"),
+        ("review_masks", "mask_id", "review mask IDs must be unique"),
+        ("decision_rules", "rule_id", "decision rule IDs must be unique"),
+    ],
+)
+def test_project_bundle_identity_boundary_rejects_duplicate_stable_model_identities(
+    collection: str, identity: str, error: str
+) -> None:
+    payload = build_ridgeway_fixture().bundle.model_dump(mode="python")
+    duplicate = dict(payload[collection][0])
+    if "title" in duplicate:
+        duplicate["title"] = f"Conflicting duplicate {duplicate[identity]}"
+    else:
+        duplicate["concerns"] = [*duplicate["concerns"], "Conflicting duplicate definition."]
+    payload[collection].append(duplicate)
+
+    bundle = ConnectivityProjectBundle.model_validate(payload)
+    with pytest.raises(ValueError, match=error):
+        assert_unique_bundle_identities(bundle)
 
 
 def _reference_tolerance() -> ReferenceMetricTolerance:

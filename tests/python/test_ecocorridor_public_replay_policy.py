@@ -8,6 +8,17 @@ from types import ModuleType
 
 import pytest
 
+RIDGEWAY_HYPOTHESIS_IDS = (
+    "h1_low_barrier",
+    "h2_moderate_barrier",
+    "h3_high_barrier",
+    "h4_future_pressure",
+)
+RIDGEWAY_HYPOTHESIS_RANKING_METRIC = (
+    "Minimum required target-pair resistance reduction (%) within each resistance "
+    "hypothesis; rank 1 is the highest score among the 128 directly evaluated portfolios."
+)
+
 
 @pytest.fixture(scope="module")
 def checker() -> ModuleType:
@@ -127,7 +138,10 @@ def _verified_inputs(tmp_path: Path) -> tuple[Path, Path, Path, Path, Path]:
         portfolios.append(
             {
                 "id": portfolio_id,
-                "hypothesisRanks": {f"hypothesis_{index}": {} for index in range(4)},
+                "hypothesisRanks": {
+                    hypothesis_id: {"rank": index + 1, "score": 70.0 - index}
+                    for index, hypothesis_id in enumerate(RIDGEWAY_HYPOTHESIS_IDS)
+                },
                 "scenarioResults": results,
             }
         )
@@ -144,6 +158,7 @@ def _verified_inputs(tmp_path: Path) -> tuple[Path, Path, Path, Path, Path]:
             "scenarioCount": 12,
             "matrixJobCount": 1536,
             "mapJobCount": 60,
+            "hypothesisRankingMetric": RIDGEWAY_HYPOTHESIS_RANKING_METRIC,
         },
         "scenarios": scenarios,
         "portfolios": portfolios,
@@ -378,6 +393,73 @@ def test_public_replay_accepts_complete_v12_pair_and_current_raster_evidence(
     )
     assert payload["verified_direct_evidence"] is True
     assert checker.PROTECTED_RIDGEWAY_FILES <= {item["path"] for item in payload["files"]}
+
+
+def test_public_replay_rejects_verified_fixture_without_the_pinned_rank_metric(
+    checker: ModuleType, tmp_path: Path
+) -> None:
+    root, fixture, projection, trust, manifest = _verified_inputs(tmp_path)
+    payload = json.loads(projection.read_text(encoding="utf-8"))
+    payload["study"]["hypothesisRankingMetric"] = None
+    encoded = (json.dumps(payload, sort_keys=True) + "\n").encode()
+    fixture.write_bytes(encoded)
+    projection.write_bytes(encoded)
+
+    with pytest.raises(ValueError, match="missing trusted direct evidence"):
+        checker.validate_and_inventory(
+            root,
+            source_sha="a" * 40,
+            fixture=fixture,
+            projection=projection,
+            trust_record=trust,
+            data_manifest=manifest,
+            require_verified_evidence=True,
+        )
+
+
+@pytest.mark.parametrize(("field", "value"), [("rank", 0), ("rank", 129), ("score", "70")])
+def test_public_replay_rejects_invalid_hypothesis_rank_observations(
+    checker: ModuleType, tmp_path: Path, field: str, value: object
+) -> None:
+    root, fixture, projection, trust, manifest = _verified_inputs(tmp_path)
+    payload = json.loads(projection.read_text(encoding="utf-8"))
+    payload["portfolios"][0]["hypothesisRanks"]["h1_low_barrier"][field] = value
+    encoded = (json.dumps(payload, sort_keys=True) + "\n").encode()
+    fixture.write_bytes(encoded)
+    projection.write_bytes(encoded)
+
+    with pytest.raises(ValueError, match="invalid hypothesis-rank evidence"):
+        checker.validate_and_inventory(
+            root,
+            source_sha="a" * 40,
+            fixture=fixture,
+            projection=projection,
+            trust_record=trust,
+            data_manifest=manifest,
+            require_verified_evidence=True,
+        )
+
+
+def test_public_replay_rejects_incomplete_hypothesis_rank_basis(
+    checker: ModuleType, tmp_path: Path
+) -> None:
+    root, fixture, projection, trust, manifest = _verified_inputs(tmp_path)
+    payload = json.loads(projection.read_text(encoding="utf-8"))
+    del payload["portfolios"][0]["hypothesisRanks"]["h4_future_pressure"]
+    encoded = (json.dumps(payload, sort_keys=True) + "\n").encode()
+    fixture.write_bytes(encoded)
+    projection.write_bytes(encoded)
+
+    with pytest.raises(ValueError, match="incomplete teaching evidence"):
+        checker.validate_and_inventory(
+            root,
+            source_sha="a" * 40,
+            fixture=fixture,
+            projection=projection,
+            trust_record=trust,
+            data_manifest=manifest,
+            require_verified_evidence=True,
+        )
 
 
 def test_public_replay_rejects_verified_fixture_without_protected_producer_receipt(

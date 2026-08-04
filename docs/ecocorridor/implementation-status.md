@@ -93,8 +93,11 @@ record is a digest-matched source recovery—not an authenticated execution
 attestation—and sets production authorization to `PROHIBITED`. Ridgeway direct
 evidence has now been regenerated into the current local reference package,
 but that package does not retroactively make the historical search campaign
-current or production-eligible. A new search campaign must be derived from the
-current evidence under its own versioned provenance.
+current or production-eligible. The benchmark derivation boundary now consumes
+the current v1.1 evidence index only after checking the complete 1,596-job
+study, its bound scientific/runtime identities, and confirmed process exits;
+it emits separately versioned v2 tables. A new campaign still must be executed
+from those tables under its own versioned provenance and immutable W&B lineage.
 
 ### Search release decision
 
@@ -160,6 +163,10 @@ current direct evidence.
   applicable review masks. A changed geometry cannot reuse a grid identity,
   and an approved alignment plan creates a semantic revision rather than a
   hidden transformation.
+- Portable bundles reject duplicate scientific stable IDs before preflight or
+  execution can resolve them differently. The same per-array identity rule is
+  emitted in public JSON Schema and generated Zod validators, while the worker
+  remains the authoritative import boundary.
 - Circuitscape startup and packaging now require the exact package UUID,
   version `5.17.1`, and source-tree hash recorded in the committed Julia
   manifest, reject path/repository-tracked substitutions, and verify the loaded
@@ -170,7 +177,11 @@ current direct evidence.
   workspace configuration, and absence of repository `.npmrc` overrides.
 - Target-specific worker/Julia staging, resource hashing, installer workflows,
   source/target-bound detached resource signatures, native GDAL/PROJ/GEOS
-  inventory, SBOM generation, and installed-smoke entry points.
+  inventory, SBOM generation, and installed-smoke entry points. The packaged
+  worker smoke boundary now exact-matches the locked geospatial, Pydantic,
+  SciPy, scikit-learn, W&B, and Weave versions and exercises credential-free,
+  offline Pydantic contracts, scrambled Sobol, ExtraTrees, W&B Table/Artifact,
+  and Weave trace/redaction capabilities in isolated temporary storage.
 
 These are source capabilities, not a claim that the complete practitioner
 workflow has passed acceptance. They do not establish green remote CI, a

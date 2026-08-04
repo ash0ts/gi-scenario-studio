@@ -380,11 +380,12 @@ test("Ridgeway robustness board presents the complete verified direct ensemble",
   await expect(page.getByRole("radio")).toHaveCount(4);
   await expect(page.getByRole("radio", { name: "Inspect Carry-forward candidate" })).toBeChecked();
   await expect(page.getByText("12/12 direct", { exact: true })).toHaveCount(4);
+  await expect(page.getByRole("columnheader", { name: "Hypothesis rank range" })).toBeVisible();
   await expect(page.getByRole("columnheader", { name: "Safeguard pairs" })).toBeVisible();
   await expect(page.getByRole("cell", { name: "4/4 scenarios pass" })).toHaveCount(4);
   await expect(page.getByRole("heading", { name: "Carry-forward candidate" })).toBeVisible();
-  const tableHint = page.getByText(/Scroll horizontally to inspect safeguard/i);
-  if (testInfo.project.name === "compact-760" || testInfo.project.name === "zoom-200") {
+  const tableHint = page.getByText(/Scroll horizontally to inspect rank sensitivity/i);
+  if (testInfo.project.name !== "desktop-1440") {
     await expect(tableHint).toBeVisible();
   } else {
     await expect(tableHint).toBeHidden();
@@ -408,6 +409,23 @@ test("Ridgeway robustness board presents the complete verified direct ensemble",
   }
   await map.getByText("View map evidence as a table", { exact: true }).click();
   await expect(map.getByRole("table")).toBeVisible();
+  await page.getByRole("radio", { name: "Inspect Hypothesis-sensitive option" }).check();
+  const sensitivityVerdict = page.locator(".replay-verdict");
+  await expect(sensitivityVerdict.getByText("#35 → #49", { exact: true })).toBeVisible();
+  await expect(sensitivityVerdict.getByText("Future pressure best · Low highway penalty weakest", { exact: true })).toBeVisible();
+  await expect(sensitivityVerdict.getByText(/its computed position shifts from #35 under Future pressure to #49 under Low highway penalty/i)).toBeVisible();
+  await expect(page.getByText(/rank 1 is the highest score among the 128 directly evaluated portfolios/i)).toBeVisible();
+  const verdictMetricsOverlap = await sensitivityVerdict.evaluate((verdict) => {
+    const rectangles = [...verdict.querySelectorAll("dl > div")].map((item) => item.getBoundingClientRect());
+    return rectangles.some((left, index) => rectangles.slice(index + 1).some((right) => !(
+      left.right <= right.left + 0.5
+      || right.right <= left.left + 0.5
+      || left.bottom <= right.top + 0.5
+      || right.bottom <= left.top + 0.5
+    )));
+  });
+  expect(verdictMetricsOverlap).toBe(false);
+  await assertNoBlockingAxeFindings(page);
 });
 
 test("compact Evidence Rail behaves as a modal dialog", async ({ page }) => {
