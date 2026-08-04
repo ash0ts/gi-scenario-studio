@@ -22,9 +22,8 @@ from pydantic import Field, SecretStr, ValidationError, field_validator, model_v
 from scenario_platform.archive import (
     ArchiveMember,
     ArchiveSecurityError,
-    extract_zip,
-    inspect_zip,
-    read_zip_member,
+    ValidatedZipSnapshot,
+    open_zip_snapshot,
 )
 from scenario_platform.cloud_sync import InMemoryCredentialSession, WandbTarget
 from scenario_platform.contracts import (
@@ -617,8 +616,24 @@ class ObservabilityAdapter(Protocol):
     ) -> dict[str, Any]: ...
 
 
-class AssistantExplainParams(ProjectParams):
-    call_id: str
+class AssistantCallParams(ProjectParams):
+    """A bounded local correlation ID that never becomes cloud metadata."""
+
+    call_id: str = Field(min_length=1, max_length=256)
+
+    @field_validator("call_id")
+    @classmethod
+    def validate_local_call_id(cls, value: str) -> str:
+        if (
+            value != value.strip()
+            or len(value.encode("utf-8")) > 512
+            or any(ord(character) < 32 or ord(character) == 127 for character in value)
+        ):
+            raise ValueError("assistant call ID must be bounded local text without controls")
+        return value
+
+
+class AssistantExplainParams(AssistantCallParams):
     question: str = Field(min_length=1, max_length=4_000)
     evidence_ids: list[str] = Field(min_length=1, max_length=64)
     sensitive_policy: SensitiveContextPolicy = Field(default_factory=SensitiveContextPolicy)
@@ -629,16 +644,15 @@ class AssistantConfigureParams(ProjectParams):
     api_key: SecretStr
 
 
-class AssistantIntakeExtractParams(ProjectParams):
-    call_id: str
+class AssistantIntakeExtractParams(AssistantCallParams):
     instruction: str
     pages: list[DocumentPage] = Field(min_length=1, max_length=2_000)
     sensitive_policy: SensitiveContextPolicy = Field(default_factory=SensitiveContextPolicy)
 
     @model_validator(mode="after")
     def validate_request_size(self) -> AssistantIntakeExtractParams:
-        if not self.call_id.strip() or not self.instruction.strip():
-            raise ValueError("intake call ID and instruction are required")
+        if not self.instruction.strip():
+            raise ValueError("intake instruction is required")
         total = sum(len(page.text.encode("utf-8")) for page in self.pages)
         if total > 6 * 1024 * 1024:
             raise ValueError("intake document pages exceed the six MiB request limit")
@@ -662,14 +676,13 @@ class AssistantIntakeConfirmParams(AssistantIntakeDraftParams):
         return self
 
 
-class AssistantFeedbackParams(ProjectParams):
-    call_id: str
+class AssistantFeedbackParams(AssistantCallParams):
     rating: Literal["HELPFUL", "NOT_HELPFUL"]
     comment: str = Field(default="", max_length=1_024)
 
 
-class AssistantTraceParams(ProjectParams):
-    call_id: str
+class AssistantTraceParams(AssistantCallParams):
+    pass
 
 
 class AssistantFeedbackSink(Protocol):
@@ -713,6 +726,160 @@ def _sha256_file(path: Path) -> str:
         if descriptor >= 0:
             os.close(descriptor)
     return digest.hexdigest()
+
+
+def _materialized_bundle_fault(
+    object_reference: str,
+    technical_message: str,
+) -> RPCFault:
+    return _fault(
+        "MATERIALIZED_BUNDLE_INTEGRITY_FAILED",
+        "The materialized bundle tree differs from the inspected archive.",
+        category=ErrorCategory.SECURITY,
+        severity=Severity.BLOCKING,
+        remediation=(
+            "Remove the retained source directory and import the reviewed portable bundle again."
+        ),
+        object_reference=object_reference,
+        technical_message=technical_message,
+    )
+
+
+def _verify_materialized_bundle_tree(
+    target: Path,
+    members: Sequence[ArchiveMember],
+) -> None:
+    """Require one exact regular-file tree for the inspected archive members.
+
+    The walk never follows symbolic links. Only directories required as parents
+    of indexed members are accepted; empty, additional, linked, and special
+    entries fail before the project store or telemetry outbox is opened.
+    """
+
+    expected_files = {member.path: member for member in members}
+    expected_directories: set[str] = set()
+    for member_path in expected_files:
+        parts = member_path.split("/")
+        expected_directories.update("/".join(parts[:index]) for index in range(1, len(parts)))
+
+    try:
+        root_metadata = os.lstat(target)
+    except OSError as exc:
+        raise _materialized_bundle_fault(".", "materialized source root is unavailable") from exc
+    if stat.S_ISLNK(root_metadata.st_mode) or not stat.S_ISDIR(root_metadata.st_mode):
+        raise _materialized_bundle_fault(
+            ".",
+            "materialized source root is not a regular directory",
+        )
+
+    observed_files: dict[str, Path] = {}
+    observed_directories: set[str] = set()
+    pending: list[tuple[Path, str]] = [(target, "")]
+    while pending:
+        directory, prefix = pending.pop()
+        try:
+            with os.scandir(directory) as scanner:
+                entries = sorted(scanner, key=lambda item: item.name.casefold())
+        except OSError as exc:
+            raise _materialized_bundle_fault(
+                prefix or ".",
+                "materialized source directory cannot be inspected",
+            ) from exc
+        for entry in entries:
+            relative = f"{prefix}/{entry.name}" if prefix else entry.name
+            try:
+                metadata = entry.stat(follow_symlinks=False)
+            except OSError as exc:
+                raise _materialized_bundle_fault(
+                    relative,
+                    "materialized source entry cannot be inspected",
+                ) from exc
+            if stat.S_ISLNK(metadata.st_mode):
+                raise _materialized_bundle_fault(
+                    relative,
+                    "symbolic links are not permitted in a materialized bundle",
+                )
+            if stat.S_ISDIR(metadata.st_mode):
+                if relative not in expected_directories:
+                    raise _materialized_bundle_fault(
+                        relative,
+                        "materialized bundle contains an unindexed directory",
+                    )
+                observed_directories.add(relative)
+                pending.append((Path(entry.path), relative))
+                continue
+            if stat.S_ISREG(metadata.st_mode):
+                if relative not in expected_files:
+                    raise _materialized_bundle_fault(
+                        relative,
+                        "materialized bundle contains an unindexed file",
+                    )
+                observed_files[relative] = Path(entry.path)
+                continue
+            raise _materialized_bundle_fault(
+                relative,
+                "special filesystem entries are not permitted in a materialized bundle",
+            )
+
+    missing_files = sorted(set(expected_files) - set(observed_files))
+    if missing_files:
+        raise _materialized_bundle_fault(
+            missing_files[0],
+            "materialized bundle is missing an indexed file",
+        )
+    missing_directories = sorted(expected_directories - observed_directories)
+    if missing_directories:
+        raise _materialized_bundle_fault(
+            missing_directories[0],
+            "materialized bundle is missing a required directory",
+        )
+
+    for member_path in sorted(expected_files):
+        member = expected_files[member_path]
+        path = observed_files[member_path]
+        try:
+            descriptor = _open_regular_readonly(path)
+        except (AssetIngestError, OSError) as exc:
+            raise _materialized_bundle_fault(
+                member_path,
+                "indexed bundle file could not be reopened safely",
+            ) from exc
+        try:
+            try:
+                opened = os.fstat(descriptor)
+                if opened.st_size != member.uncompressed_bytes:
+                    raise _materialized_bundle_fault(
+                        member_path,
+                        "indexed bundle file has an unexpected byte count",
+                    )
+                digest = hashlib.sha256()
+                observed_bytes = 0
+                while block := os.read(descriptor, 1024 * 1024):
+                    observed_bytes += len(block)
+                    if observed_bytes > member.uncompressed_bytes:
+                        raise _materialized_bundle_fault(
+                            member_path,
+                            "indexed bundle file grew while it was verified",
+                        )
+                    digest.update(block)
+                final = os.fstat(descriptor)
+            except OSError as exc:
+                raise _materialized_bundle_fault(
+                    member_path,
+                    "indexed bundle file could not be read safely",
+                ) from exc
+            if final.st_size != opened.st_size or observed_bytes != member.uncompressed_bytes:
+                raise _materialized_bundle_fault(
+                    member_path,
+                    "indexed bundle file changed while it was verified",
+                )
+            if digest.hexdigest() != member.sha256:
+                raise _materialized_bundle_fault(
+                    member_path,
+                    "indexed bundle file failed checksum verification",
+                )
+        finally:
+            os.close(descriptor)
 
 
 class AssetIngestError(RuntimeError):
@@ -1645,9 +1812,9 @@ class RPCDispatcher:
         )
 
     def _inspect_bundle(
-        self, path: Path, expected_sha256: str | None
+        self, snapshot: ValidatedZipSnapshot, expected_sha256: str | None
     ) -> tuple[ConnectivityProjectBundle, list[ArchiveMember], str]:
-        digest = _sha256_file(path)
+        digest = snapshot.sha256
         if expected_sha256 is not None and digest != require_sha256(expected_sha256.casefold()):
             raise _fault(
                 "BUNDLE_HASH_MISMATCH",
@@ -1655,7 +1822,7 @@ class RPCDispatcher:
                 category=ErrorCategory.SECURITY,
                 severity=Severity.BLOCKING,
             )
-        members = inspect_zip(path)
+        members = list(snapshot.members)
         names = {member.path: member for member in members}
         manifest_name = "connectivity-project.json"
         if manifest_name not in names:
@@ -1673,7 +1840,7 @@ class RPCDispatcher:
                 severity=Severity.BLOCKING,
             )
         try:
-            raw = json.loads(read_zip_member(path, manifest_name).decode("utf-8"))
+            raw = json.loads(snapshot.read_member(manifest_name).decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise _fault(
                 "BUNDLE_MANIFEST_INVALID",
@@ -1794,7 +1961,8 @@ class RPCDispatcher:
     def _bundle_inspect(self, params: BundleInspectParams) -> PayloadResult:
         path = self._allowed_path(params.bundle_path, must_exist=True, purpose="bundle")
         try:
-            bundle, members, digest = self._inspect_bundle(path, params.expected_sha256)
+            with open_zip_snapshot(path) as snapshot:
+                bundle, members, digest = self._inspect_bundle(snapshot, params.expected_sha256)
         except ArchiveSecurityError as exc:
             raise _fault(
                 "BUNDLE_SECURITY_REJECTED",
@@ -1823,7 +1991,48 @@ class RPCDispatcher:
             params.project_directory, must_exist=False, purpose="project"
         )
         try:
-            bundle, members, digest = self._inspect_bundle(path, params.expected_sha256)
+            with open_zip_snapshot(path) as snapshot:
+                bundle, members, digest = self._inspect_bundle(snapshot, params.expected_sha256)
+                project_directory.mkdir(parents=True, exist_ok=True)
+                try:
+                    target = contained_path(project_directory, Path("sources") / digest)
+                except PathSecurityError as exc:
+                    raise _fault(
+                        "PROJECT_SOURCE_PATH_UNSAFE",
+                        "The project source directory contains an unsafe path or symbolic link.",
+                        category=ErrorCategory.SECURITY,
+                        severity=Severity.BLOCKING,
+                    ) from exc
+                source_root = target.parent
+                if not target.exists():
+                    source_root.mkdir(parents=True, exist_ok=True)
+                    temporary = Path(tempfile.mkdtemp(prefix=".import.", dir=source_root))
+                    try:
+                        snapshot.extract(temporary)
+                        os.replace(temporary, target)
+                    finally:
+                        if temporary.exists():
+                            shutil.rmtree(temporary)
+                _verify_materialized_bundle_tree(target, members)
+                store = EcoProjectStore(project_directory)
+                try:
+                    store.initialize(
+                        project_id=bundle.project_id,
+                        title=bundle.title,
+                        mode="IMPORTED",
+                        skeleton={"source_bundle_sha256": digest},
+                    )
+                    store.store_bundle(
+                        bundle,
+                        import_manifest_id=digest,
+                        import_manifest={
+                            "archive_sha256": digest,
+                            "members": [asdict(item) for item in members],
+                            "materialized_directory": f"sources/{digest}",
+                        },
+                    )
+                finally:
+                    store.close()
         except ArchiveSecurityError as exc:
             raise _fault(
                 "BUNDLE_SECURITY_REJECTED",
@@ -1832,70 +2041,6 @@ class RPCDispatcher:
                 severity=Severity.BLOCKING,
                 technical_message=str(exc),
             ) from exc
-        project_directory.mkdir(parents=True, exist_ok=True)
-        try:
-            target = contained_path(project_directory, Path("sources") / digest)
-        except PathSecurityError as exc:
-            raise _fault(
-                "PROJECT_SOURCE_PATH_UNSAFE",
-                "The project source directory contains an unsafe path or symbolic link.",
-                category=ErrorCategory.SECURITY,
-                severity=Severity.BLOCKING,
-            ) from exc
-        source_root = target.parent
-        if not target.exists():
-            source_root.mkdir(parents=True, exist_ok=True)
-            temporary = Path(tempfile.mkdtemp(prefix=".import.", dir=source_root))
-            try:
-                extract_zip(path, temporary)
-                os.replace(temporary, target)
-            finally:
-                if temporary.exists():
-                    shutil.rmtree(temporary)
-        for member in members:
-            try:
-                materialized = (target / member.path).resolve(strict=True)
-            except OSError as exc:
-                raise _fault(
-                    "MATERIALIZED_BUNDLE_INTEGRITY_FAILED",
-                    "A materialized bundle file is missing after import.",
-                    category=ErrorCategory.SECURITY,
-                    severity=Severity.BLOCKING,
-                    object_reference=member.path,
-                ) from exc
-            if (
-                target.resolve() not in materialized.parents
-                or not materialized.is_file()
-                or materialized.is_symlink()
-                or materialized.stat().st_size != member.uncompressed_bytes
-                or _sha256_file(materialized) != member.sha256
-            ):
-                raise _fault(
-                    "MATERIALIZED_BUNDLE_INTEGRITY_FAILED",
-                    "A materialized bundle file differs from the inspected archive.",
-                    category=ErrorCategory.SECURITY,
-                    severity=Severity.BLOCKING,
-                    object_reference=member.path,
-                )
-        store = EcoProjectStore(project_directory)
-        try:
-            store.initialize(
-                project_id=bundle.project_id,
-                title=bundle.title,
-                mode="IMPORTED",
-                skeleton={"source_bundle_sha256": digest},
-            )
-            store.store_bundle(
-                bundle,
-                import_manifest_id=digest,
-                import_manifest={
-                    "archive_sha256": digest,
-                    "members": [asdict(item) for item in members],
-                    "materialized_directory": f"sources/{digest}",
-                },
-            )
-        finally:
-            store.close()
         return self._result(
             "connectivity.bundle.import",
             {

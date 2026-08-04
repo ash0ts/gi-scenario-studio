@@ -1,7 +1,15 @@
 from __future__ import annotations
 
+import json
+import socket
+
 import pytest
-from scenario_platform.observability import AppProfile, redact_sensitive
+from scenario_platform.observability import (
+    AppProfile,
+    contains_direct_identifier,
+    redact_external_identifiers,
+    redact_sensitive,
+)
 from scenario_platform.search import categorical_qmc, nondominated_indices
 
 
@@ -65,3 +73,45 @@ def test_app_profile_names_are_scoped_and_payloads_are_redacted() -> None:
         "message": "loaded [LOCAL_PATH]",
         "safe": "scenario-17",
     }
+
+
+def test_external_identifier_redaction_is_offline_recursive_and_idempotent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw_contact = "Contact field.team@example.org, 202-555-0182, or record 123-45-6789."
+    payload = {
+        "contact": raw_contact,
+        "nested": [{"authorization": "Bearer must-not-leave"}],
+        "path": "/Users/person/private/grid.tif",
+        "measurement": "Resistance changed 6.42 percent.",
+    }
+
+    def reject_network(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("deterministic redaction attempted network access")
+
+    monkeypatch.setattr(socket, "getaddrinfo", reject_network)
+    redacted = redact_external_identifiers(payload)
+    encoded = json.dumps(redacted, sort_keys=True)
+
+    assert not contains_direct_identifier(encoded)
+    assert "field.team@example.org" not in encoded
+    assert "202-555-0182" not in encoded
+    assert "123-45-6789" not in encoded
+    assert "must-not-leave" not in encoded
+    assert "/Users/person/private/grid.tif" not in encoded
+    assert redacted["measurement"] == payload["measurement"]
+    assert len(redacted["contact"]) == len(raw_contact)
+    assert redact_external_identifiers(redacted) == redacted
+
+
+def test_external_redaction_does_not_trust_authorization_like_key_names() -> None:
+    payload = {
+        "evidence_authorization": "plain-secret-value-not-labelled",
+        "evidence_authorization_decision_id": "another-raw-secret",
+        "authorization": "Bearer must-not-leave-either",
+    }
+
+    redacted = redact_external_identifiers(payload)
+
+    assert all(redacted[key] != value for key, value in payload.items())
+    assert not any("secret" in str(value) for value in redacted.values())

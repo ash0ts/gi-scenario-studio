@@ -385,7 +385,10 @@ def main() -> int:
                     "app_namespace": ECOCORRIDOR_APP_PROFILE.namespace,
                 },
             )
-            client = weave.init(f"{entity}/{project}", settings={"redact_pii": True})
+            # Evaluation cases are minimized locally before provider/trace use.
+            # Do not enable Weave's optional Presidio path: the release worker
+            # intentionally ships no runtime-downloaded NLP model.
+            client = weave.init(f"{entity}/{project}", settings={"redact_pii": False})
             set_context = getattr(client, "set_wandb_run_context", None)
             if not callable(set_context):
                 raise TypeError("WEAVE_WANDB_RUN_CONTEXT_UNAVAILABLE")

@@ -327,7 +327,7 @@ def test_packaged_worker_inventory_must_match_declared_native_runtime() -> None:
         "scipy_sobol": True,
         "sklearn_extratrees": True,
         "wandb_offline_table_artifact": True,
-        "weave_entrypoint_redaction": True,
+        "deterministic_external_redaction": True,
     }
     smoke.validate_packaged_runtime_inventory(packaged, declared)
     packaged["python_packages"]["wandb"] = "0.0.0"
@@ -375,7 +375,7 @@ def test_packaged_worker_inventory_rejects_missing_professional_dependency(
         "scipy_sobol",
         "sklearn_extratrees",
         "wandb_offline_table_artifact",
-        "weave_entrypoint_redaction",
+        "deterministic_external_redaction",
     ],
 )
 def test_packaged_worker_inventory_rejects_unproven_professional_capability(
@@ -408,6 +408,8 @@ def test_professional_runtime_probe_is_offline_credential_free_and_deterministic
     monkeypatch.setenv("WANDB_MODE", "offline")
     for name in entrypoint.FORBIDDEN_PROBE_CREDENTIALS:
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setitem(sys.modules, "presidio_analyzer", None)
+    monkeypatch.setitem(sys.modules, "presidio_anonymizer", None)
     for name in ("WANDB_ARTIFACT_DIR", "WANDB_CACHE_DIR", "WANDB_DATA_DIR", "WANDB_DIR"):
         directory = tmp_path / name.lower()
         directory.mkdir()
@@ -419,6 +421,17 @@ def test_professional_runtime_probe_is_offline_credential_free_and_deterministic
     assert inventory["capabilities"] == dict.fromkeys(
         entrypoint.PACKAGED_RUNTIME_CAPABILITIES, True
     )
+
+
+def test_all_ecocorridor_weave_init_paths_disable_unbundled_presidio() -> None:
+    root = Path(__file__).resolve().parents[2]
+    for relative in (
+        "python/ecocorridor_core/observability.py",
+        "scripts/run_ecocorridor_assistant_evaluation.py",
+    ):
+        source = root.joinpath(relative).read_text(encoding="utf-8")
+        assert 'settings={"redact_pii": True}' not in source
+        assert 'settings={"redact_pii": False}' in source
 
 
 def test_worker_entrypoint_emits_one_credential_free_professional_runtime_record(

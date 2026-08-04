@@ -6,6 +6,7 @@ import json
 import math
 import os
 import platform
+import socket
 import sys
 
 PACKAGED_RUNTIME_PACKAGES = (
@@ -25,7 +26,7 @@ PACKAGED_RUNTIME_CAPABILITIES = (
     "scipy_sobol",
     "sklearn_extratrees",
     "wandb_offline_table_artifact",
-    "weave_entrypoint_redaction",
+    "deterministic_external_redaction",
 )
 FORBIDDEN_PROBE_CREDENTIALS = (
     "ECOCORRIDOR_PROVIDER_API_KEY",
@@ -72,6 +73,7 @@ def _probe_professional_runtime() -> dict[str, bool]:
     import wandb
     import weave
     from pydantic import BaseModel
+    from scenario_platform.observability import redact_external_identifiers
     from scipy.stats import qmc
     from sklearn.ensemble import ExtraTreesClassifier, ExtraTreesRegressor
     from weave.utils import sanitize
@@ -102,6 +104,38 @@ def _probe_professional_runtime() -> dict[str, bool]:
         raise RuntimeError("ExtraTrees regression is unavailable.")
     if classification.shape != (1,) or int(classification[0]) not in {0, 1}:
         raise RuntimeError("ExtraTrees classification is unavailable.")
+
+    raw_external_payload = {
+        "contact": ("Contact field.team@example.org, 202-555-0182, or record 123-45-6789."),
+        "api_key": "must-not-leave-the-worker",
+        "note": "Read /Users/example/private/model.txt before upload.",
+    }
+    original_getaddrinfo = socket.getaddrinfo
+
+    def reject_network(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("packaged redaction may not access the network")
+
+    socket.getaddrinfo = reject_network  # type: ignore[assignment]
+    try:
+        redacted_external_payload = redact_external_identifiers(raw_external_payload)
+    finally:
+        socket.getaddrinfo = original_getaddrinfo
+    encoded_redacted = json.dumps(redacted_external_payload, sort_keys=True)
+    if (
+        any(
+            raw in encoded_redacted
+            for raw in (
+                "field.team@example.org",
+                "202-555-0182",
+                "123-45-6789",
+                "must-not-leave-the-worker",
+                "/Users/example/private/model.txt",
+            )
+        )
+        or redacted_external_payload != redact_external_identifiers(redacted_external_payload)
+        or len(str(redacted_external_payload["contact"])) != len(raw_external_payload["contact"])
+    ):
+        raise RuntimeError("Deterministic external PII redaction is unavailable.")
 
     table = wandb.Table(columns=["probe_id", "value"], data=[["offline", 1]])
     artifact = wandb.Artifact("ecocorridor-packaged-runtime-probe", type="runtime-probe")

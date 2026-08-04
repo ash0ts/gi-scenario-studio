@@ -76,6 +76,15 @@ def test_archive_rejects_symlinks_duplicates_and_limits(tmp_path: Path) -> None:
         inspect_zip(executable)
 
 
+def test_archive_snapshot_applies_a_raw_staging_byte_limit(tmp_path: Path) -> None:
+    archive = tmp_path / "raw-limit.zip"
+    with zipfile.ZipFile(archive, "w") as handle:
+        handle.writestr("model/input.txt", b"tiny")
+
+    with pytest.raises(ArchiveSecurityError, match="compressed-byte staging limit"):
+        inspect_zip(archive, limits=ArchiveLimits(max_archive_bytes=archive.stat().st_size - 1))
+
+
 def test_contained_paths_atomic_files_and_cas_detect_tampering(tmp_path: Path) -> None:
     root = tmp_path / "root"
     root.mkdir()

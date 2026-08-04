@@ -119,6 +119,16 @@ current direct evidence.
 ## Implemented source surfaces awaiting full release evidence
 
 - Versioned Eco contracts and runtime-validated JSON-RPC methods.
+- Portable-bundle inspection and import now bind the raw archive hash, secure
+  member index, parsed manifest, and extracted source tree to one anonymous
+  single-open snapshot. Path replacement after selection cannot mix those
+  identities, and a dedicated compressed-byte limit bounds snapshot staging
+  before the existing member, expansion-ratio, file-count, path, and symlink
+  controls run. New and cached materializations must contain exactly the indexed
+  regular files and their required parent directories; extra files, directories,
+  links, and special nodes block import before database or outbox publication.
+  This is a source control awaiting the same remote CI and release gates as the
+  rest of the professional workflow.
 - User-provided assets are retained through a single-open, hash-and-count
   verified ingest. Raster semantics are inspected from the verified staged
   bytes, destination publication is no-clobber, and a concurrent source or
@@ -171,6 +181,17 @@ current direct evidence.
   default.
 - Parameterized W&B/Weave adapters, sensitive-data authorization, separate
   native credential boundaries, and deterministic assistant response checks.
+- Provider and Weave payloads now pass through a bounded, dependency-free,
+  offline redactor for sensitive keys, inline credentials, local paths, email
+  addresses, North American phone numbers, and U.S. Social Security numbers;
+  configured ecological terms and coordinate pairs remain a separate stricter
+  policy layer. Weave's optional Presidio mode is explicitly disabled because
+  its analyzer, anonymizer, and default NLP model are not bundled. Packaged
+  acceptance exercises the real local transformation with DNS disabled rather
+  than treating a callable SDK hook as redaction evidence. String replacements
+  preserve intake character offsets, and renderer call IDs are bounded locally
+  while only deterministic aliases enter Weave attributes and outcome gates.
+  This does not claim generic name or place inference.
 - The Evidence Assistant provider can select and order only opaque authorized
   evidence aliases with closed explanation kinds. It cannot author user-visible
   prose, values, units, limitations, or recommendations. The worker renders the
@@ -263,7 +284,8 @@ current direct evidence.
   worker smoke boundary now exact-matches the locked geospatial, Pydantic,
   SciPy, scikit-learn, W&B, and Weave versions and exercises credential-free,
   offline Pydantic contracts, scrambled Sobol, ExtraTrees, W&B Table/Artifact,
-  and Weave trace/redaction capabilities in isolated temporary storage.
+  and Weave tracing plus deterministic external-redaction capabilities in
+  isolated temporary storage.
 
 These are source capabilities, not a claim that the complete practitioner
 workflow has passed acceptance. They do not establish green remote CI, a
@@ -324,8 +346,9 @@ startup state before release.
 2. **Python release-signing security migration verification.** Source signing
    and verification now use pinned PyNaCl 1.6.2, while preserving the native
    Rust boundary's raw 32-byte public key and raw 64-byte detached-signature
-   formats. The unused Presidio anonymizer is removed; Presidio Analyzer and
-   the existing deterministic redaction boundary remain. Required Weave still
+   formats. The Presidio anonymizer and default NLP model are not bundled, so
+   EcoCorridor disables Weave's optional Presidio mode and uses the bounded
+   deterministic offline redaction boundary described above. Required Weave still
    resolves `polyfile-weave → pdfminer-six → cryptography 48.0.1`, however, so
    this change does not claim that the vulnerable transitive package vanished.
    Forcing `cryptography 50` does not satisfy the audited macOS x86_64 wheel

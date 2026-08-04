@@ -133,6 +133,34 @@ Missing credentials, Weave, provider access, flush acknowledgement, or exact
 scope disables assistant answers. The deterministic local Evidence Rail remains
 available.
 
+All provider request fields and Weave root, child, and completion payloads pass
+through the same dependency-free external redactor immediately before
+transport. Abort traces contain only a validated uppercase error code, ordered
+step names, and typed run-association identifiers; they never include rejected
+provider or document content. The redactor recursively removes sensitive keys,
+inline credentials, bearer tokens, local paths, email addresses, North American
+phone numbers, and U.S. Social Security numbers. Replacements are deterministic,
+idempotent, and require no model or network. Every replacement inside a string,
+including a credential or path marker, preserves Python character length so it
+cannot shift reviewed intake character spans. A runtime guard rejects any
+future page minimization that changes length. EcoCorridor's separate policy
+layer additionally generalizes reviewed sensitive-location terms and coordinate
+pairs. The bounded identifier list is intentional; this control does not claim
+to infer every possible name or place.
+
+Renderer-provided assistant call IDs remain bounded local correlation keys.
+Weave receives only a deterministic SHA-256 alias in root and child attributes
+and in completion or abort gates; verified readback maps that alias back to the
+local ID without replicating the local text.
+
+Weave's optional `redact_pii` Presidio mode is explicitly disabled. It requires
+an anonymizer and a default spaCy model that are not part of the locked,
+offline-capable worker and can otherwise trigger an unreviewed runtime model
+download. Custom Weave sensitive-key registration remains enabled as defense in
+depth. Packaged-worker acceptance performs an actual email/phone/SSN,
+credential, and local-path transformation while DNS resolution is disabled; a
+callable redaction entry point alone is not accepted as evidence.
+
 ### Provider and credential boundary
 
 The desktop stores the W&B and model-provider credentials as separate keychain

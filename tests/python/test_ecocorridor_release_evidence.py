@@ -177,7 +177,7 @@ def _assistant_evaluation(assistant: ModuleType) -> dict[str, object]:
                 "operation": "evidence.explain",
                 "user_prompt": "EXPLAIN_SELECTED_EVIDENCE",
                 "context": {
-                    "authorization_decision_id": authorization.decision_id,
+                    "evidence_decision_id": authorization.decision_id,
                     "claims": [context.model_dump(mode="json")],
                 },
                 "validated_provider_selection": {

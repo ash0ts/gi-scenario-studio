@@ -28,7 +28,7 @@ satisfied.
 | Display and redacted story evidence | Source gate implemented: Decision Board and Scenario Detail re-verify authoritative selected/baseline direct-run chains, Decision Board reducers and dispositions reconcile to those verified primitives, and the shared synthetic story carries claim/run/artifact/QA links while excluding raster cells and private data; protected producer provenance remains separately required |
 | Adaptive search | Current v1.1 direct evidence can be fail-closed derived into separately versioned v2 tables, but no current campaign or immutable W&B pin exists; the historical campaign failed and remains `HISTORICAL_BENCHMARK_ONLY` / production `PROHIBITED`, so production remains scrambled Sobol |
 | Julia dependency vulnerability policy | Blocked: the PR #13 scan with database timestamp 2026-08-04T01:17:42Z found 73 unwaived records (3 critical, 32 high, 29 medium, 9 low), including critical findings in `LibSSH2_jll` and `OpenSSL_jll`; the current Julia 1.12.6 dependency graph has not resolved them |
-| Python release dependency policy | Release Ed25519 signing and verification now use pinned PyNaCl 1.6.2, the unused Presidio anonymizer is removed, and raw public/signature compatibility with the Rust host is regression-tested. Release remains blocked because required Weave still resolves `polyfile-weave → pdfminer-six → cryptography 48.0.1`; the advisory remains visible to the unwaived dependency scan |
+| Python release dependency policy | Release Ed25519 signing and verification now use pinned PyNaCl 1.6.2, and raw public/signature compatibility with the Rust host is regression-tested. The complete Presidio runtime (analyzer, anonymizer, and default NLP model) is not bundled, so EcoCorridor disables Weave's optional Presidio mode and uses a bounded deterministic offline redaction boundary instead. Release remains blocked because required Weave still resolves `polyfile-weave → pdfminer-six → cryptography 48.0.1`; the advisory remains visible to the unwaived dependency scan |
 | Branch CI and target packaging | Source workflows exist; the latest GitHub Actions checks did not start jobs because of the repository account billing/spending-limit block, so no code executed and green draft-PR plus installed-target evidence are still required |
 | W&B Restricted integration | Blocked pending a supported authoritative scope resolver and invited service account |
 | Provider-backed Weave assistant evaluation | Blocked pending approved provider credential and real evaluation evidence |
@@ -54,7 +54,13 @@ satisfied.
 - Worker-to-packaged-engine smoke tests on each target. The frozen worker must
   exact-match the locked professional runtime inventory and prove offline,
   credential-free Pydantic, Sobol, ExtraTrees, W&B Table/Artifact, and Weave
-  tracing/redaction capabilities from isolated temporary directories.
+  tracing capabilities from isolated temporary directories. It must also
+  perform the real local email, North American phone, U.S. Social Security
+  number, sensitive-key, credential, bearer-token, and local-path
+  transformation with DNS disabled; importing a callable redaction hook is not
+  sufficient evidence. Configured sensitive-location terms and coordinates are
+  covered by the separate EcoCorridor policy layer. This bounded control does
+  not claim to infer every name, place, or other possible personal identifier.
 - POSIX direct-evidence jobs must prove the complete isolated process group is
   absent after natural exit or bounded termination. A direct-child return code,
   PID-only check, sent signal, or unverified `taskkill` result cannot make a run

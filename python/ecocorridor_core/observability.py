@@ -8,6 +8,7 @@ through a documented provider and an allowed cloud-sync plan.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -32,7 +33,7 @@ from scenario_platform.observability import (
     ProjectScopeEvidence,
     ProjectScopeResolver,
     UnsupportedWandbCloudScopeProvider,
-    redact_sensitive,
+    redact_external_identifiers,
 )
 
 from .assistants import (
@@ -191,7 +192,11 @@ class SdkWeaveClientFactory:
             raise RuntimeError("WEAVE_SDK_UNAVAILABLE") from exc
         client = weave.init(
             f"{target.entity}/{target.project}",
-            settings={"redact_pii": True},
+            # External payloads pass through the deterministic local redactor
+            # before this boundary. Weave's optional Presidio mode requires an
+            # unbundled anonymizer and NLP model, so enabling it would make the
+            # packaged client attempt an unsupported runtime download.
+            settings={"redact_pii": False},
         )
         try:
             from weave.utils import sanitize  # type: ignore[import-not-found]
@@ -205,6 +210,7 @@ class SdkWeaveClientFactory:
 @dataclass(slots=True)
 class _TraceSession:
     call_id: str
+    external_call_id: str
     client: Any
     root_call: Any
     association: AssistantRunAssociation
@@ -262,10 +268,16 @@ class WeaveNestedTraceSink(NestedTraceSink):
 
     @staticmethod
     def _safe(value: dict[str, Any]) -> dict[str, Any]:
-        minimized = redact_sensitive(value)
-        if minimized != value:
-            raise RuntimeError("WEAVE_CONTEXT_REDACTION_REQUIRED")
-        return value
+        minimized = redact_external_identifiers(value)
+        if not isinstance(minimized, dict):  # pragma: no cover - fixed mapping input
+            raise TypeError("WEAVE_CONTEXT_REDACTION_FAILED")
+        return minimized
+
+    @staticmethod
+    def _external_call_id(call_id: str) -> str:
+        """Derive a cloud-safe alias while keeping renderer correlation local."""
+
+        return "ecocorridor-call-" + hashlib.sha256(call_id.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _set_run_context(client: Any, association: AssistantRunAssociation) -> None:
@@ -277,6 +289,7 @@ class WeaveNestedTraceSink(NestedTraceSink):
     def start(self, *, call_id: str, operation: str, inputs: dict[str, Any]) -> None:
         if not call_id or call_id in self._sessions:
             raise ValueError("assistant trace call ID must be unique and non-empty")
+        external_call_id = self._external_call_id(call_id)
         self._verify_scope()
         try:
             association = AssistantRunAssociation.model_validate(inputs.get("wandb_association"))
@@ -297,7 +310,7 @@ class WeaveNestedTraceSink(NestedTraceSink):
                     "app_namespace": self.profile.namespace,
                     "api_version": self.profile.api_version,
                     "schema_version": self.profile.schema_version,
-                    "assistant_call_id": call_id,
+                    "assistant_call_id": external_call_id,
                     "wandb_association_id": association.association_id,
                     "wandb_analysis_id": association.analysis_id,
                     "wandb_run_id": association.wandb_run_id,
@@ -311,6 +324,7 @@ class WeaveNestedTraceSink(NestedTraceSink):
             raise RuntimeError("WEAVE_TRACE_ID_UNAVAILABLE")
         self._sessions[call_id] = _TraceSession(
             call_id=call_id,
+            external_call_id=external_call_id,
             client=client,
             root_call=root,
             association=association,
@@ -336,7 +350,10 @@ class WeaveNestedTraceSink(NestedTraceSink):
                 op=f"{self.profile.namespace}.assistant.{name}",
                 inputs=self._safe(inputs),
                 parent=session.root_call,
-                attributes={"assistant_call_id": call_id, "step_index": len(session.steps)},
+                attributes={
+                    "assistant_call_id": session.external_call_id,
+                    "step_index": len(session.steps),
+                },
                 use_stack=False,
             )
             session.client.finish_call(child, output=self._safe(output))
@@ -347,7 +364,7 @@ class WeaveNestedTraceSink(NestedTraceSink):
         trace_output = {
             "assistant_output": self._safe(output),
             "ecocorridor_trace_gate": {
-                "call_id": call_id,
+                "call_id": session.external_call_id,
                 "completed": True,
                 "steps": list(session.steps),
                 "wandb_association": session.association.model_dump(mode="json"),
@@ -444,7 +461,7 @@ class WeaveNestedTraceSink(NestedTraceSink):
                     session.root_call,
                     output={
                         "ecocorridor_trace_gate": {
-                            "call_id": call_id,
+                            "call_id": session.external_call_id,
                             "completed": False,
                             "steps": list(session.steps),
                             "wandb_association": session.association.model_dump(mode="json"),
@@ -583,7 +600,7 @@ class WeaveNestedTraceSink(NestedTraceSink):
         if (
             not trace_id
             or str(getattr(acknowledged, "wb_run_id", "") or "") != expected_wandb_run_id
-            or gate.get("call_id") != session.call_id
+            or gate.get("call_id") != session.external_call_id
             or gate.get("completed") is not True
             or gate.get("steps") != session.steps
             or gate.get("wandb_association") != session.association.model_dump(mode="json")
@@ -610,7 +627,7 @@ class WeaveNestedTraceSink(NestedTraceSink):
         if (
             not trace_id
             or str(getattr(acknowledged, "wb_run_id", "") or "") != expected_wandb_run_id
-            or gate.get("call_id") != session.call_id
+            or gate.get("call_id") != session.external_call_id
             or gate.get("completed") is not False
             or gate.get("steps") != session.steps
             or gate.get("error_code") != error_code

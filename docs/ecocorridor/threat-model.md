@@ -26,6 +26,15 @@
   active-process zero; `taskkill` and direct-child wait are not substitutes.
 - **Archives and spatial assets:** path containment, symlink/device rejection,
   decompressed limits, explicit grid transforms, provenance and authorization.
+  A portable bundle selection is opened once as a regular file and streamed
+  into an anonymous, size-bounded snapshot while its raw SHA-256 is computed.
+  Member inspection, manifest parsing, and secure extraction all consume that
+  same staged inode, so replacing or editing the selected path cannot combine
+  identities from different archives. A separate compressed-byte cap bounds
+  temporary staging before decompressed member and file-count limits apply. A
+  no-follow materialized-tree walk then requires exactly the indexed regular
+  files and their necessary parent directories; any extra file, directory,
+  symbolic link, or special node blocks database and outbox publication.
   User-selected source assets are opened as one regular-file identity and
   streamed into a same-directory staging inode while their exact byte count and
   SHA-256 are recomputed. Modeled rasters are inspected from those staged bytes,
@@ -39,6 +48,9 @@
   sensitive-key and local-path redaction, fail-closed destination policy.
 - **Assistant:** read-only evidence authorization, minimized context, mandatory
   nested Weave trace, deterministic numeric/unit/evidence/limitation validator.
+  Renderer call IDs remain bounded local keys; cloud traces receive only a
+  deterministic opaque alias. Length-preserving page redaction keeps exact
+  intake citations anchored to the retained source text.
 - **Protected producer → Pages/release:** consumers resolve the exact successful
   run attempt, workflow and head SHA, immutable artifact ID, embedded identity,
   and server-reported digest before accepting evidence. A local or copied

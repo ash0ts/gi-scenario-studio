@@ -25,7 +25,11 @@ from typing import Any, Literal, Protocol
 from urllib.parse import urlsplit
 
 from pydantic import Field, field_validator, model_validator
-from scenario_platform.observability import redact_sensitive
+from scenario_platform.observability import (
+    contains_direct_identifier,
+    redact_external_identifiers,
+    redact_sensitive,
+)
 
 from .claim_safety import assert_strict_ecological_claim
 from .contracts import (
@@ -86,11 +90,6 @@ _UNAUTHORIZED_ACTION_PATTERNS = tuple(
 _NUMBER = re.compile(r"(?<![A-Za-z0-9_])[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?![A-Za-z0-9_])")
 _COORDINATE_PAIR = re.compile(
     r"(?<![A-Za-z0-9_])-?\d{1,3}\.\d{4,}\s*[, ]\s*-?\d{1,3}\.\d{4,}(?![A-Za-z0-9_])"
-)
-_PERSONAL_DATA_PATTERNS = (
-    re.compile(r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"),
-    re.compile(r"(?<!\d)(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}(?!\d)"),
-    re.compile(r"(?<!\d)\d{3}-\d{2}-\d{4}(?!\d)"),
 )
 _OPAQUE_DOCUMENT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 
@@ -246,20 +245,31 @@ class OpenAICompatibleProvider:
         context: dict[str, Any],
         response_schema: dict[str, Any],
     ) -> ProviderResponse:
+        external_request = redact_external_identifiers(
+            {
+                "operation": operation,
+                "system_prompt": system_prompt,
+                "user_prompt": user_prompt,
+                "context": context,
+                "response_schema": response_schema,
+            }
+        )
+        if not isinstance(external_request, dict):  # pragma: no cover - fixed mapping input
+            raise AssistantSafetyError("ASSISTANT_PROVIDER_REDACTION_FAILED")
         body = json.dumps(
             {
                 "model": self.model,
                 "temperature": 0,
                 "messages": [
-                    {"role": "system", "content": system_prompt},
+                    {"role": "system", "content": external_request["system_prompt"]},
                     {
                         "role": "user",
                         "content": json.dumps(
                             {
-                                "operation": operation,
-                                "question": user_prompt,
-                                "authorized_context": context,
-                                "required_response_schema": response_schema,
+                                "operation": external_request["operation"],
+                                "question": external_request["user_prompt"],
+                                "authorized_context": external_request["context"],
+                                "required_response_schema": external_request["response_schema"],
                             },
                             sort_keys=True,
                             separators=(",", ":"),
@@ -647,7 +657,7 @@ class AuthorizedEvidenceSelection:
         self.assert_integrity()
         return {
             "context_schema_version": self.authorization.context_schema_version,
-            "authorization_decision_id": self.authorization.decision_id,
+            "evidence_decision_id": self.authorization.decision_id,
             "question_intent": intent.value,
             "claims": [item.context.model_dump(mode="json") for item in self.items],
         }
@@ -1021,24 +1031,24 @@ def _replace_sensitive_terms(value: str, policy: SensitiveContextPolicy) -> str:
         for term in sorted(policy.prohibited_terms, key=len, reverse=True):
             result = re.sub(re.escape(term), generalized, result, flags=re.IGNORECASE)
         result = _COORDINATE_PAIR.sub(generalized, result)
-    for pattern in _PERSONAL_DATA_PATTERNS:
-        result = pattern.sub(generalized, result)
     return result
 
 
 def _minimize(value: Any, policy: SensitiveContextPolicy) -> Any:
-    redacted = redact_sensitive(value)
-    if isinstance(redacted, dict):
-        return {key: _minimize(item, policy) for key, item in redacted.items()}
-    if isinstance(redacted, list):
-        return [_minimize(item, policy) for item in redacted]
-    if isinstance(redacted, str):
-        return _replace_sensitive_terms(redacted, policy)
-    return redacted
+    def apply_policy(item: Any) -> Any:
+        if isinstance(item, dict):
+            return {key: apply_policy(nested) for key, nested in item.items()}
+        if isinstance(item, list):
+            return [apply_policy(nested) for nested in item]
+        if isinstance(item, str):
+            return _replace_sensitive_terms(item, policy)
+        return item
+
+    return apply_policy(redact_external_identifiers(value))
 
 
 def _assert_no_sensitive_location(value: str, policy: SensitiveContextPolicy) -> None:
-    if any(pattern.search(value) for pattern in _PERSONAL_DATA_PATTERNS):
+    if contains_direct_identifier(value):
         raise AssistantSafetyError("ASSISTANT_SENSITIVE_CONTEXT_LEAK")
     if policy.exact_location_authorized:
         return
@@ -1150,16 +1160,18 @@ class _TracedAssistant:
             self.trace_sink.start(
                 call_id=call_id,
                 operation="assistant.request",
-                inputs={
-                    "project_id_sha256": hashlib.sha256(project_id.encode("utf-8")).hexdigest(),
-                    "requested_operation": operation,
-                    "wandb_association": association.model_dump(mode="json"),
-                    "evidence_authorization": (
-                        evidence_authorization.model_dump(mode="json")
-                        if evidence_authorization is not None
-                        else None
-                    ),
-                },
+                inputs=redact_external_identifiers(
+                    {
+                        "project_id_sha256": hashlib.sha256(project_id.encode("utf-8")).hexdigest(),
+                        "requested_operation": operation,
+                        "wandb_association": association.model_dump(mode="json"),
+                        "evidence_audit": (
+                            evidence_authorization.model_dump(mode="json")
+                            if evidence_authorization is not None
+                            else None
+                        ),
+                    }
+                ),
             )
         except Exception as exc:
             raise AssistantSafetyError("ASSISTANT_TRACE_UNAVAILABLE") from exc
@@ -1178,8 +1190,8 @@ class _TracedAssistant:
             self.trace_sink.step(
                 call_id=call_id,
                 name=name,
-                inputs=redact_sensitive(inputs),
-                output=redact_sensitive(output),
+                inputs=redact_external_identifiers(inputs),
+                output=redact_external_identifiers(output),
             )
         except Exception as exc:
             raise AssistantSafetyError("ASSISTANT_TRACE_UNAVAILABLE") from exc
@@ -1205,7 +1217,7 @@ class _TracedAssistant:
             },
             output={
                 "authorized": authorized,
-                "evidence_authorization_decision_id": (
+                "evidence_decision_id": (
                     evidence_authorization.decision_id
                     if evidence_authorization is not None
                     else None
@@ -1223,7 +1235,10 @@ class _TracedAssistant:
         association: AssistantRunAssociation,
     ) -> TraceReadback:
         try:
-            self.trace_sink.finish(call_id=call_id, output=redact_sensitive(output))
+            self.trace_sink.finish(
+                call_id=call_id,
+                output=redact_external_identifiers(output),
+            )
             trace_id = self.trace_sink.flush(call_id=call_id)
             if not trace_id:
                 raise AssistantSafetyError("ASSISTANT_TRACE_FLUSH_FAILED")
@@ -1372,7 +1387,7 @@ class EvidenceAssistant(_TracedAssistant):
                 output={
                     "question_intent": intent.value,
                     "raw_question_replicated": False,
-                    "authorization_decision_id": authorization.decision_id,
+                    "evidence_decision_id": authorization.decision_id,
                 },
             )
             claims = self.resolver.resolve(project_id=project_id, evidence_ids=evidence_ids)
@@ -1398,7 +1413,7 @@ class EvidenceAssistant(_TracedAssistant):
                 call_id,
                 "resolve_local_evidence",
                 inputs={
-                    "authorization_decision_id": authorization.decision_id,
+                    "evidence_decision_id": authorization.decision_id,
                     "selected_count": len(evidence_ids),
                 },
                 output={
@@ -1436,7 +1451,7 @@ class EvidenceAssistant(_TracedAssistant):
                     "context_evidence_aliases": sorted(
                         item.context.evidence_alias for item in authorized_selection.items
                     ),
-                    "authorization_decision_id": authorization.decision_id,
+                    "evidence_decision_id": authorization.decision_id,
                 },
                 output={
                     "provider_call_id": provider_response.provider_call_id,
@@ -1519,7 +1534,7 @@ class EvidenceAssistant(_TracedAssistant):
                     "answer_id": answer_id,
                     "evidence_aliases": rendering.evidence_ids,
                     "association_id": association.association_id,
-                    "authorization_decision_id": authorization.decision_id,
+                    "evidence_decision_id": authorization.decision_id,
                     "provider_authored_prose": False,
                 },
                 association=association,
@@ -1646,14 +1661,18 @@ class EvidenceIntakeAssistant(_TracedAssistant):
             if len(set(page_keys)) != len(page_keys):
                 raise AssistantSafetyError("ASSISTANT_DOCUMENT_PAGE_DUPLICATED")
             minimized_instruction = _minimize(instruction, policy)
-            minimized_pages = [
-                DocumentPage(
-                    document_id=page.document_id,
-                    page_number=page.page_number,
-                    text=str(_minimize(page.text, policy)),
+            minimized_pages: list[DocumentPage] = []
+            for page in pages:
+                minimized_text = str(_minimize(page.text, policy))
+                if len(minimized_text) != len(page.text):
+                    raise AssistantSafetyError("ASSISTANT_CONTEXT_REDACTION_SPAN_SHIFT")
+                minimized_pages.append(
+                    DocumentPage(
+                        document_id=page.document_id,
+                        page_number=page.page_number,
+                        text=minimized_text,
+                    )
                 )
-                for page in pages
-            ]
             self._step(
                 call_id,
                 "minimize_sensitive_context",

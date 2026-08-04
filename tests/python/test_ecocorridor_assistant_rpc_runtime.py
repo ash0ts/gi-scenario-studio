@@ -608,13 +608,11 @@ def test_provider_runtime_explains_and_persists_only_validated_traced_answer(
     authorization = response["answer"]["evidence_authorization"]
     assert authorization["decision_id"].startswith("evidence_auth_")
     assert (
-        trace.sessions["call-1"]["inputs"]["evidence_authorization"]["decision_id"]
+        trace.sessions["call-1"]["inputs"]["evidence_audit"]["decision_id"]
         == authorization["decision_id"]
     )
     assert provider.requests[0]["user_prompt"] == "EXPLAIN_BASELINE_CHANGE"
-    assert (
-        provider.requests[0]["context"]["authorization_decision_id"] == authorization["decision_id"]
-    )
+    assert provider.requests[0]["context"]["evidence_decision_id"] == authorization["decision_id"]
     assert provider.requests[0]["context"]["claims"][0]["evidence_alias"] == "E1"
     replicated = json.dumps(
         {

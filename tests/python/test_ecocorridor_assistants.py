@@ -671,7 +671,12 @@ def test_openai_compatible_provider_uses_explicit_endpoint_model_and_scoped_key(
             operation="evidence.explain",
             system_prompt="Use selected evidence only.",
             user_prompt="Explain it.",
-            context={"claim_ids": ["claim-1"]},
+            context={
+                "claim_ids": ["claim-1"],
+                "reviewer_contact": "field.team@example.org or 202-555-0182",
+                "api_key": "context-secret-must-not-leave",
+                "local_path": "/Users/example/private/model.tif",
+            },
             response_schema={"type": "object"},
         )
     finally:
@@ -681,6 +686,12 @@ def test_openai_compatible_provider_uses_explicit_endpoint_model_and_scoped_key(
     assert requests[0]["authorization"] == "Bearer provider-test-secret-value"
     assert requests[0]["body"]["model"] == "explicit-model-v1"
     assert requests[0]["body"]["temperature"] == 0
+    serialized_request = json.dumps(requests[0]["body"], sort_keys=True)
+    assert "field.team@example.org" not in serialized_request
+    assert "202-555-0182" not in serialized_request
+    assert "context-secret-must-not-leave" not in serialized_request
+    assert "/Users/example/private/model.tif" not in serialized_request
+    assert "claim-1" in serialized_request
 
 
 def test_provider_response_cannot_echo_the_configured_credential(
@@ -1060,6 +1071,55 @@ def test_intake_draft_requires_exact_citations_then_explicit_confirmation() -> N
     entries = reviewed.confirmed_model_payload()
     assert len(entries) == 2
     assert all(entry["confirmed_by"] == "Wildlife Biologist A" for entry in entries)
+
+
+def test_intake_external_redaction_preserves_original_citation_offsets() -> None:
+    quote = "Budget cap is 250000 USD."
+    page_text = (
+        "Review /Users/example/private/source.txt and api_key=do-not-send before use. " + quote
+    )
+    start = page_text.index(quote)
+    provider = FakeProvider(
+        {
+            "draft_fields": [
+                {
+                    "field_name": "cost_limit",
+                    "value": quote,
+                    "citations": [
+                        {
+                            "document_id": "report-1",
+                            "page_number": 1,
+                            "start": start,
+                            "end": start + len(quote),
+                            "quote": quote,
+                        }
+                    ],
+                }
+            ],
+            "limitations": [INTAKE_LIMITATION, CONNECTIVITY_LIMITATION],
+        }
+    )
+    assistant = EvidenceIntakeAssistant(
+        provider=provider,
+        trace_sink=FakeTrace(),
+        authorizer=FakeAuthorizer(),
+    )
+
+    draft = assistant.extract(
+        call_id="call-intake-redacted-span",
+        project_id="project-1",
+        instruction="Extract the stated budget constraint.",
+        pages=[DocumentPage(document_id="report-1", page_number=1, text=page_text)],
+        association=_association(analysis=False),
+    )
+
+    minimized_text = provider.calls[0]["context"]["pages"][0]["text"]
+    citation = draft.fields[0].citations[0]
+    assert len(minimized_text) == len(page_text)
+    assert "/Users/example/private/source.txt" not in minimized_text
+    assert "do-not-send" not in minimized_text
+    assert minimized_text[citation.start : citation.end] == quote
+    assert page_text[citation.start : citation.end] == quote
 
 
 def test_intake_rejects_document_borne_prompt_injection_before_provider_call() -> None:

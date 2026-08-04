@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import sys
 import types
 from collections.abc import Mapping
 from pathlib import Path
@@ -14,6 +15,7 @@ from ecocorridor_core.assistants import AssistantRunAssociation
 from ecocorridor_core.observability import (
     ECOCORRIDOR_APP_PROFILE,
     EcoRpcObservabilityAdapter,
+    SdkWeaveClientFactory,
     WeaveNestedTraceSink,
     derive_cloud_sync_state,
 )
@@ -1643,6 +1645,121 @@ def test_weave_nested_trace_requires_flush_and_exact_readback(tmp_path: Path) ->
     assert client.flush_count == 1
 
 
+def test_weave_nested_trace_redacts_identifiers_secrets_and_paths_before_client(
+    tmp_path: Path,
+) -> None:
+    client = _FakeWeaveClient()
+    sink = WeaveNestedTraceSink(
+        target=_target(),
+        scope_resolver=_resolver(),
+        project_root=tmp_path,
+        client_factory=_FakeWeaveFactory(client),
+    )
+    root_inputs = {
+        **_trace_inputs(),
+        "reviewer_contact": "field.team@example.org or 202-555-0182",
+        "api_key": "trace-secret-must-not-leave",
+    }
+    sink.start(call_id="assistant_redacted", operation="assistant.request", inputs=root_inputs)
+    sink.step(
+        call_id="assistant_redacted",
+        name="construct_context",
+        inputs={"source": "/Users/example/private/report.txt"},
+        output={"record": "123-45-6789"},
+    )
+    sink.finish(
+        call_id="assistant_redacted",
+        output={"contact": "field.team@example.org"},
+    )
+
+    encoded = json.dumps(
+        {
+            "root": client.calls["provider-call-1"].inputs,
+            "root_output": client.calls["provider-call-1"].output,
+            "children": [child.inputs for _, child in client.children],
+            "child_outputs": [child.output for _, child in client.children],
+        },
+        sort_keys=True,
+    )
+    for raw in (
+        "field.team@example.org",
+        "202-555-0182",
+        "123-45-6789",
+        "trace-secret-must-not-leave",
+        "/Users/example/private/report.txt",
+    ):
+        assert raw not in encoded
+    assert "analysis-1" in encoded
+
+
+@pytest.mark.parametrize(
+    "local_call_id",
+    [
+        "field.team@example.org",
+        "202-555-0182",
+        "/Users/example/private/report.txt",
+        "Bearer abcdefghijklmnopqrstuvwxyz",
+    ],
+)
+def test_weave_completed_trace_keeps_hostile_call_id_local(
+    tmp_path: Path, local_call_id: str
+) -> None:
+    client = _FakeWeaveClient()
+    sink = WeaveNestedTraceSink(
+        target=_target(),
+        scope_resolver=_resolver(),
+        project_root=tmp_path,
+        client_factory=_FakeWeaveFactory(client),
+    )
+    sink.start(call_id=local_call_id, operation="assistant.request", inputs=_trace_inputs())
+    sink.step(
+        call_id=local_call_id,
+        name="authorize_project",
+        inputs={},
+        output={"authorized": True},
+    )
+    sink.finish(call_id=local_call_id, output={"answer_id": "answer-1"})
+    trace_id = sink.flush(call_id=local_call_id)
+    readback = sink.readback(trace_id=trace_id)
+
+    root = client.calls["provider-call-1"]
+    external_call_id = root.attributes["assistant_call_id"]
+    assert external_call_id.startswith("ecocorridor-call-")
+    assert root.output["ecocorridor_trace_gate"]["call_id"] == external_call_id
+    assert all(
+        child.attributes["assistant_call_id"] == external_call_id for _, child in client.children
+    )
+    assert readback.call_id == local_call_id
+    assert local_call_id not in json.dumps(
+        {"attributes": root.attributes, "output": root.output}, sort_keys=True
+    )
+
+
+def test_weave_factory_disables_unbundled_presidio_but_keeps_sensitive_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed_settings: list[dict[str, Any]] = []
+    observed_keys: list[str] = []
+    fake_weave = types.ModuleType("weave")
+    fake_utils = types.ModuleType("weave.utils")
+    fake_utils.sanitize = types.SimpleNamespace(add_redact_key=observed_keys.append)
+
+    def init(_project: str, *, settings: dict[str, Any]) -> object:
+        observed_settings.append(settings)
+        return object()
+
+    fake_weave.init = init  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "weave", fake_weave)
+    monkeypatch.setitem(sys.modules, "weave.utils", fake_utils)
+    monkeypatch.setenv("WANDB_API_KEY", "test-only-key-not-sent")
+
+    client = SdkWeaveClientFactory().create(_target())
+
+    assert client is not None
+    assert observed_settings == [{"redact_pii": False}]
+    assert {"api_key", "authorization", "local_path", "secret", "token"}.issubset(observed_keys)
+
+
 def test_weave_feedback_is_bounded_flushed_and_read_back(tmp_path: Path) -> None:
     client = _FakeWeaveClient()
     sink = WeaveNestedTraceSink(
@@ -1765,6 +1882,38 @@ def test_weave_aborted_trace_is_persisted_flushed_and_read_back(tmp_path: Path) 
     assert evidence["error_code"] == "ASSISTANT_PROMPT_INJECTION_REJECTED"
     assert evidence["steps"] == ["authorize_project"]
     assert client.flush_count == 1
+
+
+@pytest.mark.parametrize(
+    "local_call_id",
+    [
+        "field.team@example.org",
+        "202-555-0182",
+        "/Users/example/private/report.txt",
+        "Bearer abcdefghijklmnopqrstuvwxyz",
+    ],
+)
+def test_weave_aborted_trace_keeps_hostile_call_id_local(
+    tmp_path: Path, local_call_id: str
+) -> None:
+    client = _FakeWeaveClient()
+    sink = WeaveNestedTraceSink(
+        target=_target(),
+        scope_resolver=_resolver(),
+        project_root=tmp_path,
+        client_factory=_FakeWeaveFactory(client),
+    )
+    sink.start(call_id=local_call_id, operation="assistant.request", inputs=_trace_inputs())
+    sink.abort(call_id=local_call_id, error_code="ASSISTANT_PROMPT_INJECTION_REJECTED")
+
+    evidence = sink.aborted_readback(call_id=local_call_id)
+    root = client.calls["provider-call-1"]
+    external_call_id = root.attributes["assistant_call_id"]
+    assert root.output["ecocorridor_trace_gate"]["call_id"] == external_call_id
+    assert evidence["call_id"] == local_call_id
+    assert local_call_id not in json.dumps(
+        {"attributes": root.attributes, "output": root.output}, sort_keys=True
+    )
 
 
 def test_weave_aborted_trace_cannot_pass_without_exact_provider_readback(

@@ -53,7 +53,7 @@ PACKAGED_RUNTIME_CAPABILITIES = frozenset(
         "scipy_sobol",
         "sklearn_extratrees",
         "wandb_offline_table_artifact",
-        "weave_entrypoint_redaction",
+        "deterministic_external_redaction",
     }
 )
 

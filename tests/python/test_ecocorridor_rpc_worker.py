@@ -5,6 +5,7 @@ import io
 import json
 import os
 import zipfile
+from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -50,6 +51,7 @@ from ecocorridor_core.rpc_worker import (
     run_jsonl_worker,
 )
 from ecocorridor_core.telemetry import EcoTelemetryProjector
+from scenario_platform import archive as archive_module
 from scenario_platform.cloud_sync import InMemoryCredentialSession
 from scenario_platform.contracts import canonical_json
 from scenario_platform.observability import (
@@ -629,6 +631,156 @@ def test_bundle_inspect_and_import_verify_every_asset_hash(tmp_path: Path) -> No
         assert retained == manifest
     finally:
         store.close()
+
+
+@pytest.mark.parametrize("replacement_phase", ["after_open", "before_manifest", "before_extract"])
+def test_bundle_import_binds_archive_identity_across_path_replacement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    replacement_phase: str,
+) -> None:
+    fixture = build_ridgeway_fixture()
+    manifest_a = fixture.bundle.model_copy(update={"title": "Reviewed archive A"}).model_dump(
+        mode="json"
+    )
+    manifest_b = fixture.bundle.model_copy(update={"title": "Replacement archive B"}).model_dump(
+        mode="json"
+    )
+    selected = tmp_path / "selected.ecocorridor.zip"
+    replacement = tmp_path / "replacement.ecocorridor.zip"
+    _write_fixture_bundle_with_manifest(selected, manifest_a)
+    _write_fixture_bundle_with_manifest(replacement, manifest_b)
+    selected_sha256 = hashlib.sha256(selected.read_bytes()).hexdigest()
+    with zipfile.ZipFile(selected, "r") as archive:
+        selected_manifest_bytes = archive.read("connectivity-project.json")
+    replacement_applied = False
+
+    def replace_selected_path() -> None:
+        nonlocal replacement_applied
+        if replacement_applied:
+            return
+        os.replace(replacement, selected)
+        replacement_applied = True
+
+    if replacement_phase == "after_open":
+        original_open = archive_module._open_zip
+
+        @contextmanager
+        def replace_after_open(path: str | Path):
+            with original_open(path) as stream:
+                replace_selected_path()
+                yield stream
+
+        monkeypatch.setattr(archive_module, "_open_zip", replace_after_open)
+    elif replacement_phase == "before_manifest":
+        original_read_member = archive_module.ValidatedZipSnapshot.read_member
+
+        def replace_before_manifest(
+            snapshot: archive_module.ValidatedZipSnapshot,
+            member_path: str,
+            *,
+            max_bytes: int = 8 * 1024 * 1024,
+        ) -> bytes:
+            replace_selected_path()
+            return original_read_member(snapshot, member_path, max_bytes=max_bytes)
+
+        monkeypatch.setattr(
+            archive_module.ValidatedZipSnapshot, "read_member", replace_before_manifest
+        )
+    else:
+        original_extract = archive_module.ValidatedZipSnapshot.extract
+
+        def replace_before_extract(
+            snapshot: archive_module.ValidatedZipSnapshot, destination: str | Path
+        ) -> list[Path]:
+            replace_selected_path()
+            return original_extract(snapshot, destination)
+
+        monkeypatch.setattr(archive_module.ValidatedZipSnapshot, "extract", replace_before_extract)
+
+    project = tmp_path / f"imported-{replacement_phase}"
+    result = RPCDispatcher(data_root=tmp_path).dispatch(
+        "connectivity.bundle.import",
+        {
+            "bundle_path": str(selected),
+            "project_directory": str(project),
+            "expected_sha256": selected_sha256,
+        },
+    )["data"]
+
+    assert replacement_applied is True
+    assert result["archive_sha256"] == selected_sha256
+    assert hashlib.sha256(selected.read_bytes()).hexdigest() != selected_sha256
+    store = EcoProjectStore(project)
+    try:
+        assert store.effective_bundle().title == "Reviewed archive A"
+        retained_index = store.get_record("import_manifest", selected_sha256)
+        retained_manifest_member = next(
+            item
+            for item in retained_index["members"]
+            if item["path"] == "connectivity-project.json"
+        )
+        assert (
+            retained_manifest_member["sha256"]
+            == hashlib.sha256(selected_manifest_bytes).hexdigest()
+        )
+        retained_manifest_path = (
+            project / retained_index["materialized_directory"] / "connectivity-project.json"
+        )
+        assert retained_manifest_path.read_bytes() == selected_manifest_bytes
+        assert json.loads(retained_manifest_path.read_bytes())["title"] == "Reviewed archive A"
+        events = [item for item in store.pending_outbox() if item["event_type"] == "bundle_import"]
+        assert len(events) == 1
+        assert events[0]["payload"]["import_manifest"]["record_id"] == selected_sha256
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize(
+    ("extra_kind", "object_reference"),
+    [
+        ("executable", "unexpected.exe"),
+        ("directory", "unexpected-directory"),
+        ("symlink", "unexpected-link"),
+    ],
+)
+def test_bundle_import_rejects_unindexed_materialized_tree_entries_before_publication(
+    tmp_path: Path,
+    extra_kind: str,
+    object_reference: str,
+) -> None:
+    archive = tmp_path / "reviewed.ecocorridor.zip"
+    _write_fixture_bundle(archive)
+    archive_sha256 = hashlib.sha256(archive.read_bytes()).hexdigest()
+    project = tmp_path / f"project-{extra_kind}"
+    target = project / "sources" / archive_sha256
+    archive_module.extract_zip(archive, target)
+
+    extra = target / object_reference
+    if extra_kind == "executable":
+        extra.write_bytes(b"unindexed executable")
+    elif extra_kind == "directory":
+        extra.mkdir()
+    else:
+        try:
+            extra.symlink_to(target / "connectivity-project.json")
+        except OSError as exc:  # pragma: no cover - Windows privilege policy
+            pytest.skip(f"symbolic links are unavailable on this test host: {exc}")
+
+    with pytest.raises(RPCFault) as raised:
+        RPCDispatcher(data_root=tmp_path).dispatch(
+            "connectivity.bundle.import",
+            {
+                "bundle_path": str(archive),
+                "project_directory": str(project),
+                "expected_sha256": archive_sha256,
+            },
+        )
+
+    assert raised.value.error.code == "MATERIALIZED_BUNDLE_INTEGRITY_FAILED"
+    assert raised.value.error.severity.value == "BLOCKING"
+    assert raised.value.error.object_reference == object_reference
+    assert not (project / "project.sqlite").exists()
 
 
 def test_import_manifest_conflict_rolls_back_bundle_and_outbox(tmp_path: Path) -> None:
