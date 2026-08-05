@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import stat
 import tempfile
 import urllib.request
 from dataclasses import dataclass
@@ -17,7 +18,11 @@ from pathlib import Path
 from typing import BinaryIO, Protocol, Self
 from urllib.parse import parse_qsl, unquote, urljoin, urlparse
 
+from scenario_platform.process_lock import FileLock, FileLockTimeout
 from scenario_platform.storage import contained_path
+
+_MAX_STALE_STAGE_FILES = 256
+_STAGE_FILE_PATTERN = re.compile(r"^\.[a-z][a-z0-9_-]{2,127}\.[A-Za-z0-9_-]+\.download$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,6 +199,173 @@ class DownloadReceipt:
     created: bool
 
 
+@dataclass(frozen=True, slots=True)
+class StagedDownload:
+    """Verified provider bytes that have not entered the retained CAS yet.
+
+    The staging path is process-local operational state.  It is deliberately
+    absent from public contracts and provider receipts; callers must either
+    retain it through :func:`retain_staged_asset` or unlink it in a ``finally``
+    block while keeping its :class:`ProviderStagingLease` active.
+    """
+
+    asset_id: str
+    temporary_path: Path
+    sha256: str
+    bytes: int
+    source_url: str
+    requested_url: str
+    final_url: str
+    redirect_urls: tuple[str, ...]
+    provider_id: str
+    attribution: str
+
+
+@dataclass(slots=True)
+class ProviderStagingLease:
+    """Exclusive ownership of one project's provider staging directory."""
+
+    cache_root: Path
+    staging_path: Path
+    _lock: object
+    active: bool = True
+
+    def assert_active_for(self, cache_root: Path) -> None:
+        if not self.active or cache_root.resolve() != self.cache_root:
+            raise ValueError("DATA_PROVIDER_STAGING_LEASE_REQUIRED")
+
+    def release(self) -> None:
+        if not self.active:
+            return
+        self.active = False
+        release = getattr(self._lock, "release", None)
+        if callable(release):
+            release()
+
+
+def _recover_stale_provider_staging(staging: Path) -> None:
+    """Delete only bounded, recognizable provider staging files.
+
+    The caller holds the cross-process lease, so every valid file in this
+    private directory is from an interrupted prior owner. Validation completes
+    before any unlink; unexpected content fails closed and is never traversed.
+    """
+
+    if staging.is_symlink() or not staging.is_dir():
+        raise ValueError("DATA_PROVIDER_STAGING_PATH_INVALID")
+    entries: list[Path] = []
+    with os.scandir(staging) as scanner:
+        for entry in scanner:
+            if len(entries) >= _MAX_STALE_STAGE_FILES:
+                raise ValueError("DATA_PROVIDER_STAGING_RECOVERY_LIMIT")
+            entries.append(Path(entry.path))
+    for entry in entries:
+        metadata = entry.lstat()
+        if (
+            not _STAGE_FILE_PATTERN.fullmatch(entry.name)
+            or stat.S_ISLNK(metadata.st_mode)
+            or not stat.S_ISREG(metadata.st_mode)
+        ):
+            raise ValueError("DATA_PROVIDER_STAGING_UNSAFE_ENTRY")
+    for entry in entries:
+        entry.unlink()
+
+
+def _require_private_owned_directory(path: Path) -> None:
+    metadata = path.lstat()
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+        raise ValueError("DATA_PROVIDER_STAGING_PATH_INVALID")
+    if hasattr(os, "getuid") and metadata.st_uid != os.getuid():
+        raise ValueError("DATA_PROVIDER_STAGING_OWNER_INVALID")
+    if os.name == "posix" and stat.S_IMODE(metadata.st_mode) & 0o077:
+        raise ValueError("DATA_PROVIDER_STAGING_PERMISSIONS_INVALID")
+
+
+def _prepare_private_lock_file(lock_path: Path) -> tuple[int, int]:
+    """Create/open the lock identity without following its final component."""
+
+    try:
+        existing = lock_path.lstat()
+    except FileNotFoundError:
+        existing = None
+    if existing is not None and (
+        stat.S_ISLNK(existing.st_mode) or not stat.S_ISREG(existing.st_mode)
+    ):
+        raise ValueError("DATA_PROVIDER_STAGING_LOCK_INVALID")
+    flags = os.O_RDWR | os.O_CREAT
+    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(lock_path, flags, 0o600)
+    except OSError as exc:
+        raise ValueError("DATA_PROVIDER_STAGING_LOCK_INVALID") from exc
+    try:
+        metadata = os.fstat(descriptor)
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+            raise ValueError("DATA_PROVIDER_STAGING_LOCK_INVALID")
+        if metadata.st_nlink != 1:
+            raise ValueError("DATA_PROVIDER_STAGING_LOCK_INVALID")
+        if hasattr(os, "getuid") and metadata.st_uid != os.getuid():
+            raise ValueError("DATA_PROVIDER_STAGING_LOCK_OWNER_INVALID")
+        if os.name == "posix" and stat.S_IMODE(metadata.st_mode) & 0o077:
+            raise ValueError("DATA_PROVIDER_STAGING_LOCK_PERMISSIONS_INVALID")
+        current = lock_path.lstat()
+        if (
+            stat.S_ISLNK(current.st_mode)
+            or not stat.S_ISREG(current.st_mode)
+            or current.st_nlink != 1
+            or (current.st_dev, current.st_ino) != (metadata.st_dev, metadata.st_ino)
+        ):
+            raise ValueError("DATA_PROVIDER_STAGING_LOCK_INVALID")
+        return metadata.st_dev, metadata.st_ino
+    finally:
+        os.close(descriptor)
+
+
+def acquire_provider_staging(
+    *,
+    cache_root: Path,
+    timeout_seconds: float = 120.0,
+) -> ProviderStagingLease:
+    """Serialize provider staging across worker processes and recover crashes."""
+
+    if timeout_seconds < 0:
+        raise ValueError("DATA_PROVIDER_STAGING_TIMEOUT_INVALID")
+    cache_root.mkdir(parents=True, exist_ok=True)
+    resolved_root = cache_root.resolve(strict=True)
+    if cache_root.is_symlink() or not resolved_root.is_dir():
+        raise ValueError("DATA_PROVIDER_CACHE_PATH_INVALID")
+    staging = contained_path(resolved_root, ".downloads")
+    try:
+        staging.mkdir(mode=0o700, exist_ok=True)
+    except OSError as exc:
+        raise ValueError("DATA_PROVIDER_STAGING_PATH_INVALID") from exc
+    _require_private_owned_directory(staging)
+    lock_path = contained_path(resolved_root, ".provider-download.lock")
+    prepared_lock_identity = _prepare_private_lock_file(lock_path)
+    lock = FileLock(str(lock_path), thread_local=False)
+    try:
+        lock.acquire(timeout=timeout_seconds)
+    except FileLockTimeout as exc:
+        raise ValueError("DATA_PROVIDER_STAGING_BUSY") from exc
+    try:
+        if _prepare_private_lock_file(lock_path) != prepared_lock_identity:
+            raise ValueError("DATA_PROVIDER_STAGING_LOCK_INVALID")
+    except BaseException:
+        lock.release()
+        raise
+    lease = ProviderStagingLease(
+        cache_root=resolved_root,
+        staging_path=staging,
+        _lock=lock,
+    )
+    try:
+        _recover_stale_provider_staging(staging)
+    except BaseException:
+        lease.release()
+        raise
+    return lease
+
+
 class _Response(Protocol):
     headers: object
 
@@ -241,6 +413,21 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _fsync_directory(directory: Path) -> None:
+    """Durably publish a provider-CAS directory entry where supported."""
+
+    if os.name == "nt":  # Windows does not expose portable directory fsync.
+        return
+    descriptor = os.open(
+        directory,
+        os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_DIRECTORY", 0),
+    )
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def preview_download(
     *,
     provider_id: str,
@@ -279,15 +466,16 @@ def preview_download(
     )
 
 
-def download_approved_asset(
+def stage_approved_asset(
     *,
     preview: DownloadPreview,
     asset_id: str,
     cache_root: Path,
     explicit_consent: bool,
     maximum_bytes: int,
+    lease: ProviderStagingLease,
     opener: _Opener | None = None,
-) -> DownloadReceipt:
+) -> StagedDownload:
     if not explicit_consent:
         raise ValueError("DATA_DOWNLOAD_EXPLICIT_CONSENT_REQUIRED")
     if not re.fullmatch(r"[a-z][a-z0-9_-]{2,127}", asset_id):
@@ -298,9 +486,8 @@ def download_approved_asset(
     if provider is None:
         raise ValueError("DATA_PROVIDER_NOT_ALLOWLISTED")
     _validate_provider_url(provider, preview.source_url)
-    cache_root.mkdir(parents=True, exist_ok=True)
-    staging = contained_path(cache_root, ".downloads")
-    staging.mkdir(parents=True, exist_ok=True)
+    lease.assert_active_for(cache_root)
+    staging = lease.staging_path
     client = opener or urllib.request.build_opener(_NoAutomaticRedirectHandler())
     temporary_path: Path | None = None
     digest = hashlib.sha256()
@@ -380,32 +567,10 @@ def download_approved_asset(
             temporary_path.unlink(missing_ok=True)
         raise ValueError("DATA_PROVIDER_EMPTY_RESPONSE")
     digest_value = digest.hexdigest()
-    destination = contained_path(
-        cache_root,
-        Path("provider") / provider.provider_id / "sha256" / digest_value,
-    )
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    created = False
-    try:
-        try:
-            # A hard link publishes the fully fsynced staging inode without an
-            # overwrite window.  Existing content-addressed bytes are reused
-            # only after exact type, size, and digest verification.
-            os.link(temporary_path, destination)
-            created = True
-        except FileExistsError:
-            if (
-                not destination.is_file()
-                or destination.is_symlink()
-                or destination.stat().st_size != total
-                or _sha256_file(destination) != digest_value
-            ):
-                raise ValueError("DATA_PROVIDER_CACHE_CONFLICT") from None
-    finally:
-        temporary_path.unlink(missing_ok=True)
-    return DownloadReceipt(
+    assert temporary_path is not None
+    return StagedDownload(
         asset_id=asset_id,
-        relative_path=destination.relative_to(cache_root).as_posix(),
+        temporary_path=temporary_path,
         sha256=digest_value,
         bytes=total,
         source_url=preview.source_url,
@@ -414,8 +579,107 @@ def download_approved_asset(
         redirect_urls=tuple(redirect_urls),
         provider_id=provider.provider_id,
         attribution=provider.attribution,
+    )
+
+
+def retain_staged_asset(
+    *,
+    staged: StagedDownload,
+    cache_root: Path,
+    lease: ProviderStagingLease,
+) -> DownloadReceipt:
+    """Publish staged bytes to the immutable provider CAS without overwrite.
+
+    This operation intentionally does not delete the staging file.  The caller
+    owns cleanup so it can place CAS retention and authoritative repository
+    publication inside one serialized policy transaction.
+    """
+
+    provider = PROVIDERS.get(staged.provider_id)
+    if provider is None:
+        raise ValueError("DATA_PROVIDER_NOT_ALLOWLISTED")
+    lease.assert_active_for(cache_root)
+    staging = lease.staging_path
+    temporary_path = staged.temporary_path.resolve(strict=True)
+    if staging.resolve(strict=True) not in temporary_path.parents:
+        raise ValueError("DATA_PROVIDER_STAGING_PATH_INVALID")
+    if (
+        not temporary_path.is_file()
+        or temporary_path.is_symlink()
+        or temporary_path.stat().st_size != staged.bytes
+        or _sha256_file(temporary_path) != staged.sha256
+    ):
+        raise ValueError("DATA_PROVIDER_STAGED_INTEGRITY_MISMATCH")
+    destination = contained_path(
+        cache_root,
+        Path("provider") / provider.provider_id / "sha256" / staged.sha256,
+    )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    created = False
+    try:
+        # A hard link publishes the fully fsynced staging inode without an
+        # overwrite window.  Existing content-addressed bytes are reused only
+        # after exact type, size, and digest verification.
+        os.link(temporary_path, destination)
+        created = True
+    except FileExistsError:
+        if (
+            not destination.is_file()
+            or destination.is_symlink()
+            or destination.stat().st_size != staged.bytes
+            or _sha256_file(destination) != staged.sha256
+        ):
+            raise ValueError("DATA_PROVIDER_CACHE_CONFLICT") from None
+    # The staged inode was fsynced before linking. Persist the CAS directory
+    # entry before the caller is allowed to commit its authoritative SQLite
+    # asset and receipt; this also makes a retry after an earlier fsync failure
+    # durable before it publishes the database rows.
+    _fsync_directory(destination.parent)
+    return DownloadReceipt(
+        asset_id=staged.asset_id,
+        relative_path=destination.relative_to(cache_root).as_posix(),
+        sha256=staged.sha256,
+        bytes=staged.bytes,
+        source_url=staged.source_url,
+        requested_url=staged.requested_url,
+        final_url=staged.final_url,
+        redirect_urls=staged.redirect_urls,
+        provider_id=provider.provider_id,
+        attribution=provider.attribution,
         created=created,
     )
+
+
+def download_approved_asset(
+    *,
+    preview: DownloadPreview,
+    asset_id: str,
+    cache_root: Path,
+    explicit_consent: bool,
+    maximum_bytes: int,
+    opener: _Opener | None = None,
+) -> DownloadReceipt:
+    """Compatibility wrapper for callers without repository quota authority."""
+
+    lease = acquire_provider_staging(cache_root=cache_root)
+    staged: StagedDownload | None = None
+    try:
+        staged = stage_approved_asset(
+            preview=preview,
+            asset_id=asset_id,
+            cache_root=cache_root,
+            explicit_consent=explicit_consent,
+            maximum_bytes=maximum_bytes,
+            lease=lease,
+            opener=opener,
+        )
+        return retain_staged_asset(staged=staged, cache_root=cache_root, lease=lease)
+    finally:
+        try:
+            if staged is not None:
+                staged.temporary_path.unlink(missing_ok=True)
+        finally:
+            lease.release()
 
 
 def _validate_provider_url(provider: ProviderSpec, source_url: str) -> None:

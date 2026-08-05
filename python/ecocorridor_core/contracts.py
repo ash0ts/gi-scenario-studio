@@ -15,14 +15,25 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Annotated, Any, Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    field_validator,
+    model_validator,
+)
 
 ECOCORRIDOR_SCHEMA_VERSION = "1.0"
 SHA256_PATTERN = r"^[0-9a-f]{64}$"
+MAX_SAFE_FOCAL_ID = (1 << 53) - 1
 Sha256Digest = Annotated[
     str,
     Field(min_length=64, max_length=64, pattern=SHA256_PATTERN),
 ]
+PositiveFocalId = Annotated[StrictInt, Field(gt=0, le=MAX_SAFE_FOCAL_ID)]
 CONCEPTUAL_CONNECTIVITY_NOTICE = (
     "Conceptual connectivity screening — not observed animal movement, crossing use, "
     "collision reduction, population viability, or an approved corridor."
@@ -424,9 +435,9 @@ class ResistanceHypothesis(ContractModel):
 
 class FocalPair(ContractModel):
     pair_id: str
-    from_focal_id: int = Field(gt=0)
-    to_focal_id: int = Field(gt=0)
-    required: bool = True
+    from_focal_id: PositiveFocalId
+    to_focal_id: PositiveFocalId
+    required: StrictBool = True
 
     @model_validator(mode="after")
     def distinct_and_canonical(self) -> FocalPair:
@@ -443,7 +454,7 @@ class FocalAreaSet(ContractModel):
     asset_id: str
     grid_id: str
     guild_id: str
-    focal_ids: list[int] = Field(min_length=2)
+    focal_ids: list[PositiveFocalId] = Field(min_length=2)
     pairs: list[FocalPair] = Field(min_length=1)
     rationale: str
     reviewed_by: str
@@ -457,6 +468,13 @@ class FocalAreaSet(ContractModel):
         pair_ids = [item.pair_id for item in self.pairs]
         if len(pair_ids) != len(set(pair_ids)):
             raise ValueError("focal pair IDs must be unique")
+        # Circuitscape pairwise resistance is symmetric, so the modeled pair
+        # identity is the unordered endpoint set. FocalPair requires the
+        # ascending representation of that identity; a second pair_id must not
+        # alias the same canonical endpoints.
+        endpoint_pairs = [(item.from_focal_id, item.to_focal_id) for item in self.pairs]
+        if len(endpoint_pairs) != len(set(endpoint_pairs)):
+            raise ValueError("focal pairs must use unique canonical endpoint pairs")
         for pair in self.pairs:
             if pair.from_focal_id not in ids or pair.to_focal_id not in ids:
                 raise ValueError("every pair must reference focal IDs in the set")

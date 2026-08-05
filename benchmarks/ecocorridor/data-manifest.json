@@ -101,8 +101,8 @@
     },
     {
       "path": "apps/ecocorridor-desktop/tests/__screenshots__/evidence-boundary-desktop-1440.png",
-      "sha256": "cbd8e12e81457666f73f2df4db28f09a09e626d80f3c8cdbfdb2a783f12bbf27",
-      "byte_size": 104809,
+      "sha256": "7101a82c133b77119d34be3d38f3d4d85c0606ccc3ecdb315a3e720591f51cd6",
+      "byte_size": 104992,
       "media_type": "image/png",
       "asset_role": "SCREENSHOT",
       "repository_use": "VERIFICATION_EVIDENCE",
@@ -309,8 +309,8 @@
     },
     {
       "path": "apps/ecocorridor-desktop/tests/__screenshots__/professional-sync-compact-760.png",
-      "sha256": "91ec0e86bd3bea96ac424274075f2c0ebcb1dac9064bc9d3f29a30993e25dff0",
-      "byte_size": 25922,
+      "sha256": "f39fe02fc7e7e0911d897313fd6653da7a79f2530e601bc4400489920419a4e8",
+      "byte_size": 26262,
       "media_type": "image/png",
       "asset_role": "SCREENSHOT",
       "repository_use": "VERIFICATION_EVIDENCE",
@@ -325,8 +325,8 @@
     },
     {
       "path": "apps/ecocorridor-desktop/tests/__screenshots__/professional-sync-desktop-1440.png",
-      "sha256": "f0cb91adda5e9fdab804ff2e8487545f66fb5f2d87a56e3e76b8c97b62602d01",
-      "byte_size": 26260,
+      "sha256": "dcf744d533b6556f503aba9635456ded81bffaa667e747f92a9db1923ca7f9d0",
+      "byte_size": 27386,
       "media_type": "image/png",
       "asset_role": "SCREENSHOT",
       "repository_use": "VERIFICATION_EVIDENCE",

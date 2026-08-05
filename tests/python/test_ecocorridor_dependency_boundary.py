@@ -40,6 +40,37 @@ def test_ecocorridor_preserves_the_provenance_pinned_dependency_contract() -> No
     assert "swmmanywhere>=0.2.2" in extras["geo"]
 
 
+def test_report_publisher_dependency_is_isolated_from_shared_gi_observability() -> None:
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    extras = project["project"]["optional-dependencies"]
+
+    assert extras["ecocorridor-report"] == ["wandb-workspaces==0.4.5"]
+    assert "wandb-workspaces==0.4.5" not in extras["observability"]
+
+
+def test_only_ecocorridor_ci_and_release_install_the_report_publisher_extra() -> None:
+    workflow_root = ROOT / ".github" / "workflows"
+    consumers = {
+        path.name
+        for path in workflow_root.glob("*.yml")
+        if "--extra ecocorridor-report" in path.read_text(encoding="utf-8")
+    }
+
+    assert consumers == {"ecocorridor-ci.yml", "ecocorridor-release.yml"}
+
+
+def test_ecocorridor_docs_install_the_isolated_report_publisher_extra() -> None:
+    for relative in (
+        "docs/ecocorridor/README.md",
+        "docs/ecocorridor/wandb-search-report.md",
+    ):
+        document = (ROOT / relative).read_text(encoding="utf-8")
+        assert "--extra ecocorridor-report" in document, relative
+
+    shared_readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "--extra ecocorridor-report" not in shared_readme
+
+
 def test_ecocorridor_workflows_never_select_the_gi_geo_extra() -> None:
     for filename in ECO_WORKFLOWS:
         workflow = (ROOT / ".github" / "workflows" / filename).read_text(encoding="utf-8")

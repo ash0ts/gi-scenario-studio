@@ -1,10 +1,18 @@
 from __future__ import annotations
 
 import io
+import os
+import subprocess
+import sys
+import threading
 from pathlib import Path
 
 import pytest
-from ecocorridor_core.providers import download_approved_asset, preview_download
+from ecocorridor_core.providers import (
+    acquire_provider_staging,
+    download_approved_asset,
+    preview_download,
+)
 
 
 class _Response(io.BytesIO):
@@ -62,6 +70,160 @@ PAD_FINAL_URL = (
     "652d4fc5d34e44db0e2ee45e/PADUS4_1_GDB.zip"
     "?AWSAccessKeyId=test-public-download&Expires=1777587284&Signature=example"
 )
+
+
+def test_provider_staging_lease_serializes_concurrent_owners(tmp_path: Path) -> None:
+    first = acquire_provider_staging(cache_root=tmp_path)
+    second_started = threading.Event()
+    second_acquired = threading.Event()
+
+    def acquire_second() -> None:
+        second_started.set()
+        second = acquire_provider_staging(cache_root=tmp_path, timeout_seconds=5)
+        second_acquired.set()
+        second.release()
+
+    thread = threading.Thread(target=acquire_second)
+    thread.start()
+    assert second_started.wait(2)
+    assert not second_acquired.wait(0.1)
+    first.release()
+    thread.join(5)
+
+    assert not thread.is_alive()
+    assert second_acquired.is_set()
+
+
+def test_provider_staging_recovers_a_crashed_process_without_touching_cas(
+    tmp_path: Path,
+) -> None:
+    retained = tmp_path / "provider" / "tiger_line_2025" / "sha256" / ("a" * 64)
+    retained.parent.mkdir(parents=True)
+    child = (
+        "from pathlib import Path\n"
+        "import os, sys\n"
+        "from ecocorridor_core.providers import acquire_provider_staging\n"
+        "lease = acquire_provider_staging(cache_root=Path(sys.argv[1]))\n"
+        "staged = lease.staging_path / '.crash-stage.deadbeef.download'\n"
+        "staged.write_bytes(b'retained-cas')\n"
+        "os.link(staged, Path(sys.argv[2]))\n"
+        "os._exit(0)\n"
+    )
+    subprocess.run([sys.executable, "-c", child, str(tmp_path), str(retained)], check=True)
+    stale = tmp_path / ".downloads" / ".crash-stage.deadbeef.download"
+    assert stale.read_bytes() == b"retained-cas"
+
+    recovered = acquire_provider_staging(cache_root=tmp_path, timeout_seconds=5)
+    try:
+        assert list(recovered.staging_path.iterdir()) == []
+        assert retained.read_bytes() == b"retained-cas"
+    finally:
+        recovered.release()
+
+
+@pytest.mark.parametrize(
+    "unsafe_target",
+    [
+        "staging_symlink",
+        "staging_file",
+        "lock_symlink",
+        "lock_directory",
+        "special_entry",
+    ],
+)
+def test_provider_staging_recovery_rejects_unsafe_entries_without_deleting_cas(
+    tmp_path: Path,
+    unsafe_target: str,
+) -> None:
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    retained = cache / "provider" / "tiger_line_2025" / "sha256" / ("b" * 64)
+    retained.parent.mkdir(parents=True)
+    retained.write_bytes(b"retained-cas")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    outside_file = outside / "do-not-delete"
+    outside_file.write_bytes(b"outside")
+    if unsafe_target == "staging_symlink":
+        (cache / ".downloads").symlink_to(outside, target_is_directory=True)
+    elif unsafe_target == "staging_file":
+        (cache / ".downloads").write_bytes(b"not-a-directory")
+    elif unsafe_target == "lock_symlink":
+        (cache / ".provider-download.lock").symlink_to(outside_file)
+    elif unsafe_target == "lock_directory":
+        (cache / ".provider-download.lock").mkdir()
+    else:
+        staging = cache / ".downloads"
+        staging.mkdir(mode=0o700)
+        (staging / "unexpected-directory").mkdir()
+
+    with pytest.raises(ValueError, match="STAGING|symbolic link"):
+        acquire_provider_staging(cache_root=cache, timeout_seconds=0)
+
+    assert retained.read_bytes() == b"retained-cas"
+    assert outside_file.read_bytes() == b"outside"
+
+
+def test_provider_staging_rejects_hardlinked_lock_without_mutating_target(tmp_path: Path) -> None:
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    outside = tmp_path / "private-target"
+    outside.write_bytes(b"must-not-be-truncated")
+    outside.chmod(0o600)
+    (cache / ".provider-download.lock").hardlink_to(outside)
+
+    with pytest.raises(ValueError, match="STAGING_LOCK_INVALID"):
+        acquire_provider_staging(cache_root=cache, timeout_seconds=0)
+
+    assert outside.read_bytes() == b"must-not-be-truncated"
+
+
+def test_provider_staging_rejects_lock_path_identity_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cache = tmp_path / "cache"
+    cache.mkdir()
+
+    class _ReplacingLock:
+        def __init__(self, path: str, *, thread_local: bool) -> None:
+            del thread_local
+            self.path = Path(path)
+
+        def acquire(self, *, timeout: float) -> None:
+            del timeout
+            self.path.unlink()
+            self.path.write_bytes(b"")
+            self.path.chmod(0o600)
+
+        def release(self) -> None:
+            return None
+
+    monkeypatch.setattr("ecocorridor_core.providers.FileLock", _ReplacingLock)
+
+    with pytest.raises(ValueError, match="STAGING_LOCK_INVALID"):
+        acquire_provider_staging(cache_root=cache, timeout_seconds=0)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits are required")
+def test_provider_staging_requires_private_directory_permissions(tmp_path: Path) -> None:
+    staging = tmp_path / ".downloads"
+    staging.mkdir(mode=0o755)
+    staging.chmod(0o755)
+
+    with pytest.raises(ValueError, match="STAGING_PERMISSIONS_INVALID"):
+        acquire_provider_staging(cache_root=tmp_path, timeout_seconds=0)
+
+
+def test_provider_staging_recovery_is_bounded_and_fails_before_unlink(tmp_path: Path) -> None:
+    staging = tmp_path / ".downloads"
+    staging.mkdir(mode=0o700)
+    for index in range(257):
+        (staging / f".stale-asset.{index:08d}.download").write_bytes(b"x")
+
+    with pytest.raises(ValueError, match="STAGING_RECOVERY_LIMIT"):
+        acquire_provider_staging(cache_root=tmp_path, timeout_seconds=0)
+
+    assert len(list(staging.iterdir())) == 257
 
 
 def test_preview_explains_context_only_use() -> None:

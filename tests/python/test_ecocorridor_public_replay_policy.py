@@ -3,10 +3,15 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import re
 from pathlib import Path
 from types import ModuleType
 
 import pytest
+from ecocorridor_core.rendered_claim_safety import (
+    assert_safe_normalized_rendered_ecological_copy,
+    normalize_rendered_ecological_claim_text,
+)
 
 RIDGEWAY_HYPOTHESIS_IDS = (
     "h1_low_barrier",
@@ -18,6 +23,53 @@ RIDGEWAY_HYPOTHESIS_RANKING_METRIC = (
     "Minimum required target-pair resistance reduction (%) within each resistance "
     "hypothesis; rank 1 is the highest score among the 128 directly evaluated portfolios."
 )
+RIDGEWAY_PUBLIC_NON_GOALS = [
+    "Observed animal movement or crossing use",
+    "Collision reduction",
+    "Population viability or biodiversity benefit",
+    "Crossing, fencing, or construction design",
+    "Regulatory or permitting determination",
+]
+
+
+@pytest.mark.parametrize(
+    "default_ignorable",
+    [
+        "\u00ad",  # SOFT HYPHEN (Cf)
+        "\u034f",  # COMBINING GRAPHEME JOINER (Mn)
+        "\u061c",  # ARABIC LETTER MARK (Cf)
+        "\u115f",  # HANGUL CHOSEONG FILLER (Lo)
+        "\u17b4",  # KHMER VOWEL INHERENT AQ (Mn)
+        "\u180b",  # MONGOLIAN FREE VARIATION SELECTOR ONE (Mn)
+        "\u200b",  # ZERO WIDTH SPACE (Cf)
+        "\u202a",  # LEFT-TO-RIGHT EMBEDDING (Cf)
+        "\u2065",  # reserved default-ignorable code point (Cn)
+        "\u3164",  # HANGUL FILLER (Lo before NFKC)
+        "\ufe0f",  # VARIATION SELECTOR-16 (Mn)
+        "\ufeff",  # ZERO WIDTH NO-BREAK SPACE (Cf)
+        "\uffa0",  # HALFWIDTH HANGUL FILLER (Lo before NFKC)
+        "\ufff0",  # reserved default-ignorable code point (Cn)
+        "\U0001bca0",  # SHORTHAND FORMAT LETTER OVERLAP (Cf)
+        "\U0001d173",  # MUSICAL SYMBOL BEGIN BEAM (Cf)
+        "\U000e0100",  # VARIATION SELECTOR-17 (Mn, supplementary plane)
+    ],
+)
+def test_presentation_claim_policy_removes_standard_default_ignorables(
+    default_ignorable: str,
+) -> None:
+    claim = f"This improves habitat connectiv{default_ignorable}ity."
+
+    assert normalize_rendered_ecological_claim_text(claim) == (
+        "This improves habitat connectivity."
+    )
+    with pytest.raises(ValueError, match="HABITAT_RECONNECTION"):
+        assert_safe_normalized_rendered_ecological_copy(claim)
+
+
+def test_presentation_normalizer_preserves_semantic_combining_marks() -> None:
+    text = "reviewed q\u0301 habitat"
+
+    assert normalize_rendered_ecological_claim_text(text) == text
 
 
 @pytest.fixture(scope="module")
@@ -36,11 +88,18 @@ def _inputs(tmp_path: Path) -> tuple[Path, Path, Path, Path, Path]:
     assets.mkdir(parents=True)
     (root / "index.html").write_text(
         '<meta http-equiv="Content-Security-Policy" '
-        "content=\"default-src 'self'; connect-src 'none'; object-src 'none'; "
-        "base-uri 'self'; form-action 'none'; frame-ancestors 'none'\">",
+        "content=\"default-src 'self'; connect-src 'none'; font-src 'self'; "
+        "img-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'none'; "
+        "frame-ancestors 'none'; frame-src 'none'; media-src 'none'; worker-src 'none'; "
+        "manifest-src 'none'; navigate-to 'none'; script-src 'self'; style-src 'self'\">",
         encoding="utf-8",
     )
-    (assets / "app.js").write_text("document.body.dataset.replay = 'synthetic';", encoding="utf-8")
+    encoded_non_goals = json.dumps(RIDGEWAY_PUBLIC_NON_GOALS, separators=(",", ":"))
+    (assets / "app.js").write_text(
+        f"const replay={{nonGoals:{encoded_non_goals}}};"
+        "document.body.dataset.replay = 'synthetic';",
+        encoding="utf-8",
+    )
     fixture = tmp_path / "fixture.json"
     projection = tmp_path / "projection.json"
     fixture.write_text(
@@ -50,6 +109,15 @@ def _inputs(tmp_path: Path) -> tuple[Path, Path, Path, Path, Path]:
   "evidenceState": "ENGINE_RUN_REQUIRED",
   "releaseReplayEligible": false,
   "releaseBlocker": "Current direct evidence is required.",
+  "decisionBrief": {
+    "nonGoals": [
+      "Observed animal movement or crossing use",
+      "Collision reduction",
+      "Population viability or biodiversity benefit",
+      "Crossing, fencing, or construction design",
+      "Regulatory or permitting determination"
+    ]
+  },
   "manifestSha256": null,
   "baselinePortfolioId": null,
   "portfolios": [
@@ -151,6 +219,7 @@ def _verified_inputs(tmp_path: Path) -> tuple[Path, Path, Path, Path, Path]:
         "fixtureId": "ridgeway_crossing",
         "evidenceState": "VERIFIED_DIRECT_EVIDENCE",
         "releaseReplayEligible": True,
+        "decisionBrief": {"nonGoals": RIDGEWAY_PUBLIC_NON_GOALS},
         "manifestSha256": manifest_sha,
         "baselinePortfolioId": baseline_id,
         "study": {
@@ -378,6 +447,7 @@ def test_redacted_story_source_binding_requires_runtime_projection_comparison(
         "This portfolio is ecologically robust.",
         "This is the recommended corridor.",
         "This option reconnects habitat.",
+        "This improves habitat connectiv\u00adity.",
     ],
 )
 def test_public_replay_source_copy_rejects_prohibited_paraphrases(
@@ -408,11 +478,43 @@ def test_public_replay_document_declares_no_cloud_csp_and_local_assets() -> None
         "media-src 'none'",
         "worker-src 'none'",
         "manifest-src 'none'",
+        "navigate-to 'none'",
     ):
         assert directive in index
     assert "http://" not in index
     assert "https://" not in index
     assert "modulePreload: { polyfill: false }" in vite_config
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("worker-src 'none'; ", ""),
+        ("navigate-to 'none'; ", ""),
+        ("img-src 'self' data:; ", "img-src https:; img-src 'self' data:; "),
+    ],
+)
+def test_public_replay_rejects_missing_or_ambiguous_csp_locks(
+    checker: ModuleType,
+    tmp_path: Path,
+    old: str,
+    new: str,
+) -> None:
+    root, fixture, projection, trust, manifest = _inputs(tmp_path)
+    index = root / "index.html"
+    original = index.read_text(encoding="utf-8")
+    assert old in original
+    index.write_text(original.replace(old, new, 1), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Content Security Policy is not fail-closed"):
+        checker.validate_and_inventory(
+            root,
+            source_sha="a" * 40,
+            fixture=fixture,
+            projection=projection,
+            trust_record=trust,
+            data_manifest=manifest,
+        )
 
 
 def test_public_replay_accepts_complete_v12_pair_and_current_raster_evidence(
@@ -736,6 +838,361 @@ def test_public_replay_rejects_desktop_or_rpc_runtime_code(
     (root / "assets" / "app.js").write_text(desktop_marker, encoding="utf-8")
 
     with pytest.raises(ValueError, match="private/runtime material"):
+        checker.validate_and_inventory(
+            root,
+            source_sha="a" * 40,
+            fixture=fixture,
+            projection=projection,
+            trust_record=trust,
+            data_manifest=manifest,
+        )
+
+
+@pytest.mark.parametrize(
+    "built_copy",
+    [
+        "This improves habitat connectivity.",
+        "This option reconnects habitat.",
+        "This is the recommended corridor.",
+    ],
+)
+def test_public_replay_rejects_prohibited_copy_in_built_javascript(
+    checker: ModuleType,
+    tmp_path: Path,
+    built_copy: str,
+) -> None:
+    root, fixture, projection, trust, manifest = _inputs(tmp_path)
+    (root / "assets" / "app.js").write_text(
+        f'document.body.textContent = "{built_copy}";',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="built artifact violates ecological claim policy"):
+        checker.validate_and_inventory(
+            root,
+            source_sha="a" * 40,
+            fixture=fixture,
+            projection=projection,
+            trust_record=trust,
+            data_manifest=manifest,
+        )
+
+
+def test_public_replay_allows_limited_copy_in_built_javascript(
+    checker: ModuleType,
+    tmp_path: Path,
+) -> None:
+    root, fixture, projection, trust, manifest = _inputs(tmp_path)
+    (root / "assets" / "app.js").write_text(
+        'document.body.textContent = "This does not predict animal movement.";',
+        encoding="utf-8",
+    )
+
+    inventory = checker.validate_and_inventory(
+        root,
+        source_sha="a" * 40,
+        fixture=fixture,
+        projection=projection,
+        trust_record=trust,
+        data_manifest=manifest,
+    )
+
+    assert inventory["artifact_kind"] == "CC0_SYNTHETIC_PUBLIC_REPLAY"
+
+
+def test_public_replay_preserves_structural_non_goal_semantics_in_built_javascript(
+    checker: ModuleType,
+    tmp_path: Path,
+) -> None:
+    root, fixture, projection, trust, manifest = _inputs(tmp_path)
+    replay = json.loads(projection.read_text(encoding="utf-8"))
+    non_goals = RIDGEWAY_PUBLIC_NON_GOALS
+    replay["decisionBrief"] = {"nonGoals": non_goals}
+    encoded = (json.dumps(replay, sort_keys=True) + "\n").encode()
+    fixture.write_bytes(encoded)
+    projection.write_bytes(encoded)
+    (root / "assets" / "app.js").write_text(
+        f"const brief={{nonGoals:{json.dumps(non_goals, separators=(',', ':'))}}};",
+        encoding="utf-8",
+    )
+
+    inventory = checker.validate_and_inventory(
+        root,
+        source_sha="a" * 40,
+        fixture=fixture,
+        projection=projection,
+        trust_record=trust,
+        data_manifest=manifest,
+    )
+
+    assert inventory["artifact_kind"] == "CC0_SYNTHETIC_PUBLIC_REPLAY"
+
+
+def test_structural_non_goal_does_not_hide_unrelated_prohibited_built_copy(
+    checker: ModuleType,
+    tmp_path: Path,
+) -> None:
+    root, fixture, projection, trust, manifest = _inputs(tmp_path)
+    replay = json.loads(projection.read_text(encoding="utf-8"))
+    non_goals = RIDGEWAY_PUBLIC_NON_GOALS
+    replay["decisionBrief"] = {"nonGoals": non_goals}
+    encoded = (json.dumps(replay, sort_keys=True) + "\n").encode()
+    fixture.write_bytes(encoded)
+    projection.write_bytes(encoded)
+    (root / "assets" / "app.js").write_text(
+        f"const brief={{nonGoals:{json.dumps(non_goals, separators=(',', ':'))}}};"
+        'document.body.textContent="This improves habitat connectivity.";',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"built artifact violates ecological claim policy: assets/app\.js",
+    ):
+        checker.validate_and_inventory(
+            root,
+            source_sha="a" * 40,
+            fixture=fixture,
+            projection=projection,
+            trust_record=trust,
+            data_manifest=manifest,
+        )
+
+
+def test_non_goal_name_suffix_does_not_receive_structural_exemption(
+    checker: ModuleType,
+    tmp_path: Path,
+) -> None:
+    root, fixture, projection, trust, manifest = _inputs(tmp_path)
+    (root / "assets" / "app.js").write_text(
+        'const brief={unreviewednonGoals:["This improves habitat connectivity."]};',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"built artifact violates ecological claim policy: assets/app\.js",
+    ):
+        checker.validate_and_inventory(
+            root,
+            source_sha="a" * 40,
+            fixture=fixture,
+            projection=projection,
+            trust_record=trust,
+            data_manifest=manifest,
+        )
+
+
+def test_arbitrary_non_goal_array_does_not_receive_structural_exemption(
+    checker: ModuleType,
+    tmp_path: Path,
+) -> None:
+    root, fixture, projection, trust, manifest = _inputs(tmp_path)
+    (root / "assets" / "app.js").write_text(
+        'const x={nonGoals:["This improves habitat connectivity."]};'
+        "document.body.textContent=x.nonGoals[0];",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"built artifact violates ecological claim policy: assets/app\.js",
+    ):
+        checker.validate_and_inventory(
+            root,
+            source_sha="a" * 40,
+            fixture=fixture,
+            projection=projection,
+            trust_record=trust,
+            data_manifest=manifest,
+        )
+
+
+def test_exact_non_goal_array_cannot_flow_to_browser_rendering_sink(
+    checker: ModuleType,
+    tmp_path: Path,
+) -> None:
+    root, fixture, projection, trust, manifest = _inputs(tmp_path)
+    encoded = json.dumps(RIDGEWAY_PUBLIC_NON_GOALS, separators=(",", ":"))
+    (root / "assets" / "app.js").write_text(
+        f"const brief={{nonGoals:{encoded}}};document.body.textContent=brief.nonGoals[2];",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"built artifact violates ecological claim policy: assets/app\.js",
+    ):
+        checker.validate_and_inventory(
+            root,
+            source_sha="a" * 40,
+            fixture=fixture,
+            projection=projection,
+            trust_record=trust,
+            data_manifest=manifest,
+        )
+
+
+def test_mutated_or_unterminated_non_goal_array_fails_linearly(
+    checker: ModuleType,
+    tmp_path: Path,
+) -> None:
+    root, fixture, projection, trust, manifest = _inputs(tmp_path)
+    (root / "assets" / "app.js").write_text(
+        "const brief={nonGoals:[" + ",".join('"safe limitation"' for _ in range(10_000)),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"built artifact violates ecological claim policy: assets/app\.js",
+    ):
+        checker.validate_and_inventory(
+            root,
+            source_sha="a" * 40,
+            fixture=fixture,
+            projection=projection,
+            trust_record=trust,
+            data_manifest=manifest,
+        )
+
+
+@pytest.mark.parametrize(
+    ("artifact_name", "built_copy"),
+    [
+        ("app.js", r'document.body.textContent="This improves habitat\u0020connectivity.";'),
+        ("app.js", 'document.body.textContent="This improves habitat connectiv\u00adity.";'),
+        ("app.js", 'document.body.textContent="This improves habitat connectiv\u034fity.";'),
+        ("app.js", 'document.body.textContent="This improves habitat connectiv\ufe0fity.";'),
+        (
+            "app.js",
+            'document.body.textContent="This improves habitat connectiv\U000e0100ity.";',
+        ),
+        (
+            "app.js",
+            r'document.body.textContent="This improves habitat connectiv\u{E0100}ity.";',
+        ),
+        (
+            "app.js",
+            r'document.body.textContent="This improves habitat connectiv\uD835\uDC56ty.";',
+        ),
+        ("app.js", 'document.body.textContent="This improves "+"habitat connectivity.";'),
+        ("app.js", 'document.body.innerHTML="This improves habitat connectiv&#105;ty.";'),
+        (
+            "app.js",
+            'document.body.innerHTML="This improves <span>habitat</span> connectivity.";',
+        ),
+        ("app.js", r'document.body.textContent="<This improves habitat\u0020connectivity.>";'),
+        ("app.css", r'.claim::after{content:"This improves habitat connectiv\69 ty."}'),
+        (
+            "app.js",
+            'document.body.textContent=["This", "improves", "habitat", "connectivity"].join(" ");',
+        ),
+    ],
+)
+def test_public_replay_rejects_browser_decoded_or_joined_prohibited_copy(
+    checker: ModuleType,
+    tmp_path: Path,
+    artifact_name: str,
+    built_copy: str,
+) -> None:
+    root, fixture, projection, trust, manifest = _inputs(tmp_path)
+    (root / "assets" / artifact_name).write_text(built_copy, encoding="utf-8")
+
+    with pytest.raises(
+        ValueError,
+        match=rf"built artifact violates ecological claim policy: assets/{re.escape(artifact_name)}",
+    ):
+        checker.validate_and_inventory(
+            root,
+            source_sha="a" * 40,
+            fixture=fixture,
+            projection=projection,
+            trust_record=trust,
+            data_manifest=manifest,
+        )
+
+
+def test_unrelated_negated_fragment_cannot_hide_joined_prohibited_copy(
+    checker: ModuleType,
+    tmp_path: Path,
+) -> None:
+    root, fixture, projection, trust, manifest = _inputs(tmp_path)
+    (root / "assets" / "app.js").write_text(
+        'const boundary="does not show that";'
+        'const claim="improves "+"habitat connectivity";'
+        "document.body.textContent=claim;",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"built artifact violates ecological claim policy: assets/app\.js",
+    ):
+        checker.validate_and_inventory(
+            root,
+            source_sha="a" * 40,
+            fixture=fixture,
+            projection=projection,
+            trust_record=trust,
+            data_manifest=manifest,
+        )
+
+
+def test_public_replay_rejects_unpaired_javascript_surrogate_escape(
+    checker: ModuleType,
+    tmp_path: Path,
+) -> None:
+    root, fixture, projection, trust, manifest = _inputs(tmp_path)
+    (root / "assets" / "app.js").write_text(
+        r'document.body.textContent="safe text \uD835";',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"built artifact violates ecological claim policy: assets/app\.js",
+    ):
+        checker.validate_and_inventory(
+            root,
+            source_sha="a" * 40,
+            fixture=fixture,
+            projection=projection,
+            trust_record=trust,
+            data_manifest=manifest,
+        )
+
+
+def test_escaped_backslash_is_not_mistaken_for_a_javascript_unicode_escape(
+    checker: ModuleType,
+    tmp_path: Path,
+) -> None:
+    root, fixture, projection, trust, manifest = _inputs(tmp_path)
+    (root / "assets" / "app.js").write_text(
+        r'document.body.textContent="This improves habitat connectiv\\u0069ty.";',
+        encoding="utf-8",
+    )
+
+    inventory = checker.validate_and_inventory(
+        root,
+        source_sha="a" * 40,
+        fixture=fixture,
+        projection=projection,
+        trust_record=trust,
+        data_manifest=manifest,
+    )
+
+    assert inventory["artifact_kind"] == "CC0_SYNTHETIC_PUBLIC_REPLAY"
+
+
+def test_public_replay_reports_invalid_text_encoding_with_artifact_path(
+    checker: ModuleType,
+    tmp_path: Path,
+) -> None:
+    root, fixture, projection, trust, manifest = _inputs(tmp_path)
+    (root / "assets" / "app.js").write_bytes(b"\xff\xfe")
+
+    with pytest.raises(ValueError, match=r"not UTF-8: assets/app\.js"):
         checker.validate_and_inventory(
             root,
             source_sha="a" * 40,

@@ -680,6 +680,31 @@ def test_eco_pr_ci_validates_the_built_public_replay() -> None:
         "--trust-record apps/ecocorridor-desktop/src/data/ridgewayReleaseTrust.json" in frontend_job
     )
     assert "--require-verified-evidence" not in frontend_job
+    assert "pnpm --dir apps/ecocorridor-replay test:rendered-copy" in frontend_job
+    assert frontend_job.index("pnpm build:eco") < frontend_job.index(
+        "pnpm --dir apps/ecocorridor-replay test:rendered-copy"
+    )
+
+
+def test_pages_crawls_rendered_copy_before_uploading_the_public_replay() -> None:
+    root = Path(__file__).resolve().parents[2]
+    workflow = (root / ".github/workflows/ecocorridor-pages.yml").read_text(encoding="utf-8")
+    build_job = workflow.split("  build-public-replay:", 1)[1].split(
+        "\n  deploy-public-replay:", 1
+    )[0]
+
+    assert "uv sync --locked --no-dev --no-install-project" in build_job
+    assert (
+        "pnpm --dir apps/ecocorridor-replay exec playwright install --with-deps chromium"
+        in build_job
+    )
+    assert "pnpm --dir apps/ecocorridor-replay test:rendered-copy" in build_job
+    assert build_job.index("pnpm --dir apps/ecocorridor-replay build") < build_job.index(
+        "pnpm --dir apps/ecocorridor-replay test:rendered-copy"
+    )
+    assert build_job.index(
+        "pnpm --dir apps/ecocorridor-replay test:rendered-copy"
+    ) < build_job.index("uses: actions/upload-pages-artifact")
 
 
 def test_packaged_boundary_preserves_verifiable_success_evidence_without_masking_failure() -> None:
@@ -1112,7 +1137,8 @@ def test_eco_workflow_policy_requires_locked_sync_before_helper(policy: ModuleTy
     invocation = f"uv run --no-sync python {policy.ECOCORRIDOR_GEOSPATIAL_HELPER}"
     release = workflows[policy.ECOCORRIDOR_RELEASE_WORKFLOW]
     sync = (
-        "uv sync --locked --extra science --extra ecocorridor --extra export "
+        "uv sync --locked --extra science --extra ecocorridor --extra ecocorridor-report "
+        "--extra export "
         "--extra observability --extra release"
     )
     assert f"{sync}\n          {invocation}" in release

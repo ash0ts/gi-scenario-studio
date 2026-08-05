@@ -4,15 +4,20 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import html
 import json
 import math
 import os
 import re
 import stat
 import tempfile
+from html.parser import HTMLParser
 from pathlib import Path
 
-from ecocorridor_core.claim_safety import assert_safe_rendered_ecological_copy
+from ecocorridor_core.rendered_claim_safety import (
+    assert_safe_normalized_rendered_ecological_copy,
+    normalize_rendered_ecological_claim_text,
+)
 
 ALLOWED_SUFFIXES = {".css", ".html", ".js", ".woff", ".woff2"}
 FONT_SUFFIXES = {".woff", ".woff2"}
@@ -48,6 +53,13 @@ RIDGEWAY_HYPOTHESIS_IDS = frozenset(
 RIDGEWAY_HYPOTHESIS_RANKING_METRIC = (
     "Minimum required target-pair resistance reduction (%) within each resistance "
     "hypothesis; rank 1 is the highest score among the 128 directly evaluated portfolios."
+)
+RIDGEWAY_PUBLIC_NON_GOALS = (
+    "Observed animal movement or crossing use",
+    "Collision reduction",
+    "Population viability or biodiversity benefit",
+    "Crossing, fencing, or construction design",
+    "Regulatory or permitting determination",
 )
 PUBLIC_REPLAY_SOURCE = (
     Path(__file__).resolve().parents[1]
@@ -96,10 +108,19 @@ PROCESS_INTERVAL_OVERLAP_LIMITATION = (
 REQUIRED_CSP = {
     "default-src 'self'",
     "connect-src 'none'",
+    "font-src 'self'",
+    "img-src 'self' data:",
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'none'",
     "frame-ancestors 'none'",
+    "frame-src 'none'",
+    "media-src 'none'",
+    "worker-src 'none'",
+    "manifest-src 'none'",
+    "navigate-to 'none'",
+    "script-src 'self'",
+    "style-src 'self'",
 }
 FORBIDDEN_TEXT = (
     re.compile(r"WANDB_API_KEY", re.IGNORECASE),
@@ -116,6 +137,17 @@ FORBIDDEN_TEXT = (
     re.compile(r"assistant\.(?:explain|follow_up|feedback|get_trace|intake)"),
     re.compile(r"(?:createProjectWorkspace|chooseConnectivityBundle|chooseConnectivityAsset)"),
 )
+NON_GOAL_RENDER_SINK = re.compile(
+    r"(?:textContent|innerHTML|outerHTML|insertAdjacentHTML|setAttribute)"
+    r".{0,256}(?:nonGoals|non_goals)|"
+    r"(?:nonGoals|non_goals).{0,256}"
+    r"(?:textContent|innerHTML|outerHTML|insertAdjacentHTML|setAttribute)",
+    re.DOTALL,
+)
+JS_UNICODE_ESCAPE = re.compile(
+    r"\\u\{(?P<braced>[0-9a-fA-F]{1,6})\}|\\u(?P<short>[0-9a-fA-F]{4})|\\x(?P<byte>[0-9a-fA-F]{2})"
+)
+CSS_UNICODE_ESCAPE = re.compile(r"\\(?P<codepoint>[0-9a-fA-F]{1,6})(?:\r\n|[\t\n\r\f ])?")
 
 
 def digest(path: Path) -> str:
@@ -196,7 +228,13 @@ def validate_public_replay_source_copy(source_path: Path | None = None) -> None:
             if source.stat().st_size > MAX_SOURCE_COPY_BYTES:
                 raise ValueError("public replay UI source exceeds its claim-audit size limit")
             audited[source.as_posix()] = source.read_text(encoding="utf-8")
-        assert_safe_rendered_ecological_copy(audited)
+        assert_safe_normalized_rendered_ecological_copy(audited)
+        if source_path is None and re.search(
+            r"\b(?:nonGoals|non_goals)\b", audited[PUBLIC_REPLAY_SOURCE.as_posix()]
+        ):
+            raise ValueError(
+                "the public replay renderer may not read structured non-goal evidence directly"
+            )
     except UnicodeDecodeError as exc:
         raise ValueError("public replay UI source is not UTF-8") from exc
     except ValueError as exc:
@@ -245,6 +283,215 @@ def _json_object(path: Path, *, label: str) -> dict[str, object]:
     if not isinstance(value, dict):
         raise TypeError(f"{label} must contain a JSON object")
     return value
+
+
+def _mask_validated_structural_non_goals(
+    text: str,
+    *,
+    allowed_non_goals: tuple[str, ...],
+) -> str:
+    """Retain the claim policy's narrow structural non-goal exemption.
+
+    Production bundling serializes the reviewed projection into JavaScript.
+    Remove only the exact reviewed Ridgeway ``decisionBrief.nonGoals`` array.
+    A property name alone is not authority: arbitrary ``nonGoals`` arrays stay
+    in the text and are checked like all other emitted copy.
+    """
+
+    if allowed_non_goals != RIDGEWAY_PUBLIC_NON_GOALS:
+        return text
+    encoded = json.dumps(list(RIDGEWAY_PUBLIC_NON_GOALS), separators=(",", ":"))
+    masked = text
+    for key in ("nonGoals:", '"nonGoals":', "non_goals:", '"non_goals":'):
+        masked = masked.replace(f"{key}{encoded}", f"{key}[]")
+    return masked
+
+
+def _canonical_non_goal_literal_count(text: str) -> int:
+    encoded = json.dumps(list(RIDGEWAY_PUBLIC_NON_GOALS), separators=(",", ":"))
+    return sum(
+        text.count(f"{key}{encoded}")
+        for key in ("nonGoals:", '"nonGoals":', "non_goals:", '"non_goals":')
+    )
+
+
+def _assert_no_mutated_non_goal_array(text: str) -> None:
+    """Reject array literals using the protected key unless exactly reviewed."""
+
+    encoded = json.dumps(list(RIDGEWAY_PUBLIC_NON_GOALS), separators=(",", ":"))
+    for key in ("nonGoals:", '"nonGoals":', "non_goals:", '"non_goals":'):
+        prefix = f"{key}["
+        allowed = f"{key}{encoded}"
+        if text.count(prefix) != text.count(allowed):
+            raise ValueError("built artifact contains a mutated structured non-goal array")
+
+
+class _RenderedHTMLText(HTMLParser):
+    """Collect browser-visible HTML text and human-facing attributes linearly."""
+
+    _VISIBLE_ATTRIBUTES = frozenset({"alt", "aria-label", "placeholder", "title"})
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+
+    def handle_data(self, data: str) -> None:
+        self.parts.append(data)
+
+    def handle_starttag(
+        self,
+        tag: str,
+        attrs: list[tuple[str, str | None]],
+    ) -> None:
+        del tag
+        self.parts.extend(
+            value
+            for name, value in attrs
+            if name.casefold() in self._VISIBLE_ATTRIBUTES and value is not None
+        )
+
+
+def _html_rendered_text(text: str) -> str:
+    parser = _RenderedHTMLText()
+    parser.feed(text)
+    parser.close()
+    return " ".join(parser.parts)
+
+
+def _escape_is_active(text: str, start: int) -> bool:
+    """Return whether the backslash at ``start`` is not itself escaped."""
+
+    preceding = 0
+    cursor = start - 1
+    while cursor >= 0 and text[cursor] == "\\":
+        preceding += 1
+        cursor -= 1
+    return preceding % 2 == 0
+
+
+def _decode_js_unicode_escapes(text: str) -> str:
+    """Decode one JavaScript lexical escape layer without inventing execution.
+
+    UTF-16 surrogate escapes are common serializer output. Combine a valid
+    adjacent pair into its scalar value and reject unpaired or invalid values;
+    silently deleting a surrogate would create a claim-policy blind spot.
+    Escaped backslashes remain literal so text such as ``\\\\u0069`` is not
+    mistaken for a character the browser would render.
+    """
+
+    matches = list(JS_UNICODE_ESCAPE.finditer(text))
+    if not matches:
+        return text
+    result: list[str] = []
+    cursor = 0
+    index = 0
+    while index < len(matches):
+        match = matches[index]
+        result.append(text[cursor : match.start()])
+        if not _escape_is_active(text, match.start()):
+            result.append(match.group(0))
+            cursor = match.end()
+            index += 1
+            continue
+
+        token = match.group("braced") or match.group("short") or match.group("byte")
+        assert token is not None
+        value = int(token, 16)
+        if match.group("short") is not None and 0xD800 <= value <= 0xDBFF:
+            if index + 1 >= len(matches):
+                raise ValueError("built artifact contains an unpaired JavaScript surrogate escape")
+            following = matches[index + 1]
+            following_token = following.group("short")
+            if (
+                following.start() != match.end()
+                or following_token is None
+                or not _escape_is_active(text, following.start())
+                or not 0xDC00 <= int(following_token, 16) <= 0xDFFF
+            ):
+                raise ValueError("built artifact contains an unpaired JavaScript surrogate escape")
+            scalar = 0x10000 + ((value - 0xD800) << 10) + (int(following_token, 16) - 0xDC00)
+            result.append(chr(scalar))
+            cursor = following.end()
+            index += 2
+            continue
+        if 0xD800 <= value <= 0xDFFF or value > 0x10FFFF:
+            raise ValueError("built artifact contains an invalid JavaScript Unicode escape")
+        result.append(chr(value))
+        cursor = match.end()
+        index += 1
+    result.append(text[cursor:])
+    return "".join(result)
+
+
+def _decode_css_unicode_escapes(text: str) -> str:
+    def decode(match: re.Match[str]) -> str:
+        if not _escape_is_active(text, match.start()):
+            return match.group(0)
+        value = int(match.group("codepoint"), 16)
+        if value == 0 or value > 0x10FFFF or 0xD800 <= value <= 0xDFFF:
+            return " "
+        return chr(value)
+
+    return CSS_UNICODE_ESCAPE.sub(decode, text)
+
+
+def _decode_emitted_copy(text: str, *, suffix: str) -> tuple[str, ...]:
+    """Normalize common browser-decoded forms before applying claim policy.
+
+    The release artifact is executable HTML/CSS/JavaScript, so scanning only
+    its source spelling misses Unicode/hex escapes, HTML entities, markup, and
+    concatenated string fragments. This deliberately produces a conservative
+    plain-text view; a false positive blocks release for human review.
+    """
+
+    normalized = text
+    if suffix == ".js":
+        normalized = _decode_js_unicode_escapes(normalized)
+    elif suffix == ".css":
+        normalized = _decode_css_unicode_escapes(normalized)
+    # A few bounded entity passes cover HTML and JS-to-innerHTML serialization
+    # without treating entity-like text in standalone CSS/JSON as executable.
+    if suffix in {".html", ".js", ".svg"}:
+        for _ in range(3):
+            previous = normalized
+            normalized = html.unescape(normalized)
+            if normalized == previous:
+                break
+    views = [normalized]
+    if suffix == ".html":
+        views.append(_html_rendered_text(normalized))
+    elif suffix == ".js" and "<" in normalized and ">" in normalized:
+        # JS may assign an HTML literal to innerHTML. Parse a second view, but
+        # retain the unstripped JS view so angle brackets can never hide text.
+        views.append(_html_rendered_text(normalized))
+    result: list[str] = []
+    for view in views:
+        view = normalize_rendered_ecological_claim_text(view)
+        # Browser-visible fragments commonly sit across quotes, arrays, tags,
+        # or concatenation operators. Preserve actual clause and statement
+        # boundaries so an unrelated limitation cannot negate later copy.
+        view = re.sub(r"\r\n?|\n", ";", view)
+        view = re.sub(r"[^\w'’.!?;–-]+", " ", view, flags=re.UNICODE)
+        view = re.sub(r"\s+", " ", view).strip()
+        if view and view not in result:
+            result.append(view)
+    return tuple(result)
+
+
+def _assert_safe_emitted_ecological_copy(
+    text: str,
+    *,
+    suffix: str,
+    allowed_non_goals: tuple[str, ...],
+) -> None:
+    masked = _mask_validated_structural_non_goals(
+        text,
+        allowed_non_goals=allowed_non_goals,
+    )
+    assert_safe_normalized_rendered_ecological_copy(masked)
+    for decoded in _decode_emitted_copy(masked, suffix=suffix):
+        if decoded != masked:
+            assert_safe_normalized_rendered_ecological_copy(decoded)
 
 
 def _valid_retained_process_interval_overlap(value: object) -> bool:
@@ -400,10 +647,17 @@ def validate_and_inventory(
         raise ValueError("Ridgeway replay and trust contracts are incompatible")
 
     try:
-        assert_safe_rendered_ecological_copy(replay)
+        assert_safe_normalized_rendered_ecological_copy(replay)
     except ValueError as exc:
         raise ValueError("Ridgeway public replay violates ecological claim policy") from exc
     replay_eligible = replay.get("releaseReplayEligible") is True
+    decision_brief = replay.get("decisionBrief")
+    non_goals = decision_brief.get("nonGoals") if isinstance(decision_brief, dict) else None
+    if not isinstance(non_goals, list) or tuple(non_goals) != RIDGEWAY_PUBLIC_NON_GOALS:
+        raise ValueError(
+            "Ridgeway public replay non-goals differ from the reviewed release boundary"
+        )
+    allowed_non_goals = RIDGEWAY_PUBLIC_NON_GOALS
     if replay_eligible:
         manifest_sha = replay.get("manifestSha256")
         portfolios = replay.get("portfolios")
@@ -558,6 +812,7 @@ def validate_and_inventory(
 
     files: list[dict[str, object]] = []
     total_bytes = 0
+    canonical_non_goal_literals = 0
     font_sources: dict[str, dict[str, str]] | None = None
     for directory, names, filenames in os.walk(root, followlinks=False):
         for name in names:
@@ -587,9 +842,30 @@ def validate_and_inventory(
             if total_bytes > MAX_TOTAL_BYTES:
                 raise ValueError("public replay exceeds its total byte policy")
             if suffix in {".css", ".html", ".js", ".json", ".svg"}:
-                text = candidate.read_text(encoding="utf-8")
+                try:
+                    text = candidate.read_text(encoding="utf-8")
+                except UnicodeDecodeError as exc:
+                    raise ValueError(
+                        f"public replay textual artifact is not UTF-8: {relative}"
+                    ) from exc
                 if any(pattern.search(text) for pattern in FORBIDDEN_TEXT):
                     raise ValueError(f"public replay contains private/runtime material: {relative}")
+                try:
+                    _assert_no_mutated_non_goal_array(text)
+                    if NON_GOAL_RENDER_SINK.search(text):
+                        raise ValueError(
+                            "structured non-goals may not flow to a browser rendering sink"
+                        )
+                    canonical_non_goal_literals += _canonical_non_goal_literal_count(text)
+                    _assert_safe_emitted_ecological_copy(
+                        text,
+                        suffix=suffix,
+                        allowed_non_goals=allowed_non_goals,
+                    )
+                except ValueError as exc:
+                    raise ValueError(
+                        f"public replay built artifact violates ecological claim policy: {relative}"
+                    ) from exc
             sha256 = digest(candidate)
             record: dict[str, object] = {
                 "path": relative,
@@ -608,6 +884,12 @@ def validate_and_inventory(
             files.append(record)
     if not files or len(files) > MAX_FILES:
         raise ValueError("public replay file count is outside its release policy")
+    if canonical_non_goal_literals > 1 or (
+        require_verified_evidence and canonical_non_goal_literals != 1
+    ):
+        raise ValueError(
+            "public replay must contain exactly one reviewed structured non-goal literal"
+        )
     index = root / "index.html"
     if not index.is_file() or index.is_symlink():
         raise ValueError("public replay index.html is missing or unsafe")
@@ -619,8 +901,9 @@ def validate_and_inventory(
     )
     if csp_match is None:
         raise ValueError("public replay has no inline Content Security Policy")
-    directives = {item.strip() for item in csp_match.group(1).split(";") if item.strip()}
-    if not REQUIRED_CSP.issubset(directives):
+    directive_items = [item.strip() for item in csp_match.group(1).split(";") if item.strip()]
+    directive_names = [item.split(maxsplit=1)[0].casefold() for item in directive_items]
+    if len(directive_names) != len(set(directive_names)) or set(directive_items) != REQUIRED_CSP:
         raise ValueError("public replay Content Security Policy is not fail-closed")
     return {
         "schema_version": "1.0",

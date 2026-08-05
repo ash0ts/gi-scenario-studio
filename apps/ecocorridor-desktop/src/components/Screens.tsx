@@ -7,6 +7,7 @@ import { evidenceFor, formatUsd, hypothesisRankRange, mapEvidenceFor, pairEviden
 import { chooseConnectivityAsset, chooseConnectivityBundle, createProjectWorkspace, hasNativeHost, hostErrorMessage, hostRequest, rpcData, saveExportCopy } from "../lib/host";
 import { DetailedCloudUploadPreviewSchema, ObservabilitySyncResponseSchema, Sha256Schema } from "../lib/observabilityContracts";
 import { guidedDispositionLabel } from "../lib/decisionCopy";
+import { parseFocalPairCsv, parsePositiveIntegerCsv } from "../lib/focalInput";
 import { AnalysisPlanReceiptSchema, AnalysisPrepareResponseSchema, AnalysisStateResponseSchema, AnalysisStatusResponseSchema, assetRequirements, assetUsesRasterGrid, buildAssetAddParams, buildAssetInspectParams, buildPlanningCreateParams, CostBasisGetResponseSchema, CostBasisSaveResponseSchema, createAssetDraft, DecisionBoardResponseSchema, DigitizationDraftSchema, DigitizationPreviewResponseSchema, DigitizationPublicationResponseSchema, ExportCreateResponseSchema, ExportEligibilityResponseSchema, GridApprovalResponseSchema, GridPreviewResponseSchema, GuidedControlResponseSchema, GuidedRerunStatusSchema, InterventionPreviewResponseSchema, InterventionSaveResponseSchema, ModelAttestResponseSchema, ModelValidationResponseSchema, planningRequirements, ProfessionalProjectStateSchema, ProviderDownloadResponseSchema, RasterInspectionSchema, RecordSaveResponseSchema, type AssetDraft } from "../lib/professional";
 import type { AssetDeployment, EntryPath, EvidenceSelection, GuidedDesktopSession, GuidedEventDraft, OpaqueFileHandle, PlanningState, ProfessionalAnalysisWorkspace, ProfessionalAssetRecord, ProfessionalGridApproval, ProfessionalModelRecords, ProfessionalProjectCandidate, ProfessionalProjectSession, RasterGrid, RasterInspection, RidgewayFixture, RidgewayPortfolio, RpcPayload, WorkflowStepId } from "../types";
 import { CorridorTransect } from "./CorridorTransect";
@@ -977,7 +978,7 @@ function HypothesesScreen({ planning, onPlanning, projectSession, professionalAs
   );
 }
 
-function FocalAreasScreen({ planning, onPlanning, projectSession, professionalAssets, professionalRecords, onProfessionalRecords }: Pick<ScreensProps, "planning" | "onPlanning" | "projectSession" | "professionalAssets" | "professionalRecords" | "onProfessionalRecords">) {
+export function FocalAreasScreen({ planning, onPlanning, projectSession, professionalAssets, professionalRecords, onProfessionalRecords }: Pick<ScreensProps, "planning" | "onPlanning" | "projectSession" | "professionalAssets" | "professionalRecords" | "onProfessionalRecords">) {
   const assets = professionalAssets.filter((item) => item.kind === "FOCAL_RASTER" && item.grid?.value_kind === "IDENTIFIER");
   const [draft, setDraft, undoDraft, draftDirty, commitDraft] = useWorkspaceDraft("focal-area-editor", () => ({ focalSetId: stableUiId("focal_set"), title: "", assetId: assets[0]?.assetId ?? "", guildId: "", focalIds: "", pairText: "", reviewedAt: "" }));
   const { focalSetId, title, assetId, guildId, focalIds, pairText, reviewedAt } = draft;
@@ -990,6 +991,25 @@ function FocalAreasScreen({ planning, onPlanning, projectSession, professionalAs
   const setReviewedAt = (value: string) => updateDraft("reviewedAt", value);
   const [state, setState] = useState<"idle" | "saving" | "error">("idle");
   const [message, setMessage] = useState("");
+  const parsedFocalIds = parsePositiveIntegerCsv(focalIds, { itemName: "Focal ID", minimumItems: 2 });
+  const parsedPairs = parsedFocalIds.ok
+    ? parseFocalPairCsv(pairText, parsedFocalIds.value)
+    : { ok: false as const, error: "Correct the focal-ID list before checking pair membership." };
+  const focalIdsError = focalIds.length > 0 && !parsedFocalIds.ok ? parsedFocalIds.error : null;
+  const pairsError = pairText.length > 0 && parsedFocalIds.ok && !parsedPairs.ok ? parsedPairs.error : null;
+  const selectedAsset = assets.find((item) => item.assetId === assetId);
+  const canSave = Boolean(
+    projectSession
+    && selectedAsset?.grid
+    && title.trim()
+    && guildId.trim()
+    && planning.focalRationale.trim()
+    && planning.reviewer.trim()
+    && reviewedAt
+    && parsedFocalIds.ok
+    && parsedPairs.ok
+    && state !== "saving",
+  );
   const save = async () => {
     if (!projectSession) return;
     setState("saving");
@@ -997,15 +1017,18 @@ function FocalAreasScreen({ planning, onPlanning, projectSession, professionalAs
     try {
       const asset = assets.find((item) => item.assetId === assetId);
       if (!asset?.grid) throw new Error("Select a worker-inspected identifier raster.");
-      const ids = focalIds.split(",").map((item) => Number(item.trim())).filter((item) => Number.isInteger(item));
-      const pairs = pairText.split(",").map((item, index) => {
-        const values = item.trim().split(/[-:]/).map((value) => Number(value.trim()));
-        if (values.length !== 2 || values.some((value) => !Number.isInteger(value) || value <= 0)) throw new Error(`Pair ${item || index + 1} must use positive IDs such as 1-2.`);
-        const [from, to] = values[0] < values[1] ? values : [values[1], values[0]];
-        return { pair_id: `${focalSetId}_pair_${from}_${to}`, from_focal_id: from, to_focal_id: to, required: true };
-      });
+      const strictIds = parsePositiveIntegerCsv(focalIds, { itemName: "Focal ID", minimumItems: 2 });
+      if (!strictIds.ok) throw new Error(strictIds.error);
+      const strictPairs = parseFocalPairCsv(pairText, strictIds.value);
+      if (!strictPairs.ok) throw new Error(strictPairs.error);
+      const pairs = strictPairs.value.map(({ fromFocalId, toFocalId }) => ({
+        pair_id: `${focalSetId}_pair_${fromFocalId}_${toFocalId}`,
+        from_focal_id: fromFocalId,
+        to_focal_id: toFocalId,
+        required: true,
+      }));
       if ([title, guildId, planning.focalRationale, planning.reviewer].some((item) => !item.trim()) || !reviewedAt) throw new Error("Complete title, guild, rationale, reviewer, and review time.");
-      const focalAreaSet = FocalAreaSetSchema.parse({ focal_set_id: focalSetId, title: title.trim(), asset_id: asset.assetId, grid_id: asset.grid.grid_id, guild_id: guildId.trim(), focal_ids: ids, pairs, rationale: planning.focalRationale.trim(), reviewed_by: planning.reviewer.trim(), reviewed_at: new Date(reviewedAt).toISOString() });
+      const focalAreaSet = FocalAreaSetSchema.parse({ focal_set_id: focalSetId, title: title.trim(), asset_id: asset.assetId, grid_id: asset.grid.grid_id, guild_id: guildId.trim(), focal_ids: strictIds.value, pairs, rationale: planning.focalRationale.trim(), reviewed_by: planning.reviewer.trim(), reviewed_at: new Date(reviewedAt).toISOString() });
       const response = await hostRequest<RpcPayload<unknown>>("connectivity.focal_areas.save", { project_handle: projectSession.projectHandle, focal_area_set: focalAreaSet });
       const saved = RecordSaveResponseSchema.parse(rpcData(response));
       if (saved.record_id !== focalAreaSet.focal_set_id) throw new Error("The worker returned a different focal-set identity.");
@@ -1023,7 +1046,29 @@ function FocalAreasScreen({ planning, onPlanning, projectSession, professionalAs
       <PageIntro kicker="Assembly · 05" title="Explain why these places must connect." description="Focal areas establish the question Circuitscape solves. Their rationale, identity, scale, and included pairs must be explicit." badge={<StatusPill state={professionalRecords.focalAreaSets.length ? "pass" : planning.focalRationale ? "review" : "fail"}>{professionalRecords.focalAreaSets.length ? `${professionalRecords.focalAreaSets.length} reviewed` : planning.focalRationale ? "Draft focal set" : "Focal set required"}</StatusPill>} />
       <div className="focal-layout">
         <section className="paper-panel focal-sketch" aria-label="Conceptual focal relationship sketch"><div className="focal-placeholder"><span>A</span><span>B</span><i /><span>C</span><span>D</span></div><p>Relationship sketch only. Import a reviewed IDENTIFIER raster, or publish reviewer-authored cells or polygons from Source assets. This screen binds that retained geometry to explicit focal IDs and pairs; it never merges or alters the asset.</p></section>
-        <section className="paper-panel form-panel"><div className="form-section-heading"><span>Focal-set editor</span><h2>Rationale and explicit pairs</h2><div className="draft-actions"><small>{draftDirty ? "Draft retained in workspace" : "No unsaved field changes"}</small><button className="text-action" type="button" disabled={!draftDirty} onClick={undoDraft}>Undo draft changes</button></div></div><label><span>Title *</span><input value={title} onChange={(event) => setTitle(event.target.value)} /></label><label><span>Reviewed identifier raster *</span><select value={assetId} onChange={(event) => setAssetId(event.target.value)}><option value="">Choose persisted focal raster…</option>{assets.map((asset) => <option key={asset.assetId} value={asset.assetId}>{asset.title} · {asset.grid?.grid_id}</option>)}</select></label><label><span>Guild ID *</span><input value={guildId} onChange={(event) => setGuildId(event.target.value)} /></label><label><span>Positive focal IDs * · comma separated</span><input className="mono" value={focalIds} onChange={(event) => setFocalIds(event.target.value)} placeholder="1, 2, 3, 4" /></label><label><span>Required pairs * · comma separated</span><input className="mono" value={pairText} onChange={(event) => setPairText(event.target.value)} placeholder="1-2, 1-3, 2-4" /></label><label><span>Ecological rationale *</span><textarea rows={5} value={planning.focalRationale} onChange={(event) => onPlanning({ ...planning, focalRationale: event.target.value })} placeholder="Describe guild, evidence basis, core selection, exclusions, scale, and intended comparisons." /></label><label><span>Reviewed at *</span><input type="datetime-local" value={reviewedAt} onChange={(event) => setReviewedAt(event.target.value)} /></label><button className="primary-button" type="button" disabled={!projectSession || !assets.length || state === "saving"} onClick={() => void save()}>{state === "saving" ? "Persisting reviewed focal set…" : "Save reviewed focal set"}</button>{message && <p className={`operation-message ${state === "error" ? "error" : "success"}`} role={state === "error" ? "alert" : "status"}>{message}</p>}<p className="control-requirement">Unconfirmed edits remain local to this open workspace. Saving requires an authorized IDENTIFIER raster, explicit pairs, guild, rationale, reviewer, and review time.</p></section>
+        <section className="paper-panel form-panel">
+          <div className="form-section-heading"><span>Focal-set editor</span><h2>Rationale and explicit pairs</h2><div className="draft-actions"><small>{draftDirty ? "Draft retained in workspace" : "No unsaved field changes"}</small><button className="text-action" type="button" disabled={!draftDirty} onClick={undoDraft}>Undo draft changes</button></div></div>
+          <label><span>Title *</span><input value={title} onChange={(event) => setTitle(event.target.value)} /></label>
+          <label><span>Reviewed identifier raster *</span><select value={assetId} onChange={(event) => setAssetId(event.target.value)}><option value="">Choose persisted focal raster…</option>{assets.map((asset) => <option key={asset.assetId} value={asset.assetId}>{asset.title} · {asset.grid?.grid_id}</option>)}</select></label>
+          <label><span>Guild ID *</span><input value={guildId} onChange={(event) => setGuildId(event.target.value)} /></label>
+          <label>
+            <span>Positive focal IDs * · comma separated</span>
+            <input className="mono" value={focalIds} onChange={(event) => setFocalIds(event.target.value)} placeholder="1, 2, 3, 4" aria-invalid={Boolean(focalIdsError)} aria-describedby={`focal-ids-help${focalIdsError ? " focal-ids-error" : ""}`} />
+            <small id="focal-ids-help">Enter every reviewed raster identifier once. Invalid tokens are never dropped or repaired.</small>
+            {focalIdsError && <small id="focal-ids-error" className="field-error" role="alert">{focalIdsError}</small>}
+          </label>
+          <label>
+            <span>Required pairs * · comma separated</span>
+            <input className="mono" value={pairText} onChange={(event) => setPairText(event.target.value)} placeholder="1-2, 1-3, 2-4" aria-invalid={Boolean(pairsError)} aria-describedby={`focal-pairs-help${pairsError ? " focal-pairs-error" : ""}`} />
+            <small id="focal-pairs-help">Use ascending focal IDs in the form 1-2. Every endpoint must be in the focal-ID list.</small>
+            {pairsError && <small id="focal-pairs-error" className="field-error" role="alert">{pairsError}</small>}
+          </label>
+          <label><span>Ecological rationale *</span><textarea rows={5} value={planning.focalRationale} onChange={(event) => onPlanning({ ...planning, focalRationale: event.target.value })} placeholder="Describe guild, evidence basis, core selection, exclusions, scale, and intended comparisons." /></label>
+          <label><span>Reviewed at *</span><input type="datetime-local" value={reviewedAt} onChange={(event) => setReviewedAt(event.target.value)} /></label>
+          <button className="primary-button" type="button" disabled={!canSave} onClick={() => void save()}>{state === "saving" ? "Persisting reviewed focal set…" : "Save reviewed focal set"}</button>
+          {message && <p className={`operation-message ${state === "error" ? "error" : "success"}`} role={state === "error" ? "alert" : "status"}>{message}</p>}
+          <p className="control-requirement">Unconfirmed edits remain local to this open workspace. Saving requires an authorized IDENTIFIER raster, explicit pairs, guild, rationale, reviewer, and review time.</p>
+        </section>
       </div>
     </>
   );

@@ -42,6 +42,7 @@ jobs:
           --extra dev
           --extra science
           --extra ecocorridor
+          --extra ecocorridor-report
           --extra export
           --extra observability
           --extra release
@@ -253,6 +254,7 @@ jobs:
           uv sync --locked
           --extra science
           --extra ecocorridor
+          --extra ecocorridor-report
           --extra export
           --extra observability
           --extra release
@@ -469,6 +471,9 @@ jobs:
       - name: Install Playwright Chromium
         run: pnpm --dir apps/ecocorridor-desktop exec playwright install --with-deps chromium
 
+      - name: Crawl policy-safe production replay copy
+        run: pnpm --dir apps/ecocorridor-replay test:rendered-copy
+
       - name: Run accessibility and screenshot acceptance
         run: pnpm --dir apps/ecocorridor-desktop test:e2e
 
@@ -480,6 +485,8 @@ jobs:
           path: |
             apps/ecocorridor-desktop/playwright-report
             apps/ecocorridor-desktop/test-results
+            apps/ecocorridor-replay/playwright-report
+            apps/ecocorridor-replay/test-results
           if-no-files-found: warn
           retention-days: 14
 

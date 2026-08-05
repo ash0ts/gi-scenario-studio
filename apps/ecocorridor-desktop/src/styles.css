@@ -87,6 +87,8 @@ textarea { resize: vertical; line-height: 1.45; }
 input::placeholder, textarea::placeholder { color: #7a8a85; opacity: 1; }
 label > span, fieldset legend { display: block; margin-bottom: 6px; color: var(--basalt-soft); font-size: 13px; font-weight: 700; }
 label > small { display: block; margin-top: 7px; color: var(--muted); font-size: 12px; }
+input[aria-invalid="true"] { border-color: var(--berry); box-shadow: inset 3px 0 0 var(--berry); }
+label > .field-error { color: #7b2d45; font-weight: 700; line-height: 1.4; }
 .checkbox-row { min-height: 38px; margin: 9px 0; display: flex; align-items: center; gap: 9px; font-size: 13px; line-height: 1.35; }
 .checkbox-row input { width: 17px; min-height: 17px; margin: 0; flex: 0 0 auto; accent-color: var(--cyan); }
 

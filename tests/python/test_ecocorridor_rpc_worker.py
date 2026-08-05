@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import os
+import threading
 import zipfile
 from contextlib import contextmanager
 from dataclasses import asdict
@@ -12,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from ecocorridor_core import providers as provider_module
 from ecocorridor_core import rpc_worker
 from ecocorridor_core.analysis_executor import (
     AnalysisOwnershipError,
@@ -43,6 +45,7 @@ from ecocorridor_core.observability import (
     derive_cloud_sync_state,
 )
 from ecocorridor_core.project_store import EcoProjectStore
+from ecocorridor_core.providers import preview_download
 from ecocorridor_core.ridgeway import build_public_ui_projection, build_ridgeway_fixture
 from ecocorridor_core.rpc_worker import (
     ExportValidateParams,
@@ -263,6 +266,83 @@ def _asset_publication_state(project: Path) -> dict[str, Any]:
             "semantic_diffs": store.list_records("semantic_diff"),
             "outbox": store.telemetry_rows(),
         }
+    finally:
+        store.close()
+
+
+_PROVIDER_DOWNLOAD_URL = "https://www2.census.gov/geo/tiger/TIGER2025/ROADS/tl_2025_01001_roads.zip"
+_PROVIDER_DOWNLOAD_BYTES = b"reviewed provider context"
+
+
+class _ProviderDownloadResponse(io.BytesIO):
+    def __init__(self, payload: bytes = _PROVIDER_DOWNLOAD_BYTES) -> None:
+        super().__init__(payload)
+        self.headers = {"Content-Length": str(len(payload))}
+
+    def geturl(self) -> str:
+        return _PROVIDER_DOWNLOAD_URL
+
+    def getcode(self) -> int:
+        return 200
+
+
+class _ProviderDownloadOpener:
+    def __init__(self, payload: bytes = _PROVIDER_DOWNLOAD_BYTES) -> None:
+        self.payload = payload
+        self.open_count = 0
+
+    def open(self, request: Any, timeout: float) -> _ProviderDownloadResponse:
+        assert request.full_url == _PROVIDER_DOWNLOAD_URL
+        assert timeout == 60.0
+        self.open_count += 1
+        return _ProviderDownloadResponse(self.payload)
+
+
+def _provider_download_params(
+    project: Path,
+    fixture: Any,
+    *,
+    asset_id: str,
+) -> dict[str, Any]:
+    preview = preview_download(
+        provider_id="tiger_line_2025",
+        source_url=_PROVIDER_DOWNLOAD_URL,
+        extent_description="Synthetic county planning context",
+        expected_bytes=len(_PROVIDER_DOWNLOAD_BYTES),
+    )
+    authorization = fixture.bundle.assets[0].authorization.model_copy(
+        update={
+            "asset_id": asset_id,
+            "license_spdx_or_name": preview.license,
+        }
+    )
+    return {
+        "project_directory": str(project),
+        "provider_id": preview.provider_id,
+        "source_url": preview.source_url,
+        "extent_description": preview.extent_description,
+        "expected_bytes": preview.expected_bytes,
+        "asset_id": asset_id,
+        "title": f"Reviewed provider asset {asset_id}",
+        "kind": AssetKind.VECTOR_CONTEXT.value,
+        "media_type": "application/zip",
+        "authorization": authorization.model_dump(mode="json"),
+        "explicit_consent": True,
+        "maximum_bytes": 1024,
+    }
+
+
+def _set_provider_input_limit(project: Path, maximum_bytes: int) -> None:
+    store = EcoProjectStore(project)
+    try:
+        policy = store.effective_bundle().resource_policy.model_copy(
+            update={"max_input_bytes": maximum_bytes}
+        )
+        store.publish_semantic_change(
+            [("resource_policy", "current", policy.model_dump(mode="json"))],
+            created_by="Resource reviewer",
+            reason="Set a focused provider-input limit for the concurrency test.",
+        )
     finally:
         store.close()
 
@@ -885,6 +965,42 @@ def test_bundle_transport_keeps_unknown_malformed_modes_manifest_invalid(tmp_pat
     assert raised.value.error.code == "BUNDLE_MANIFEST_INVALID"
 
 
+def test_bundle_import_rejects_assets_above_policy_before_project_publication(
+    tmp_path: Path,
+) -> None:
+    fixture = build_ridgeway_fixture()
+    payloads = _fixture_asset_payloads()
+    oversized = fixture.bundle.model_copy(
+        update={
+            "resource_policy": fixture.bundle.resource_policy.model_copy(
+                update={"max_input_bytes": 1}
+            )
+        }
+    )
+    archive = tmp_path / "oversized-input-policy.ecocorridor"
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as output:
+        output.writestr(
+            "connectivity-project.json",
+            _json_bytes(oversized.model_dump(mode="json")),
+        )
+        for asset in oversized.assets:
+            output.writestr(asset.relative_path, payloads[asset.asset_id])
+    project = tmp_path / "oversized-input-policy-project"
+    dispatcher = RPCDispatcher(data_root=tmp_path)
+
+    with pytest.raises(RPCFault) as blocked:
+        dispatcher.dispatch(
+            "connectivity.bundle.import",
+            {
+                "bundle_path": str(archive),
+                "project_directory": str(project),
+            },
+        )
+
+    assert blocked.value.error.code == "BUNDLE_INPUT_RESOURCE_POLICY_BLOCKED"
+    assert not project.exists()
+
+
 def test_bundle_import_rejects_duplicate_scientific_identity(tmp_path: Path) -> None:
     payload = build_ridgeway_fixture().bundle.model_dump(mode="json")
     duplicate = dict(payload["resistance_hypotheses"][0])
@@ -1073,6 +1189,88 @@ def test_asset_ingest_reuses_identical_destination_idempotently(tmp_path: Path) 
     assert _asset_publication_state(project) == after_first
 
 
+def test_asset_ingest_rejects_changed_bytes_for_an_existing_asset_id(tmp_path: Path) -> None:
+    dispatcher, project, fixture = _create_asset_ingest_planning_project(
+        tmp_path, project_name="immutable-local-asset-project"
+    )
+    first_source = tmp_path / "immutable-local-first.bin"
+    changed_source = tmp_path / "immutable-local-changed.bin"
+    first_source.write_bytes(b"first-content")
+    changed_source.write_bytes(b"other-content")
+    first_asset = _reviewed_document_asset(
+        fixture,
+        first_source,
+        asset_id="immutable-local-asset",
+    )
+    changed_asset = _reviewed_document_asset(
+        fixture,
+        changed_source,
+        asset_id="immutable-local-asset",
+    ).model_copy(update={"relative_path": "data_assets/immutable-local-changed.bin"})
+    dispatcher.dispatch(
+        "connectivity.asset.add",
+        {
+            "project_directory": str(project),
+            "source_path": str(first_source),
+            "asset": first_asset.model_dump(mode="json"),
+        },
+    )
+    before = _asset_publication_state(project)
+
+    with pytest.raises(RPCFault) as changed:
+        dispatcher.dispatch(
+            "connectivity.asset.add",
+            {
+                "project_directory": str(project),
+                "source_path": str(changed_source),
+                "asset": changed_asset.model_dump(mode="json"),
+            },
+        )
+
+    assert changed.value.error.code == "ASSET_ID_IMMUTABLE_CONFLICT"
+    assert not (project / changed_asset.relative_path).exists()
+    assert _asset_publication_state(project) == before
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "outside-managed-input.bin",
+        "data_assets/.downloads/.reserved-stage.token.download",
+        "data_assets/.provider-download.lock",
+        "data_assets/provider/tiger_line_2025/sha256/" + "a" * 64,
+    ],
+)
+def test_local_asset_rejects_provider_operational_paths(tmp_path: Path, relative_path: str) -> None:
+    dispatcher, project, fixture = _create_asset_ingest_planning_project(
+        tmp_path, project_name="reserved-local-asset-path-project"
+    )
+    source = tmp_path / "reserved-local-asset.bin"
+    source.write_bytes(b"reviewed")
+    asset = _reviewed_document_asset(
+        fixture,
+        source,
+        asset_id="reserved-local-asset",
+    ).model_copy(update={"relative_path": relative_path})
+
+    with pytest.raises(RPCFault) as raised:
+        dispatcher.dispatch(
+            "connectivity.asset.add",
+            {
+                "project_directory": str(project),
+                "source_path": str(source),
+                "asset": asset.model_dump(mode="json"),
+            },
+        )
+
+    assert raised.value.error.code == "ASSET_PATH_RESERVED"
+    store = EcoProjectStore(project)
+    try:
+        assert store.list_records("asset") == []
+    finally:
+        store.close()
+
+
 def test_raster_contract_inspects_hash_verified_staged_inode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1118,7 +1316,7 @@ def test_raster_contract_inspects_hash_verified_staged_inode(
     def inspect_staged(path: Path, reviewed_asset: ConnectivityAsset) -> Any:
         inspected_paths.append(Path(path))
         assert Path(path) != source
-        assert Path(path).parent == destination.parent
+        assert Path(path).parent == project / "data_assets" / ".downloads"
         assert Path(path).read_bytes() == source.read_bytes()
         return original_inspect(path, reviewed_asset)
 
@@ -1135,7 +1333,8 @@ def test_raster_contract_inspects_hash_verified_staged_inode(
 
     assert added["inspection"]["minimum"] == 10
     assert len(inspected_paths) == 1
-    assert inspected_paths[0].name.startswith(f".{destination.name}.")
+    assert inspected_paths[0].name.startswith(".local_asset.")
+    assert inspected_paths[0].name.endswith(".download")
     assert not inspected_paths[0].exists()
     assert destination.read_bytes() == source.read_bytes()
 
@@ -1149,6 +1348,7 @@ def test_asset_publication_failure_rolls_back_repository_and_reuses_exact_orphan
     source = tmp_path / "reviewed-publication-failure.bin"
     source.write_bytes(b"reviewed")
     asset = _reviewed_document_asset(fixture, source, asset_id="publication-failure-asset")
+    _set_provider_input_limit(project, asset.byte_size)
     destination = project / asset.relative_path
     before = _asset_publication_state(project)
     original_enqueue = EcoProjectStore._enqueue_outbox
@@ -1179,6 +1379,11 @@ def test_asset_publication_failure_rolls_back_repository_and_reuses_exact_orphan
     assert raised.value.error.retryable is True
     assert destination.read_bytes() == b"reviewed"
     assert _asset_publication_state(project) == before
+    store = EcoProjectStore(project)
+    try:
+        assert store.retained_input_bytes() == asset.byte_size
+    finally:
+        store.close()
 
     monkeypatch.setattr(EcoProjectStore, "_enqueue_outbox", staticmethod(original_enqueue))
     recovered = dispatcher.dispatch(
@@ -1191,6 +1396,831 @@ def test_asset_publication_failure_rolls_back_repository_and_reuses_exact_orphan
     )["data"]
     assert recovered["asset_id"] == asset.asset_id
     assert len(_asset_publication_state(project)["assets"]) == 1
+
+
+def test_local_publication_orphan_blocks_a_different_asset_at_input_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dispatcher, project, fixture = _create_asset_ingest_planning_project(
+        tmp_path, project_name="local-orphan-quota-project"
+    )
+    first_source = tmp_path / "local-orphan-first.bin"
+    second_source = tmp_path / "local-orphan-second.bin"
+    first_source.write_bytes(b"first123")
+    second_source.write_bytes(b"second12")
+    first = _reviewed_document_asset(fixture, first_source, asset_id="local-orphan-first")
+    second = _reviewed_document_asset(fixture, second_source, asset_id="local-orphan-second")
+    _set_provider_input_limit(project, first.byte_size)
+    original_enqueue = EcoProjectStore._enqueue_outbox
+
+    def fail_semantic_outbox(*args: Any, **kwargs: Any) -> str:
+        if kwargs.get("event_type") == "semantic_revision":
+            raise OSError("injected local publication failure")
+        return original_enqueue(*args, **kwargs)
+
+    monkeypatch.setattr(
+        EcoProjectStore,
+        "_enqueue_outbox",
+        staticmethod(fail_semantic_outbox),
+    )
+    with pytest.raises(RPCFault) as failed:
+        dispatcher.dispatch(
+            "connectivity.asset.add",
+            {
+                "project_directory": str(project),
+                "source_path": str(first_source),
+                "asset": first.model_dump(mode="json"),
+            },
+        )
+    assert failed.value.error.code == "ASSET_PUBLICATION_FAILED"
+    monkeypatch.setattr(EcoProjectStore, "_enqueue_outbox", staticmethod(original_enqueue))
+
+    with pytest.raises(RPCFault) as blocked:
+        dispatcher.dispatch(
+            "connectivity.asset.add",
+            {
+                "project_directory": str(project),
+                "source_path": str(second_source),
+                "asset": second.model_dump(mode="json"),
+            },
+        )
+
+    assert blocked.value.error.code == "ASSET_RESOURCE_POLICY_BLOCKED"
+    assert (project / first.relative_path).read_bytes() == first_source.read_bytes()
+    assert not (project / second.relative_path).exists()
+    store = EcoProjectStore(project)
+    try:
+        assert store.retained_input_bytes() == first.byte_size
+        assert store.list_records("asset") == []
+    finally:
+        store.close()
+
+
+def test_local_asset_aliases_share_one_physical_quota_charge(tmp_path: Path) -> None:
+    dispatcher, project, fixture = _create_asset_ingest_planning_project(
+        tmp_path, project_name="local-shared-path-project"
+    )
+    source = tmp_path / "local-shared.bin"
+    source.write_bytes(b"shared-local")
+    first = _reviewed_document_asset(fixture, source, asset_id="local-shared-first")
+    second = _reviewed_document_asset(
+        fixture,
+        source,
+        asset_id="local-shared-second",
+    ).model_copy(update={"relative_path": first.relative_path})
+    _set_provider_input_limit(project, first.byte_size)
+
+    for asset in (first, second):
+        dispatcher.dispatch(
+            "connectivity.asset.add",
+            {
+                "project_directory": str(project),
+                "source_path": str(source),
+                "asset": asset.model_dump(mode="json"),
+            },
+        )
+
+    store = EcoProjectStore(project)
+    try:
+        assert store.retained_input_bytes() == first.byte_size
+        assert {item["asset_id"] for item in store.list_records("asset")} == {
+            first.asset_id,
+            second.asset_id,
+        }
+    finally:
+        store.close()
+
+
+def test_provider_download_publication_failure_keeps_orphan_for_idempotent_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, project, fixture = _create_asset_ingest_planning_project(
+        tmp_path, project_name="provider-publication-failure-project"
+    )
+    dispatcher = RPCDispatcher(data_root=tmp_path, download_opener=_ProviderDownloadOpener())
+    params = _provider_download_params(project, fixture, asset_id="provider-retry-asset")
+    before = _asset_publication_state(project)
+    digest = hashlib.sha256(_PROVIDER_DOWNLOAD_BYTES).hexdigest()
+    retained = project / "data_assets" / "provider" / "tiger_line_2025" / "sha256" / digest
+    original_enqueue = EcoProjectStore._enqueue_outbox
+
+    def fail_semantic_outbox(*args: Any, **kwargs: Any) -> str:
+        if kwargs.get("event_type") == "semantic_revision":
+            raise OSError("injected provider publication failure")
+        return original_enqueue(*args, **kwargs)
+
+    monkeypatch.setattr(
+        EcoProjectStore,
+        "_enqueue_outbox",
+        staticmethod(fail_semantic_outbox),
+    )
+
+    with pytest.raises(RPCFault) as raised:
+        dispatcher.dispatch("connectivity.asset.download", params)
+
+    assert raised.value.error.code == "ASSET_PUBLICATION_FAILED"
+    assert raised.value.error.severity.value == "BLOCKING"
+    assert raised.value.error.retryable is True
+    assert retained.read_bytes() == _PROVIDER_DOWNLOAD_BYTES
+    assert _asset_publication_state(project) == before
+
+    monkeypatch.setattr(EcoProjectStore, "_enqueue_outbox", staticmethod(original_enqueue))
+    recovered = dispatcher.dispatch("connectivity.asset.download", params)["data"]
+    after_recovery = _asset_publication_state(project)
+    retained_inode = retained.stat().st_ino
+    repeated = dispatcher.dispatch("connectivity.asset.download", params)["data"]
+
+    assert recovered == repeated
+    assert retained.read_bytes() == _PROVIDER_DOWNLOAD_BYTES
+    assert retained.stat().st_ino == retained_inode
+    assert len(after_recovery["assets"]) == 1
+    assert _asset_publication_state(project) == after_recovery
+    store = EcoProjectStore(project)
+    try:
+        receipts = store.list_records("provider_receipt")
+    finally:
+        store.close()
+    assert len(receipts) == 1
+    assert receipts[0]["created"] is False
+
+
+def test_provider_cas_directory_fsync_failure_blocks_database_publication_and_retries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, project, fixture = _create_asset_ingest_planning_project(
+        tmp_path, project_name="provider-fsync-failure-project"
+    )
+    opener = _ProviderDownloadOpener()
+    dispatcher = RPCDispatcher(data_root=tmp_path, download_opener=opener)
+    params = _provider_download_params(project, fixture, asset_id="provider-fsync-retry")
+    digest = hashlib.sha256(_PROVIDER_DOWNLOAD_BYTES).hexdigest()
+    retained = project / "data_assets" / "provider" / "tiger_line_2025" / "sha256" / digest
+    before = _asset_publication_state(project)
+    original_fsync = provider_module._fsync_directory
+
+    def fail_directory_fsync(_directory: Path) -> None:
+        raise OSError("injected provider CAS directory fsync failure")
+
+    monkeypatch.setattr(provider_module, "_fsync_directory", fail_directory_fsync)
+    with pytest.raises(RPCFault) as raised:
+        dispatcher.dispatch("connectivity.asset.download", params)
+
+    assert raised.value.error.code == "ASSET_PUBLICATION_FAILED"
+    assert raised.value.error.retryable is True
+    assert retained.read_bytes() == _PROVIDER_DOWNLOAD_BYTES
+    assert _asset_publication_state(project) == before
+
+    monkeypatch.setattr(provider_module, "_fsync_directory", original_fsync)
+    recovered = dispatcher.dispatch("connectivity.asset.download", params)["data"]
+    assert recovered["asset"]["asset_id"] == "provider-fsync-retry"
+    assert opener.open_count == 2
+    store = EcoProjectStore(project)
+    try:
+        assert len(store.list_records("asset")) == 1
+        receipts = store.list_records("provider_receipt")
+    finally:
+        store.close()
+    assert len(receipts) == 1
+    assert receipts[0]["created"] is False
+
+
+def test_provider_download_failed_creator_never_unlinks_reused_published_blob(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, project, fixture = _create_asset_ingest_planning_project(
+        tmp_path, project_name="provider-concurrent-publication-project"
+    )
+    first_dispatcher = RPCDispatcher(data_root=tmp_path, download_opener=_ProviderDownloadOpener())
+    second_dispatcher = RPCDispatcher(data_root=tmp_path, download_opener=_ProviderDownloadOpener())
+    first_params = _provider_download_params(project, fixture, asset_id="provider-first")
+    second_params = _provider_download_params(project, fixture, asset_id="provider-second")
+    original_publish = EcoProjectStore.publish_semantic_change
+
+    def interleaved_publish(
+        store: EcoProjectStore,
+        records: Any,
+        *args: Any,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        if records and records[0][0:2] == ("asset", "provider-first"):
+            raise OSError("injected first-writer publication failure")
+        return original_publish(store, records, *args, **kwargs)
+
+    monkeypatch.setattr(EcoProjectStore, "publish_semantic_change", interleaved_publish)
+    with pytest.raises(RPCFault) as first_error:
+        first_dispatcher.dispatch("connectivity.asset.download", first_params)
+    first_fault = first_error.value
+    assert first_fault.error.code == "ASSET_PUBLICATION_FAILED"
+    assert first_fault.error.retryable is True
+    second = second_dispatcher.dispatch("connectivity.asset.download", second_params)["data"]
+    retained = project / second["asset"]["relative_path"]
+    assert retained.read_bytes() == _PROVIDER_DOWNLOAD_BYTES
+    store = EcoProjectStore(project)
+    try:
+        assets = store.list_records("asset")
+        receipts = store.list_records("provider_receipt")
+    finally:
+        store.close()
+    assert [item["asset_id"] for item in assets] == ["provider-second"]
+    assert [item["asset_id"] for item in receipts] == ["provider-second"]
+
+
+def test_provider_orphan_counts_against_input_limit_but_exact_retry_can_reuse_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, project, fixture = _create_asset_ingest_planning_project(
+        tmp_path, project_name="provider-orphan-quota-project"
+    )
+    _set_provider_input_limit(project, len(_PROVIDER_DOWNLOAD_BYTES))
+    opener = _ProviderDownloadOpener()
+    dispatcher = RPCDispatcher(data_root=tmp_path, download_opener=opener)
+    params = _provider_download_params(project, fixture, asset_id="provider-orphan-retry")
+    original_enqueue = EcoProjectStore._enqueue_outbox
+
+    def fail_semantic_outbox(*args: Any, **kwargs: Any) -> str:
+        if kwargs.get("event_type") == "semantic_revision":
+            raise OSError("injected provider publication failure")
+        return original_enqueue(*args, **kwargs)
+
+    monkeypatch.setattr(
+        EcoProjectStore,
+        "_enqueue_outbox",
+        staticmethod(fail_semantic_outbox),
+    )
+    with pytest.raises(RPCFault) as failed:
+        dispatcher.dispatch("connectivity.asset.download", params)
+    assert failed.value.error.code == "ASSET_PUBLICATION_FAILED"
+
+    store = EcoProjectStore(project)
+    try:
+        assert store.retained_input_bytes() == len(_PROVIDER_DOWNLOAD_BYTES)
+        assert store.list_records("asset") == []
+        assert store.list_records("provider_receipt") == []
+    finally:
+        store.close()
+    preview = dispatcher.dispatch(
+        "connectivity.asset.download.preview",
+        {
+            key: params[key]
+            for key in (
+                "project_directory",
+                "provider_id",
+                "source_url",
+                "extent_description",
+                "expected_bytes",
+                "selected_vintage",
+                "selected_resolution",
+            )
+            if key in params
+        },
+    )["data"]
+    assert preview["remaining_project_input_bytes"] == 0
+    assert preview["resource_policy_allowed"] is False
+
+    monkeypatch.setattr(EcoProjectStore, "_enqueue_outbox", staticmethod(original_enqueue))
+    recovered = dispatcher.dispatch("connectivity.asset.download", params)["data"]
+    assert recovered["asset"]["asset_id"] == "provider-orphan-retry"
+    assert opener.open_count == 2
+    store = EcoProjectStore(project)
+    try:
+        assert store.retained_input_bytes() == len(_PROVIDER_DOWNLOAD_BYTES)
+        assert len(store.list_records("asset")) == 1
+        assert len(store.list_records("provider_receipt")) == 1
+    finally:
+        store.close()
+
+
+def test_provider_orphan_at_input_limit_blocks_local_asset_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, project, fixture = _create_asset_ingest_planning_project(
+        tmp_path, project_name="provider-orphan-local-quota-project"
+    )
+    _set_provider_input_limit(project, len(_PROVIDER_DOWNLOAD_BYTES))
+    dispatcher = RPCDispatcher(data_root=tmp_path, download_opener=_ProviderDownloadOpener())
+    provider_params = _provider_download_params(
+        project,
+        fixture,
+        asset_id="provider-orphan-before-local",
+    )
+    original_enqueue = EcoProjectStore._enqueue_outbox
+
+    def fail_semantic_outbox(*args: Any, **kwargs: Any) -> str:
+        if kwargs.get("event_type") == "semantic_revision":
+            raise OSError("injected provider publication failure")
+        return original_enqueue(*args, **kwargs)
+
+    monkeypatch.setattr(
+        EcoProjectStore,
+        "_enqueue_outbox",
+        staticmethod(fail_semantic_outbox),
+    )
+    with pytest.raises(RPCFault) as provider_failure:
+        dispatcher.dispatch("connectivity.asset.download", provider_params)
+    assert provider_failure.value.error.code == "ASSET_PUBLICATION_FAILED"
+    monkeypatch.setattr(EcoProjectStore, "_enqueue_outbox", staticmethod(original_enqueue))
+
+    source = tmp_path / "local-after-provider-orphan.bin"
+    source.write_bytes(b"local")
+    local_asset = _reviewed_document_asset(
+        fixture,
+        source,
+        asset_id="local-after-provider-orphan",
+    )
+    destination = project / local_asset.relative_path
+    with pytest.raises(RPCFault) as blocked:
+        dispatcher.dispatch(
+            "connectivity.asset.add",
+            {
+                "project_directory": str(project),
+                "source_path": str(source),
+                "asset": local_asset.model_dump(mode="json"),
+            },
+        )
+
+    assert blocked.value.error.code == "ASSET_RESOURCE_POLICY_BLOCKED"
+    assert not destination.exists()
+    assert list(destination.parent.glob(f".{destination.name}.*")) == []
+    store = EcoProjectStore(project)
+    try:
+        assert store.retained_input_bytes() == len(_PROVIDER_DOWNLOAD_BYTES)
+        assert store.list_records("asset") == []
+        assert store.list_records("provider_receipt") == []
+    finally:
+        store.close()
+
+
+def test_imported_bundle_assets_count_against_local_asset_input_limit(tmp_path: Path) -> None:
+    dispatcher, project, fixture = _create_asset_ingest_planning_project(
+        tmp_path, project_name="imported-base-asset-quota-project"
+    )
+    project_id = "imported-base-asset-quota-project"
+    base_bytes = sum(asset.byte_size for asset in fixture.bundle.assets)
+    imported = fixture.bundle.model_copy(
+        update={
+            "project_id": project_id,
+            "title": "Imported base asset quota project",
+            "revision": fixture.bundle.revision.model_copy(
+                update={"project_id": project_id, "revision_id": f"{project_id}-revision"}
+            ),
+            "fitness": fixture.bundle.fitness.model_copy(
+                update={"revision_id": f"{project_id}-revision"}
+            ),
+            "resource_policy": fixture.bundle.resource_policy.model_copy(
+                update={"max_input_bytes": base_bytes}
+            ),
+        }
+    )
+    store = EcoProjectStore(project)
+    try:
+        store.put_record("bundle", project_id, imported.model_dump(mode="json"))
+        assert store.retained_input_bytes() == base_bytes
+    finally:
+        store.close()
+    _set_provider_input_limit(project, base_bytes)
+    source = tmp_path / "local-after-imported-base.bin"
+    source.write_bytes(b"local")
+    asset = _reviewed_document_asset(fixture, source, asset_id="local-after-imported-base")
+
+    with pytest.raises(RPCFault) as blocked:
+        dispatcher.dispatch(
+            "connectivity.asset.add",
+            {
+                "project_directory": str(project),
+                "source_path": str(source),
+                "asset": asset.model_dump(mode="json"),
+            },
+        )
+
+    assert blocked.value.error.code == "ASSET_RESOURCE_POLICY_BLOCKED"
+    assert not (project / asset.relative_path).exists()
+
+
+def test_concurrent_local_assets_cannot_both_publish_above_input_limit(tmp_path: Path) -> None:
+    _, project, fixture = _create_asset_ingest_planning_project(
+        tmp_path, project_name="concurrent-local-quota-project"
+    )
+    first_source = tmp_path / "concurrent-local-first.bin"
+    second_source = tmp_path / "concurrent-local-second.bin"
+    first_source.write_bytes(b"first-content")
+    second_source.write_bytes(b"other-content")
+    assert first_source.stat().st_size == second_source.stat().st_size
+    _set_provider_input_limit(project, first_source.stat().st_size)
+    assets = [
+        _reviewed_document_asset(fixture, first_source, asset_id="concurrent-local-first"),
+        _reviewed_document_asset(fixture, second_source, asset_id="concurrent-local-second"),
+    ]
+    start_barrier = threading.Barrier(2)
+    dispatchers = [RPCDispatcher(data_root=tmp_path), RPCDispatcher(data_root=tmp_path)]
+    sources = [first_source, second_source]
+    successes: list[dict[str, Any]] = []
+    failures: list[RPCFault] = []
+
+    def add_local(index: int) -> None:
+        start_barrier.wait(10)
+        try:
+            successes.append(
+                dispatchers[index].dispatch(
+                    "connectivity.asset.add",
+                    {
+                        "project_directory": str(project),
+                        "source_path": str(sources[index]),
+                        "asset": assets[index].model_dump(mode="json"),
+                    },
+                )["data"]
+            )
+        except RPCFault as exc:
+            failures.append(exc)
+
+    threads = [threading.Thread(target=add_local, args=(index,)) for index in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(15)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert len(successes) == 1
+    assert len(failures) == 1
+    assert failures[0].error.code == "ASSET_RESOURCE_POLICY_BLOCKED"
+    store = EcoProjectStore(project)
+    try:
+        assert store.retained_input_bytes() == first_source.stat().st_size
+        assert len(store.list_records("asset")) == 1
+    finally:
+        store.close()
+    retained = [project / asset.relative_path for asset in assets]
+    assert sum(path.exists() for path in retained) == 1
+    assert all(list(path.parent.glob(f".{path.name}.*")) == [] for path in retained)
+
+
+def test_local_asset_rechecks_concurrently_lowered_input_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dispatcher, project, fixture = _create_asset_ingest_planning_project(
+        tmp_path, project_name="local-policy-race-project"
+    )
+    source = tmp_path / "local-policy-race.bin"
+    source.write_bytes(b"reviewed")
+    asset = _reviewed_document_asset(fixture, source, asset_id="local-policy-race")
+    staged_event = threading.Event()
+    continue_event = threading.Event()
+    original_stage = rpc_worker._stage_verified_file
+
+    def pause_after_stage(*args: Any, **kwargs: Any) -> Any:
+        staged = original_stage(*args, **kwargs)
+        staged_event.set()
+        assert continue_event.wait(10)
+        return staged
+
+    monkeypatch.setattr(rpc_worker, "_stage_verified_file", pause_after_stage)
+    failures: list[RPCFault] = []
+
+    def add_local() -> None:
+        try:
+            dispatcher.dispatch(
+                "connectivity.asset.add",
+                {
+                    "project_directory": str(project),
+                    "source_path": str(source),
+                    "asset": asset.model_dump(mode="json"),
+                },
+            )
+        except RPCFault as exc:
+            failures.append(exc)
+
+    thread = threading.Thread(target=add_local)
+    thread.start()
+    assert staged_event.wait(10)
+    _set_provider_input_limit(project, asset.byte_size - 1)
+    continue_event.set()
+    thread.join(15)
+
+    assert not thread.is_alive()
+    assert len(failures) == 1
+    assert failures[0].error.code == "ASSET_RESOURCE_POLICY_BLOCKED"
+    assert not (project / asset.relative_path).exists()
+    store = EcoProjectStore(project)
+    try:
+        assert store.list_records("asset") == []
+        assert store.retained_input_bytes() == 0
+    finally:
+        store.close()
+
+
+def test_resource_policy_cannot_be_lowered_below_retained_input_bytes(tmp_path: Path) -> None:
+    dispatcher, project, fixture = _create_asset_ingest_planning_project(
+        tmp_path, project_name="resource-policy-retained-input-project"
+    )
+    source = tmp_path / "resource-policy-retained-input.bin"
+    source.write_bytes(b"reviewed")
+    asset = _reviewed_document_asset(fixture, source, asset_id="resource-policy-retained-input")
+    dispatcher.dispatch(
+        "connectivity.asset.add",
+        {
+            "project_directory": str(project),
+            "source_path": str(source),
+            "asset": asset.model_dump(mode="json"),
+        },
+    )
+    store = EcoProjectStore(project)
+    try:
+        active_policy = store.effective_bundle().resource_policy
+        before = store.latest_record("resource_policy")
+    finally:
+        store.close()
+    proposed = active_policy.model_copy(update={"max_input_bytes": asset.byte_size - 1})
+
+    with pytest.raises(RPCFault) as blocked:
+        dispatcher.dispatch(
+            "connectivity.resource_policy.save",
+            {
+                "project_directory": str(project),
+                "resource_policy": proposed.model_dump(mode="json"),
+            },
+        )
+
+    assert blocked.value.error.code == "RESOURCE_POLICY_INPUT_BYTES_BLOCKED"
+    store = EcoProjectStore(project)
+    try:
+        assert store.latest_record("resource_policy") == before
+        assert store.retained_input_bytes() == asset.byte_size
+    finally:
+        store.close()
+
+
+def test_asset_commit_wins_race_against_lower_resource_policy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dispatcher, project, fixture = _create_asset_ingest_planning_project(
+        tmp_path, project_name="asset-policy-reverse-race-project"
+    )
+    source = tmp_path / "asset-policy-reverse-race.bin"
+    source.write_bytes(b"reviewed")
+    asset = _reviewed_document_asset(fixture, source, asset_id="asset-policy-reverse-race")
+    store = EcoProjectStore(project)
+    try:
+        active_policy = store.effective_bundle().resource_policy
+    finally:
+        store.close()
+    proposed = active_policy.model_copy(update={"max_input_bytes": asset.byte_size - 1})
+    policy_ready = threading.Event()
+    asset_committed = threading.Event()
+    original_publish = EcoProjectStore.publish_semantic_change
+
+    def pause_policy_publication(
+        store: EcoProjectStore,
+        records: Any,
+        *args: Any,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        if records and records[0][0:2] == ("resource_policy", "current"):
+            policy_ready.set()
+            assert asset_committed.wait(10)
+        return original_publish(store, records, *args, **kwargs)
+
+    monkeypatch.setattr(EcoProjectStore, "publish_semantic_change", pause_policy_publication)
+    policy_failures: list[RPCFault] = []
+
+    def lower_policy() -> None:
+        try:
+            dispatcher.dispatch(
+                "connectivity.resource_policy.save",
+                {
+                    "project_directory": str(project),
+                    "resource_policy": proposed.model_dump(mode="json"),
+                },
+            )
+        except RPCFault as exc:
+            policy_failures.append(exc)
+
+    thread = threading.Thread(target=lower_policy)
+    thread.start()
+    assert policy_ready.wait(10)
+    dispatcher.dispatch(
+        "connectivity.asset.add",
+        {
+            "project_directory": str(project),
+            "source_path": str(source),
+            "asset": asset.model_dump(mode="json"),
+        },
+    )
+    asset_committed.set()
+    thread.join(15)
+
+    assert not thread.is_alive()
+    assert len(policy_failures) == 1
+    assert policy_failures[0].error.code == "RESOURCE_POLICY_INPUT_BYTES_BLOCKED"
+    store = EcoProjectStore(project)
+    try:
+        assert store.effective_bundle().resource_policy == active_policy
+        assert store.retained_input_bytes() == asset.byte_size
+        assert len(store.list_records("asset")) == 1
+    finally:
+        store.close()
+
+
+def test_two_assets_can_share_one_provider_blob_without_double_charging_quota(
+    tmp_path: Path,
+) -> None:
+    _, project, fixture = _create_asset_ingest_planning_project(
+        tmp_path, project_name="provider-shared-blob-project"
+    )
+    _set_provider_input_limit(project, len(_PROVIDER_DOWNLOAD_BYTES))
+    dispatcher = RPCDispatcher(data_root=tmp_path, download_opener=_ProviderDownloadOpener())
+
+    first = dispatcher.dispatch(
+        "connectivity.asset.download",
+        _provider_download_params(project, fixture, asset_id="provider-shared-first"),
+    )["data"]
+    second = dispatcher.dispatch(
+        "connectivity.asset.download",
+        _provider_download_params(project, fixture, asset_id="provider-shared-second"),
+    )["data"]
+
+    assert first["asset"]["sha256"] == second["asset"]["sha256"]
+    store = EcoProjectStore(project)
+    try:
+        assert store.retained_input_bytes() == len(_PROVIDER_DOWNLOAD_BYTES)
+        assert len(store.list_records("asset")) == 2
+        assert len(store.list_records("provider_receipt")) == 2
+    finally:
+        store.close()
+
+
+def test_reused_provider_asset_id_with_changed_request_fails_before_download(
+    tmp_path: Path,
+) -> None:
+    _, project, fixture = _create_asset_ingest_planning_project(
+        tmp_path, project_name="provider-immutable-id-project"
+    )
+    first_opener = _ProviderDownloadOpener()
+    first_dispatcher = RPCDispatcher(data_root=tmp_path, download_opener=first_opener)
+    params = _provider_download_params(project, fixture, asset_id="provider-immutable")
+    retained = first_dispatcher.dispatch("connectivity.asset.download", params)["data"]
+    changed_bytes = b"changed provider context"
+    changed_params = {**params, "expected_bytes": len(changed_bytes)}
+    changed_opener = _ProviderDownloadOpener(changed_bytes)
+    changed_dispatcher = RPCDispatcher(data_root=tmp_path, download_opener=changed_opener)
+
+    with pytest.raises(RPCFault) as changed:
+        changed_dispatcher.dispatch("connectivity.asset.download", changed_params)
+
+    assert changed.value.error.code == "ASSET_ID_IMMUTABLE_CONFLICT"
+    assert changed.value.error.retryable is False
+    assert changed_opener.open_count == 0
+    assert first_dispatcher.dispatch("connectivity.asset.download", params)["data"] == retained
+    assert first_opener.open_count == 1
+
+
+def test_concurrent_different_provider_blobs_cannot_both_publish_above_input_limit(
+    tmp_path: Path,
+) -> None:
+    _, project, fixture = _create_asset_ingest_planning_project(
+        tmp_path, project_name="provider-concurrent-quota-project"
+    )
+    first_bytes = b"provider-content-one"
+    second_bytes = b"provider-content-two"
+    assert len(first_bytes) == len(second_bytes)
+    _set_provider_input_limit(project, len(first_bytes))
+    start_barrier = threading.Barrier(2)
+    dispatchers = [
+        RPCDispatcher(data_root=tmp_path, download_opener=_ProviderDownloadOpener(first_bytes)),
+        RPCDispatcher(data_root=tmp_path, download_opener=_ProviderDownloadOpener(second_bytes)),
+    ]
+    params = [
+        _provider_download_params(project, fixture, asset_id="provider-quota-first"),
+        _provider_download_params(project, fixture, asset_id="provider-quota-second"),
+    ]
+    for item in params:
+        item["expected_bytes"] = len(first_bytes)
+    successes: list[dict[str, Any]] = []
+    failures: list[RPCFault] = []
+
+    def download(index: int) -> None:
+        start_barrier.wait(10)
+        try:
+            successes.append(
+                dispatchers[index].dispatch("connectivity.asset.download", params[index])["data"]
+            )
+        except RPCFault as exc:
+            failures.append(exc)
+
+    threads = [threading.Thread(target=download, args=(index,)) for index in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(15)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert len(successes) == 1
+    assert len(failures) == 1
+    assert failures[0].error.code == "ASSET_DOWNLOAD_RESOURCE_POLICY_BLOCKED"
+    assert failures[0].error.retryable is False
+    store = EcoProjectStore(project)
+    try:
+        assert store.retained_input_bytes() == len(first_bytes)
+        assert len(store.list_records("asset")) == 1
+        assert len(store.list_records("provider_receipt")) == 1
+        provider_blobs = [
+            path for path in (project / "data_assets" / "provider").rglob("*") if path.is_file()
+        ]
+        assert len(provider_blobs) == 1
+    finally:
+        store.close()
+
+
+def test_provider_asset_rechecks_concurrently_lowered_input_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, project, fixture = _create_asset_ingest_planning_project(
+        tmp_path, project_name="provider-policy-race-project"
+    )
+    _set_provider_input_limit(project, len(_PROVIDER_DOWNLOAD_BYTES))
+    dispatcher = RPCDispatcher(data_root=tmp_path, download_opener=_ProviderDownloadOpener())
+    params = _provider_download_params(project, fixture, asset_id="provider-policy-race")
+    staged_event = threading.Event()
+    continue_event = threading.Event()
+    original_stage = rpc_worker.stage_approved_asset
+
+    def pause_after_stage(*args: Any, **kwargs: Any) -> Any:
+        staged = original_stage(*args, **kwargs)
+        staged_event.set()
+        assert continue_event.wait(10)
+        return staged
+
+    monkeypatch.setattr(rpc_worker, "stage_approved_asset", pause_after_stage)
+    failures: list[RPCFault] = []
+
+    def download_provider() -> None:
+        try:
+            dispatcher.dispatch("connectivity.asset.download", params)
+        except RPCFault as exc:
+            failures.append(exc)
+
+    thread = threading.Thread(target=download_provider)
+    thread.start()
+    assert staged_event.wait(10)
+    _set_provider_input_limit(project, len(_PROVIDER_DOWNLOAD_BYTES) - 1)
+    continue_event.set()
+    thread.join(15)
+
+    assert not thread.is_alive()
+    assert len(failures) == 1
+    assert failures[0].error.code == "ASSET_DOWNLOAD_RESOURCE_POLICY_BLOCKED"
+    store = EcoProjectStore(project)
+    try:
+        assert store.list_records("asset") == []
+        assert store.list_records("provider_receipt") == []
+        assert store.retained_input_bytes() == 0
+    finally:
+        store.close()
+
+
+def test_concurrent_changed_bytes_for_one_provider_asset_id_are_rejected_atomically(
+    tmp_path: Path,
+) -> None:
+    _, project, fixture = _create_asset_ingest_planning_project(
+        tmp_path, project_name="provider-concurrent-id-project"
+    )
+    first_bytes = b"provider-content-one"
+    second_bytes = b"provider-content-two"
+    assert len(first_bytes) == len(second_bytes)
+    _set_provider_input_limit(project, len(first_bytes) * 2)
+    start_barrier = threading.Barrier(2)
+    dispatchers = [
+        RPCDispatcher(data_root=tmp_path, download_opener=_ProviderDownloadOpener(first_bytes)),
+        RPCDispatcher(data_root=tmp_path, download_opener=_ProviderDownloadOpener(second_bytes)),
+    ]
+    params = _provider_download_params(project, fixture, asset_id="provider-one-identity")
+    params["expected_bytes"] = len(first_bytes)
+    successes: list[dict[str, Any]] = []
+    failures: list[RPCFault] = []
+
+    def download(dispatcher: RPCDispatcher) -> None:
+        start_barrier.wait(10)
+        try:
+            successes.append(dispatcher.dispatch("connectivity.asset.download", params)["data"])
+        except RPCFault as exc:
+            failures.append(exc)
+
+    threads = [threading.Thread(target=download, args=(dispatcher,)) for dispatcher in dispatchers]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(15)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert len(successes) == 1
+    assert len(failures) == 1
+    assert failures[0].error.code == "ASSET_ID_IMMUTABLE_CONFLICT"
+    assert failures[0].error.retryable is False
+    store = EcoProjectStore(project)
+    try:
+        assert store.retained_input_bytes() == len(first_bytes)
+        assert len(store.list_records("asset")) == 1
+        assert len(store.list_records("provider_receipt")) == 1
+    finally:
+        store.close()
 
 
 def test_planning_grid_and_validation_state_persist_in_project_sqlite(tmp_path: Path) -> None:

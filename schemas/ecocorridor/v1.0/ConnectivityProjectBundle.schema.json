@@ -718,6 +718,8 @@
         },
         "focal_ids": {
           "items": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
             "type": "integer"
           },
           "minItems": 2,
@@ -782,6 +784,7 @@
       "properties": {
         "from_focal_id": {
           "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
           "title": "From Focal Id",
           "type": "integer"
         },
@@ -796,6 +799,7 @@
         },
         "to_focal_id": {
           "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
           "title": "To Focal Id",
           "type": "integer"
         }

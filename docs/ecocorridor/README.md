@@ -71,6 +71,7 @@ whole-tree exit.
 - [Data governance](data-governance.md)
 - [Ridgeway guided example](guided-ridgeway.md)
 - [Resource and energy observation method](resource-observability.md)
+- [W&B historical search benchmark report](wandb-search-report.md)
 - [Release gates](release-gates.md)
 - [Practitioner acceptance protocol](practitioner-acceptance.md)
 - [Threat model](threat-model.md)
@@ -88,7 +89,7 @@ direct-engine boundaries.
 ```bash
 uv sync --locked \
   --extra dev --extra science --extra ecocorridor \
-  --extra export --extra observability --extra release
+  --extra ecocorridor-report --extra export --extra observability --extra release
 uv run --no-sync python scripts/install_ecocorridor_geospatial_runtime.py
 pnpm install --frozen-lockfile
 

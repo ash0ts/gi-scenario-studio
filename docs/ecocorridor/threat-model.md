@@ -43,7 +43,25 @@
   The semantic revision and telemetry outbox remain one SQLite transaction. If
   that transaction fails, the exact verified file may remain as an idempotent
   retry target, but no asset, revision, evidence claim, or outbox row is
-  published.
+  published. The final local-file link and total retained-input check execute
+  under that transaction's `BEGIN IMMEDIATE` writer lock; imported assets and
+  provider-CAS orphans therefore cannot be omitted by a concurrent local add,
+  and a stable asset ID cannot be rebound to changed evidence. Explicit-consent
+  provider downloads likewise use shared
+  provider-and-SHA paths. A failed publisher never unlinks those exact bytes,
+  because another concurrent asset may already have reused and published the
+  same content; reference-aware garbage collection is a separate operation.
+  Network bytes remain in a private staging file until a `BEGIN IMMEDIATE`
+  publication guard accounts for every physical provider-CAS blob, including
+  unpublished orphans, and every other retained input. The guard serializes
+  the final no-clobber CAS link with the asset, provider receipt, semantic
+  revision, and outbox transaction. Changed bytes cannot reuse an immutable
+  asset ID, and a concurrent second blob cannot cross the reviewed input cap.
+  A cross-process project lock permits only one network staging owner. The lock
+  identity and staging directory must be regular, current-user-owned, and
+  private; symlinks and special entries fail closed. OS lock release provides
+  crash recovery, after which the next owner removes only a bounded set of
+  recognized staging files, never provider CAS paths.
 - **Worker → W&B/Weave:** producer-atomic outbox, deterministic idempotency,
   sensitive-key and local-path redaction, fail-closed destination policy.
 - **Assistant:** read-only evidence authorization, minimized context, mandatory

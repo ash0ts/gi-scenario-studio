@@ -9,11 +9,12 @@ import math
 import os
 import re
 import shutil
+import sqlite3
 import stat
 import sys
 import tempfile
 from collections.abc import Callable, Sequence
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, Protocol, TextIO
@@ -173,7 +174,13 @@ from .professional_validation import (
     validation_projection,
 )
 from .project_store import EcoProjectStore
-from .providers import download_approved_asset, preview_download
+from .providers import (
+    ProviderStagingLease,
+    acquire_provider_staging,
+    preview_download,
+    retain_staged_asset,
+    stage_approved_asset,
+)
 from .raster_io import (
     RasterIOError,
     current_map_values_and_nodata,
@@ -1009,25 +1016,28 @@ def _regular_file_matches(path: Path, *, expected_sha256: str, expected_bytes: i
     return observed == expected_bytes and digest.hexdigest() == expected_sha256
 
 
-def _ingest_verified_file(
+@dataclass(frozen=True, slots=True)
+class _StagedAssetFile:
+    path: Path
+    sha256: str
+    byte_size: int
+
+
+def _stage_verified_file(
     source: Path,
     destination: Path,
     *,
     expected_sha256: str,
     expected_bytes: int,
     staged_validator: Callable[[Path], None] | None = None,
-) -> bool:
-    """Retain exactly the reviewed source bytes, returning whether a file was created.
-
-    The source is opened once. Its bytes are hashed while being copied to a
-    same-directory temporary file, and that inode is linked into place with
-    no-replace semantics. A byte-identical existing destination is reusable;
-    any other collision remains untouched and blocks publication.
-    """
+    staging_directory: Path | None = None,
+) -> _StagedAssetFile:
+    """Copy and validate reviewed bytes without publishing the destination."""
 
     source_descriptor = -1
     target_descriptor = -1
     temporary: Path | None = None
+    completed = False
     try:
         destination.parent.mkdir(parents=True, exist_ok=True)
         source_descriptor = _open_regular_readonly(source)
@@ -1042,8 +1052,18 @@ def _ingest_verified_file(
                 "ASSET_INGEST_INTEGRITY_MISMATCH",
                 "asset source byte count differs from its reviewed contract",
             )
+        if staging_directory is None:
+            staging_parent = destination.parent
+            temporary_prefix = f".{destination.name}."
+            temporary_suffix = ""
+        else:
+            staging_parent = staging_directory
+            temporary_prefix = ".local_asset."
+            temporary_suffix = ".download"
         target_descriptor, temporary_name = tempfile.mkstemp(
-            prefix=f".{destination.name}.", dir=destination.parent
+            prefix=temporary_prefix,
+            suffix=temporary_suffix,
+            dir=staging_parent,
         )
         temporary = Path(temporary_name)
         copied, digest = _stream_copy_and_digest(
@@ -1061,43 +1081,12 @@ def _ingest_verified_file(
             # The validator reads the staged inode whose complete bytes were
             # just hashed, rather than reopening the mutable source selection.
             staged_validator(temporary)
-        try:
-            _link_file_noreplace(temporary, destination)
-        except FileExistsError:
-            try:
-                matches = _regular_file_matches(
-                    destination,
-                    expected_sha256=expected_sha256,
-                    expected_bytes=expected_bytes,
-                )
-            except AssetIngestError as exc:
-                raise AssetIngestError(
-                    "ASSET_DESTINATION_CONFLICT",
-                    "asset destination appeared during verified ingest",
-                ) from exc
-            if not matches:
-                raise AssetIngestError(
-                    "ASSET_DESTINATION_CONFLICT",
-                    "different bytes already occupy the reviewed asset destination",
-                )
-            return False
-        except OSError as exc:
-            raise AssetIngestError(
-                "ASSET_DESTINATION_PUBLISH_FAILED",
-                "verified asset bytes could not be published without overwrite",
-            ) from exc
-        try:
-            _fsync_directory(destination.parent)
-        except OSError as exc:
-            # Never compare-then-unlink: a concurrent replacement between
-            # those operations could delete bytes this process did not create.
-            # The verified no-clobber destination is safe for an idempotent
-            # retry, while no repository record has yet been published.
-            raise AssetIngestError(
-                "ASSET_DESTINATION_PUBLISH_FAILED",
-                "verified asset directory entry could not be synchronized",
-            ) from exc
-        return True
+        completed = True
+        return _StagedAssetFile(
+            path=temporary,
+            sha256=expected_sha256,
+            byte_size=expected_bytes,
+        )
     except (AssetIngestError, RasterIOError):
         raise
     except OSError as exc:
@@ -1116,11 +1105,84 @@ def _ingest_verified_file(
                 os.close(target_descriptor)
             except OSError:  # pragma: no cover - cleanup must not mask the typed failure
                 pass
-        if temporary is not None:
+        if temporary is not None and not completed:
             try:
                 temporary.unlink(missing_ok=True)
             except OSError:  # pragma: no cover - hidden orphan is safer than masking failure
                 pass
+
+
+def _retain_staged_file(staged: _StagedAssetFile, destination: Path) -> bool:
+    """Publish one verified staging inode with no-clobber semantics."""
+
+    if not _regular_file_matches(
+        staged.path,
+        expected_sha256=staged.sha256,
+        expected_bytes=staged.byte_size,
+    ):
+        raise AssetIngestError(
+            "ASSET_INGEST_INTEGRITY_MISMATCH",
+            "staged asset bytes changed before publication",
+        )
+    try:
+        _link_file_noreplace(staged.path, destination)
+    except FileExistsError:
+        try:
+            matches = _regular_file_matches(
+                destination,
+                expected_sha256=staged.sha256,
+                expected_bytes=staged.byte_size,
+            )
+        except AssetIngestError as exc:
+            raise AssetIngestError(
+                "ASSET_DESTINATION_CONFLICT",
+                "asset destination appeared during verified ingest",
+            ) from exc
+        if not matches:
+            raise AssetIngestError(
+                "ASSET_DESTINATION_CONFLICT",
+                "different bytes already occupy the reviewed asset destination",
+            )
+        return False
+    except OSError as exc:
+        raise AssetIngestError(
+            "ASSET_DESTINATION_PUBLISH_FAILED",
+            "verified asset bytes could not be published without overwrite",
+        ) from exc
+    try:
+        _fsync_directory(destination.parent)
+    except OSError as exc:
+        # Never compare-then-unlink: a concurrent replacement between those
+        # operations could delete bytes this process did not create. The exact
+        # destination remains an idempotent retry target.
+        raise AssetIngestError(
+            "ASSET_DESTINATION_PUBLISH_FAILED",
+            "verified asset directory entry could not be synchronized",
+        ) from exc
+    return True
+
+
+def _ingest_verified_file(
+    source: Path,
+    destination: Path,
+    *,
+    expected_sha256: str,
+    expected_bytes: int,
+    staged_validator: Callable[[Path], None] | None = None,
+) -> bool:
+    """Compatibility helper that stages, then publishes reviewed bytes."""
+
+    staged = _stage_verified_file(
+        source,
+        destination,
+        expected_sha256=expected_sha256,
+        expected_bytes=expected_bytes,
+        staged_validator=staged_validator,
+    )
+    try:
+        return _retain_staged_file(staged, destination)
+    finally:
+        staged.path.unlink(missing_ok=True)
 
 
 _SAFE_BLOCKED_RIDGEWAY_ROLE_COPY = {
@@ -1891,6 +1953,21 @@ class RPCDispatcher:
                     severity=Severity.BLOCKING,
                     object_reference=asset.asset_id,
                 )
+        retained_asset_bytes = sum(
+            names[relative_path].uncompressed_bytes
+            for relative_path in {asset.relative_path for asset in bundle.assets}
+        )
+        if retained_asset_bytes > bundle.resource_policy.max_input_bytes:
+            raise _fault(
+                "BUNDLE_INPUT_RESOURCE_POLICY_BLOCKED",
+                "The imported asset bytes exceed the bundle's reviewed input policy.",
+                category=ErrorCategory.RESOURCE_LIMIT,
+                severity=Severity.BLOCKING,
+                remediation=(
+                    "Increase max_input_bytes in the reviewed bundle policy or reduce its "
+                    "retained input assets before import."
+                ),
+            )
         return bundle, members, digest
 
     @staticmethod
@@ -2285,6 +2362,23 @@ class RPCDispatcher:
                 category=ErrorCategory.SECURITY,
                 severity=Severity.BLOCKING,
             )
+        relative_parts = tuple(Path(params.asset.relative_path).parts)
+        if (
+            relative_parts[:1] != ("data_assets",)
+            or relative_parts[:2]
+            in {
+                ("data_assets", ".downloads"),
+                ("data_assets", "provider"),
+            }
+            or relative_parts == ("data_assets", ".provider-download.lock")
+        ):
+            raise _fault(
+                "ASSET_PATH_RESERVED",
+                "The reviewed asset path is outside the managed local-evidence boundary.",
+                category=ErrorCategory.SECURITY,
+                severity=Severity.BLOCKING,
+                remediation="Choose a non-operational path under data_assets for local evidence.",
+            )
         source = self._allowed_path(params.source_path, must_exist=True, purpose="source asset")
         if not source.is_file() or source.is_symlink():
             raise _fault(
@@ -2293,15 +2387,11 @@ class RPCDispatcher:
                 category=ErrorCategory.SECURITY,
             )
         store = self._store(params.project_directory)
+        staged: _StagedAssetFile | None = None
+        staging_lease: ProviderStagingLease | None = None
         try:
             policy = self._project_resource_policy(store)
-            existing_assets = {item["asset_id"]: item for item in store.list_records("asset")}
-            retained_size = sum(
-                int(item["byte_size"])
-                for asset_id, item in existing_assets.items()
-                if asset_id != params.asset.asset_id
-            )
-            if retained_size + params.asset.byte_size > policy.max_input_bytes:
+            if params.asset.byte_size > policy.max_input_bytes:
                 raise _fault(
                     "ASSET_RESOURCE_POLICY_BLOCKED",
                     "The retained project inputs would exceed the reviewed resource policy.",
@@ -2315,6 +2405,22 @@ class RPCDispatcher:
                     "The reviewed asset path escapes the project.",
                     category=ErrorCategory.SECURITY,
                 )
+            try:
+                staging_lease = acquire_provider_staging(cache_root=store.root / "data_assets")
+            except (OSError, ValueError) as exc:
+                code = str(exc) if str(exc).startswith("DATA_PROVIDER_") else ""
+                raise _fault(
+                    code or "ASSET_STAGING_UNAVAILABLE",
+                    "Local asset staging is unavailable for this project.",
+                    category=ErrorCategory.RESOURCE_LIMIT,
+                    severity=Severity.BLOCKING,
+                    remediation=(
+                        "Retry after the active ingest finishes, or repair unsafe stale "
+                        "entries in the project staging directory."
+                    ),
+                    retryable=code == "DATA_PROVIDER_STAGING_BUSY",
+                    technical_message=type(exc).__name__,
+                ) from exc
             inspection: dict[str, Any] | None = None
             staged_validator: Callable[[Path], None] | None = None
             if params.asset.kind in {
@@ -2336,12 +2442,13 @@ class RPCDispatcher:
 
                 staged_validator = validate_staged_raster
             try:
-                _ingest_verified_file(
+                staged = _stage_verified_file(
                     source,
                     destination,
                     expected_sha256=params.asset.sha256,
                     expected_bytes=params.asset.byte_size,
                     staged_validator=staged_validator,
+                    staging_directory=staging_lease.staging_path,
                 )
             except RasterIOError as exc:
                 raise _fault(
@@ -2360,30 +2467,102 @@ class RPCDispatcher:
                     remediation="Reselect the reviewed source and resolve any project-path conflict.",
                     technical_message=str(exc),
                 ) from exc
-            try:
-                retained_matches = _regular_file_matches(
-                    destination,
-                    expected_sha256=params.asset.sha256,
-                    expected_bytes=params.asset.byte_size,
+
+            def retain_with_quota(connection: sqlite3.Connection) -> None:
+                current_policy = self._project_resource_policy(store)
+                current = store.effective_asset(params.asset.asset_id, connection=connection)
+                if current is not None and current != params.asset:
+                    raise _fault(
+                        "ASSET_ID_IMMUTABLE_CONFLICT",
+                        "This asset ID is already bound to different reviewed evidence.",
+                        category=ErrorCategory.SECURITY,
+                        severity=Severity.BLOCKING,
+                        remediation=(
+                            "Keep the retained asset unchanged or choose a new stable asset ID."
+                        ),
+                    )
+                try:
+                    retained_before = store.retained_input_bytes(connection=connection)
+                except (OSError, ValueError) as exc:
+                    raise _fault(
+                        "PROJECT_INPUT_ACCOUNTING_FAILED",
+                        "The retained project inputs could not be verified for resource review.",
+                        category=ErrorCategory.SECURITY,
+                        severity=Severity.BLOCKING,
+                        remediation="Repair retained project evidence before adding more data.",
+                        technical_message=type(exc).__name__,
+                    ) from exc
+                additional_bytes = (
+                    0 if current is not None or destination.exists() else params.asset.byte_size
                 )
-            except AssetIngestError:
-                retained_matches = False
-            if not retained_matches:
-                raise _fault(
-                    "ASSET_RETAINED_INTEGRITY_MISMATCH",
-                    "The retained asset changed before its evidence record could be published.",
-                    category=ErrorCategory.SECURITY,
-                    severity=Severity.BLOCKING,
-                    remediation="Resolve the project-path race and add the reviewed asset again.",
-                )
+                projected_bytes = retained_before + additional_bytes
+                if projected_bytes > current_policy.max_input_bytes:
+                    raise _fault(
+                        "ASSET_RESOURCE_POLICY_BLOCKED",
+                        "The retained project inputs would exceed the reviewed resource policy.",
+                        category=ErrorCategory.RESOURCE_LIMIT,
+                        severity=Severity.BLOCKING,
+                    )
+                assert staged is not None
+                try:
+                    _retain_staged_file(staged, destination)
+                except AssetIngestError as exc:
+                    raise _fault(
+                        exc.code,
+                        "The asset could not be retained as its exact reviewed bytes.",
+                        category=ErrorCategory.SECURITY,
+                        severity=Severity.BLOCKING,
+                        remediation=(
+                            "Reselect the reviewed source and resolve any project-path conflict."
+                        ),
+                        technical_message=str(exc),
+                    ) from exc
+                try:
+                    retained_matches = _regular_file_matches(
+                        destination,
+                        expected_sha256=params.asset.sha256,
+                        expected_bytes=params.asset.byte_size,
+                    )
+                except AssetIngestError:
+                    retained_matches = False
+                if not retained_matches:
+                    raise _fault(
+                        "ASSET_RETAINED_INTEGRITY_MISMATCH",
+                        "The retained asset changed before its evidence record could be published.",
+                        category=ErrorCategory.SECURITY,
+                        severity=Severity.BLOCKING,
+                        remediation=(
+                            "Resolve the project-path race and add the reviewed asset again."
+                        ),
+                    )
+                try:
+                    retained_after = store.retained_input_bytes(connection=connection)
+                except (OSError, ValueError) as exc:
+                    raise _fault(
+                        "PROJECT_INPUT_ACCOUNTING_FAILED",
+                        "The retained project inputs could not be verified after publication.",
+                        category=ErrorCategory.SECURITY,
+                        severity=Severity.BLOCKING,
+                        remediation="Repair retained project evidence before adding more data.",
+                        technical_message=type(exc).__name__,
+                    ) from exc
+                if retained_after > current_policy.max_input_bytes:
+                    raise _fault(
+                        "ASSET_RESOURCE_POLICY_BLOCKED",
+                        "The retained project inputs exceed the reviewed resource policy.",
+                        category=ErrorCategory.RESOURCE_LIMIT,
+                        severity=Severity.BLOCKING,
+                    )
+
             try:
                 publication = store.publish_semantic_change(
                     [("asset", params.asset.asset_id, params.asset.model_dump(mode="json"))],
                     created_by=params.asset.authorization.reviewer,
                     created_at=params.asset.authorization.reviewed_at,
                     reason="Retain a reviewed project asset and its cloud/export authorization.",
+                    transaction_guard=retain_with_quota,
                 )
-            except (OSError, ValueError) as exc:
+            except (OSError, ValueError, sqlite3.Error) as exc:
                 # The SQLite transaction rolls back the asset, semantic
                 # revision, and outbox together. Exact no-clobber bytes may
                 # remain as an idempotent retry target; never unlink a path a
@@ -2399,7 +2578,15 @@ class RPCDispatcher:
                 ) from exc
             revision = int(publication["record_revisions"][f"asset:{params.asset.asset_id}"])
         finally:
-            store.close()
+            try:
+                if staged is not None:
+                    staged.path.unlink(missing_ok=True)
+            finally:
+                try:
+                    if staging_lease is not None:
+                        staging_lease.release()
+                finally:
+                    store.close()
         return self._result(
             "connectivity.asset.add",
             {
@@ -2433,7 +2620,17 @@ class RPCDispatcher:
         store = self._store(params.project_directory)
         try:
             policy = self._project_resource_policy(store)
-            retained_bytes = sum(int(item["byte_size"]) for item in store.list_records("asset"))
+            try:
+                retained_bytes = store.retained_input_bytes()
+            except (OSError, ValueError) as exc:
+                raise _fault(
+                    "PROVIDER_CAS_ACCOUNTING_FAILED",
+                    "The retained provider cache could not be verified for resource review.",
+                    category=ErrorCategory.SECURITY,
+                    severity=Severity.BLOCKING,
+                    remediation="Repair the project provider cache before downloading more data.",
+                    technical_message=type(exc).__name__,
+                ) from exc
             remaining_bytes = max(0, policy.max_input_bytes - retained_bytes)
         finally:
             store.close()
@@ -2445,6 +2642,86 @@ class RPCDispatcher:
                 "resource_policy_allowed": preview.expected_bytes <= remaining_bytes,
             },
         )
+
+    @staticmethod
+    def _existing_provider_asset(
+        store: EcoProjectStore,
+        *,
+        params: AssetDownloadParams,
+        preview: Any,
+        connection: sqlite3.Connection | None = None,
+    ) -> ConnectivityAsset | None:
+        """Resolve an immutable provider asset ID without touching the network."""
+
+        existing = store.effective_asset(params.asset_id, connection=connection)
+        if existing is None:
+            return None
+        try:
+            receipt = store.get_record("provider_receipt", params.asset_id)
+        except KeyError as exc:
+            raise _fault(
+                "ASSET_ID_IMMUTABLE_CONFLICT",
+                "This asset ID already belongs to non-provider evidence.",
+                category=ErrorCategory.SECURITY,
+                severity=Severity.BLOCKING,
+                remediation="Choose a new stable asset ID for the provider download.",
+            ) from exc
+        expected_fields = {
+            "kind": params.kind,
+            "title": params.title,
+            "media_type": params.media_type,
+            "source": preview.source_url,
+            "vintage": preview.vintage,
+            "license": preview.license,
+            "authorization": params.authorization,
+        }
+        if any(getattr(existing, name) != value for name, value in expected_fields.items()):
+            raise _fault(
+                "ASSET_ID_IMMUTABLE_CONFLICT",
+                "This provider asset ID is already bound to different reviewed inputs.",
+                category=ErrorCategory.SECURITY,
+                severity=Severity.BLOCKING,
+                remediation="Keep the retained asset unchanged or choose a new stable asset ID.",
+            )
+        expected_receipt = {
+            "asset_id": params.asset_id,
+            "provider_id": preview.provider_id,
+            "source_url": preview.source_url,
+            "requested_url": preview.source_url,
+            "preview": asdict(preview),
+            "explicit_consent": True,
+        }
+        if any(receipt.get(key) != value for key, value in expected_receipt.items()):
+            raise _fault(
+                "ASSET_ID_IMMUTABLE_CONFLICT",
+                "This provider asset ID is already bound to a different provider request.",
+                category=ErrorCategory.SECURITY,
+                severity=Severity.BLOCKING,
+                remediation="Keep the retained asset unchanged or choose a new stable asset ID.",
+            )
+        expected_relative = f"data_assets/provider/{preview.provider_id}/sha256/{existing.sha256}"
+        if existing.relative_path != expected_relative:
+            raise _fault(
+                "PROVIDER_ASSET_INTEGRITY_MISMATCH",
+                "The retained provider asset path no longer matches its immutable checksum.",
+                category=ErrorCategory.SECURITY,
+                severity=Severity.BLOCKING,
+            )
+        retained = contained_path(store.root, existing.relative_path)
+        if (
+            not retained.is_file()
+            or retained.is_symlink()
+            or retained.stat().st_size != existing.byte_size
+            or _sha256_file(retained) != existing.sha256
+        ):
+            raise _fault(
+                "PROVIDER_ASSET_INTEGRITY_MISMATCH",
+                "The retained provider asset bytes failed checksum verification.",
+                category=ErrorCategory.SECURITY,
+                severity=Severity.BLOCKING,
+                remediation="Restore the exact retained bytes from authorized evidence.",
+            )
+        return existing
 
     def _asset_download(self, params: AssetDownloadParams) -> PayloadResult:
         if params.authorization.asset_id != params.asset_id:
@@ -2468,65 +2745,186 @@ class RPCDispatcher:
                 category=ErrorCategory.SECURITY,
                 severity=Severity.BLOCKING,
             )
+        if not params.explicit_consent:
+            raise _fault(
+                "DATA_DOWNLOAD_EXPLICIT_CONSENT_REQUIRED",
+                "Explicit consent is required before downloading contextual provider data.",
+                category=ErrorCategory.DATA_PROVIDER,
+                severity=Severity.BLOCKING,
+            )
         store = self._store(params.project_directory)
-        receipt = None
+        staged = None
+        staging_lease: ProviderStagingLease | None = None
         try:
             policy = self._project_resource_policy(store)
-            retained_size = sum(int(item["byte_size"]) for item in store.list_records("asset"))
-            remaining_bytes = policy.max_input_bytes - retained_size
-            if params.expected_bytes > remaining_bytes:
+            existing = self._existing_provider_asset(store, params=params, preview=preview)
+            if existing is not None:
+                return self._result(
+                    "connectivity.asset.download",
+                    {"asset": existing.model_dump(mode="json"), "context_only": True},
+                )
+            if params.expected_bytes > policy.max_input_bytes:
                 raise _fault(
                     "ASSET_DOWNLOAD_RESOURCE_POLICY_BLOCKED",
                     "The proposed download would exceed the reviewed project input policy.",
                     category=ErrorCategory.RESOURCE_LIMIT,
                     severity=Severity.BLOCKING,
                 )
-            receipt = download_approved_asset(
+            try:
+                staging_lease = acquire_provider_staging(cache_root=store.root / "data_assets")
+            except (OSError, ValueError) as exc:
+                code = str(exc) if str(exc).startswith("DATA_PROVIDER_") else ""
+                raise _fault(
+                    code or "DATA_PROVIDER_STAGING_UNAVAILABLE",
+                    "Provider download staging is unavailable for this project.",
+                    category=ErrorCategory.RESOURCE_LIMIT,
+                    severity=Severity.BLOCKING,
+                    remediation=(
+                        "Retry after the active download finishes, or repair unsafe stale "
+                        "entries in the project provider staging directory."
+                    ),
+                    retryable=code == "DATA_PROVIDER_STAGING_BUSY",
+                    technical_message=type(exc).__name__,
+                ) from exc
+            staged = stage_approved_asset(
                 preview=preview,
                 asset_id=params.asset_id,
                 cache_root=store.root / "data_assets",
                 explicit_consent=params.explicit_consent,
-                maximum_bytes=min(params.maximum_bytes, remaining_bytes),
+                maximum_bytes=min(params.maximum_bytes, policy.max_input_bytes),
+                lease=staging_lease,
                 opener=self.download_opener,
             )
             asset = ConnectivityAsset(
                 asset_id=params.asset_id,
                 kind=params.kind,
                 title=params.title,
-                relative_path=f"data_assets/{receipt.relative_path}",
-                sha256=receipt.sha256,
-                byte_size=receipt.bytes,
+                relative_path=(f"data_assets/provider/{staged.provider_id}/sha256/{staged.sha256}"),
+                sha256=staged.sha256,
+                byte_size=staged.bytes,
                 media_type=params.media_type,
-                source=receipt.source_url,
+                source=staged.source_url,
                 vintage=preview.vintage,
                 license=preview.license,
                 authorization=params.authorization,
             )
-            store.publish_semantic_change(
-                [("asset", asset.asset_id, asset.model_dump(mode="json"))],
-                created_by=params.authorization.reviewer,
-                created_at=params.authorization.reviewed_at,
-                reason="Retain an explicitly authorized contextual provider asset.",
-                extra_records=[
-                    (
-                        "provider_receipt",
-                        asset.asset_id,
-                        {
-                            **asdict(receipt),
-                            "preview": asdict(preview),
-                            "explicit_consent": True,
-                        },
-                        False,
+            receipt_payload: dict[str, Any] = {}
+
+            def retain_with_quota(connection: sqlite3.Connection) -> None:
+                current_policy = self._project_resource_policy(store)
+                concurrent = self._existing_provider_asset(
+                    store,
+                    params=params,
+                    preview=preview,
+                    connection=connection,
+                )
+                if concurrent is not None:
+                    if concurrent != asset:
+                        raise _fault(
+                            "ASSET_ID_IMMUTABLE_CONFLICT",
+                            "This provider asset ID was concurrently bound to different bytes.",
+                            category=ErrorCategory.SECURITY,
+                            severity=Severity.BLOCKING,
+                            remediation="Use a new stable asset ID for changed provider bytes.",
+                        )
+                    receipt_payload.update(store.get_record("provider_receipt", params.asset_id))
+                    return
+                try:
+                    retained_before = store.retained_input_bytes(connection=connection)
+                except (OSError, ValueError) as exc:
+                    raise _fault(
+                        "PROVIDER_CAS_ACCOUNTING_FAILED",
+                        "The retained provider cache could not be verified for publication.",
+                        category=ErrorCategory.SECURITY,
+                        severity=Severity.BLOCKING,
+                        remediation="Repair the project provider cache before downloading more data.",
+                        technical_message=type(exc).__name__,
+                    ) from exc
+                destination = contained_path(store.root, asset.relative_path)
+                additional_bytes = 0 if destination.exists() else asset.byte_size
+                if retained_before + additional_bytes > current_policy.max_input_bytes:
+                    raise _fault(
+                        "ASSET_DOWNLOAD_RESOURCE_POLICY_BLOCKED",
+                        "Retaining these provider bytes would exceed the reviewed input policy.",
+                        category=ErrorCategory.RESOURCE_LIMIT,
+                        severity=Severity.BLOCKING,
+                        remediation=(
+                            "Increase the reviewed project policy or remove data through an "
+                            "explicit reference-aware maintenance workflow."
+                        ),
                     )
-                ],
-            )
-        except BaseException:
-            if receipt is not None and receipt.created:
-                retained = contained_path(store.root / "data_assets", receipt.relative_path)
-                retained.unlink(missing_ok=True)
-            raise
+                receipt = retain_staged_asset(
+                    staged=staged,
+                    cache_root=store.root / "data_assets",
+                    lease=staging_lease,
+                )
+                receipt_payload.update(
+                    {
+                        **asdict(receipt),
+                        "preview": asdict(preview),
+                        "explicit_consent": True,
+                    }
+                )
+                try:
+                    retained_after = store.retained_input_bytes(connection=connection)
+                except (OSError, ValueError) as exc:
+                    raise _fault(
+                        "PROVIDER_CAS_ACCOUNTING_FAILED",
+                        "The retained provider cache could not be verified after publication.",
+                        category=ErrorCategory.SECURITY,
+                        severity=Severity.BLOCKING,
+                        technical_message=type(exc).__name__,
+                    ) from exc
+                if retained_after > current_policy.max_input_bytes:
+                    raise _fault(
+                        "ASSET_DOWNLOAD_RESOURCE_POLICY_BLOCKED",
+                        "The provider cache exceeds the reviewed input policy.",
+                        category=ErrorCategory.RESOURCE_LIMIT,
+                        severity=Severity.BLOCKING,
+                    )
+
+            try:
+                store.publish_semantic_change(
+                    [("asset", asset.asset_id, asset.model_dump(mode="json"))],
+                    created_by=params.authorization.reviewer,
+                    created_at=params.authorization.reviewed_at,
+                    reason="Retain an explicitly authorized contextual provider asset.",
+                    extra_records=[
+                        (
+                            "provider_receipt",
+                            asset.asset_id,
+                            receipt_payload,
+                            False,
+                        )
+                    ],
+                    transaction_guard=retain_with_quota,
+                )
+            except (OSError, ValueError, sqlite3.Error) as exc:
+                # The SQLite transaction rolls back the asset, semantic
+                # revision, provider receipt, and outbox together. The exact
+                # content-addressed bytes may already be shared by another
+                # published asset, so ``receipt.created`` is not ownership and
+                # must never authorize unlinking this path. Retain the verified
+                # bytes as an idempotent retry target instead.
+                raise _fault(
+                    "ASSET_PUBLICATION_FAILED",
+                    "The downloaded provider bytes could not be published to project evidence.",
+                    category=ErrorCategory.INTERNAL,
+                    severity=Severity.BLOCKING,
+                    remediation="Retry the asset publication; the verified bytes can be reused.",
+                    retryable=True,
+                    technical_message=type(exc).__name__,
+                ) from exc
         finally:
-            store.close()
+            try:
+                if staged is not None:
+                    staged.temporary_path.unlink(missing_ok=True)
+            finally:
+                try:
+                    if staging_lease is not None:
+                        staging_lease.release()
+                finally:
+                    store.close()
         return self._result(
             "connectivity.asset.download",
             {"asset": asset.model_dump(mode="json"), "context_only": True},
@@ -3443,12 +3841,45 @@ class RPCDispatcher:
         )
 
     def _resource_policy_save(self, params: ResourcePolicySaveParams) -> PayloadResult:
-        return self._save_contract(
-            params.project_directory,
-            "resource_policy",
-            "current",
-            params.resource_policy,
+        store = self._store(params.project_directory)
+        try:
+
+            def retained_input_guard(connection: sqlite3.Connection) -> None:
+                try:
+                    retained_bytes = store.retained_input_bytes(connection=connection)
+                except (OSError, ValueError) as exc:
+                    raise _fault(
+                        "PROJECT_INPUT_ACCOUNTING_FAILED",
+                        "The retained project inputs could not be verified for policy review.",
+                        category=ErrorCategory.SECURITY,
+                        severity=Severity.BLOCKING,
+                        remediation="Repair retained project evidence before changing its policy.",
+                        technical_message=type(exc).__name__,
+                    ) from exc
+                if retained_bytes > params.resource_policy.max_input_bytes:
+                    raise _fault(
+                        "RESOURCE_POLICY_INPUT_BYTES_BLOCKED",
+                        "The proposed resource policy is below the retained project inputs.",
+                        category=ErrorCategory.RESOURCE_LIMIT,
+                        severity=Severity.BLOCKING,
+                        remediation=(
+                            "Keep max_input_bytes at or above retained inputs, or remove data "
+                            "through an explicit reference-aware maintenance workflow."
+                        ),
+                    )
+
+            publication = store.publish_semantic_change(
+                [("resource_policy", "current", params.resource_policy.model_dump(mode="json"))],
+                created_by="EcoCorridor project editor",
+                reason="Publish reviewed resource policy configuration.",
+                transaction_guard=retained_input_guard,
+            )
+            revision = int(publication["record_revisions"]["resource_policy:current"])
+        finally:
+            store.close()
+        return self._result(
             "connectivity.resource_policy.save",
+            {"record_id": "current", "revision": revision},
         )
 
     def _save_contract(

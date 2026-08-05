@@ -134,7 +134,29 @@ current direct evidence.
   bytes, destination publication is no-clobber, and a concurrent source or
   destination change cannot publish a mismatched asset/revision/outbox record.
   A transaction failure leaves no authoritative record and may reuse only the
-  exact verified orphan bytes on an explicitly retryable request.
+  exact verified orphan bytes on an explicitly retryable request. The final
+  no-clobber link and authoritative input-quota projection now run inside the
+  same `BEGIN IMMEDIATE` transaction as the asset, semantic revision, and
+  outbox. This counts imported-bundle assets and provider-CAS orphans, prevents
+  concurrent local additions from crossing the cap, and keeps a stable asset
+  ID bound to one reviewed checksum and contract.
+- Explicit-consent provider downloads use a provider-and-SHA content-addressed
+  path. Repository publication remains one semantic-revision transaction, and
+  a failure returns a retryable typed fault without deleting exact bytes that a
+  concurrent asset may already have reused and published. Unreferenced exact
+  bytes may remain as an idempotent retry target; download creation is not
+  treated as exclusive ownership of shared content. Downloading now stages
+  bytes before the CAS, then serializes the final link and physical input-quota
+  check in the same `BEGIN IMMEDIATE` transaction as the asset, provider
+  receipt, semantic revision, and telemetry outbox. Physical CAS orphans count
+  against the cap, shared checksums count once, changed bytes cannot replace an
+  existing asset ID, and competing different blobs cannot both publish above
+  the hard project input limit. A private, user-owned project lock serializes
+  provider staging across processes; its OS lock is released after a crash, and
+  the next owner performs a bounded, non-recursive cleanup of recognizable
+  staging files only. Unsafe links, special entries, excessive stale-file
+  counts, non-private permissions, or foreign ownership fail closed without
+  touching retained CAS content.
 - Eco SQLite authority, semantic revisions, durable direct-job state,
   content-addressed artifacts, evidence graph, and producer-atomic telemetry
   outbox.

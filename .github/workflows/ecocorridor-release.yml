@@ -777,7 +777,7 @@ jobs:
 
       - name: Install exact application dependencies
         run: |
-          uv sync --locked --extra science --extra ecocorridor --extra export --extra observability --extra release
+          uv sync --locked --extra science --extra ecocorridor --extra ecocorridor-report --extra export --extra observability --extra release
           uv run --no-sync python scripts/install_ecocorridor_geospatial_runtime.py
           pnpm install --frozen-lockfile
 

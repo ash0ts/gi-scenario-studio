@@ -10,7 +10,7 @@ import secrets
 import sqlite3
 import stat
 import threading
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -31,6 +31,7 @@ from .contracts import (
     FITNESS_LIMITATION,
     AssetKind,
     ComputationalResourceObservation,
+    ConnectivityAsset,
     ConnectivityEvidenceClaim,
     ConnectivityProjectBundle,
     ConnectivityRunPlan,
@@ -1189,6 +1190,160 @@ class EcoProjectStore:
         row["skeleton"] = json.loads(row.pop("skeleton_json"))
         return row
 
+    def retained_input_bytes(
+        self,
+        *,
+        connection: sqlite3.Connection | None = None,
+    ) -> int:
+        """Return authoritative retained-input usage, including CAS orphans.
+
+        Managed local and provider bytes are counted physically by inode, not
+        only from published asset records. This deliberately charges an exact
+        retained orphan after a later SQLite publication failure while counting
+        hard-linked aliases once. Effective asset contracts supplement missing,
+        damaged, or securely imported paths so quota cannot recover silently.
+
+        When ``connection`` is supplied the caller must already hold the
+        store's ``BEGIN IMMEDIATE`` transaction.  That form is used to
+        serialize the final filesystem-retention and semantic-publication
+        decision.
+        """
+
+        active_connection = connection or self._connection
+        project_id = self.project()["project_id"]
+        project = active_connection.execute(
+            "SELECT skeleton_json FROM eco_projects WHERE project_id=?", (project_id,)
+        ).fetchone()
+        if project is None:
+            raise KeyError(project_id)
+        bundle = active_connection.execute(
+            "SELECT payload_json FROM eco_records WHERE project_id=? AND record_type='bundle' "
+            "ORDER BY rowid DESC LIMIT 1",
+            (project_id,),
+        ).fetchone()
+        base = json.loads(
+            str(bundle["payload_json"] if bundle is not None else project["skeleton_json"])
+        )
+        assets = {
+            str(item["asset_id"]): item
+            for item in base.get("assets", [])
+            if isinstance(item, dict) and "asset_id" in item
+        }
+        for row in active_connection.execute(
+            "SELECT payload_json FROM eco_records WHERE project_id=? AND record_type='asset'",
+            (project_id,),
+        ):
+            item = json.loads(str(row["payload_json"]))
+            assets[str(item["asset_id"])] = item
+
+        physical_bytes: dict[tuple[object, ...], int] = {}
+        managed_paths: dict[Path, tuple[object, ...]] = {}
+
+        def record_file(path: Path, *, context: str) -> None:
+            metadata = path.lstat()
+            if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+                raise ValueError(f"{context} contains an unsafe file entry")
+            identity: tuple[object, ...] = (
+                ("inode", int(metadata.st_dev), int(metadata.st_ino))
+                if metadata.st_ino
+                else ("path", path.as_posix())
+            )
+            physical_bytes[identity] = max(physical_bytes.get(identity, 0), int(metadata.st_size))
+            managed_paths[path] = identity
+
+        data_assets_root = self.root / "data_assets"
+        provider_root = data_assets_root / "provider"
+        if data_assets_root.is_symlink():
+            raise ValueError("managed input root must not be a symbolic link")
+        if data_assets_root.exists():
+            if not data_assets_root.is_dir():
+                raise ValueError("managed input root must be a directory")
+            for directory, directories, filenames in os.walk(data_assets_root, followlinks=False):
+                current = Path(directory)
+                for name in directories:
+                    child = current / name
+                    metadata = child.lstat()
+                    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+                        raise ValueError("managed inputs contain an unsafe directory entry")
+                if current == data_assets_root:
+                    directories[:] = [
+                        name for name in directories if name not in {".downloads", "provider"}
+                    ]
+                for name in filenames:
+                    if current == data_assets_root and name == ".provider-download.lock":
+                        continue
+                    record_file(current / name, context="managed inputs")
+
+        if provider_root.is_symlink():
+            raise ValueError("provider CAS root must not be a symbolic link")
+        if provider_root.exists():
+            if not provider_root.is_dir():
+                raise ValueError("provider CAS root must be a directory")
+            for directory, directories, filenames in os.walk(provider_root, followlinks=False):
+                current = Path(directory)
+                for name in directories:
+                    child = current / name
+                    metadata = child.lstat()
+                    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+                        raise ValueError("provider CAS contains an unsafe directory entry")
+                for name in filenames:
+                    record_file(current / name, context="provider CAS")
+
+        logical_bytes: dict[str, int] = {}
+        for item in assets.values():
+            byte_size = item.get("byte_size")
+            if isinstance(byte_size, bool) or not isinstance(byte_size, int) or byte_size < 0:
+                raise ValueError("retained asset has an invalid byte-size contract")
+            relative = PurePosixPath(str(item.get("relative_path", "")))
+            if relative.is_absolute() or any(part in {"", ".", ".."} for part in relative.parts):
+                raise ValueError("retained asset has an invalid relative path")
+            direct_path = self.root.joinpath(*relative.parts)
+            identity = managed_paths.get(direct_path)
+            if identity is None:
+                # Secure imports are materialized outside the managed local
+                # tree, and missing/damaged retained paths must not make quota
+                # silently recover. Preserve their reviewed contract charge.
+                logical_key = relative.as_posix()
+                logical_bytes[logical_key] = max(logical_bytes.get(logical_key, 0), byte_size)
+            else:
+                physical_bytes[identity] = max(physical_bytes[identity], byte_size)
+        return sum(logical_bytes.values()) + sum(physical_bytes.values())
+
+    def effective_asset(
+        self,
+        asset_id: str,
+        *,
+        connection: sqlite3.Connection | None = None,
+    ) -> ConnectivityAsset | None:
+        """Resolve one asset head without requiring a complete model graph."""
+
+        active_connection = connection or self._connection
+        project_id = self.project()["project_id"]
+        imported = active_connection.execute(
+            "SELECT payload_json FROM eco_records WHERE project_id=? AND record_type='bundle' "
+            "ORDER BY rowid DESC LIMIT 1",
+            (project_id,),
+        ).fetchone()
+        candidate: dict[str, Any] | None = None
+        if imported is not None:
+            bundle = json.loads(str(imported["payload_json"]))
+            candidate = next(
+                (
+                    item
+                    for item in bundle.get("assets", [])
+                    if isinstance(item, dict) and item.get("asset_id") == asset_id
+                ),
+                None,
+            )
+        overlay = active_connection.execute(
+            "SELECT payload_json FROM eco_records WHERE project_id=? AND record_type='asset' "
+            "AND record_id=?",
+            (project_id, asset_id),
+        ).fetchone()
+        if overlay is not None:
+            candidate = json.loads(str(overlay["payload_json"]))
+        return ConnectivityAsset.model_validate(candidate) if candidate is not None else None
+
     @staticmethod
     def _put_record_in_transaction(
         connection: sqlite3.Connection,
@@ -1486,6 +1641,7 @@ class EcoProjectStore:
         proposed_revision_id: str | None = None,
         expected_parent_revision_id: str | None = None,
         extra_records: Sequence[tuple[str, str, dict[str, Any], bool]] = (),
+        transaction_guard: Callable[[sqlite3.Connection], None] | None = None,
     ) -> dict[str, Any]:
         """Atomically publish model heads, revision, diff, and telemetry.
 
@@ -1494,6 +1650,11 @@ class EcoProjectStore:
         can never expose a changed effective model under an earlier revision.
         ``extra_records`` are immutable provenance records committed with the
         publication but excluded from the scientific model hash.
+        ``transaction_guard`` runs only after ``BEGIN IMMEDIATE`` and before
+        any authoritative row changes. It exists for policy decisions whose
+        filesystem side effect (such as a no-clobber CAS link) must serialize
+        with publication; retained immutable bytes are not rolled back or
+        unlinked if a later SQL/outbox write fails.
         """
 
         if not records:
@@ -1516,6 +1677,8 @@ class EcoProjectStore:
             else str(created_at or _now())
         )
         with self.transaction() as connection:
+            if transaction_guard is not None:
+                transaction_guard(connection)
             active = self._active_revision_in_transaction(connection, project_id)
             if (
                 expected_parent_revision_id is not None

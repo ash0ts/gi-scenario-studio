@@ -40,6 +40,9 @@ observability = [
   "weave>=0.52.17,<1",
   "presidio-analyzer>=2.2.359,<3",
 ]
+ecocorridor-report = [
+  "wandb-workspaces==0.4.5",
+]
 release = [
   "PyNaCl==1.6.2",
   "pyinstaller==6.21.0",

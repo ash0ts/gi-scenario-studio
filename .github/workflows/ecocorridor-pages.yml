@@ -51,6 +51,9 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
 
+      - name: Install minimal locked replay-policy dependencies
+        run: uv sync --locked --no-dev --no-install-project
+
       - name: Resolve the exact protected Ridgeway producer artifact
         id: resolve_ridgeway_evidence
         shell: bash
@@ -180,6 +183,12 @@ jobs:
           --trust-record apps/ecocorridor-desktop/src/data/ridgewayReleaseTrust.json
           --data-manifest benchmarks/ecocorridor/data-manifest.json
           --require-verified-evidence
+
+      - name: Install Playwright Chromium
+        run: pnpm --dir apps/ecocorridor-replay exec playwright install --with-deps chromium
+
+      - name: Crawl policy-safe production replay copy
+        run: pnpm --dir apps/ecocorridor-replay test:rendered-copy
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
