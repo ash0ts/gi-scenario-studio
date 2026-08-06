@@ -923,11 +923,24 @@ def safe_child_error_code(exc: BaseException) -> str:
 
     if isinstance(exc, ReviewBriefAgentRuntimeError) and _SAFE_ERROR.fullmatch(str(exc)):
         return str(exc)
-    name = type(exc).__name__.upper()
+    name = type(exc).__name__.upper().replace("_", "")
     if "TIMEOUT" in name:
         return "REVIEW_BRIEF_AGENT_DEADLINE_EXCEEDED"
-    if "GUARDRAIL" in name or "MAXTURNS" in name.replace("_", ""):
+    if "GUARDRAIL" in name or "MAXTURNS" in name:
         return "REVIEW_BRIEF_AGENT_BOUNDARY_REJECTED"
+    provider_errors = {
+        "BADREQUESTERROR": "REVIEW_BRIEF_PROVIDER_REQUEST_REJECTED",
+        "AUTHENTICATIONERROR": "REVIEW_BRIEF_PROVIDER_AUTHENTICATION_FAILED",
+        "PERMISSIONDENIEDERROR": "REVIEW_BRIEF_PROVIDER_ACCESS_DENIED",
+        "NOTFOUNDERROR": "REVIEW_BRIEF_PROVIDER_MODEL_NOT_FOUND",
+        "RATELIMITERROR": "REVIEW_BRIEF_PROVIDER_RATE_LIMITED",
+        "APICONNECTIONERROR": "REVIEW_BRIEF_PROVIDER_UNAVAILABLE",
+        "INTERNALSERVERERROR": "REVIEW_BRIEF_PROVIDER_FAILED",
+        "APISTATUSERROR": "REVIEW_BRIEF_PROVIDER_FAILED",
+        "MODELBEHAVIORERROR": "REVIEW_BRIEF_PROVIDER_OUTPUT_INVALID",
+    }
+    if name in provider_errors:
+        return provider_errors[name]
     return "REVIEW_BRIEF_AGENT_INVOCATION_FAILED"
 
 

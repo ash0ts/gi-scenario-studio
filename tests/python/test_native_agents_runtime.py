@@ -43,6 +43,7 @@ from ecocorridor_core.native_agents_runtime import (
     NativeSingleTurnPayload,
     PopenNativeSingleTurnSubprocess,
     _trace_url_matches,
+    safe_native_child_error_code,
 )
 from ecocorridor_core.review_brief_agent_runtime import (
     REVIEW_BRIEF_MAX_CONTEXT_BYTES,
@@ -60,6 +61,31 @@ from ecocorridor_core.review_brief_evaluation import ReviewBriefAnswer
 
 def _sha(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+@pytest.mark.parametrize(
+    ("exception_name", "expected"),
+    [
+        ("BadRequestError", "NATIVE_AGENT_PROVIDER_REQUEST_REJECTED"),
+        ("AuthenticationError", "NATIVE_AGENT_PROVIDER_AUTHENTICATION_FAILED"),
+        ("PermissionDeniedError", "NATIVE_AGENT_PROVIDER_ACCESS_DENIED"),
+        ("NotFoundError", "NATIVE_AGENT_PROVIDER_MODEL_NOT_FOUND"),
+        ("RateLimitError", "NATIVE_AGENT_PROVIDER_RATE_LIMITED"),
+        ("APIConnectionError", "NATIVE_AGENT_PROVIDER_UNAVAILABLE"),
+        ("InternalServerError", "NATIVE_AGENT_PROVIDER_FAILED"),
+        ("ModelBehaviorError", "NATIVE_AGENT_PROVIDER_OUTPUT_INVALID"),
+    ],
+)
+def test_safe_native_error_code_classifies_provider_failures_without_message(
+    exception_name: str, expected: str
+) -> None:
+    error_type = type(exception_name, (Exception,), {})
+    error = error_type("credential-and-provider-payload-must-not-escape")
+
+    observed = safe_native_child_error_code(error)
+
+    assert observed == expected
+    assert "credential" not in observed.casefold()
 
 
 def _provider() -> ReviewBriefAgentProvider:
