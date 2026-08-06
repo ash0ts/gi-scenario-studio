@@ -70,6 +70,7 @@ from ecocorridor_core.review_brief_agent_runtime import (
     ReviewBriefSubprocessRunner,
     ReviewBriefWeaveTarget,
     _communicate_with_deadline,
+    _configure_weave_pii_redaction,
     _json_bytes,
     _read_frame,
     _trace_url_matches_target,
@@ -126,6 +127,22 @@ def test_stage_failure_preserves_provider_classification_and_bounds_generic_erro
             TypeError("internal payload must not escape"),
             fallback_code="REVIEW_BRIEF_AGENT_CONFIGURATION_FAILED",
         )
+
+
+def test_weave_pii_redaction_uses_offline_cached_presidio_engine(tmp_path: Path) -> None:
+    import tldextract
+    import weave.utils.pii_redaction as weave_pii
+
+    _configure_weave_pii_redaction(tmp_path)
+    first = weave_pii._get_engines()
+    second = weave_pii._get_engines()
+    redacted = weave_pii.redact_pii_string("Contact alice@example.com in Seattle.")
+
+    assert first is second
+    assert "alice@example.com" not in redacted
+    assert "Seattle" not in redacted
+    assert tuple(tldextract.extract.suffix_list_urls) == ()
+    assert (tmp_path / "tldextract-cache").is_dir()
 
 
 def _snapshot(*, evidence_aliases: list[str] | None = None) -> ReviewBriefAuthorizedSnapshot:

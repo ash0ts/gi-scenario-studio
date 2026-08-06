@@ -39,6 +39,7 @@ from .native_agents_runtime import (
 )
 from .review_brief_agent_runtime import (
     ReviewBriefAgentRuntimeError,
+    _configure_weave_pii_redaction,
     _read_frame,
     _wandb_inference_project,
     _write_frame,
@@ -349,6 +350,7 @@ def _configure_environment(child: NativeSingleTurnChildRequest) -> None:
             "WEAVE_ENABLE_DISK_FALLBACK": "false",
         }
     )
+    _configure_weave_pii_redaction(runtime)
 
 
 def _model(child: NativeSingleTurnChildRequest) -> Any:

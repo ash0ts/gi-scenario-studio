@@ -29,6 +29,7 @@ from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal, Protocol
 from urllib.parse import urlsplit
@@ -210,6 +211,48 @@ def _wandb_inference_project(
     if provider_base_url != _WANDB_SERVERLESS_INFERENCE_BASE_URL:
         return None
     return f"{weave_target.entity}/{weave_target.project}"
+
+
+def _configure_weave_pii_redaction(runtime: Path) -> None:
+    """Install an offline, cached Presidio engine before any Weave serialization."""
+
+    try:
+        import tldextract
+        import weave.utils.pii_redaction as weave_pii
+        from presidio_analyzer import AnalyzerEngine
+        from presidio_analyzer.nlp_engine import NlpEngineProvider
+        from presidio_anonymizer import AnonymizerEngine
+    except ImportError as exc:
+        raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_PII_REDACTION_UNAVAILABLE") from exc
+
+    cache_directory = runtime / "tldextract-cache"
+    cache_directory.mkdir(mode=0o700, exist_ok=True)
+    if cache_directory.is_symlink() or runtime not in cache_directory.resolve().parents:
+        raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_RUNTIME_PATH_UNSAFE")
+    # Presidio's email recognizer uses the module-level extractor. Force its
+    # bundled Public Suffix List so an agent subprocess never performs an
+    # undeclared network fetch while redacting trace data.
+    tldextract.extract = tldextract.TLDExtract(
+        cache_dir=str(cache_directory),
+        suffix_list_urls=(),
+        fallback_to_snapshot=True,
+    )
+
+    @lru_cache(maxsize=1)
+    def engines() -> tuple[Any, Any]:
+        provider = NlpEngineProvider(
+            nlp_configuration={
+                "nlp_engine_name": "spacy",
+                "models": [{"lang_code": "en", "model_name": "en_core_web_sm"}],
+            }
+        )
+        analyzer = AnalyzerEngine(nlp_engine=provider.create_engine())
+        return analyzer, AnonymizerEngine()
+
+    weave_pii._get_engines = engines
+    probe = weave_pii.redact_pii_string("Contact alice@example.com in Seattle.")
+    if "alice@example.com" in probe or "Seattle" in probe:
+        raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_PII_REDACTION_UNAVAILABLE")
 
 
 class ReviewBriefAgentBinding(ContractModel):
