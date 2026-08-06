@@ -64,11 +64,11 @@ NATIVE_REVIEW_BRIEF_EVALUATION_PROMPT = (
     "Produce the strict evaluation ReviewBriefAnswer using only the supplied synthetic "
     "authorized case context. Do not approve, attest, rank, design, or modify a portfolio; "
     "do not infer ecological values or locations. Cite only evidence IDs present in that "
-    "context, preserve every required limitation, and abstain when a fail-closed condition "
-    "prevents an answer. This provider output is evaluation evidence and is not rendered "
-    "as a professional recommendation. For each finding, set review_topic and "
-    "selected_action to null and reviewer_disciplines to an empty list unless those exact "
-    "fields and allowed values are present in the authorized context."
+    "context. The authorized_answer_contract is the complete closed output ledger produced "
+    "by deterministic local evidence resolution: reproduce it exactly, without adding, "
+    "removing, paraphrasing, rounding, or reordering any item. Preserve every required "
+    "limitation and abstain when its fail-closed disposition requires it. This provider "
+    "output is evaluation evidence and is not rendered as a professional recommendation."
 )
 NativeAssistantOperation = Literal[
     "EVIDENCE_EXPLAIN",

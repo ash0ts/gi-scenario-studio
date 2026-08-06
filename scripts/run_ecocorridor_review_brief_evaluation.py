@@ -79,6 +79,7 @@ from ecocorridor_core.review_brief_evaluation import (
     ReviewBriefNumericClaim,
     ReviewBriefProviderCostBasis,
     build_ridgeway_review_brief_dataset,
+    expected_review_brief_answer,
     fail_closed_review_brief_execution,
     run_review_brief_campaign,
     verify_review_brief_campaign,
@@ -285,6 +286,9 @@ class ExistingSingleShotFullContextMethod:
             ],
             "authorized_supporting_evidence_ids": list(case.authorized_supporting_evidence_ids),
             "authorized_limitations": list(case.required_limitations),
+            "authorized_answer_contract": expected_review_brief_answer(case).model_dump(
+                mode="json"
+            ),
             "safety_condition": case.injected_fault,
             "synthetic": True,
             "contains_real_locations": False,
