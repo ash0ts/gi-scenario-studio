@@ -679,7 +679,7 @@ def test_per_tool_revalidation_rejects_identity_alias_and_generic_arguments() ->
     with pytest.raises(ReviewBriefAgentRuntimeError, match="TOOL_ALIAS_NOT_AUTHORIZED"):
         context.revalidate(
             tool_name="review_brief_get_findings",
-            raw_arguments=json.dumps({"query": {"finding_aliases": ["F9"]}}),
+            raw_arguments=json.dumps({"finding_aliases": ["F9"]}),
         )
     assert context.inspected_finding_aliases == set()
     assert context.tool_calls == ["review_brief_get_scope", "review_brief_list_findings"]
@@ -894,7 +894,7 @@ def test_model_visible_context_is_incremental_closed_and_canonically_accounted()
     }
 
     manifest = review_brief_model_visible_context(snapshot)
-    assert manifest["schema_version"] == "review-brief-model-visible-context/v1"
+    assert manifest["schema_version"] == "review-brief-model-visible-context/v2"
     assert [item["tool_name"] for item in manifest["ordered_tool_exchanges"]] == list(
         required_review_brief_tools(snapshot)
     )
@@ -1202,12 +1202,12 @@ class _ScriptedAgentsModel(Model):
             ("review_brief_list_findings", {}),
             (
                 "review_brief_get_findings",
-                {"query": {"finding_aliases": ["F1"]}},
+                {"finding_aliases": ["F1"]},
             ),
             ("review_brief_list_model_fitness_gaps", {}),
             (
                 "review_brief_resolve_evidence_aliases",
-                {"query": {"evidence_aliases": ["E1"]}},
+                {"evidence_aliases": ["E1"]},
             ),
         ]
         if self.turn < len(calls):

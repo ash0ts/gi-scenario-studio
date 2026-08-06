@@ -70,7 +70,7 @@ _SAFE_MODEL_INPUT = (
     "Prepare the bounded review-finding selection. Use only the registered "
     "read-only tools and return only the required structured output."
 )
-REVIEW_BRIEF_MODEL_VISIBLE_CONTEXT_VERSION = "review-brief-model-visible-context/v1"
+REVIEW_BRIEF_MODEL_VISIBLE_CONTEXT_VERSION = "review-brief-model-visible-context/v2"
 REVIEW_BRIEF_MAX_TOOL_OUTPUT_BYTES = 48 * 1024
 
 
@@ -217,14 +217,14 @@ class _InvocationContext:
         inspected_findings: set[str] = set()
         resolved_evidence: set[str] = set()
         if tool_name == "review_brief_get_findings":
-            if set(arguments) != {"query"}:
+            if set(arguments) != {"finding_aliases"}:
                 raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_ARGUMENTS_INVALID")
-            query = _FindingQuery.model_validate(arguments["query"])
+            query = _FindingQuery.model_validate(arguments)
             inspected_findings.update(query.finding_aliases)
         elif tool_name == "review_brief_resolve_evidence_aliases":
-            if set(arguments) != {"query"}:
+            if set(arguments) != {"evidence_aliases"}:
                 raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_ARGUMENTS_INVALID")
-            query = _EvidenceQuery.model_validate(arguments["query"])
+            query = _EvidenceQuery.model_validate(arguments)
             resolved_evidence.update(query.evidence_aliases)
         elif arguments:
             raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_ARGUMENTS_INVALID")
@@ -488,8 +488,9 @@ def _build_tools(context: _InvocationContext) -> list[Any]:
         "Return full closed-vocabulary detail for a batch of authorized finding aliases.",
     )
     async def get_findings(
-        wrapper: RunContextWrapper[_InvocationContext], query: _FindingQuery
+        wrapper: RunContextWrapper[_InvocationContext], finding_aliases: list[str]
     ) -> dict[str, Any]:
+        query = _FindingQuery(finding_aliases=finding_aliases)
         return _findings_payload(wrapper.context.snapshot, query.finding_aliases)
 
     @decorate(
@@ -515,8 +516,9 @@ def _build_tools(context: _InvocationContext) -> list[Any]:
         "Resolve a batch of authorized evidence aliases to finding aliases only.",
     )
     async def resolve_evidence_aliases(
-        wrapper: RunContextWrapper[_InvocationContext], query: _EvidenceQuery
+        wrapper: RunContextWrapper[_InvocationContext], evidence_aliases: list[str]
     ) -> dict[str, Any]:
+        query = _EvidenceQuery(evidence_aliases=evidence_aliases)
         permitted = set(wrapper.context.child.binding.permitted_evidence_aliases)
         if not set(query.evidence_aliases).issubset(permitted):
             raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_EVIDENCE_ALIAS_NOT_FOUND")
@@ -1030,7 +1032,7 @@ def review_brief_model_visible_context(
                 ]
             }
         elif tool_name == "review_brief_get_findings":
-            arguments = {"query": {"finding_aliases": finding_aliases}}
+            arguments = {"finding_aliases": finding_aliases}
             output = _findings_payload(snapshot, finding_aliases)
         elif tool_name == "review_brief_list_option_constraints":
             arguments = {}
@@ -1045,7 +1047,7 @@ def review_brief_model_visible_context(
             arguments = {}
             output = _authorization_payload(snapshot)
         elif tool_name == "review_brief_resolve_evidence_aliases":
-            arguments = {"query": {"evidence_aliases": evidence_aliases}}
+            arguments = {"evidence_aliases": evidence_aliases}
             output = _evidence_payload(snapshot, evidence_aliases)
         else:  # pragma: no cover - required traversal is a closed local contract
             raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_NOT_ALLOWED")
