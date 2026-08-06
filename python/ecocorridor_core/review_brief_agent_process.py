@@ -1050,13 +1050,21 @@ async def _execute_agent(
         )
     except Exception as exc:  # noqa: BLE001 - stage boundary emits only a finite code
         _raise_stage_failure(exc, fallback_code="REVIEW_BRIEF_AGENT_TRACE_SETUP_FAILED")
-    set_run_context = getattr(client, "set_wandb_run_context", None)
-    if not callable(set_run_context):
-        raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_WANDB_ASSOCIATION_UNAVAILABLE")
-    set_run_context(run_id=child.trace.wandb_run_id)
-    processor = _ReceiptWeaveTracingProcessor(context=context)
-    # Replaces the SDK's default exporter and any processor auto-installed by Weave.
-    set_trace_processors([processor])
+    try:
+        set_run_context = getattr(client, "set_wandb_run_context", None)
+        if not callable(set_run_context):
+            raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_WANDB_ASSOCIATION_UNAVAILABLE")
+        set_run_context(run_id=child.trace.wandb_run_id)
+        processor = _ReceiptWeaveTracingProcessor(context=context)
+        # Replaces the SDK's default exporter and any processor auto-installed by Weave.
+        set_trace_processors([processor])
+    except ReviewBriefAgentRuntimeError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - stage boundary emits only a finite code
+        _raise_stage_failure(
+            exc,
+            fallback_code="REVIEW_BRIEF_AGENT_TRACE_ASSOCIATION_FAILED",
+        )
 
     @input_guardrail(name="review_brief_fixed_task", run_in_parallel=False)
     async def fixed_input_guard(_wrapper: Any, _agent: Any, value: Any) -> GuardrailFunctionOutput:
@@ -1091,7 +1099,10 @@ async def _execute_agent(
             )
         return GuardrailFunctionOutput(output_info={"validated": False}, tripwire_triggered=True)
 
-    tools = _build_tools(context)
+    try:
+        tools = _build_tools(context)
+    except Exception as exc:  # noqa: BLE001 - stage boundary emits only a finite code
+        _raise_stage_failure(exc, fallback_code="REVIEW_BRIEF_AGENT_TOOL_SETUP_FAILED")
     if child.action == "PREFLIGHT":
         tools = [tool for tool in tools if tool.name == "review_brief_get_scope"]
         output_type: type[ContractModel] = _CapabilityOutput
@@ -1156,12 +1167,22 @@ async def _execute_agent(
     except Exception as exc:  # noqa: BLE001 - stage boundary emits only a finite code
         _raise_stage_failure(exc, fallback_code="REVIEW_BRIEF_AGENT_EXECUTION_FAILED")
     elapsed_ms = round((time.monotonic() - started) * 1000)
-    trace_id, weave_call_id, trace_url = _readback_trace(
-        client=client,
-        processor=processor,
-        context=context,
-    )
-    input_tokens, output_tokens, provider_call_id = _usage(result)
+    try:
+        trace_id, weave_call_id, trace_url = _readback_trace(
+            client=client,
+            processor=processor,
+            context=context,
+        )
+    except ReviewBriefAgentRuntimeError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - stage boundary emits only a finite code
+        _raise_stage_failure(exc, fallback_code="REVIEW_BRIEF_AGENT_TRACE_READBACK_FAILED")
+    try:
+        input_tokens, output_tokens, provider_call_id = _usage(result)
+    except ReviewBriefAgentRuntimeError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - stage boundary emits only a finite code
+        _raise_stage_failure(exc, fallback_code="REVIEW_BRIEF_AGENT_USAGE_EXTRACTION_FAILED")
     if child.action == "PREFLIGHT":
         if not isinstance(result.final_output, _CapabilityOutput):
             raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_PREFLIGHT_OUTPUT_INVALID")
