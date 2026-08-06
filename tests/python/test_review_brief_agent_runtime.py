@@ -41,6 +41,7 @@ from ecocorridor_core.review_brief_agent_process import (
     _evidence_payload,
     _execute,
     _finding_payload,
+    _get_trace_call_with_retry,
     _InvocationContext,
     _model,
     _raise_stage_failure,
@@ -991,6 +992,50 @@ def test_weave_processor_replaces_root_with_hash_only_gate_and_exact_readback(
     assert weave_call_id == "weave-call-1"
     assert trace_url == record.ui_url
     assert client.flush_count == 1
+
+
+def test_trace_readback_retries_bounded_visibility_lag() -> None:
+    expected = object()
+
+    class Client:
+        def __init__(self) -> None:
+            self.attempts = 0
+
+        def get_call(self, call_id: str) -> object:
+            assert call_id == "call-1"
+            self.attempts += 1
+            if self.attempts < 3:
+                raise LookupError("not visible yet")
+            return expected
+
+    client = Client()
+    assert (
+        _get_trace_call_with_retry(
+            client,
+            "call-1",
+            timeout_seconds=0.1,
+            interval_seconds=0,
+        )
+        is expected
+    )
+    assert client.attempts == 3
+
+
+def test_trace_readback_visibility_timeout_is_content_free() -> None:
+    class Client:
+        def get_call(self, _call_id: str) -> object:
+            raise LookupError("sensitive trace response")
+
+    with pytest.raises(
+        ReviewBriefAgentRuntimeError,
+        match="^REVIEW_BRIEF_AGENT_TRACE_FETCH_FAILED$",
+    ):
+        _get_trace_call_with_retry(
+            Client(),
+            "call-1",
+            timeout_seconds=0,
+            interval_seconds=0,
+        )
 
 
 @pytest.mark.parametrize("suffix", ["?download=1", "#other-trace"])

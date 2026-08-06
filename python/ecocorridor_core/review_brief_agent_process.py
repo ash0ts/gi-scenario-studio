@@ -660,17 +660,44 @@ def _validate_trace_url(url: str, child: ReviewBriefAgentChildRequest) -> str:
     return url
 
 
+def _get_trace_call_with_retry(
+    client: Any,
+    call_id: str,
+    *,
+    timeout_seconds: float = 8.0,
+    interval_seconds: float = 0.25,
+) -> Any:
+    """Read back an exact flushed call while tolerating bounded index visibility lag."""
+
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        try:
+            return client.get_call(call_id)
+        except Exception as exc:
+            if time.monotonic() >= deadline:
+                raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TRACE_FETCH_FAILED") from exc
+            time.sleep(interval_seconds)
+
+
 def _readback_trace(
     *,
     client: Any,
     processor: _ReceiptWeaveTracingProcessor,
     context: _InvocationContext,
 ) -> tuple[str, str, str]:
-    processor.force_flush()
-    client.flush()
+    try:
+        processor.force_flush()
+    except Exception as exc:
+        raise ReviewBriefAgentRuntimeError(
+            "REVIEW_BRIEF_AGENT_TRACE_PROCESSOR_FLUSH_FAILED"
+        ) from exc
+    try:
+        client.flush()
+    except Exception as exc:
+        raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TRACE_CLIENT_FLUSH_FAILED") from exc
     if not processor.root_call_id:
         raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_WEAVE_ROOT_MISSING")
-    record = client.get_call(processor.root_call_id)
+    record = _get_trace_call_with_retry(client, processor.root_call_id)
     attributes = _value(record, "attributes", {})
     if _value(attributes, "agent_trace_id") != context.child.trace.trace_id:
         raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TRACE_ID_MISMATCH")
