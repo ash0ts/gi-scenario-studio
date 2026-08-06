@@ -49,6 +49,7 @@ from ecocorridor_core.review_brief_agent_process import (
     _ReceiptWeaveTracingProcessor,
     _scope_payload,
     _usage,
+    _validate_trace_gate,
     _validate_trace_url,
     review_brief_model_visible_context,
     review_brief_model_visible_context_bytes,
@@ -1014,6 +1015,20 @@ def test_weave_processor_replaces_root_with_hash_only_gate_and_exact_readback(
     assert weave_call_id == "weave-call-1"
     assert trace_url == record.ui_url
     assert client.flush_count == 1
+
+
+def test_trace_gate_failures_identify_only_the_bounded_field() -> None:
+    expected = {"snapshot_sha256": _sha("snapshot")}
+    with pytest.raises(
+        ReviewBriefAgentRuntimeError,
+        match="^REVIEW_BRIEF_AGENT_TRACE_GATE_SNAPSHOT_SHA256_MISMATCH$",
+    ):
+        _validate_trace_gate({"snapshot_sha256": _sha("changed")}, expected)
+    with pytest.raises(
+        ReviewBriefAgentRuntimeError,
+        match="^REVIEW_BRIEF_AGENT_TRACE_GATE_SCHEMA_MISMATCH$",
+    ):
+        _validate_trace_gate({"other_sha256": _sha("snapshot")}, expected)
 
 
 def test_trace_readback_retries_bounded_visibility_lag() -> None:

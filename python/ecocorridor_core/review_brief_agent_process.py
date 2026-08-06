@@ -644,6 +644,23 @@ def _trace_gate(record: Any) -> dict[str, Any]:
     return gate
 
 
+def _validate_trace_gate(gate: dict[str, Any], expected: dict[str, Any]) -> None:
+    """Validate hash-only gate data while returning only finite mismatched field names."""
+
+    if set(gate) != set(expected):
+        raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TRACE_GATE_SCHEMA_MISMATCH")
+    for key, expected_value in expected.items():
+        observed = gate[key]
+        if not key.endswith("_sha256") or not re.fullmatch(r"[0-9a-f]{64}", str(observed)):
+            raise ReviewBriefAgentRuntimeError(
+                f"REVIEW_BRIEF_AGENT_TRACE_GATE_{key.upper()}_INVALID"
+            )
+        if observed != expected_value:
+            raise ReviewBriefAgentRuntimeError(
+                f"REVIEW_BRIEF_AGENT_TRACE_GATE_{key.upper()}_MISMATCH"
+            )
+
+
 def _validate_trace_url(url: str, child: ReviewBriefAgentChildRequest) -> str:
     parsed = urlsplit(url)
     expected = urlsplit(child.weave_target.web_base_url)
@@ -747,11 +764,7 @@ def _readback_trace(
         "output_validation_sha256": canonical_sha256({"output_validated": True}),
         "access_mode_sha256": hashlib.sha256(b"READ_ONLY").hexdigest(),
     }
-    if gate != expected or any(
-        not key.endswith("_sha256") or not re.fullmatch(r"[0-9a-f]{64}", str(value))
-        for key, value in gate.items()
-    ):
-        raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TRACE_GATE_MISMATCH")
+    _validate_trace_gate(gate, expected)
     url = str(_value(record, "ui_url", "") or "")
     if not url:
         raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TRACE_URL_MISSING")
