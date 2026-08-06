@@ -66,6 +66,7 @@ _OPAQUE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
 _TRACE_ID = re.compile(r"^trace_[0-9a-f]{32}$")
 _WAND_DB_SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _SAFE_ERROR = re.compile(r"^[A-Z][A-Z0-9_]{2,127}$")
+_WANDB_SERVERLESS_INFERENCE_BASE_URL = "https://api.inference.wandb.ai/v1"
 
 
 class ReviewBriefAgentRuntimeError(RuntimeError):
@@ -199,6 +200,16 @@ class ReviewBriefWeaveTarget(ContractModel):
         ):
             raise ValueError("W&B/Weave URL must be HTTPS or explicit loopback HTTP")
         return normalized
+
+
+def _wandb_inference_project(
+    *, provider_base_url: str, weave_target: ReviewBriefWeaveTarget
+) -> str | None:
+    """Return W&B's non-secret inference routing value for its canonical origin only."""
+
+    if provider_base_url != _WANDB_SERVERLESS_INFERENCE_BASE_URL:
+        return None
+    return f"{weave_target.entity}/{weave_target.project}"
 
 
 class ReviewBriefAgentBinding(ContractModel):

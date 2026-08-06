@@ -42,6 +42,7 @@ from ecocorridor_core.review_brief_agent_process import (
     _execute,
     _finding_payload,
     _InvocationContext,
+    _model,
     _readback_trace,
     _ReceiptWeaveTracingProcessor,
     _scope_payload,
@@ -239,6 +240,36 @@ def test_ipc_serialization_reveals_secrets_only_in_explicit_frame() -> None:
     finally:
         payload[:] = b"\0" * len(payload)
     assert set(payload) == {0}
+
+
+def test_model_routes_only_wandb_inference_to_the_weave_project(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: list[dict[str, Any]] = []
+
+    class FakeAsyncOpenAI:
+        def __init__(self, **kwargs: Any) -> None:
+            requests.append(kwargs)
+
+    monkeypatch.setattr("openai.AsyncOpenAI", FakeAsyncOpenAI)
+    wandb_child = _child().model_copy(
+        update={
+            "provider": _provider().model_copy(
+                update={"base_url": "https://api.inference.wandb.ai/v1"}
+            )
+        }
+    )
+    _model(wandb_child)
+    _model(_child())
+
+    assert requests[0]["project"] == "wandb/ecocorridor-scenario-studio"
+    assert "project" not in requests[1]
+    routing_metadata = json.dumps(
+        {key: value for key, value in requests[0].items() if key != "api_key"},
+        sort_keys=True,
+    )
+    assert wandb_child.provider_api_key.get_secret_value() not in routing_metadata
+    assert wandb_child.wandb_api_key.get_secret_value() not in routing_metadata
 
 
 def test_owned_child_run_uses_hash_only_config_and_finishes(

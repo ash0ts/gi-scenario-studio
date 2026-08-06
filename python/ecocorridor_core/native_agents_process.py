@@ -40,6 +40,7 @@ from .native_agents_runtime import (
 from .review_brief_agent_runtime import (
     ReviewBriefAgentRuntimeError,
     _read_frame,
+    _wandb_inference_project,
     _write_frame,
 )
 from .review_brief_evaluation import ReviewBriefAnswer
@@ -355,11 +356,20 @@ def _model(child: NativeSingleTurnChildRequest) -> Any:
     from agents.models.openai_responses import OpenAIResponsesModel
     from openai import AsyncOpenAI
 
+    routing_project = _wandb_inference_project(
+        provider_base_url=child.provider.base_url,
+        weave_target=child.weave_target,
+    )
+    client_kwargs: dict[str, Any] = {
+        "api_key": child.provider_api_key.get_secret_value(),
+        "base_url": child.provider.base_url,
+        "timeout": child.provider.timeout_seconds,
+        "max_retries": 0,
+    }
+    if routing_project is not None:
+        client_kwargs["project"] = routing_project
     client = AsyncOpenAI(
-        api_key=child.provider_api_key.get_secret_value(),
-        base_url=child.provider.base_url,
-        timeout=child.provider.timeout_seconds,
-        max_retries=0,
+        **client_kwargs,
     )
     if child.provider.mode == "RESPONSES":
         return OpenAIResponsesModel(
