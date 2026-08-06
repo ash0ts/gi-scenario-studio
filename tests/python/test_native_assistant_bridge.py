@@ -131,6 +131,7 @@ class _FakeExecutor:
             output=output,
             output_sha256=canonical_sha256(output),
             provider_call_id_sha256=_sha("provider-call-1"),
+            provider_call_identity_kind="PROVIDER_RESPONSE_ID",
             provider_model="model-1",
             input_tokens=10,
             output_tokens=4,

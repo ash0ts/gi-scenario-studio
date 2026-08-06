@@ -161,6 +161,15 @@
       "title": "Provider Call Id Sha256",
       "type": "string"
     },
+    "provider_call_identity_kind": {
+      "enum": [
+        "PROVIDER_RESPONSE_ID",
+        "PROVIDER_REQUEST_ID",
+        "WEAVE_GENERATION_CALL_ID"
+      ],
+      "title": "Provider Call Identity Kind",
+      "type": "string"
+    },
     "provider_model": {
       "title": "Provider Model",
       "type": "string"
@@ -211,6 +220,7 @@
     "snapshot_sha256",
     "selections",
     "provider_call_id_sha256",
+    "provider_call_identity_kind",
     "provider_model",
     "tool_calls",
     "trace"

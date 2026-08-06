@@ -523,6 +523,9 @@ class ProviderExecutionEvidence(ContractModel):
     provider: str = Field(min_length=1, max_length=256)
     model: str = Field(min_length=1, max_length=512)
     provider_call_id: str = Field(min_length=1, max_length=512)
+    provider_call_identity_kind: Literal[
+        "PROVIDER_RESPONSE_ID", "PROVIDER_REQUEST_ID", "WEAVE_GENERATION_CALL_ID"
+    ]
     provider_response_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     weave_call_id: str | None = None
     weave_trace_id: str | None = None
@@ -2660,6 +2663,7 @@ def build_review_brief_publication_plan(
                     record.case_id,
                     record.execution.execution_path,
                     provider.provider_call_id,
+                    provider.provider_call_identity_kind,
                     provider.weave_call_id,
                     provider.weave_trace_id,
                     provider.weave_trace_url,
@@ -2802,6 +2806,7 @@ def build_review_brief_publication_plan(
                 "case_id",
                 "execution_path",
                 "provider_call_id",
+                "provider_call_identity_kind",
                 "weave_call_id",
                 "weave_trace_id",
                 "weave_trace_url",

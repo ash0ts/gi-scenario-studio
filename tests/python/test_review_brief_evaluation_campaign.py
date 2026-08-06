@@ -181,6 +181,7 @@ class _CapturingSingleTurnSubprocess:
             output=output,
             output_sha256=canonical_sha256(output),
             provider_call_id_sha256="a" * 64,
+            provider_call_identity_kind="PROVIDER_RESPONSE_ID",
             provider_model=request.provider.model,
             input_tokens=11,
             output_tokens=7,
@@ -213,6 +214,7 @@ class _DatasetSingleTurnSubprocess:
             output=output,
             output_sha256=canonical_sha256(output),
             provider_call_id_sha256=hashlib.sha256(case.case_id.encode()).hexdigest(),
+            provider_call_identity_kind="PROVIDER_RESPONSE_ID",
             provider_model=request.provider.model,
             input_tokens=50,
             output_tokens=7,
@@ -266,6 +268,7 @@ class _CapturingReviewBriefSubprocess:
             snapshot_sha256=runner_request.snapshot.snapshot_sha256,
             selections=selections,
             provider_call_id_sha256="b" * 64,
+            provider_call_identity_kind="PROVIDER_RESPONSE_ID",
             provider_model=request.provider.model,
             tool_calls=list(required_review_brief_tools(runner_request.snapshot)),
             input_tokens=17,
@@ -308,6 +311,7 @@ def _perfect_campaign(
                         provider="provider",
                         model="model-1",
                         provider_call_id=f"provider:{method_id}:{case.case_id}",
+                        provider_call_identity_kind="PROVIDER_RESPONSE_ID",
                         provider_response_sha256=hashlib.sha256(
                             f"response:{method_id}:{case.case_id}".encode()
                         ).hexdigest(),
@@ -369,6 +373,7 @@ def _perfect_campaign(
                     provider="provider",
                     model="model-1",
                     provider_call_id=f"provider:{method_id}:{case.case_id}",
+                    provider_call_identity_kind="PROVIDER_RESPONSE_ID",
                     provider_response_sha256=hashlib.sha256(
                         f"response:{method_id}:{case.case_id}".encode()
                     ).hexdigest(),
@@ -654,6 +659,7 @@ def test_independent_role_ledger_matches_actual_production_finding_granularity(
             snapshot_sha256=snapshot.snapshot_sha256,
             selections=selections,
             provider_call_id_sha256="a" * 64,
+            provider_call_identity_kind="PROVIDER_RESPONSE_ID",
             provider_model="model-1",
             tool_calls=list(required_review_brief_tools(snapshot)),
             input_tokens=10,
@@ -708,6 +714,7 @@ def test_independent_role_ledger_matches_actual_production_finding_granularity(
                 provider="provider",
                 model="model-1",
                 provider_call_id=f"provider:{case.case_id}",
+                provider_call_identity_kind="PROVIDER_RESPONSE_ID",
                 provider_response_sha256="b" * 64,
                 weave_call_id=f"call:{case.case_id}",
                 weave_trace_id=f"trace:{case.case_id}",

@@ -45,6 +45,7 @@ from ecocorridor_core.review_brief_agent_process import (
     _InvocationContext,
     _model,
     _raise_stage_failure,
+    _readback_generation_calls,
     _readback_trace,
     _ReceiptWeaveTracingProcessor,
     _scope_payload,
@@ -486,6 +487,7 @@ class _FakeSubprocess:
                 )
             ],
             provider_call_id_sha256=_sha("provider-call-1"),
+            provider_call_identity_kind="PROVIDER_RESPONSE_ID",
             provider_model=request.provider.model,
             tool_calls=[
                 "review_brief_get_scope",
@@ -1017,12 +1019,13 @@ def test_weave_processor_replaces_root_with_hash_only_gate_and_exact_readback(
             return record
 
     client = Client()
-    trace_id, weave_call_id, trace_url = _readback_trace(
+    trace_id, weave_call_id, trace_url, generation_call_ids = _readback_trace(
         client=client, processor=processor, context=context
     )
     assert trace_id == child.trace.trace_id
     assert weave_call_id == "weave-call-1"
     assert trace_url == record.ui_url
+    assert generation_call_ids == ()
     assert client.flush_count == 1
 
 
@@ -1081,6 +1084,75 @@ def test_trace_readback_visibility_timeout_is_content_free() -> None:
             "call-1",
             timeout_seconds=0,
             interval_seconds=0,
+        )
+
+
+def test_usage_recovers_provider_data_id_and_labels_weave_fallback() -> None:
+    usage = SimpleNamespace(input_tokens=7, output_tokens=3)
+    provider_response = SimpleNamespace(
+        usage=usage,
+        response_id=None,
+        request_id=None,
+        output=[SimpleNamespace(provider_data={"response_id": "provider-response-1"})],
+    )
+    assert _usage(
+        SimpleNamespace(raw_responses=[provider_response]),
+        verified_generation_call_ids=("generation-1",),
+    ) == (7, 3, "provider-response-1", "PROVIDER_RESPONSE_ID")
+
+    fallback_response = SimpleNamespace(
+        usage=usage,
+        response_id=None,
+        request_id=None,
+        output=[SimpleNamespace(provider_data=None)],
+    )
+    assert _usage(
+        SimpleNamespace(raw_responses=[fallback_response]),
+        verified_generation_call_ids=("generation-1",),
+    ) == (7, 3, "weave-generation:generation-1", "WEAVE_GENERATION_CALL_ID")
+    with pytest.raises(ReviewBriefAgentRuntimeError, match="PROVIDER_CALL_ID_MISSING"):
+        _usage(SimpleNamespace(raw_responses=[fallback_response]))
+
+
+def test_generation_identity_requires_exact_read_back_span() -> None:
+    agent_trace_id = "trace_" + "a" * 32
+    run_id = "wandb/ecocorridor-scenario-studio/run-1"
+    root = SimpleNamespace(trace_id="weave-trace-1")
+    generation = SimpleNamespace(
+        id="generation-1",
+        trace_id="weave-trace-1",
+        parent_id="turn-1",
+        wb_run_id=run_id,
+        attributes={
+            "agent_trace_id": agent_trace_id,
+            "agent_span_id": "span-1",
+            "type": "generation",
+        },
+        op_name=(
+            "weave:///wandb/ecocorridor-scenario-studio/op/"
+            "openai_agent_generation:" + "b" * 64
+        ),
+        ended_at="done",
+        exception=None,
+        output={"error": None},
+    )
+    client = SimpleNamespace(get_call=lambda call_id: generation)
+    processor = SimpleNamespace(generation_calls=[("span-1", "generation-1")])
+    assert _readback_generation_calls(
+        client=client,
+        processor=processor,
+        root_record=root,
+        expected_wandb_run_id=run_id,
+        expected_agent_trace_id=agent_trace_id,
+    ) == ("generation-1",)
+    generation.attributes["agent_span_id"] = "wrong-span"
+    with pytest.raises(ReviewBriefAgentRuntimeError, match="WEAVE_GENERATION_INVALID"):
+        _readback_generation_calls(
+            client=client,
+            processor=processor,
+            root_record=root,
+            expected_wandb_run_id=run_id,
+            expected_agent_trace_id=agent_trace_id,
         )
 
 

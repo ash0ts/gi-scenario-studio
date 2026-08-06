@@ -721,6 +721,9 @@ class ReviewBriefRunnerResult(ContractModel):
     selections: list[ReviewBriefFindingSelection] = Field(min_length=1)
     runner_kind: Literal["OPENAI_AGENTS_SDK"] = "OPENAI_AGENTS_SDK"
     provider_call_id_sha256: str = Field(pattern=_DIGEST)
+    provider_call_identity_kind: Literal[
+        "PROVIDER_RESPONSE_ID", "PROVIDER_REQUEST_ID", "WEAVE_GENERATION_CALL_ID"
+    ]
     provider_model: str
     tool_calls: list[ReviewBriefToolName] = Field(
         min_length=1, max_length=REVIEW_BRIEF_MAX_REQUIRED_TOOL_CALLS

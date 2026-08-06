@@ -223,7 +223,6 @@ def _configure_weave_pii_redaction(runtime: Path) -> None:
         import weave.utils.pii_redaction as weave_pii
         from presidio_analyzer import AnalyzerEngine
         from presidio_analyzer.nlp_engine import NlpEngineProvider
-        from presidio_anonymizer import AnonymizerEngine
         from weave.utils.sanitize import REDACTED_VALUE, redact_dataclass_fields, should_redact
     except ImportError as exc:
         raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_PII_REDACTION_UNAVAILABLE") from exc
@@ -242,22 +241,57 @@ def _configure_weave_pii_redaction(runtime: Path) -> None:
     )
 
     @lru_cache(maxsize=1)
-    def engines() -> tuple[Any, Any]:
+    def analyzer_engine() -> Any:
         provider = NlpEngineProvider(
             nlp_configuration={
                 "nlp_engine_name": "spacy",
                 "models": [{"lang_code": "en", "model_name": "en_core_web_sm"}],
             }
         )
-        analyzer = AnalyzerEngine(nlp_engine=provider.create_engine())
-        return analyzer, AnonymizerEngine()
+        return AnalyzerEngine(nlp_engine=provider.create_engine())
 
-    weave_pii._get_engines = engines
-    original_redact_string = weave_pii.redact_pii_string
+    def redact_results(value: str, results: Any) -> str:
+        spans: list[tuple[int, int]] = []
+        for result in sorted(results, key=lambda item: (int(item.start), int(item.end))):
+            start, end = int(result.start), int(result.end)
+            if start < 0 or end > len(value) or start >= end:
+                raise ReviewBriefAgentRuntimeError(
+                    "REVIEW_BRIEF_AGENT_PII_REDACTION_UNAVAILABLE"
+                )
+            if spans and start <= spans[-1][1]:
+                spans[-1] = (spans[-1][0], max(spans[-1][1], end))
+            else:
+                spans.append((start, end))
+        redacted = value
+        for start, end in reversed(spans):
+            redacted = redacted[:start] + REDACTED_VALUE + redacted[end:]
+        return redacted
+
+    class _Anonymized:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    class _LocalAnonymizer:
+        def anonymize(self, *, text: str, analyzer_results: Any) -> _Anonymized:
+            return _Anonymized(redact_results(text, analyzer_results))
+
+    @lru_cache(maxsize=1)
+    def engines() -> tuple[Any, Any]:
+        return analyzer_engine(), _LocalAnonymizer()
+
+    def redact_string(value: str) -> str:
+        if not value:
+            return value
+        results = analyzer_engine().analyze(
+            text=value,
+            language="en",
+            entities=weave_pii._get_redaction_entities(),
+        )
+        return redact_results(value, results)
 
     def redact_with_digest_fields(value: Any) -> Any:
         if isinstance(value, str):
-            return original_redact_string(value)
+            return redact_string(value)
         if isinstance(value, dict):
             redacted: dict[Any, Any] = {}
             for key, nested in value.items():
@@ -279,6 +313,8 @@ def _configure_weave_pii_redaction(runtime: Path) -> None:
             return redact_dataclass_fields(value, redact_with_digest_fields)
         return value
 
+    weave_pii._get_engines = engines
+    weave_pii.redact_pii_string = redact_string
     weave_pii.redact_pii = redact_with_digest_fields
     digest = "a8142d6da77747b58e57708edfeaa9d83e3d465cf3503f9636affa9ef169a919"
     probe = weave_pii.redact_pii_string(

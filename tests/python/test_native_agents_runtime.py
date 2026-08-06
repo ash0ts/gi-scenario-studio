@@ -25,8 +25,10 @@ from ecocorridor_core.native_agents_process import (
     _execute,
     _InvocationContext,
     _model,
+    _readback_generation_calls,
     _readback_trace,
     _ReceiptWeaveTracingProcessor,
+    _usage,
     _validate_trace_url,
 )
 from ecocorridor_core.native_agents_runtime import (
@@ -275,6 +277,7 @@ class _FakeSubprocess:
             output=output,
             output_sha256=canonical_sha256(output),
             provider_call_id_sha256=_sha("provider-call-1"),
+            provider_call_identity_kind="PROVIDER_RESPONSE_ID",
             provider_model=request.provider.model,
             input_tokens=9,
             output_tokens=3,
@@ -453,6 +456,64 @@ def test_operation_specific_output_validation_is_closed_and_authorized() -> None
             next_action="Resolve the recorded evidence boundary before another evaluation.",
         )
     )
+
+
+def test_native_usage_labels_verified_weave_generation_fallback() -> None:
+    response = SimpleNamespace(
+        usage=SimpleNamespace(input_tokens=5, output_tokens=2),
+        response_id=None,
+        request_id=None,
+        output=[SimpleNamespace(provider_data=None)],
+    )
+    assert _usage(
+        SimpleNamespace(raw_responses=[response]),
+        verified_generation_call_ids=("generation-1",),
+    ) == (5, 2, "weave-generation:generation-1", "WEAVE_GENERATION_CALL_ID")
+    response.request_id = "request-1"
+    assert _usage(SimpleNamespace(raw_responses=[response])) == (
+        5,
+        2,
+        "request-1",
+        "PROVIDER_REQUEST_ID",
+    )
+
+
+def test_native_generation_readback_rejects_non_generation_op() -> None:
+    agent_trace_id = "trace_" + "a" * 32
+    run_id = "wandb/ecocorridor-scenario-studio/run-1"
+    generation = SimpleNamespace(
+        id="generation-1",
+        trace_id="weave-trace-1",
+        parent_id="turn-1",
+        wb_run_id=run_id,
+        attributes={
+            "agent_trace_id": agent_trace_id,
+            "agent_span_id": "span-1",
+            "type": "generation",
+        },
+        op_name="weave:///wandb/project/op/openai_agent_generation:" + "b" * 64,
+        ended_at="done",
+        exception=None,
+        output={"error": None},
+    )
+    client = SimpleNamespace(get_call=lambda call_id: generation)
+    processor = SimpleNamespace(generation_calls=[("span-1", "generation-1")])
+    assert _readback_generation_calls(
+        client=client,
+        processor=processor,
+        root_record=SimpleNamespace(trace_id="weave-trace-1"),
+        expected_wandb_run_id=run_id,
+        expected_agent_trace_id=agent_trace_id,
+    ) == ("generation-1",)
+    generation.op_name = "weave:///wandb/project/op/not_generation:" + "b" * 64
+    with pytest.raises(ReviewBriefAgentRuntimeError, match="WEAVE_GENERATION_INVALID"):
+        _readback_generation_calls(
+            client=client,
+            processor=processor,
+            root_record=SimpleNamespace(trace_id="weave-trace-1"),
+            expected_wandb_run_id=run_id,
+            expected_agent_trace_id=agent_trace_id,
+        )
 
 
 class _ScriptedOneTurnModel(Model):

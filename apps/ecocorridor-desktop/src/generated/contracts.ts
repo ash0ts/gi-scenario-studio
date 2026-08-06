@@ -1127,6 +1127,7 @@ export const ReviewBriefAgentOutputSchema = z.object({
 }).strict()).min(1),
   "runner_kind": z.literal("OPENAI_AGENTS_SDK").optional(),
   "provider_call_id_sha256": z.string().regex(new RegExp("^[0-9a-f]{64}$")),
+  "provider_call_identity_kind": z.enum(["PROVIDER_RESPONSE_ID", "PROVIDER_REQUEST_ID", "WEAVE_GENERATION_CALL_ID"]),
   "provider_model": z.string(),
   "tool_calls": z.array(z.enum(["review_brief_get_scope", "review_brief_list_findings", "review_brief_get_findings", "review_brief_list_option_constraints", "review_brief_list_model_fitness_gaps", "review_brief_resolve_evidence_aliases", "review_brief_get_reference_status", "review_brief_get_authorization_status"])).min(1).max(8),
   "input_tokens": z.union([z.number().int().min(0), z.null()]).optional(),

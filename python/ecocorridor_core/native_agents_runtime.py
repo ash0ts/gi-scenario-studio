@@ -160,6 +160,9 @@ class NativeSingleTurnAgentsResult(ContractModel):
     output: dict[str, Any]
     output_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     provider_call_id_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    provider_call_identity_kind: Literal[
+        "PROVIDER_RESPONSE_ID", "PROVIDER_REQUEST_ID", "WEAVE_GENERATION_CALL_ID"
+    ]
     provider_model: str
     input_tokens: int | None = Field(default=None, ge=0)
     output_tokens: int | None = Field(default=None, ge=0)

@@ -16,7 +16,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
 from .assistants import (
@@ -175,6 +175,7 @@ class _ReceiptWeaveTracingProcessor:
         self._delegate = WeaveTracingProcessor()
         self.context = context
         self.root_call_id: str | None = None
+        self.generation_calls: list[tuple[str, str]] = []
 
     def on_trace_start(self, trace: Any) -> None:
         self._delegate.on_trace_start(trace)
@@ -212,6 +213,14 @@ class _ReceiptWeaveTracingProcessor:
 
     def on_span_start(self, span: Any) -> None:
         self._delegate.on_span_start(span)
+        from agents.tracing.span_data import GenerationSpanData
+
+        if isinstance(span.span_data, GenerationSpanData):
+            call = self._delegate._span_calls.get(span.span_id)
+            call_id = str(getattr(call, "id", "") or "") if call is not None else ""
+            if not call_id:
+                raise ReviewBriefAgentRuntimeError("NATIVE_AGENT_WEAVE_GENERATION_MISSING")
+            self.generation_calls.append((str(span.span_id), call_id))
 
     def on_span_end(self, span: Any) -> None:
         self._delegate.on_span_end(span)
@@ -283,7 +292,7 @@ def _readback_trace(
     client: Any,
     processor: _ReceiptWeaveTracingProcessor,
     context: _InvocationContext,
-) -> NativeAgentsTraceReceipt:
+) -> tuple[NativeAgentsTraceReceipt, tuple[str, ...]]:
     processor.force_flush()
     client.flush()
     if not processor.root_call_id:
@@ -308,13 +317,65 @@ def _readback_trace(
     url = str(_value(record, "ui_url", "") or "")
     if not url:
         raise ReviewBriefAgentRuntimeError("NATIVE_AGENT_TRACE_URL_MISSING")
+    generation_call_ids = _readback_generation_calls(
+        client=client,
+        processor=processor,
+        root_record=record,
+        expected_wandb_run_id=expected_wandb_run_id,
+        expected_agent_trace_id=context.child.trace.trace_id,
+    )
     return NativeAgentsTraceReceipt(
         agents_trace_id=context.child.trace.trace_id,
         weave_call_id=processor.root_call_id,
         association_id=context.child.trace.association_id,
         wandb_run_id=context.child.trace.wandb_run_id,
         trace_url=_validate_trace_url(url, context.child),
-    )
+    ), generation_call_ids
+
+
+def _readback_generation_calls(
+    *,
+    client: Any,
+    processor: _ReceiptWeaveTracingProcessor,
+    root_record: Any,
+    expected_wandb_run_id: str,
+    expected_agent_trace_id: str,
+) -> tuple[str, ...]:
+    calls = list(processor.generation_calls)
+    call_ids = [call_id for _, call_id in calls]
+    span_ids = [span_id for span_id, _ in calls]
+    if (
+        len(calls) > NATIVE_AGENTS_MAX_TURNS
+        or len(call_ids) != len(set(call_ids))
+        or len(span_ids) != len(set(span_ids))
+    ):
+        raise ReviewBriefAgentRuntimeError("NATIVE_AGENT_WEAVE_GENERATION_COUNT_INVALID")
+    if not calls:
+        return ()
+    root_trace_id = str(_value(root_record, "trace_id", "") or "")
+    if not root_trace_id:
+        raise ReviewBriefAgentRuntimeError("NATIVE_AGENT_WEAVE_TRACE_ID_MISSING")
+    for span_id, call_id in calls:
+        record = client.get_call(call_id)
+        attributes = _value(record, "attributes", {})
+        op_name = str(_value(record, "op_name", "") or "")
+        op_token = op_name.rsplit("/op/", 1)[-1].split(":", 1)[0]
+        output = _value(record, "output", {})
+        if (
+            str(_value(record, "id", "") or "") != call_id
+            or str(_value(record, "trace_id", "") or "") != root_trace_id
+            or not str(_value(record, "parent_id", "") or "")
+            or _value(record, "wb_run_id") != expected_wandb_run_id
+            or _value(attributes, "agent_trace_id") != expected_agent_trace_id
+            or str(_value(attributes, "agent_span_id", "") or "") != span_id
+            or _value(attributes, "type") != "generation"
+            or op_token != "openai_agent_generation"
+            or not _value(record, "ended_at")
+            or _value(record, "exception") not in (None, "")
+            or _value(output, "error") not in (None, "")
+        ):
+            raise ReviewBriefAgentRuntimeError("NATIVE_AGENT_WEAVE_GENERATION_INVALID")
+    return tuple(call_ids)
 
 
 def _configure_environment(child: NativeSingleTurnChildRequest) -> None:
@@ -387,16 +448,50 @@ def _model(child: NativeSingleTurnChildRequest) -> Any:
     )
 
 
-def _usage(result: Any) -> tuple[int, int, str]:
-    input_tokens = sum(int(response.usage.input_tokens) for response in result.raw_responses)
-    output_tokens = sum(int(response.usage.output_tokens) for response in result.raw_responses)
-    response_ids = [
-        str(response.response_id or response.request_id or "") for response in result.raw_responses
-    ]
-    provider_call_id = next((value for value in reversed(response_ids) if value), "")
-    if not provider_call_id:
+def _usage(
+    result: Any, *, verified_generation_call_ids: tuple[str, ...] = ()
+) -> tuple[
+    int,
+    int,
+    str,
+    Literal["PROVIDER_RESPONSE_ID", "PROVIDER_REQUEST_ID", "WEAVE_GENERATION_CALL_ID"],
+]:
+    responses = list(result.raw_responses)
+    if not 1 <= len(responses) <= NATIVE_AGENTS_MAX_TURNS:
+        raise ReviewBriefAgentRuntimeError("NATIVE_AGENT_MODEL_TURN_LIMIT_EXCEEDED")
+    input_tokens = sum(int(response.usage.input_tokens) for response in responses)
+    output_tokens = sum(int(response.usage.output_tokens) for response in responses)
+    final_response = responses[-1]
+    direct_response_id = str(getattr(final_response, "response_id", "") or "")
+    provider_data_ids = {
+        str(provider_data.get("response_id"))
+        for item in getattr(final_response, "output", ())
+        if isinstance((provider_data := getattr(item, "provider_data", None)), dict)
+        and provider_data.get("response_id")
+    }
+    if len(provider_data_ids) > 1:
+        raise ReviewBriefAgentRuntimeError("NATIVE_AGENT_PROVIDER_RESPONSE_ID_CONFLICT")
+    provider_data_response_id = next(iter(provider_data_ids), "")
+    if (
+        direct_response_id
+        and provider_data_response_id
+        and direct_response_id != provider_data_response_id
+    ):
+        raise ReviewBriefAgentRuntimeError("NATIVE_AGENT_PROVIDER_RESPONSE_ID_CONFLICT")
+    response_id = direct_response_id or provider_data_response_id
+    if response_id:
+        return input_tokens, output_tokens, response_id, "PROVIDER_RESPONSE_ID"
+    request_id = str(getattr(final_response, "request_id", "") or "")
+    if request_id:
+        return input_tokens, output_tokens, request_id, "PROVIDER_REQUEST_ID"
+    if len(verified_generation_call_ids) != len(responses):
         raise ReviewBriefAgentRuntimeError("NATIVE_AGENT_PROVIDER_CALL_ID_MISSING")
-    return input_tokens, output_tokens, provider_call_id
+    return (
+        input_tokens,
+        output_tokens,
+        f"weave-generation:{verified_generation_call_ids[-1]}",
+        "WEAVE_GENERATION_CALL_ID",
+    )
 
 
 async def _execute(child: NativeSingleTurnChildRequest) -> NativeSingleTurnChildResponse:
@@ -513,8 +608,13 @@ async def _execute(child: NativeSingleTurnChildRequest) -> NativeSingleTurnChild
     )
     if not context.output_validated or context.output_sha256 is None:
         raise ReviewBriefAgentRuntimeError("NATIVE_AGENT_OUTPUT_NOT_VALIDATED")
-    receipt = _readback_trace(client=client, processor=processor, context=context)
-    input_tokens, output_tokens, provider_call_id = _usage(result)
+    receipt, generation_call_ids = _readback_trace(
+        client=client, processor=processor, context=context
+    )
+    input_tokens, output_tokens, provider_call_id, provider_call_identity_kind = _usage(
+        result,
+        verified_generation_call_ids=generation_call_ids,
+    )
     final_output = result.final_output
     if not isinstance(final_output, _OUTPUT_TYPES[child.payload.operation]):
         raise ReviewBriefAgentRuntimeError("NATIVE_AGENT_OUTPUT_SCHEMA_INVALID")
@@ -524,6 +624,7 @@ async def _execute(child: NativeSingleTurnChildRequest) -> NativeSingleTurnChild
         output=output,
         output_sha256=canonical_sha256(output),
         provider_call_id_sha256=_sha(provider_call_id),
+        provider_call_identity_kind=provider_call_identity_kind,
         provider_model=child.provider.model,
         input_tokens=input_tokens,
         output_tokens=output_tokens,

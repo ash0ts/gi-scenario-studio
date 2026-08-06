@@ -92,6 +92,7 @@ def _result(source, *, trace_suffix: str = "one") -> ReviewBriefRunnerResult:
             for finding in request.snapshot.findings
         ],
         provider_call_id_sha256=("b" if trace_suffix == "one" else "c") * 64,
+        provider_call_identity_kind="PROVIDER_RESPONSE_ID",
         provider_model="gpt-review-test",
         tool_calls=list(required_review_brief_tools(request.snapshot)),
         trace=ReviewBriefTrace(
@@ -575,6 +576,7 @@ def test_deterministic_renderer_names_the_exact_feasibility_issue(
             )
         ],
         provider_call_id_sha256="d" * 64,
+        provider_call_identity_kind="PROVIDER_RESPONSE_ID",
         provider_model="gpt-review-test",
         tool_calls=list(required_review_brief_tools(request.snapshot)),
         trace=ReviewBriefTrace(

@@ -561,6 +561,7 @@ class _ReceiptWeaveTracingProcessor:
         self._delegate = WeaveTracingProcessor()
         self.context = context
         self.root_call_id: str | None = None
+        self.generation_calls: list[tuple[str, str]] = []
 
     def on_trace_start(self, trace: Any) -> None:
         self._delegate.on_trace_start(trace)
@@ -618,6 +619,16 @@ class _ReceiptWeaveTracingProcessor:
 
     def on_span_start(self, span: Any) -> None:
         self._delegate.on_span_start(span)
+        from agents.tracing.span_data import GenerationSpanData
+
+        if isinstance(span.span_data, GenerationSpanData):
+            call = self._delegate._span_calls.get(span.span_id)
+            call_id = str(getattr(call, "id", "") or "") if call is not None else ""
+            if not call_id:
+                raise ReviewBriefAgentRuntimeError(
+                    "REVIEW_BRIEF_AGENT_WEAVE_GENERATION_MISSING"
+                )
+            self.generation_calls.append((str(span.span_id), call_id))
 
     def on_span_end(self, span: Any) -> None:
         self._delegate.on_span_end(span)
@@ -702,7 +713,7 @@ def _readback_trace(
     client: Any,
     processor: _ReceiptWeaveTracingProcessor,
     context: _InvocationContext,
-) -> tuple[str, str, str]:
+) -> tuple[str, str, str, tuple[str, ...]]:
     try:
         processor.force_flush()
     except Exception as exc:
@@ -765,6 +776,13 @@ def _readback_trace(
         "access_mode_sha256": hashlib.sha256(b"READ_ONLY").hexdigest(),
     }
     _validate_trace_gate(gate, expected)
+    generation_call_ids = _readback_generation_calls(
+        client=client,
+        processor=processor,
+        root_record=record,
+        expected_wandb_run_id=expected_wandb_run_id,
+        expected_agent_trace_id=context.child.trace.trace_id,
+    )
     url = str(_value(record, "ui_url", "") or "")
     if not url:
         raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TRACE_URL_MISSING")
@@ -772,7 +790,65 @@ def _readback_trace(
         context.child.trace.trace_id,
         processor.root_call_id,
         _validate_trace_url(url, context.child),
+        generation_call_ids,
     )
+
+
+def _readback_generation_calls(
+    *,
+    client: Any,
+    processor: _ReceiptWeaveTracingProcessor,
+    root_record: Any,
+    expected_wandb_run_id: str,
+    expected_agent_trace_id: str,
+) -> tuple[str, ...]:
+    """Verify the exact provider-generation spans and return the final opaque call ID.
+
+    Some OpenAI-compatible providers do not emit a provider-native response ID. In that
+    case the exact, read-back Weave generation span is the only truthful provider-call
+    identity. It is accepted only after proving that every captured generation belongs to
+    the flushed root trace and associated W&B run and completed without an exception.
+    """
+
+    calls = list(processor.generation_calls)
+    call_ids = [call_id for _, call_id in calls]
+    span_ids = [span_id for span_id, _ in calls]
+    if (
+        len(calls) > REVIEW_BRIEF_MAX_TURNS
+        or len(call_ids) != len(set(call_ids))
+        or len(span_ids) != len(set(span_ids))
+    ):
+        raise ReviewBriefAgentRuntimeError(
+            "REVIEW_BRIEF_AGENT_WEAVE_GENERATION_COUNT_INVALID"
+        )
+    if not calls:
+        return ()
+    root_trace_id = str(_value(root_record, "trace_id", "") or "")
+    if not root_trace_id:
+        raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_WEAVE_TRACE_ID_MISSING")
+    for span_id, call_id in calls:
+        record = _get_trace_call_with_retry(client, call_id)
+        attributes = _value(record, "attributes", {})
+        op_name = str(_value(record, "op_name", "") or "")
+        op_token = op_name.rsplit("/op/", 1)[-1].split(":", 1)[0]
+        output = _value(record, "output", {})
+        if (
+            str(_value(record, "id", "") or "") != call_id
+            or str(_value(record, "trace_id", "") or "") != root_trace_id
+            or not str(_value(record, "parent_id", "") or "")
+            or _value(record, "wb_run_id") != expected_wandb_run_id
+            or _value(attributes, "agent_trace_id") != expected_agent_trace_id
+            or str(_value(attributes, "agent_span_id", "") or "") != span_id
+            or _value(attributes, "type") != "generation"
+            or op_token != "openai_agent_generation"
+            or not _value(record, "ended_at")
+            or _value(record, "exception") not in (None, "")
+            or _value(output, "error") not in (None, "")
+        ):
+            raise ReviewBriefAgentRuntimeError(
+                "REVIEW_BRIEF_AGENT_WEAVE_GENERATION_INVALID"
+            )
+    return tuple(call_ids)
 
 
 def _configure_environment(child: ReviewBriefAgentChildRequest) -> None:
@@ -852,19 +928,54 @@ def _raise_stage_failure(exc: BaseException, *, fallback_code: str) -> NoReturn:
     raise ReviewBriefAgentRuntimeError(mapped) from exc
 
 
-def _usage(result: Any) -> tuple[int | None, int | None, str]:
+def _usage(
+    result: Any, *, verified_generation_call_ids: tuple[str, ...] = ()
+) -> tuple[
+    int | None,
+    int | None,
+    str,
+    Literal["PROVIDER_RESPONSE_ID", "PROVIDER_REQUEST_ID", "WEAVE_GENERATION_CALL_ID"],
+]:
     responses = list(result.raw_responses)
     if not 1 <= len(responses) <= REVIEW_BRIEF_MAX_TURNS:
         raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_MODEL_TURN_LIMIT_EXCEEDED")
     input_tokens = sum(int(response.usage.input_tokens) for response in responses)
     output_tokens = sum(int(response.usage.output_tokens) for response in responses)
-    response_ids = [
-        str(response.response_id or response.request_id or "") for response in responses
-    ]
-    provider_call_id = next((value for value in reversed(response_ids) if value), "")
-    if not provider_call_id:
+    final_response = responses[-1]
+    direct_response_id = str(getattr(final_response, "response_id", "") or "")
+    provider_data_ids = {
+        str(provider_data.get("response_id"))
+        for item in getattr(final_response, "output", ())
+        if isinstance((provider_data := getattr(item, "provider_data", None)), dict)
+        and provider_data.get("response_id")
+    }
+    if len(provider_data_ids) > 1:
+        raise ReviewBriefAgentRuntimeError(
+            "REVIEW_BRIEF_AGENT_PROVIDER_RESPONSE_ID_CONFLICT"
+        )
+    provider_data_response_id = next(iter(provider_data_ids), "")
+    if (
+        direct_response_id
+        and provider_data_response_id
+        and direct_response_id != provider_data_response_id
+    ):
+        raise ReviewBriefAgentRuntimeError(
+            "REVIEW_BRIEF_AGENT_PROVIDER_RESPONSE_ID_CONFLICT"
+        )
+    response_id = direct_response_id or provider_data_response_id
+    if response_id:
+        return input_tokens, output_tokens, response_id, "PROVIDER_RESPONSE_ID"
+    request_id = str(getattr(final_response, "request_id", "") or "")
+    if request_id:
+        return input_tokens, output_tokens, request_id, "PROVIDER_REQUEST_ID"
+    if len(verified_generation_call_ids) != len(responses):
         raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_PROVIDER_CALL_ID_MISSING")
-    return input_tokens, output_tokens, provider_call_id
+    return (
+        input_tokens,
+        output_tokens,
+        f"weave-generation:{verified_generation_call_ids[-1]}",
+        "WEAVE_GENERATION_CALL_ID",
+    )
 
 
 def _instructions_for_snapshot(snapshot: ReviewBriefAuthorizedSnapshot) -> str:
@@ -1210,7 +1321,7 @@ async def _execute_agent(
         _raise_stage_failure(exc, fallback_code="REVIEW_BRIEF_AGENT_EXECUTION_FAILED")
     elapsed_ms = round((time.monotonic() - started) * 1000)
     try:
-        trace_id, weave_call_id, trace_url = _readback_trace(
+        trace_id, weave_call_id, trace_url, generation_call_ids = _readback_trace(
             client=client,
             processor=processor,
             context=context,
@@ -1220,7 +1331,10 @@ async def _execute_agent(
     except Exception as exc:  # noqa: BLE001 - stage boundary emits only a finite code
         _raise_stage_failure(exc, fallback_code="REVIEW_BRIEF_AGENT_TRACE_READBACK_FAILED")
     try:
-        input_tokens, output_tokens, provider_call_id = _usage(result)
+        input_tokens, output_tokens, provider_call_id, provider_call_identity_kind = _usage(
+            result,
+            verified_generation_call_ids=generation_call_ids,
+        )
     except ReviewBriefAgentRuntimeError:
         raise
     except Exception as exc:  # noqa: BLE001 - stage boundary emits only a finite code
@@ -1242,6 +1356,7 @@ async def _execute_agent(
         snapshot_sha256=result.final_output.snapshot_sha256,
         selections=result.final_output.selections,
         provider_call_id_sha256=hashlib.sha256(provider_call_id.encode("utf-8")).hexdigest(),
+        provider_call_identity_kind=provider_call_identity_kind,
         provider_model=child.provider.model,
         tool_calls=list(context.tool_calls),
         input_tokens=input_tokens,

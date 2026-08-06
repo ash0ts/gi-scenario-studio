@@ -1120,6 +1120,7 @@ ecocorridor = [
     { name = "rasterio", version = "1.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
 ]
 ecocorridor-agents = [
+    { name = "en-core-web-sm" },
     { name = "openai-agents" },
 ]
 ecocorridor-report = [
@@ -1135,9 +1136,7 @@ geo = [
     { name = "swmmanywhere" },
 ]
 observability = [
-    { name = "en-core-web-sm" },
     { name = "presidio-analyzer" },
-    { name = "presidio-anonymizer" },
     { name = "wandb" },
     { name = "weave" },
 ]
@@ -1155,7 +1154,7 @@ science = [
 
 [package.metadata]
 requires-dist = [
-    { name = "en-core-web-sm", marker = "extra == 'observability'", url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" },
+    { name = "en-core-web-sm", marker = "extra == 'ecocorridor-agents'", url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" },
     { name = "filelock", marker = "extra == 'ecocorridor'", specifier = ">=3.20,<4" },
     { name = "geopandas", marker = "extra == 'geo'", specifier = ">=1.0" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.112" },
@@ -1164,7 +1163,6 @@ requires-dist = [
     { name = "openai-agents", marker = "extra == 'ecocorridor-agents'", specifier = "==0.18.3" },
     { name = "openpyxl", marker = "extra == 'export'", specifier = ">=3.1" },
     { name = "presidio-analyzer", marker = "extra == 'observability'", specifier = ">=2.2.359,<3" },
-    { name = "presidio-anonymizer", marker = "extra == 'observability'", specifier = ">=2.2.359,<3" },
     { name = "pydantic", specifier = ">=2.8,<3" },
     { name = "pyinstaller", marker = "extra == 'release'", specifier = "==6.21.0" },
     { name = "pymoo", marker = "extra == 'science'", specifier = ">=0.6.1" },
@@ -2766,18 +2764,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c7/50/408a41cf99d076107d3823d514bb6408e249132418f068673cb807839ce5/presidio_analyzer-2.2.364.tar.gz", hash = "sha256:51f27bacf199fb9777ade9552c0f0111e00a1d73cfe2d4797fc05c998de1e0b6", size = 154117, upload-time = "2026-07-22T07:54:36.264Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a6/15/44a64276cd5c45485716314addfb7966c24f61034d8ff8e9a78d13d0afbe/presidio_analyzer-2.2.364-py3-none-any.whl", hash = "sha256:0a9eeb60ccc416c505367b4989d056becb84ef082703ee3361c046fb75941739", size = 266299, upload-time = "2026-07-22T07:54:34.868Z" },
-]
-
-[[package]]
-name = "presidio-anonymizer"
-version = "2.2.364"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "cryptography" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/66/93/0889954ed2448fe20b1a714e96fccd7c4a60dc1cc078efaeae10b7975807/presidio_anonymizer-2.2.364.tar.gz", hash = "sha256:eced015f1195f79a91ad11b34a531ceca2e5c673ed57e97649efea3d3293155d", size = 26006, upload-time = "2026-07-22T07:54:35.861Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/c2/47/9a353565cbd6d1af87c9e6f68e9e2b89dd5ced7be9634284c6975abd63d2/presidio_anonymizer-2.2.364-py3-none-any.whl", hash = "sha256:f3edfe80b5e83a22976439727e9d449c796b12efdf6cd70a6db860d4942a6b72", size = 38128, upload-time = "2026-07-22T07:54:34.797Z" },
 ]
 
 [[package]]
