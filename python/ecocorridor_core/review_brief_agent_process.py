@@ -20,7 +20,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, NoReturn
 from urllib.parse import urlsplit
 
 from agents import RunContextWrapper
@@ -801,6 +801,15 @@ def _model(child: ReviewBriefAgentChildRequest) -> Any:
     )
 
 
+def _raise_stage_failure(exc: BaseException, *, fallback_code: str) -> NoReturn:
+    """Preserve a finite provider code or replace internals with a safe stage code."""
+
+    mapped = safe_child_error_code(exc)
+    if mapped == "REVIEW_BRIEF_AGENT_INVOCATION_FAILED":
+        mapped = fallback_code
+    raise ReviewBriefAgentRuntimeError(mapped) from exc
+
+
 def _usage(result: Any) -> tuple[int | None, int | None, str]:
     responses = list(result.raw_responses)
     if not 1 <= len(responses) <= REVIEW_BRIEF_MAX_TURNS:
@@ -1014,30 +1023,33 @@ async def _execute_agent(
     )
 
     context = _InvocationContext(request=request, child=child)
-    client = weave.init(
-        f"{child.weave_target.entity}/{child.weave_target.project}",
-        settings={
-            "print_call_link": False,
-            "capture_code": False,
-            "capture_client_info": False,
-            "capture_system_info": False,
-            # The Agents SDK emits the model/tool spans consumed by the sole
-            # WeaveTracingProcessor installed below. Avoid a second automatic
-            # provider patch and its duplicate, non-agent call tree.
-            "implicitly_patch_integrations": False,
-            "redact_pii": True,
-            "use_server_cache": False,
-            "enable_disk_fallback": False,
-            "http_timeout": min(child.provider.timeout_seconds, 60.0),
-        },
-        global_attributes={
-            "app_namespace_sha256": hashlib.sha256(b"ecocorridor").hexdigest(),
-            "agent_kind_sha256": hashlib.sha256(b"review_brief_agent").hexdigest(),
-            "project_id_sha256": child.binding.project_id_sha256,
-            "analysis_id_sha256": child.binding.analysis_id_sha256,
-            "portfolio_id_sha256": child.binding.portfolio_id_sha256,
-        },
-    )
+    try:
+        client = weave.init(
+            f"{child.weave_target.entity}/{child.weave_target.project}",
+            settings={
+                "print_call_link": False,
+                "capture_code": False,
+                "capture_client_info": False,
+                "capture_system_info": False,
+                # The Agents SDK emits the model/tool spans consumed by the sole
+                # WeaveTracingProcessor installed below. Avoid a second automatic
+                # provider patch and its duplicate, non-agent call tree.
+                "implicitly_patch_integrations": False,
+                "redact_pii": True,
+                "use_server_cache": False,
+                "enable_disk_fallback": False,
+                "http_timeout": min(child.provider.timeout_seconds, 60.0),
+            },
+            global_attributes={
+                "app_namespace_sha256": hashlib.sha256(b"ecocorridor").hexdigest(),
+                "agent_kind_sha256": hashlib.sha256(b"review_brief_agent").hexdigest(),
+                "project_id_sha256": child.binding.project_id_sha256,
+                "analysis_id_sha256": child.binding.analysis_id_sha256,
+                "portfolio_id_sha256": child.binding.portfolio_id_sha256,
+            },
+        )
+    except Exception as exc:  # noqa: BLE001 - stage boundary emits only a finite code
+        _raise_stage_failure(exc, fallback_code="REVIEW_BRIEF_AGENT_TRACE_SETUP_FAILED")
     set_run_context = getattr(client, "set_wandb_run_context", None)
     if not callable(set_run_context):
         raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_WANDB_ASSOCIATION_UNAVAILABLE")
@@ -1090,53 +1102,59 @@ async def _execute_agent(
     else:
         output_type = _AgentSelectionOutput
         instructions = _instructions(context)
-    agent = Agent[_InvocationContext](
-        name="EcoCorridor Review Brief Agent",
-        instructions=instructions,
-        model=_model(child),
-        model_settings=ModelSettings(
-            temperature=0,
-            parallel_tool_calls=False,
-            include_usage=True,
-            store=False,
-        ),
-        tools=tools,
-        output_type=output_type,
-        input_guardrails=[fixed_input_guard],
-        output_guardrails=[closed_output_guard],
-        reset_tool_choice=True,
-    )
-    started = time.monotonic()
-    result = await asyncio.wait_for(
-        Runner.run(
-            agent,
-            _SAFE_MODEL_INPUT,
-            context=context,
-            max_turns=REVIEW_BRIEF_MAX_TURNS,
-            session=None,
-            previous_response_id=None,
-            conversation_id=None,
-            run_config=RunConfig(
-                trace_include_sensitive_data=False,
-                workflow_name="EcoCorridor Review Brief Agent",
-                trace_id=child.trace.trace_id,
-                group_id=child.trace.wandb_run_id_sha256,
-                trace_metadata={
-                    "snapshot_sha256": context.snapshot.snapshot_sha256,
-                    "project_id_sha256": child.binding.project_id_sha256,
-                    "analysis_id_sha256": child.binding.analysis_id_sha256,
-                    "portfolio_id_sha256": child.binding.portfolio_id_sha256,
-                    "association_id_sha256": child.trace.association_id_sha256,
-                },
-                tool_execution=ToolExecutionConfig(
-                    max_function_tool_concurrency=1,
-                    pre_approval_tool_input_guardrails=True,
-                ),
-                tool_not_found_behavior="raise_error",
+    try:
+        agent = Agent[_InvocationContext](
+            name="EcoCorridor Review Brief Agent",
+            instructions=instructions,
+            model=_model(child),
+            model_settings=ModelSettings(
+                temperature=0,
+                parallel_tool_calls=False,
+                include_usage=True,
+                store=False,
             ),
-        ),
-        timeout=child.provider.timeout_seconds,
-    )
+            tools=tools,
+            output_type=output_type,
+            input_guardrails=[fixed_input_guard],
+            output_guardrails=[closed_output_guard],
+            reset_tool_choice=True,
+        )
+    except Exception as exc:  # noqa: BLE001 - stage boundary emits only a finite code
+        _raise_stage_failure(exc, fallback_code="REVIEW_BRIEF_AGENT_CONFIGURATION_FAILED")
+    started = time.monotonic()
+    try:
+        result = await asyncio.wait_for(
+            Runner.run(
+                agent,
+                _SAFE_MODEL_INPUT,
+                context=context,
+                max_turns=REVIEW_BRIEF_MAX_TURNS,
+                session=None,
+                previous_response_id=None,
+                conversation_id=None,
+                run_config=RunConfig(
+                    trace_include_sensitive_data=False,
+                    workflow_name="EcoCorridor Review Brief Agent",
+                    trace_id=child.trace.trace_id,
+                    group_id=child.trace.wandb_run_id_sha256,
+                    trace_metadata={
+                        "snapshot_sha256": context.snapshot.snapshot_sha256,
+                        "project_id_sha256": child.binding.project_id_sha256,
+                        "analysis_id_sha256": child.binding.analysis_id_sha256,
+                        "portfolio_id_sha256": child.binding.portfolio_id_sha256,
+                        "association_id_sha256": child.trace.association_id_sha256,
+                    },
+                    tool_execution=ToolExecutionConfig(
+                        max_function_tool_concurrency=1,
+                        pre_approval_tool_input_guardrails=True,
+                    ),
+                    tool_not_found_behavior="raise_error",
+                ),
+            ),
+            timeout=child.provider.timeout_seconds,
+        )
+    except Exception as exc:  # noqa: BLE001 - stage boundary emits only a finite code
+        _raise_stage_failure(exc, fallback_code="REVIEW_BRIEF_AGENT_EXECUTION_FAILED")
     elapsed_ms = round((time.monotonic() - started) * 1000)
     trace_id, weave_call_id, trace_url = _readback_trace(
         client=client,

@@ -43,6 +43,7 @@ from ecocorridor_core.review_brief_agent_process import (
     _finding_payload,
     _InvocationContext,
     _model,
+    _raise_stage_failure,
     _readback_trace,
     _ReceiptWeaveTracingProcessor,
     _scope_payload,
@@ -103,6 +104,27 @@ def test_safe_child_error_code_classifies_provider_failures_without_message(
 
     assert observed == expected
     assert "credential" not in observed.casefold()
+
+
+def test_stage_failure_preserves_provider_classification_and_bounds_generic_error() -> None:
+    bad_request = type("BadRequestError", (Exception,), {})
+    with pytest.raises(
+        ReviewBriefAgentRuntimeError,
+        match="^REVIEW_BRIEF_PROVIDER_REQUEST_REJECTED$",
+    ):
+        _raise_stage_failure(
+            bad_request("provider payload must not escape"),
+            fallback_code="REVIEW_BRIEF_AGENT_EXECUTION_FAILED",
+        )
+
+    with pytest.raises(
+        ReviewBriefAgentRuntimeError,
+        match="^REVIEW_BRIEF_AGENT_CONFIGURATION_FAILED$",
+    ):
+        _raise_stage_failure(
+            TypeError("internal payload must not escape"),
+            fallback_code="REVIEW_BRIEF_AGENT_CONFIGURATION_FAILED",
+        )
 
 
 def _snapshot(*, evidence_aliases: list[str] | None = None) -> ReviewBriefAuthorizedSnapshot:
