@@ -136,11 +136,16 @@ def test_weave_pii_redaction_uses_offline_cached_presidio_engine(tmp_path: Path)
     _configure_weave_pii_redaction(tmp_path)
     first = weave_pii._get_engines()
     second = weave_pii._get_engines()
-    redacted = weave_pii.redact_pii_string("Contact alice@example.com in Seattle.")
+    digest = "0" * 64
+    redacted = weave_pii.redact_pii_string(
+        f"Contact alice@example.com in Seattle. Evidence digest {digest}."
+    )
 
     assert first is second
     assert "alice@example.com" not in redacted
     assert "Seattle" not in redacted
+    assert digest in redacted
+    assert os.environ["WEAVE_REDACT_PII_EXCLUDE_FIELDS"] == "CRYPTO"
     assert tuple(tldextract.extract.suffix_list_urls) == ()
     assert (tmp_path / "tldextract-cache").is_dir()
 

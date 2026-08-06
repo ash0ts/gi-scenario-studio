@@ -237,6 +237,11 @@ def _configure_weave_pii_redaction(runtime: Path) -> None:
         suffix_list_urls=(),
         fallback_to_snapshot=True,
     )
+    # Every trace-integrity field is an opaque SHA-256 digest. Presidio's broad
+    # CRYPTO recognizer treats those non-secret digests as cryptocurrency and
+    # would destroy the exact readback gate. Credentials never enter trace
+    # payloads; keep all actual PII entities enabled while preserving hashes.
+    os.environ["WEAVE_REDACT_PII_EXCLUDE_FIELDS"] = "CRYPTO"
 
     @lru_cache(maxsize=1)
     def engines() -> tuple[Any, Any]:
@@ -250,8 +255,11 @@ def _configure_weave_pii_redaction(runtime: Path) -> None:
         return analyzer, AnonymizerEngine()
 
     weave_pii._get_engines = engines
-    probe = weave_pii.redact_pii_string("Contact alice@example.com in Seattle.")
-    if "alice@example.com" in probe or "Seattle" in probe:
+    digest = "0" * 64
+    probe = weave_pii.redact_pii_string(
+        f"Contact alice@example.com in Seattle. Evidence digest {digest}."
+    )
+    if "alice@example.com" in probe or "Seattle" in probe or digest not in probe:
         raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_PII_REDACTION_UNAVAILABLE")
 
 
