@@ -97,6 +97,7 @@ class _InvocationContext:
     child: NativeSingleTurnChildRequest
     output_validated: bool = False
     output_sha256: str | None = None
+    output_validation_error_code: str | None = None
     child_control_sha256: str = field(init=False)
 
     def __post_init__(self) -> None:
@@ -557,7 +558,13 @@ async def _execute(child: NativeSingleTurnChildRequest) -> NativeSingleTurnChild
     ) -> GuardrailFunctionOutput:
         try:
             context.validate_output(value)
-        except (ValueError, ReviewBriefAgentRuntimeError):
+        except ReviewBriefAgentRuntimeError as exc:
+            context.output_validation_error_code = str(exc)
+            return GuardrailFunctionOutput(
+                output_info={"validated": False}, tripwire_triggered=True
+            )
+        except ValueError:
+            context.output_validation_error_code = "NATIVE_AGENT_OUTPUT_VALUE_INVALID"
             return GuardrailFunctionOutput(
                 output_info={"validated": False}, tripwire_triggered=True
             )
@@ -581,31 +588,36 @@ async def _execute(child: NativeSingleTurnChildRequest) -> NativeSingleTurnChild
         reset_tool_choice=True,
     )
     started = time.monotonic()
-    result = await asyncio.wait_for(
-        Runner.run(
-            agent,
-            model_input,
-            context=context,
-            max_turns=NATIVE_AGENTS_MAX_TURNS,
-            session=None,
-            previous_response_id=None,
-            conversation_id=None,
-            run_config=RunConfig(
-                trace_include_sensitive_data=False,
-                workflow_name="EcoCorridor Bounded Evidence Agent",
-                trace_id=child.trace.trace_id,
-                group_id=child.trace.wandb_run_id_sha256,
-                trace_metadata={
-                    "operation_sha256": _sha(child.payload.operation),
-                    "payload_sha256": canonical_sha256(child.payload.model_dump(mode="json")),
-                    "project_id_sha256": child.authorization.project_id_sha256,
-                    "analysis_id_sha256": child.authorization.analysis_id_sha256,
-                    "association_id_sha256": child.trace.association_id_sha256,
-                },
+    try:
+        result = await asyncio.wait_for(
+            Runner.run(
+                agent,
+                model_input,
+                context=context,
+                max_turns=NATIVE_AGENTS_MAX_TURNS,
+                session=None,
+                previous_response_id=None,
+                conversation_id=None,
+                run_config=RunConfig(
+                    trace_include_sensitive_data=False,
+                    workflow_name="EcoCorridor Bounded Evidence Agent",
+                    trace_id=child.trace.trace_id,
+                    group_id=child.trace.wandb_run_id_sha256,
+                    trace_metadata={
+                        "operation_sha256": _sha(child.payload.operation),
+                        "payload_sha256": canonical_sha256(child.payload.model_dump(mode="json")),
+                        "project_id_sha256": child.authorization.project_id_sha256,
+                        "analysis_id_sha256": child.authorization.analysis_id_sha256,
+                        "association_id_sha256": child.trace.association_id_sha256,
+                    },
+                ),
             ),
-        ),
-        timeout=child.provider.timeout_seconds,
-    )
+            timeout=child.provider.timeout_seconds,
+        )
+    except Exception as exc:
+        if context.output_validation_error_code is not None:
+            raise ReviewBriefAgentRuntimeError(context.output_validation_error_code) from exc
+        raise
     if not context.output_validated or context.output_sha256 is None:
         raise ReviewBriefAgentRuntimeError("NATIVE_AGENT_OUTPUT_NOT_VALIDATED")
     receipt, generation_call_ids = _readback_trace(
