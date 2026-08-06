@@ -64,11 +64,15 @@
   recognized staging files, never provider CAS paths.
 - **Worker → W&B/Weave:** producer-atomic outbox, deterministic idempotency,
   sensitive-key and local-path redaction, fail-closed destination policy.
-- **Assistant:** read-only evidence authorization, minimized context, mandatory
-  nested Weave trace, deterministic numeric/unit/evidence/limitation validator.
-  Renderer call IDs remain bounded local keys; cloud traces receive only a
-  deterministic opaque alias. Length-preserving page redaction keeps exact
-  intake citations anchored to the retained source text.
+- **Assistant and Review Brief Agent:** read-only evidence authorization,
+  minimized alias-only context, one short-lived subprocess per invocation,
+  closed tool allowlists, bounded turns/calls/deadline, native Agents SDK spans
+  through the sole W&B `WeaveTracingProcessor`, exact flush/readback, and
+  deterministic numeric/unit/evidence/limitation validation. No agent process
+  receives SQLite, project paths, search, shell, solver, mutation, approval, or
+  export access. Renderer call IDs remain bounded local keys; cloud traces
+  receive only deterministic opaque hashes. Length-preserving page redaction
+  keeps exact intake citations anchored to the retained source text.
 - **Protected producer → Pages/release:** consumers resolve the exact successful
   run attempt, workflow and head SHA, immutable artifact ID, embedded identity,
   and server-reported digest before accepting evidence. A local or copied

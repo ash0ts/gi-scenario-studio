@@ -1,0 +1,220 @@
+{
+  "$defs": {
+    "ReviewBriefActionKind": {
+      "enum": [
+        "INSPECT_EVIDENCE",
+        "FIELD_VERIFY",
+        "OBTAIN_QUALIFIED_REVIEW",
+        "RESOLVE_LAND_OR_OWNERSHIP",
+        "RESOLVE_AUTHORIZATION",
+        "COMPLETE_COST_BASIS",
+        "REVISE_MODEL_AND_RERUN"
+      ],
+      "title": "ReviewBriefActionKind",
+      "type": "string"
+    },
+    "ReviewBriefFindingSelection": {
+      "additionalProperties": false,
+      "properties": {
+        "action_kind": {
+          "$ref": "#/$defs/ReviewBriefActionKind"
+        },
+        "finding_alias": {
+          "pattern": "^F[1-9][0-9]{0,3}$",
+          "title": "Finding Alias",
+          "type": "string"
+        },
+        "reviewer_disciplines": {
+          "items": {
+            "$ref": "#/$defs/ReviewerDiscipline"
+          },
+          "minItems": 1,
+          "title": "Reviewer Disciplines",
+          "type": "array"
+        }
+      },
+      "required": [
+        "finding_alias",
+        "action_kind",
+        "reviewer_disciplines"
+      ],
+      "title": "ReviewBriefFindingSelection",
+      "type": "object"
+    },
+    "ReviewBriefTrace": {
+      "additionalProperties": false,
+      "properties": {
+        "association_id": {
+          "minLength": 1,
+          "title": "Association Id",
+          "type": "string"
+        },
+        "flushed": {
+          "const": true,
+          "default": true,
+          "title": "Flushed",
+          "type": "boolean"
+        },
+        "readback_verified": {
+          "const": true,
+          "default": true,
+          "title": "Readback Verified",
+          "type": "boolean"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "title": "Trace Id",
+          "type": "string"
+        },
+        "trace_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace Url"
+        },
+        "wandb_run_id": {
+          "minLength": 1,
+          "title": "Wandb Run Id",
+          "type": "string"
+        },
+        "weave_call_id": {
+          "minLength": 1,
+          "title": "Weave Call Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "trace_id",
+        "weave_call_id",
+        "association_id",
+        "wandb_run_id"
+      ],
+      "title": "ReviewBriefTrace",
+      "type": "object"
+    },
+    "ReviewerDiscipline": {
+      "enum": [
+        "ECOLOGY",
+        "FIELD",
+        "ENGINEERING",
+        "LAND",
+        "MAINTENANCE",
+        "CULTURAL",
+        "PERMITTING",
+        "COST"
+      ],
+      "title": "ReviewerDiscipline",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.ecocorridor.local/1.0/ReviewBriefAgentOutput.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "elapsed_ms": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Elapsed Ms"
+    },
+    "input_tokens": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Input Tokens"
+    },
+    "output_tokens": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Output Tokens"
+    },
+    "provider_call_id_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Provider Call Id Sha256",
+      "type": "string"
+    },
+    "provider_model": {
+      "title": "Provider Model",
+      "type": "string"
+    },
+    "runner_kind": {
+      "const": "OPENAI_AGENTS_SDK",
+      "default": "OPENAI_AGENTS_SDK",
+      "title": "Runner Kind",
+      "type": "string"
+    },
+    "selections": {
+      "items": {
+        "$ref": "#/$defs/ReviewBriefFindingSelection"
+      },
+      "minItems": 1,
+      "title": "Selections",
+      "type": "array"
+    },
+    "snapshot_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Snapshot Sha256",
+      "type": "string"
+    },
+    "tool_calls": {
+      "items": {
+        "enum": [
+          "review_brief_get_scope",
+          "review_brief_list_findings",
+          "review_brief_get_findings",
+          "review_brief_list_option_constraints",
+          "review_brief_list_model_fitness_gaps",
+          "review_brief_resolve_evidence_aliases",
+          "review_brief_get_reference_status",
+          "review_brief_get_authorization_status"
+        ],
+        "type": "string"
+      },
+      "maxItems": 8,
+      "minItems": 1,
+      "title": "Tool Calls",
+      "type": "array"
+    },
+    "trace": {
+      "$ref": "#/$defs/ReviewBriefTrace"
+    }
+  },
+  "required": [
+    "snapshot_sha256",
+    "selections",
+    "provider_call_id_sha256",
+    "provider_model",
+    "tool_calls",
+    "trace"
+  ],
+  "title": "ReviewBriefAgentOutput",
+  "type": "object"
+}

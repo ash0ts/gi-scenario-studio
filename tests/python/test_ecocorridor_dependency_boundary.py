@@ -48,7 +48,7 @@ def test_report_publisher_dependency_is_isolated_from_shared_gi_observability() 
     assert "wandb-workspaces==0.4.5" not in extras["observability"]
 
 
-def test_only_ecocorridor_ci_and_release_install_the_report_publisher_extra() -> None:
+def test_only_report_publishing_workflows_install_the_report_publisher_extra() -> None:
     workflow_root = ROOT / ".github" / "workflows"
     consumers = {
         path.name
@@ -56,7 +56,11 @@ def test_only_ecocorridor_ci_and_release_install_the_report_publisher_extra() ->
         if "--extra ecocorridor-report" in path.read_text(encoding="utf-8")
     }
 
-    assert consumers == {"ecocorridor-ci.yml", "ecocorridor-release.yml"}
+    assert consumers == {
+        "ecocorridor-ci.yml",
+        "ecocorridor-release.yml",
+        "ecocorridor-review-brief-evaluation.yml",
+    }
 
 
 def test_ecocorridor_docs_install_the_isolated_report_publisher_extra() -> None:

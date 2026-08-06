@@ -35,8 +35,10 @@ ECOCORRIDOR_CI_WORKFLOW = "ecocorridor-ci.yml"
 ECOCORRIDOR_RELEASE_WORKFLOW = "ecocorridor-release.yml"
 ECOCORRIDOR_PAGES_WORKFLOW = "ecocorridor-pages.yml"
 RIDGEWAY_EVIDENCE_WORKFLOW = "ecocorridor-ridgeway-evidence.yml"
+REVIEW_BRIEF_EVALUATION_WORKFLOW = "ecocorridor-review-brief-evaluation.yml"
 ASSISTANT_EVALUATION_NAME = "Eco protected assistant evaluation candidate"
 RIDGEWAY_EVIDENCE_NAME = "EcoCorridor protected Ridgeway direct evidence"
+REVIEW_BRIEF_EVALUATION_NAME = "EcoCorridor protected Review Brief evaluation"
 ECOCORRIDOR_GEOSPATIAL_HELPER = "scripts/install_ecocorridor_geospatial_runtime.py"
 ECOCORRIDOR_GEO_EXTRA = re.compile(r"(?<![A-Za-z0-9_-])--extra\s+geo(?=(?:\s|\\|['\";]|$))")
 ECOCORRIDOR_GEOSPATIAL_INVOCATION = re.compile(
@@ -773,6 +775,66 @@ def evaluate_ridgeway_release_topology(
     return findings
 
 
+def evaluate_review_brief_evaluation_topology(workflow: str) -> list[str]:
+    """Lock the credentialed campaign, media, and append-only Report sequence."""
+
+    findings: list[str] = []
+    if f"name: {REVIEW_BRIEF_EVALUATION_NAME}" not in workflow:
+        findings.append("Review Brief evaluation workflow has an unexpected identity")
+    if not _declares_event(workflow, "workflow_dispatch") or any(
+        _declares_event(workflow, event)
+        for event in ("push", "pull_request", "pull_request_target", "merge_group", "schedule")
+    ):
+        findings.append("Review Brief evaluation workflow must be manual-only")
+    required = (
+        'test "${GITHUB_REF}" = "refs/heads/main"',
+        'test "${GITHUB_WORKFLOW_SHA}" = "${GITHUB_SHA}"',
+        "environment:",
+        "ecocorridor-observability-integration",
+        "uv sync --locked --extra ecocorridor --extra ecocorridor-agents",
+        "tests/python/test_review_brief_evaluation_campaign.py",
+        "scripts/run_ecocorridor_review_brief_evaluation.py",
+        '--provider-cost-basis-ref "${PROVIDER_COST_BASIS_REF}"',
+        '--provider-input-usd-per-million "${PROVIDER_INPUT_USD_PER_MILLION}"',
+        '--provider-output-usd-per-million "${PROVIDER_OUTPUT_USD_PER_MILLION}"',
+        '--wandb-api-base-url "${WANDB_BASE_URL}"',
+        '--wandb-web-base-url "${WANDB_WEB_BASE_URL}"',
+        "--authorize-synthetic-public-provider-evaluation",
+        "scripts/render_ecocorridor_review_brief_animation.py",
+        "--authorize-verified-provider-media-render",
+        "scripts/publish_ecocorridor_review_brief_report.py",
+        '--report-url "${WANDB_REPORT_URL}"',
+        "--authorize-synthetic-public-upload",
+        "name: ecocorridor-review-brief-evaluation",
+        "if-no-files-found: error",
+    )
+    for token in required:
+        if token not in workflow:
+            findings.append(f"Review Brief evaluation workflow is missing {token}")
+    for token in (
+        '--wandb-api-base-url "${WANDB_BASE_URL}"',
+        '--wandb-web-base-url "${WANDB_WEB_BASE_URL}"',
+    ):
+        if workflow.count(token) != 2:
+            findings.append(
+                f"Review Brief campaign and publisher must both receive the exact target: {token}"
+            )
+    ordered = (
+        "Run network-free campaign and publisher tests",
+        "Run the real three-method by fourteen-case campaign",
+        "Render only the complete verified campaign",
+        "Append only the verified owned section to the existing Report",
+        "Preserve the exact campaign and publication receipt",
+    )
+    if all(f"- name: {name}" in workflow for name in ordered):
+        positions = [workflow.index(f"- name: {name}") for name in ordered]
+        if positions != sorted(positions):
+            findings.append(
+                "Review Brief evaluation must test, run, render, append, and preserve in order"
+            )
+    return findings
+
+
 def _shell_without_comment_lines(source: str) -> str:
     """Normalize a YAML run body while excluding comment-only shell lines."""
 
@@ -1349,6 +1411,7 @@ def main() -> int:
         ECOCORRIDOR_RELEASE_WORKFLOW,
         ECOCORRIDOR_PAGES_WORKFLOW,
         RIDGEWAY_EVIDENCE_WORKFLOW,
+        REVIEW_BRIEF_EVALUATION_WORKFLOW,
     }
     missing = sorted(required - set(by_name))
     if missing:
@@ -1368,6 +1431,9 @@ def main() -> int:
                 by_name[ECOCORRIDOR_PAGES_WORKFLOW],
                 by_name[ECOCORRIDOR_RELEASE_WORKFLOW],
             )
+        )
+        findings.extend(
+            evaluate_review_brief_evaluation_topology(by_name[REVIEW_BRIEF_EVALUATION_WORKFLOW])
         )
     eco_workflows = {
         name: text for name, text in by_name.items() if name.startswith("ecocorridor-")

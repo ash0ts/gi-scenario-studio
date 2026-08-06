@@ -1,0 +1,318 @@
+{
+  "$defs": {
+    "ReviewBriefActionKind": {
+      "enum": [
+        "INSPECT_EVIDENCE",
+        "FIELD_VERIFY",
+        "OBTAIN_QUALIFIED_REVIEW",
+        "RESOLVE_LAND_OR_OWNERSHIP",
+        "RESOLVE_AUTHORIZATION",
+        "COMPLETE_COST_BASIS",
+        "REVISE_MODEL_AND_RERUN"
+      ],
+      "title": "ReviewBriefActionKind",
+      "type": "string"
+    },
+    "ReviewBriefCloudBoundary": {
+      "enum": [
+        "CC0_SYNTHETIC",
+        "RESTRICTED_VERIFIED",
+        "BLOCKED"
+      ],
+      "title": "ReviewBriefCloudBoundary",
+      "type": "string"
+    },
+    "ReviewBriefDeterministicItem": {
+      "additionalProperties": false,
+      "description": "Locally rendered default checklist item; never provider-authored.",
+      "properties": {
+        "action_kind": {
+          "$ref": "#/$defs/ReviewBriefActionKind"
+        },
+        "direct_run_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Direct Run Ids",
+          "type": "array"
+        },
+        "evidence_claim_ids": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence Claim Ids",
+          "type": "array"
+        },
+        "finding_kind": {
+          "$ref": "#/$defs/ReviewBriefFindingKind"
+        },
+        "item_id": {
+          "minLength": 1,
+          "title": "Item Id",
+          "type": "string"
+        },
+        "priority": {
+          "$ref": "#/$defs/ReviewBriefPriority"
+        },
+        "rendered_text": {
+          "minLength": 1,
+          "title": "Rendered Text",
+          "type": "string"
+        },
+        "review_topic": {
+          "$ref": "#/$defs/ReviewBriefTopic"
+        },
+        "reviewer_disciplines": {
+          "items": {
+            "$ref": "#/$defs/ReviewerDiscipline"
+          },
+          "minItems": 1,
+          "title": "Reviewer Disciplines",
+          "type": "array"
+        },
+        "scenario_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Scenario Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "item_id",
+        "finding_kind",
+        "review_topic",
+        "priority",
+        "action_kind",
+        "reviewer_disciplines",
+        "evidence_claim_ids",
+        "rendered_text"
+      ],
+      "title": "ReviewBriefDeterministicItem",
+      "type": "object"
+    },
+    "ReviewBriefFindingKind": {
+      "enum": [
+        "RULE_FAILURE",
+        "SURVEY_FIRST",
+        "SAFEGUARD",
+        "REVIEW_MASK",
+        "FEASIBILITY_GAP",
+        "MODEL_FITNESS",
+        "QA",
+        "ASSUMPTION",
+        "COST",
+        "REFERENCE",
+        "AUTHORIZATION"
+      ],
+      "title": "ReviewBriefFindingKind",
+      "type": "string"
+    },
+    "ReviewBriefPriority": {
+      "enum": [
+        "BLOCKING",
+        "BEFORE_FEASIBILITY",
+        "FOLLOW_UP"
+      ],
+      "title": "ReviewBriefPriority",
+      "type": "string"
+    },
+    "ReviewBriefSourceMode": {
+      "enum": [
+        "RIDGEWAY_SYNTHETIC",
+        "PROFESSIONAL"
+      ],
+      "title": "ReviewBriefSourceMode",
+      "type": "string"
+    },
+    "ReviewBriefTopic": {
+      "description": "Closed, non-narrative facet used to route a finding to the right review.",
+      "enum": [
+        "REQUIRED_RULE",
+        "SURVEY_OR_FIELD_DATA",
+        "SAFEGUARD_REVIEW",
+        "CURRENT_REDISTRIBUTION_MASK",
+        "GENERAL_FEASIBILITY",
+        "LAND_ACCESS_OR_OWNERSHIP",
+        "MAINTENANCE_RESPONSIBILITY",
+        "CULTURAL_REVIEW",
+        "PERMITTING_REVIEW",
+        "TRAFFIC_OR_STRUCTURAL_FEASIBILITY",
+        "ECOLOGICAL_FIELD_RISK",
+        "MODEL_FITNESS_BASIS",
+        "DIRECT_RUN_QA",
+        "ECOLOGICAL_ASSUMPTION",
+        "COST_BASIS",
+        "REFERENCE_COMPARISON",
+        "DATA_AUTHORIZATION"
+      ],
+      "title": "ReviewBriefTopic",
+      "type": "string"
+    },
+    "ReviewerDiscipline": {
+      "enum": [
+        "ECOLOGY",
+        "FIELD",
+        "ENGINEERING",
+        "LAND",
+        "MAINTENANCE",
+        "CULTURAL",
+        "PERMITTING",
+        "COST"
+      ],
+      "title": "ReviewerDiscipline",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.ecocorridor.local/1.0/ReviewBriefPreflight.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "agent_release_status": {
+      "default": "EXPERIMENTAL",
+      "enum": [
+        "EXPERIMENTAL",
+        "BENCHMARK_APPROVED"
+      ],
+      "title": "Agent Release Status",
+      "type": "string"
+    },
+    "analysis_id": {
+      "minLength": 1,
+      "title": "Analysis Id",
+      "type": "string"
+    },
+    "blocked_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Blocked Reason"
+    },
+    "cloud_boundary": {
+      "$ref": "#/$defs/ReviewBriefCloudBoundary"
+    },
+    "decision_board_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Decision Board Sha256",
+      "type": "string"
+    },
+    "deterministic_available": {
+      "default": false,
+      "title": "Deterministic Available",
+      "type": "boolean"
+    },
+    "deterministic_items": {
+      "items": {
+        "$ref": "#/$defs/ReviewBriefDeterministicItem"
+      },
+      "title": "Deterministic Items",
+      "type": "array"
+    },
+    "disposition": {
+      "enum": [
+        "PASSES",
+        "FAILS",
+        "SURVEY_FIRST",
+        "INCOMPLETE"
+      ],
+      "title": "Disposition",
+      "type": "string"
+    },
+    "eligible": {
+      "title": "Eligible",
+      "type": "boolean"
+    },
+    "evidence_claim_count": {
+      "minimum": 0,
+      "title": "Evidence Claim Count",
+      "type": "integer"
+    },
+    "experimental_acknowledgement_required": {
+      "default": true,
+      "title": "Experimental Acknowledgement Required",
+      "type": "boolean"
+    },
+    "model_revision_id": {
+      "minLength": 1,
+      "title": "Model Revision Id",
+      "type": "string"
+    },
+    "next_action": {
+      "minLength": 1,
+      "title": "Next Action",
+      "type": "string"
+    },
+    "portfolio_id": {
+      "minLength": 1,
+      "title": "Portfolio Id",
+      "type": "string"
+    },
+    "production_default": {
+      "default": "DETERMINISTIC_CHECKLIST",
+      "enum": [
+        "DETERMINISTIC_CHECKLIST",
+        "REVIEW_BRIEF_AGENT"
+      ],
+      "title": "Production Default",
+      "type": "string"
+    },
+    "project_title": {
+      "minLength": 1,
+      "title": "Project Title",
+      "type": "string"
+    },
+    "provider_model": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Provider Model"
+    },
+    "provider_ready": {
+      "title": "Provider Ready",
+      "type": "boolean"
+    },
+    "scenario_count": {
+      "exclusiveMinimum": 0,
+      "title": "Scenario Count",
+      "type": "integer"
+    },
+    "source_mode": {
+      "$ref": "#/$defs/ReviewBriefSourceMode"
+    },
+    "weave_ready": {
+      "title": "Weave Ready",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "source_mode",
+    "project_title",
+    "analysis_id",
+    "portfolio_id",
+    "model_revision_id",
+    "decision_board_sha256",
+    "scenario_count",
+    "evidence_claim_count",
+    "disposition",
+    "next_action",
+    "cloud_boundary",
+    "provider_ready",
+    "weave_ready",
+    "eligible"
+  ],
+  "title": "ReviewBriefPreflight",
+  "type": "object"
+}

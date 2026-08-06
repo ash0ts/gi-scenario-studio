@@ -234,6 +234,8 @@ def main() -> int:
         for name in (
             "geopandas",
             "numpy",
+            "openai",
+            "openai-agents",
             "pydantic",
             "pyogrio",
             "pyinstaller",

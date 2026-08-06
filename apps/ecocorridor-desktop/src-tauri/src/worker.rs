@@ -21,6 +21,7 @@ use tokio::sync::oneshot;
 use zeroize::Zeroize;
 
 const RESPONSE_TIMEOUT_MS: u64 = 120_000;
+const REVIEW_BRIEF_RESPONSE_TIMEOUT_MS: u64 = 420_000;
 const INSTALLED_HEALTH_TIMEOUT: Duration = Duration::from_secs(120);
 const WORKER_SHUTDOWN_GRACE: Duration = Duration::from_secs(7);
 const WORKER_EXIT_POLL_INTERVAL: Duration = Duration::from_millis(20);
@@ -632,6 +633,11 @@ impl WorkerManager {
         app: &AppHandle,
         mut request: WorkerRequest,
     ) -> Result<Value, HostError> {
+        let default_timeout_ms = if request.method == "assistant.review_brief.prepare" {
+            REVIEW_BRIEF_RESPONSE_TIMEOUT_MS
+        } else {
+            RESPONSE_TIMEOUT_MS
+        };
         let request_bytes = serde_json::to_vec(&request.params)
             .map_err(|_| {
                 HostError::new(
@@ -710,7 +716,7 @@ impl WorkerManager {
         }
         let timeout = request
             .timeout_ms
-            .unwrap_or(RESPONSE_TIMEOUT_MS)
+            .unwrap_or(default_timeout_ms)
             .clamp(1_000, 30 * 60 * 1_000);
         tokio::time::timeout(std::time::Duration::from_millis(timeout), receiver)
             .await
@@ -735,9 +741,15 @@ impl WorkerManager {
     }
 
     fn inject_credential(&self, method: &str, params: &mut Value) -> Result<(), HostError> {
-        let kind = if method == "observability.preflight" {
+        let kind = if matches!(
+            method,
+            "observability.preflight" | "observability.synthetic_trace.preflight"
+        ) {
             Some(CredentialKind::Wandb)
-        } else if method == "assistant.configure" {
+        } else if matches!(
+            method,
+            "assistant.configure" | "assistant.review_brief.configure_synthetic"
+        ) {
             Some(CredentialKind::ModelProvider)
         } else {
             None

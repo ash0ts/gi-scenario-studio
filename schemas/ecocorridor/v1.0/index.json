@@ -135,6 +135,42 @@
     {
       "file": "SemanticModelDiff.schema.json",
       "name": "SemanticModelDiff"
+    },
+    {
+      "file": "ReviewBriefRequest.schema.json",
+      "name": "ReviewBriefRequest"
+    },
+    {
+      "file": "AuthorizedReviewSnapshot.schema.json",
+      "name": "AuthorizedReviewSnapshot"
+    },
+    {
+      "file": "ReviewBriefAgentOutput.schema.json",
+      "name": "ReviewBriefAgentOutput"
+    },
+    {
+      "file": "ReviewBriefDraft.schema.json",
+      "name": "ReviewBriefDraft"
+    },
+    {
+      "file": "ReviewBriefItem.schema.json",
+      "name": "ReviewBriefItem"
+    },
+    {
+      "file": "ReviewBriefPreflight.schema.json",
+      "name": "ReviewBriefPreflight"
+    },
+    {
+      "file": "ReviewBriefTraceReceipt.schema.json",
+      "name": "ReviewBriefTraceReceipt"
+    },
+    {
+      "file": "ReviewBriefValidation.schema.json",
+      "name": "ReviewBriefValidation"
+    },
+    {
+      "file": "ReviewBriefAttestation.schema.json",
+      "name": "ReviewBriefAttestation"
     }
   ],
   "schema_version": "1.0"

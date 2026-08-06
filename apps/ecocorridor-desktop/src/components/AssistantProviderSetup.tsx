@@ -10,9 +10,10 @@ interface AssistantProviderSetupProps {
   allowConfiguration: boolean;
   unavailableReason: string;
   onStatus: (status: AssistantStatus | null) => void;
+  capability?: "PROFESSIONAL_ASSISTANTS" | "RIDGEWAY_REVIEW_BRIEF_ONLY";
 }
 
-export function AssistantProviderSetup({ projectHandle, allowConfiguration, unavailableReason, onStatus }: AssistantProviderSetupProps) {
+export function AssistantProviderSetup({ projectHandle, allowConfiguration, unavailableReason, onStatus, capability = "PROFESSIONAL_ASSISTANTS" }: AssistantProviderSetupProps) {
   const id = useId();
   const statusCallback = useRef(onStatus);
   const [status, setStatus] = useState<AssistantStatus | null>(null);
@@ -36,9 +37,13 @@ export function AssistantProviderSetup({ projectHandle, allowConfiguration, unav
       return;
     }
     let active = true;
+    setStatus(null);
     setState("checking");
     setMessage("");
-    void hostRequest<RpcPayload<unknown>>("assistant.status", { project_handle: projectHandle })
+    const statusMethod = capability === "RIDGEWAY_REVIEW_BRIEF_ONLY"
+      ? "assistant.review_brief.status_synthetic"
+      : "assistant.status";
+    void hostRequest<RpcPayload<unknown>>(statusMethod, { project_handle: projectHandle })
       .then((response) => {
         if (!active) return;
         const next = AssistantStatusSchema.parse(rpcData(response));
@@ -59,7 +64,7 @@ export function AssistantProviderSetup({ projectHandle, allowConfiguration, unav
         statusCallback.current(null);
       });
     return () => { active = false; };
-  }, [projectHandle]);
+  }, [capability, projectHandle]);
 
   useEffect(() => {
     setCredentialStored(false);
@@ -95,7 +100,10 @@ export function AssistantProviderSetup({ projectHandle, allowConfiguration, unav
     setState("configuring");
     setMessage("");
     try {
-      const response = await hostRequest<RpcPayload<unknown>>("assistant.configure", {
+      const configureMethod = capability === "RIDGEWAY_REVIEW_BRIEF_ONLY"
+        ? "assistant.review_brief.configure_synthetic"
+        : "assistant.configure";
+      const response = await hostRequest<RpcPayload<unknown>>(configureMethod, {
         project_handle: projectHandle,
         credential_id: credentialId,
         configuration: { base_url: baseUrl.trim().replace(/\/$/, ""), model: model.trim(), timeout_seconds: 60 },
@@ -107,7 +115,9 @@ export function AssistantProviderSetup({ projectHandle, allowConfiguration, unav
       setStatus(next);
       setEditing(false);
       setState("idle");
-      setMessage("Trace-required assistant session configured for this project. No untraced fallback is enabled.");
+      setMessage(capability === "RIDGEWAY_REVIEW_BRIEF_ONLY"
+        ? "Trace-required Review Brief Agent configured for the exact CC0 Ridgeway project. General Evidence and Intake assistants remain off."
+        : "Trace-required assistant session configured for this project. No untraced fallback is enabled.");
       statusCallback.current(next);
     } catch (reason) {
       setState("error");
@@ -119,7 +129,7 @@ export function AssistantProviderSetup({ projectHandle, allowConfiguration, unav
     return (
       <div className="assistant-provider-state assistant-provider-ready">
         <Icon name="check" />
-        <div><strong>Traced provider ready</strong><span>{status.provider?.model} · Weave read-back required for every answer</span></div>
+        <div><strong>{capability === "RIDGEWAY_REVIEW_BRIEF_ONLY" ? "Review Brief provider ready" : "Traced provider ready"}</strong><span>{status.provider?.model} · Weave read-back required for every {capability === "RIDGEWAY_REVIEW_BRIEF_ONLY" ? "brief" : "answer"}</span></div>
         {allowConfiguration && <button className="text-action" type="button" onClick={() => setEditing(true)}>Change provider</button>}
       </div>
     );
@@ -130,8 +140,8 @@ export function AssistantProviderSetup({ projectHandle, allowConfiguration, unav
       <div className="assistant-provider-state">
         <Icon name={allowConfiguration ? "shield" : "lock"} />
         <div>
-          <strong>{state === "checking" ? "Checking traced assistant…" : "Traced assistant is off"}</strong>
-          <span>{allowConfiguration ? "Configure an OpenAI-compatible provider; Weave trace flush and read-back remain mandatory." : unavailableReason}</span>
+          <strong>{state === "checking" ? (capability === "RIDGEWAY_REVIEW_BRIEF_ONLY" ? "Checking Review Brief Agent…" : "Checking traced assistant…") : capability === "RIDGEWAY_REVIEW_BRIEF_ONLY" ? "Review Brief Agent provider is off" : "Traced assistant is off"}</strong>
+          <span>{allowConfiguration ? (capability === "RIDGEWAY_REVIEW_BRIEF_ONLY" ? "Configure an OpenAI-compatible provider for this bounded CC0 Review Brief task only; Weave trace flush and read-back remain mandatory." : "Configure an OpenAI-compatible provider; Weave trace flush and read-back remain mandatory.") : unavailableReason}</span>
         </div>
       </div>
       {allowConfiguration && editing && (
@@ -142,7 +152,7 @@ export function AssistantProviderSetup({ projectHandle, allowConfiguration, unav
             <button className="secondary-button" type="button" disabled={!credentialHost || !configurationValid || state === "storing" || state === "configuring"} onClick={() => void storeKey()}>{state === "storing" ? "Opening secure prompt…" : credentialStored ? "Replace key in keychain" : "Store key in keychain"}</button>
             <small>{credentialHost ? "The native host injects the key in memory; the renderer, SQLite, logs, exports, and command arguments never receive it." : "API-key entry is available only in the signed desktop host."}</small>
           </div>
-          <button className="primary-button" type="button" disabled={!configurationValid || !credentialStored || state === "configuring"} onClick={() => void configure()}>{state === "configuring" ? "Verifying W&B + Weave…" : "Configure traced assistant"}</button>
+          <button className="primary-button" type="button" disabled={!configurationValid || !credentialStored || state === "configuring"} onClick={() => void configure()}>{state === "configuring" ? "Verifying W&B + Weave…" : capability === "RIDGEWAY_REVIEW_BRIEF_ONLY" ? "Configure Review Brief Agent" : "Configure traced assistant"}</button>
         </div>
       )}
       {message && <p className={`operation-message ${state === "error" ? "error" : "success"}`} role={state === "error" ? "alert" : "status"}>{message}</p>}

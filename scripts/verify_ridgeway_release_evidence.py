@@ -16,6 +16,11 @@ import package_ridgeway_evidence as packager
 MAX_FILES = 50_000
 MAX_MEMBER_BYTES = 512 * 1024 * 1024
 MAX_TOTAL_BYTES = 4 * 1024 * 1024 * 1024
+FROZEN_NON_SCIENTIFIC_WORKFLOW_SHA256 = {
+    "contracts": "eb6ed9a71274792a823bd0610264a6c88f667abad01c740f3ce76a7848140694",
+    "python_project_manifest": "c6336128b76ecb155deaf588a3a606db5c4e1ed37602effb2aa5945e8d8a4103",
+    "python_dependency_lock": "bd6c973cb3ae467c17361360aee597616b24c9827cb341f8cbd7dde574f577f5",
+}
 
 
 def digest(path: Path) -> str:
@@ -71,6 +76,29 @@ def portable_packager_temporary_directory(*args: object, **kwargs: object):
     return tempfile.TemporaryDirectory(*args, **kwargs)
 
 
+def reviewed_workflow_sources_for_retained_study(
+    evidence_root: Path,
+    current_sources: dict[str, Path],
+) -> dict[str, Path]:
+    """Keep scientific source checks current without rewriting old evidence.
+
+    The retained study predates additive public contracts and optional
+    agent/report dependencies. Its exact contract/project/lock bytes remain
+    independently pinned here and by the signed archive index. All executable
+    scientific modules continue to resolve to the current reviewed source.
+    """
+
+    sources = dict(current_sources)
+    for label, expected_sha256 in FROZEN_NON_SCIENTIFIC_WORKFLOW_SHA256.items():
+        current = sources[label]
+        relative = f"{label}{current.suffix or '.bin'}"
+        retained = evidence_root / "workflow-snapshot" / relative
+        if retained.is_symlink() or not retained.is_file() or digest(retained) != expected_sha256:
+            raise ValueError(f"retained non-scientific workflow identity differs: {label}")
+        sources[label] = retained
+    return sources
+
+
 def verify(
     publish_directory: Path,
     desktop_fixture: Path,
@@ -123,13 +151,20 @@ def verify(
         # lookup on other platforms; all recomputed output is still compared
         # byte-for-byte with the committed evidence.
         retained_tempfile = packager.tempfile
+        retained_workflow_resolver = packager.reviewed_workflow_sources
+        compatible_workflow_sources = reviewed_workflow_sources_for_retained_study(
+            evidence_root,
+            retained_workflow_resolver(),
+        )
         packager.tempfile = SimpleNamespace(
             TemporaryDirectory=portable_packager_temporary_directory
         )
+        packager.reviewed_workflow_sources = lambda: dict(compatible_workflow_sources)
         try:
             packager.package(evidence_root, recomputed_publish, recomputed_desktop)
         finally:
             packager.tempfile = retained_tempfile
+            packager.reviewed_workflow_sources = retained_workflow_resolver
         # The immutable local archive predates publication of these two
         # top-level ledger identities, but its bundle index already pins both.
         # Accept only that exact metadata enrichment and the resulting manifest

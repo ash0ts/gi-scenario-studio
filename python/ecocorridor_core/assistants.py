@@ -421,7 +421,15 @@ class AssistantRunAssociation(ContractModel):
                 )
             )
             or self.association_id != expected
-            or (self.wandb_run_kind in {"connectivity_analysis", "assistant_evaluation"})
+            or (
+                self.wandb_run_kind
+                in {
+                    "connectivity_analysis",
+                    "assistant_evaluation",
+                    "guided_session",
+                    "review_brief_evaluation",
+                }
+            )
             != bool(self.analysis_id)
         ):
             raise ValueError("assistant W&B run association is inconsistent")
@@ -1301,11 +1309,14 @@ class _TracedAssistant:
             )
         except Exception as exc:
             raise AssistantSafetyError("ASSISTANT_LOCAL_REJECTION_AUDIT_FAILED") from exc
+        completed_trace_expected = bool(
+            provider_abort_trace is not None and provider_abort_trace.get("completed") is True
+        )
         if (
             receipt.get("local_audit_verified") is not True
             or receipt.get("disposition") != "REJECTED"
             or receipt.get("answer_returned") is not False
-            or receipt.get("completed_trace_readback_verified") is not False
+            or receipt.get("completed_trace_readback_verified") is not completed_trace_expected
         ):
             raise AssistantSafetyError("ASSISTANT_LOCAL_REJECTION_AUDIT_FAILED")
 

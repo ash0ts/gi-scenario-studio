@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { z } from "zod";
 import { evidenceFor, fixtureIsManifestVerified, parseRidgewayFixture } from "../data/ridgeway";
 import { PUBLIC_RIDGEWAY_EVIDENCE_MANIFEST_SHA256 } from "../data/trustedManifests";
 import type { AppMode, EntryPath, EvidenceSelection, GuidedDesktopSession, GuidedEventDraft, GuidedOpenData, ObservabilityPreflight, PlanningState, ProfessionalAnalysisWorkspace, ProfessionalAssetRecord, ProfessionalGridApproval, ProfessionalModelRecords, ProfessionalProjectCandidate, ProfessionalProjectSession, ReopenableProject, RidgewayFixture, RidgewayPortfolio, RpcPayload, WorkflowStepId } from "../types";
@@ -18,6 +19,7 @@ interface WorkspaceProps {
   preflight: ObservabilityPreflight | null;
   reopenedProject?: ReopenableProject | null;
   publicFixture?: RidgewayFixture | null;
+  onConnectObservability?: (projectHandle: string | null) => void;
   onHome?: () => void;
 }
 
@@ -49,6 +51,21 @@ const initialProfessionalAnalysis: ProfessionalAnalysisWorkspace = {
   exportRecord: null,
 };
 
+const SyntheticTraceConnectResponseSchema = z.object({
+  connected: z.literal(true),
+  state: z.literal("SYNTHETIC_TRACE_TARGET_VERIFIED"),
+  binding_sha256: z.string().regex(/^[0-9a-f]{64}$/),
+  entity: z.string().min(1),
+  project: z.string().min(1),
+  deployment: z.enum(["WANDB_CLOUD", "DEDICATED", "SELF_MANAGED"]),
+  visibility_claim: z.literal("NONE"),
+  restricted_verified: z.literal(false),
+  full_sync_allowed: z.literal(false),
+  artifact_upload_allowed: z.literal(false),
+  weave_capability: z.literal("PENDING_NATIVE_AGENT_PREFLIGHT"),
+  message: z.string().min(1),
+}).strict();
+
 function reopenedSession(project: ReopenableProject): ProfessionalProjectSession {
   const state = project.projectState.sync_status["state"];
   const bindingState: ProfessionalProjectSession["bindingState"] = state === "CONNECTED"
@@ -77,12 +94,12 @@ function reopenedSession(project: ReopenableProject): ProfessionalProjectSession
   };
 }
 
-function retainedObservabilityDeployment(projectState: ProfessionalAnalysisWorkspace["projectState"]): ObservabilityPreflight["deployment"] | null {
+function retainedObservabilityDeployment(projectState: ProfessionalAnalysisWorkspace["projectState"]): "DEDICATED" | "SELF_MANAGED" | null {
   const deployment = projectState?.sync_status["deployment"];
   return deployment === "DEDICATED" || deployment === "SELF_MANAGED" ? deployment : null;
 }
 
-export function Workspace({ mode, path, localPreview, preflight, reopenedProject = null, publicFixture = null, onHome }: WorkspaceProps) {
+export function Workspace({ mode, path, localPreview, preflight, reopenedProject = null, publicFixture = null, onConnectObservability, onHome }: WorkspaceProps) {
   const publicMode = mode === "public-replay";
   const steps = useMemo(() => stepsFor(path), [path]);
   const [step, setStep] = useState<WorkflowStepId>("overview");
@@ -99,6 +116,11 @@ export function Workspace({ mode, path, localPreview, preflight, reopenedProject
   const [guidedRecordState, setGuidedRecordState] = useState<"UNAVAILABLE" | "OPENING" | "ACTIVE" | "FAILED">("UNAVAILABLE");
   const [guidedFixture, setGuidedFixture] = useState<RidgewayFixture | null>(null);
   const [guidedProjectionError, setGuidedProjectionError] = useState<string | null>(null);
+  // A professional/full-sync status can never prove the separate Ridgeway
+  // trace-only consent. Reopened guided projects therefore start fail-closed
+  // until the dedicated synthetic target is verified in this process.
+  const [guidedBindingState, setGuidedBindingState] = useState<"UNBOUND" | "CONNECTING" | "CONNECTED" | "BLOCKED">("UNBOUND");
+  const [guidedBindingMessage, setGuidedBindingMessage] = useState("");
   const activeFixture = publicMode ? publicFixture : guidedFixture;
   const fixtureVerified = activeFixture
     ? fixtureIsManifestVerified(activeFixture, publicMode ? PUBLIC_RIDGEWAY_EVIDENCE_MANIFEST_SHA256 : guidedSession?.evidenceManifestSha256 ?? null)
@@ -114,13 +136,18 @@ export function Workspace({ mode, path, localPreview, preflight, reopenedProject
   const pendingGuidedEventsRef = useRef<GuidedEventDraft[]>([]);
   const guidedOpeningRef = useRef(false);
   const reopenedBindingRef = useRef<string | null>(null);
+  const guidedBindingRef = useRef<string | null>(null);
   const stepStartedAtRef = useRef(performance.now());
   const currentIndex = steps.findIndex((item) => item.id === step);
   const previous = currentIndex > 0 ? steps[currentIndex - 1] : null;
   const next = currentIndex < steps.length - 1 ? steps[currentIndex + 1] : null;
   const evidenceAvailable = (path === "guided" && Boolean(activeFixture && selectedPortfolio))
     || (path !== "guided" && Boolean(evidence));
-  const observabilityDeployment = preflight?.deployment ?? retainedObservabilityDeployment(professionalAnalysis.projectState);
+  const observabilityDeployment = path === "guided"
+    ? null
+    : preflight?.deployment === "DEDICATED" || preflight?.deployment === "SELF_MANAGED"
+      ? preflight.deployment
+      : retainedObservabilityDeployment(professionalAnalysis.projectState);
 
   useEffect(() => {
     setProfessionalAnalysis(initialProfessionalAnalysis);
@@ -308,6 +335,37 @@ export function Workspace({ mode, path, localPreview, preflight, reopenedProject
   }, [localPreview, path, publicMode, reopenedProject?.projectHandle]);
 
   useEffect(() => {
+    if (publicMode || path !== "guided" || !guidedSession || !preflight) return;
+    if (
+      preflight.purpose !== "RIDGEWAY_SYNTHETIC_TRACE_ONLY"
+      || preflight.projectHandle !== guidedSession.projectHandle
+    ) {
+      setGuidedBindingState("BLOCKED");
+      setGuidedBindingMessage("The trace-only preflight does not belong to this exact opened Ridgeway project. No cloud capability was enabled.");
+      return;
+    }
+    const attemptKey = `${guidedSession.projectHandle}:${preflight.preflightId}`;
+    if (guidedBindingRef.current === attemptKey) return;
+    guidedBindingRef.current = attemptKey;
+    setGuidedBindingState("CONNECTING");
+    setGuidedBindingMessage("Binding the optional synthetic trace destination…");
+    void hostRequest<RpcPayload<unknown>>("observability.synthetic_trace.connect", {
+      project_handle: guidedSession.projectHandle,
+      preflight_id: preflight.preflightId,
+    }).then((response) => {
+      const data = SyntheticTraceConnectResponseSchema.parse(rpcData(response));
+      if (data.entity !== preflight.entity || data.project !== preflight.project || data.deployment !== preflight.deployment) {
+        throw new Error("The trace-only W&B destination differs from the exact project preflight.");
+      }
+      setGuidedBindingState("CONNECTED");
+      setGuidedBindingMessage("Trace-only connected. Project visibility was not asserted, full synchronization and artifact upload remain disabled, and the local Ridgeway evidence stays authoritative.");
+    }).catch((reason: unknown) => {
+      setGuidedBindingState("BLOCKED");
+      setGuidedBindingMessage(hostErrorMessage(reason, "The optional synthetic trace destination could not be bound."));
+    });
+  }, [guidedSession?.projectHandle, path, preflight?.preflightId, preflight?.projectHandle, preflight?.purpose, publicMode]);
+
+  useEffect(() => {
     const heading = mainRef.current?.querySelector<HTMLElement>("h1");
     heading?.focus();
     mainRef.current?.scrollTo({ top: 0, behavior: "auto" });
@@ -354,8 +412,8 @@ export function Workspace({ mode, path, localPreview, preflight, reopenedProject
   };
 
   const bindProject = async (candidate: ProfessionalProjectCandidate) => {
-    if (!preflight) {
-      setProjectSession({ ...candidate, bindingState: "FAILED", bindingMessage: "The Restricted-destination preflight is missing. Return home and verify it again." });
+    if (!preflight || preflight.purpose !== "PROFESSIONAL_FULL_SYNC" || preflight.projectHandle !== null) {
+      setProjectSession({ ...candidate, bindingState: "FAILED", bindingMessage: "The exact professional Restricted-destination preflight is missing or belongs to another capability. Return home and verify it again." });
       return;
     }
     setProjectSession({ ...candidate, bindingState: "CONNECTING", bindingMessage: "Binding the verified destination to this local project…" });
@@ -416,7 +474,7 @@ export function Workspace({ mode, path, localPreview, preflight, reopenedProject
         </button>
         <div className="project-heading"><strong>{projectName}</strong><span>{flowLabel}</span></div>
         <div className="header-actions">
-          {publicMode ? <span className="cloud-state public"><Icon name="eye" /> No login · no cloud</span> : localPreview ? <span className="cloud-state preview"><Icon name="info" /> Local UI preview</span> : path === "guided" ? <span className={`cloud-state ${guidedRecordState === "FAILED" ? "preview" : "local"}`}><Icon name={guidedRecordState === "FAILED" ? "warning" : "shield"} /> {guidedRecordState === "ACTIVE" ? "Guided record active" : guidedRecordState === "OPENING" ? "Opening guided record" : guidedRecordState === "FAILED" ? "Guided record unavailable" : "Synthetic local replay"}</span> : projectSession?.bindingState === "CONNECTED" ? <span className="cloud-state connected"><Icon name="cloud" /> Restricted project connected</span> : projectSession?.bindingState === "SYNCING" ? <span className="cloud-state connected"><Icon name="cloud" /> Synchronizing evidence</span> : projectSession?.bindingState === "SYNC_QUEUED_OFFLINE" ? <span className="cloud-state preview"><Icon name="shield" /> Sync queued offline</span> : projectSession?.bindingState === "BLOCKED_PROJECT_POLICY" ? <span className="cloud-state preview"><Icon name="warning" /> Sync blocked by asset policy</span> : projectSession?.bindingState === "AUTHENTICATION_REQUIRED" ? <span className="cloud-state preview" title={projectSession.bindingMessage}><Icon name="warning" /> Authentication required</span> : projectSession?.bindingState === "FAILED_RETRYING" ? <span className="cloud-state preview" title={projectSession.bindingMessage}><Icon name="warning" /> Sync failed · retry queued</span> : projectSession?.bindingState === "FAILED" ? <button className="cloud-state preview cloud-retry" type="button" onClick={() => void bindProject(projectSession)} title={projectSession.bindingMessage}><Icon name="warning" /> Retry destination binding</button> : <span className="cloud-state preview"><Icon name="shield" /> Restricted destination preflight</span>}
+          {publicMode ? <span className="cloud-state public"><Icon name="eye" /> No login · no cloud</span> : localPreview ? <span className="cloud-state preview"><Icon name="info" /> Local UI preview</span> : path === "guided" ? guidedBindingState === "CONNECTED" ? <span className="cloud-state connected" title={guidedBindingMessage}><Icon name="cloud" /> Trace-only connected · no full sync</span> : guidedBindingState === "CONNECTING" ? <span className="cloud-state preview"><Icon name="route" /> Connecting trace-only target</span> : <span className={`cloud-state ${guidedRecordState === "FAILED" ? "preview" : "local"}`} title={guidedBindingMessage || "Ridgeway remains an offline-capable local replay."}><Icon name={guidedRecordState === "FAILED" ? "warning" : "shield"} /> {guidedRecordState === "ACTIVE" ? "Guided record active" : guidedRecordState === "OPENING" ? "Opening guided record" : guidedRecordState === "FAILED" ? "Guided record unavailable" : "Synthetic local replay"}</span> : projectSession?.bindingState === "CONNECTED" ? <span className="cloud-state connected"><Icon name="cloud" /> Restricted project connected</span> : projectSession?.bindingState === "SYNCING" ? <span className="cloud-state connected"><Icon name="cloud" /> Synchronizing evidence</span> : projectSession?.bindingState === "SYNC_QUEUED_OFFLINE" ? <span className="cloud-state preview"><Icon name="shield" /> Sync queued offline</span> : projectSession?.bindingState === "BLOCKED_PROJECT_POLICY" ? <span className="cloud-state preview"><Icon name="warning" /> Sync blocked by asset policy</span> : projectSession?.bindingState === "AUTHENTICATION_REQUIRED" ? <span className="cloud-state preview" title={projectSession.bindingMessage}><Icon name="warning" /> Authentication required</span> : projectSession?.bindingState === "FAILED_RETRYING" ? <span className="cloud-state preview" title={projectSession.bindingMessage}><Icon name="warning" /> Sync failed · retry queued</span> : projectSession?.bindingState === "FAILED" ? <button className="cloud-state preview cloud-retry" type="button" onClick={() => void bindProject(projectSession)} title={projectSession.bindingMessage}><Icon name="warning" /> Retry destination binding</button> : <span className="cloud-state preview"><Icon name="shield" /> Restricted destination preflight</span>}
           <button className="evidence-button" type="button" disabled={!evidenceAvailable} title={evidenceAvailable ? undefined : "Evidence opens after a direct project claim exists."} onClick={() => setEvidenceOpen(true)} aria-expanded={evidenceOpen} aria-label="Open evidence details"><Icon name="evidence" /><span>Evidence</span></button>
           <button className="nav-toggle icon-button" type="button" onClick={() => setNavOpen((open) => !open)} aria-expanded={navOpen} aria-controls="workflow-navigation" aria-label="Toggle workflow navigation"><Icon name="route" /></button>
         </div>
@@ -483,6 +541,9 @@ export function Workspace({ mode, path, localPreview, preflight, reopenedProject
             professionalAnalysis={professionalAnalysis}
             onProfessionalAnalysis={setProfessionalAnalysis}
             observabilityDeployment={observabilityDeployment}
+            observabilityConnected={path === "guided" ? guidedBindingState === "CONNECTED" : projectSession?.bindingState === "CONNECTED"}
+            observabilityMessage={path === "guided" ? guidedBindingMessage : projectSession?.bindingMessage ?? ""}
+            onConnectObservability={onConnectObservability ? () => onConnectObservability(path === "guided" ? guidedSession?.projectHandle ?? null : projectSession?.projectHandle ?? null) : undefined}
             fixture={activeFixture}
             fixtureVerified={fixtureVerified}
             guidedProjectionError={guidedProjectionError}
@@ -500,7 +561,7 @@ export function Workspace({ mode, path, localPreview, preflight, reopenedProject
         </div>
       </main>
 
-      {evidence && (activeFixture || evidence.source === "PROFESSIONAL_CLAIM") && <EvidencePanel open={evidenceOpen} selection={evidence} fixture={activeFixture} verified={evidence.source === "PROFESSIONAL_CLAIM" ? true : fixtureVerified} publicMode={publicMode} projectHandle={evidence.source === "PROFESSIONAL_CLAIM" ? projectSession?.projectHandle ?? null : guidedSession?.projectHandle ?? null} allowAssistantConfiguration={evidence.source === "PROFESSIONAL_CLAIM" && projectSession?.bindingState === "CONNECTED"} assistantUnavailableReason={evidence.source === "PROFESSIONAL_CLAIM" ? "Connect and verify this project's exact-scope Restricted W&B destination before configuring a traced provider." : "Ridgeway opens without W&B. Bind a professional project to use a provider-backed assistant; the local Evidence Rail remains available."} onClose={() => setEvidenceOpen(false)} />}
+      {evidence && (activeFixture || evidence.source === "PROFESSIONAL_CLAIM") && <EvidencePanel open={evidenceOpen} selection={evidence} fixture={activeFixture} verified={evidence.source === "PROFESSIONAL_CLAIM" ? true : fixtureVerified} publicMode={publicMode} projectHandle={evidence.source === "PROFESSIONAL_CLAIM" ? projectSession?.projectHandle ?? null : guidedSession?.projectHandle ?? null} showAssistant={evidence.source === "PROFESSIONAL_CLAIM"} allowAssistantConfiguration={evidence.source === "PROFESSIONAL_CLAIM" && projectSession?.bindingState === "CONNECTED"} assistantUnavailableReason="Connect and verify this project's exact-scope Restricted W&B destination before configuring a traced provider." onClose={() => setEvidenceOpen(false)} />}
       {!evidenceOpen && evidenceAvailable && <button className="evidence-tab" type="button" onClick={() => setEvidenceOpen(true)}><Icon name="evidence" /><span>Trace a claim</span></button>}
       <div className="sr-only" aria-live="polite">Current workflow step: {steps[currentIndex]?.label}</div>
     </div>

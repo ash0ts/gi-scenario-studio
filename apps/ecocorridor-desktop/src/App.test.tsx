@@ -638,6 +638,8 @@ describe("EcoCorridor desktop entry paths", () => {
     expect(publicRidgewayFixture.baselinePortfolioId).toMatch(/^portfolio_[a-f0-9]{20}$/);
     expect(publicRidgewayFixture.evidenceState).toBe("VERIFIED_DIRECT_EVIDENCE");
     expect(publicRidgewayFixture.releaseReplayEligible).toBe(true);
+    expect(screen.queryByRole("button", { name: /Prepare field-review brief/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Evidence Assistant/i)).not.toBeInTheDocument();
   });
 
   it("shows retained public map diagnostics with the claim boundary attached", async () => {
@@ -696,6 +698,58 @@ describe("EcoCorridor desktop entry paths", () => {
     expect(JSON.stringify(request.mock.calls)).not.toContain("project_directory");
   });
 
+  it("binds the exact guided project only through the CC0 trace-only method", async () => {
+    const exactHandle = "project_guided_trace_only";
+    const request = vi.fn(async (method: string, _params: Record<string, unknown>) => {
+      if (method === "connectivity.guided.open") {
+        return payload(method, {
+          session_id: "guided_ridgeway_v1",
+          projection: verifiedGuidedProjection(),
+          can_rerun: true,
+          state: "VERIFIED_FIXTURE_REPLAY",
+          evidence_manifest_sha256: verifiedGuidedProjection().manifestSha256,
+        });
+      }
+      if (method === "connectivity.guided.checkpoint") return payload(method, { recorded: true });
+      if (method === "observability.synthetic_trace.connect") {
+        return payload(method, {
+          connected: true,
+          state: "SYNTHETIC_TRACE_TARGET_VERIFIED",
+          binding_sha256: "b".repeat(64),
+          entity: "wandb",
+          project: "ecocorridor-scenario-studio",
+          deployment: "WANDB_CLOUD",
+          visibility_claim: "NONE",
+          restricted_verified: false,
+          full_sync_allowed: false,
+          artifact_upload_allowed: false,
+          weave_capability: "PENDING_NATIVE_AGENT_PREFLIGHT",
+          message: "Trace-only identity verified.",
+        });
+      }
+      throw new Error(`Unexpected method ${method}`);
+    });
+    window.__ECOCORRIDOR_HOST__ = {
+      request: request as unknown as HostBridge["request"],
+      createProjectWorkspace: vi.fn(async () => ({ handle: exactHandle })),
+    };
+
+    render(<Workspace mode="desktop" path="guided" localPreview={false} preflight={{
+      preflightId: "synthetic_trace_preflight_fixture123",
+      entity: "wandb",
+      project: "ecocorridor-scenario-studio",
+      deployment: "WANDB_CLOUD",
+      purpose: "RIDGEWAY_SYNTHETIC_TRACE_ONLY",
+      projectHandle: exactHandle,
+    }} />);
+
+    expect(await screen.findByText("Trace-only connected · no full sync")).toBeInTheDocument();
+    const connectCall = request.mock.calls.find(([method]) => method === "observability.synthetic_trace.connect");
+    expect(connectCall?.[1]).toEqual({ project_handle: exactHandle, preflight_id: "synthetic_trace_preflight_fixture123" });
+    expect(request.mock.calls.some(([method]) => method === "observability.connect")).toBe(false);
+    expect(screen.getByText("Trace-only connected · no full sync")).toHaveAttribute("title", expect.stringMatching(/visibility was not asserted.*full synchronization.*disabled/i));
+  });
+
   it("uses exact worker projection identities and resolves desktop evidence through the worker", async () => {
     const user = userEvent.setup();
     const workerProjection = verifiedGuidedProjection();
@@ -744,60 +798,6 @@ describe("EcoCorridor desktop entry paths", () => {
           limitations: [workerProjection.disclaimer],
         });
       }
-      if (method === "assistant.status") {
-        return payload(method, {
-          configured: true,
-          provider: { base_url: "https://provider.example/v1", model: "eco-evidence-model", timeout_seconds: 60 },
-          project_id: "ridgeway-guided",
-          wandb_external_project_id: "wandb-project-1",
-          trace_required: true,
-        });
-      }
-      if (method === "assistant.explain") {
-        const params = _params as { call_id: string; evidence_ids: string[] };
-        return payload(method, {
-          answer: {
-            answer_id: "answer-verified-1",
-            call_id: params.call_id,
-            project_id: "ridgeway-guided",
-            text: "This claim is shown because it is the directly evaluated controlling scenario for the selected screening portfolio.",
-            evidence_ids: params.evidence_ids,
-            numeric_claims: [],
-            limitations: ["Interpret only within the documented resistance hypothesis and scenario."],
-            provider_call_id: "provider-call-1",
-            provider_model: "eco-evidence-model",
-            trace_id: "weave-trace-1",
-            association: {
-              association_id: "association-guided-1",
-              project_id: "ridgeway-guided",
-              wandb_external_project_id: "wandb-project-1",
-              wandb_run_id: "ecocorridor-connectivity-analysis-ridgeway",
-              wandb_run_kind: "connectivity_analysis",
-              run_subject_id: "ridgeway-analysis",
-              analysis_id: "ridgeway-analysis",
-            },
-            evidence_authorization: {
-              decision_id: `evidence_auth_${"a".repeat(24)}`,
-              project_id_sha256: "1".repeat(64),
-              analysis_id_sha256: "2".repeat(64),
-              model_revision_id_sha256: "3".repeat(64),
-              destination: "SELF_MANAGED",
-              external_project_id_sha256: "4".repeat(64),
-              scope_evidence_sha256: "5".repeat(64),
-              snapshot_bundle_sha256: "6".repeat(64),
-              current_authorizations_sha256: "7".repeat(64),
-              selected_evidence_sha256: "8".repeat(64),
-              authorized_asset_count: 1,
-              generalized_derivative_count: 0,
-              context_schema_version: "ecocorridor-assistant-context/v3",
-            },
-            deterministic_validation: "PASSED",
-            validator_version: "ecocorridor-assistant-validator-v1",
-            trace_readback_verified: true,
-            read_only: true,
-          },
-        });
-      }
       throw new Error(`Unexpected method ${method}`);
     });
     window.__ECOCORRIDOR_HOST__ = {
@@ -838,14 +838,8 @@ describe("EcoCorridor desktop entry paths", () => {
     expect(screen.getAllByText(result.runId, { exact: false }).length).toBeGreaterThan(0);
     const resolveCall = request.mock.calls.find(([method, params]) => method === "connectivity.evidence.resolve" && (params as Record<string, unknown>).claim_id === claimId);
     expect(resolveCall?.[1]).toEqual({ project_handle: "project_guided_exact", claim_id: claimId });
-    expect(await screen.findByText("Traced provider ready")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Ask traced assistant" }));
-    expect(await screen.findByText(/directly evaluated controlling scenario/i)).toBeInTheDocument();
-    expect(screen.getByText("ecocorridor-connectivity-analysis-ridgeway")).toBeInTheDocument();
-    expect(screen.getAllByText(/A direct Circuitscape result is not observed animal movement/i).length).toBeGreaterThan(0);
-    const assistantCall = request.mock.calls.find(([method]) => method === "assistant.explain");
-    expect(assistantCall?.[1]).toMatchObject({ project_handle: "project_guided_exact", evidence_ids: [claimId], sensitive_policy: { prohibited_terms: [], exact_location_authorized: false } });
-    expect(JSON.stringify(assistantCall)).not.toContain("api_key");
+    expect(screen.queryByRole("button", { name: "Ask traced assistant" })).not.toBeInTheDocument();
+    expect(request.mock.calls.some(([method]) => method === "assistant.status" || method === "assistant.explain")).toBe(false);
     expect(JSON.stringify(resolveCall)).not.toContain("project_directory");
   });
 
@@ -889,6 +883,34 @@ describe("EcoCorridor desktop entry paths", () => {
 });
 
 describe("authoritative professional workspace", () => {
+  it("rejects a Ridgeway trace-only receipt at the professional full-sync boundary", async () => {
+    const savedState = projectState("professional-capability-boundary", "Professional boundary", "IMPORTED");
+    const request = vi.fn(async (method: string) => {
+      if (method === "connectivity.project.get_state") return payload(method, savedState);
+      throw new Error(`Unexpected method ${method}`);
+    });
+    window.__ECOCORRIDOR_HOST__ = { request: request as unknown as HostBridge["request"] };
+
+    render(<Workspace
+      mode="desktop"
+      path="existing"
+      localPreview={false}
+      preflight={{
+        preflightId: "synthetic_trace_preflight_wrong_capability",
+        entity: "wandb",
+        project: "ecocorridor-scenario-studio",
+        deployment: "WANDB_CLOUD",
+        purpose: "RIDGEWAY_SYNTHETIC_TRACE_ONLY",
+        projectHandle: "project_professional_boundary",
+      }}
+      reopenedProject={{ projectHandle: "project_professional_boundary", lastModifiedMs: Date.now(), projectState: savedState }}
+    />);
+
+    const retry = await screen.findByRole("button", { name: "Retry destination binding" });
+    expect(retry).toHaveAttribute("title", expect.stringMatching(/professional Restricted-destination preflight is missing or belongs to another capability/i));
+    expect(request.mock.calls.some(([method]) => method === "observability.connect" || method === "observability.synthetic_trace.connect")).toBe(false);
+  });
+
   it("hydrates reference recovery separately from the alternatives-analysis workspace", () => {
     const alternativesPlan = directAnalysisPlan("analysis_alternatives");
     const base = projectState("mixed-analysis-project", "Mixed durable analysis project", "IMPORTED");
@@ -1928,7 +1950,7 @@ describe("authoritative professional workspace", () => {
       createProjectWorkspace: async () => ({ handle: "project_opaque" }),
     };
 
-    render(<Workspace mode="desktop" path="existing" localPreview={false} preflight={{ preflightId: "preflight_1", entity: "team", project: "eco", deployment: "DEDICATED" }} />);
+    render(<Workspace mode="desktop" path="existing" localPreview={false} preflight={{ preflightId: "preflight_1", entity: "team", project: "eco", deployment: "DEDICATED", purpose: "PROFESSIONAL_FULL_SYNC", projectHandle: null }} />);
     await user.click(screen.getByRole("button", { name: "Choose bundle" }));
     await user.click(await screen.findByRole("button", { name: "Inspect bundle" }));
     expect(await screen.findByText(/Worker inspection passed/i)).toBeInTheDocument();
@@ -1962,7 +1984,7 @@ describe("authoritative professional workspace", () => {
       createProjectWorkspace: async () => ({ handle: "project_planning" }),
     };
 
-    render(<Workspace mode="desktop" path="planning" localPreview={false} preflight={{ preflightId: "preflight_2", entity: "team", project: "eco", deployment: "SELF_MANAGED" }} />);
+    render(<Workspace mode="desktop" path="planning" localPreview={false} preflight={{ preflightId: "preflight_2", entity: "team", project: "eco", deployment: "SELF_MANAGED", purpose: "PROFESSIONAL_FULL_SYNC", projectHandle: null }} />);
     await user.click(screen.getAllByRole("button", { name: "Study context" })[0]);
     expect(screen.getByText(/Complete the six required fields/i)).toBeInTheDocument();
     await user.type(screen.getByLabelText("Project name *"), "Route 14 screen");
@@ -1999,7 +2021,7 @@ describe("authoritative professional workspace", () => {
       createProjectWorkspace: async () => ({ handle: "project_malformed_binding" }),
     };
 
-    render(<Workspace mode="desktop" path="planning" localPreview={false} preflight={{ preflightId: "preflight_malformed", entity: "team", project: "eco", deployment: "SELF_MANAGED" }} />);
+    render(<Workspace mode="desktop" path="planning" localPreview={false} preflight={{ preflightId: "preflight_malformed", entity: "team", project: "eco", deployment: "SELF_MANAGED", purpose: "PROFESSIONAL_FULL_SYNC", projectHandle: null }} />);
     await createPlanningRecord(user);
 
     expect(await screen.findByRole("button", { name: "Retry destination binding" })).toBeInTheDocument();
@@ -2092,7 +2114,7 @@ describe("authoritative professional workspace", () => {
       chooseConnectivityAsset,
     };
 
-    render(<Workspace mode="desktop" path="planning" localPreview={false} preflight={{ preflightId: "preflight_assets", entity: "team", project: "eco", deployment: "SELF_MANAGED" }} />);
+    render(<Workspace mode="desktop" path="planning" localPreview={false} preflight={{ preflightId: "preflight_assets", entity: "team", project: "eco", deployment: "SELF_MANAGED", purpose: "PROFESSIONAL_FULL_SYNC", projectHandle: null }} />);
     await createPlanningRecord(user);
     await user.click(screen.getAllByRole("button", { name: "Source assets" })[0]);
     await user.click(screen.getByRole("button", { name: "Choose reviewed asset" }));
@@ -2157,7 +2179,7 @@ describe("authoritative professional workspace", () => {
     });
     window.__ECOCORRIDOR_HOST__ = { request: request as unknown as HostBridge["request"], createProjectWorkspace: async () => ({ handle: "project_provider_opaque" }) };
 
-    render(<Workspace mode="desktop" path="planning" localPreview={false} preflight={{ preflightId: "preflight_provider", entity: "team", project: "eco", deployment: "SELF_MANAGED" }} />);
+    render(<Workspace mode="desktop" path="planning" localPreview={false} preflight={{ preflightId: "preflight_provider", entity: "team", project: "eco", deployment: "SELF_MANAGED", purpose: "PROFESSIONAL_FULL_SYNC", projectHandle: null }} />);
     await createPlanningRecord(user);
     await user.click(screen.getAllByRole("button", { name: "Source assets" })[0]);
     await user.click(screen.getByRole("button", { name: "Review provider request" }));
@@ -2312,7 +2334,7 @@ describe("authoritative professional workspace", () => {
       chooseConnectivityAsset: async () => staged,
     };
 
-    render(<Workspace mode="desktop" path="planning" localPreview={false} preflight={{ preflightId: "preflight_raster", entity: "team", project: "eco", deployment: "SELF_MANAGED" }} />);
+    render(<Workspace mode="desktop" path="planning" localPreview={false} preflight={{ preflightId: "preflight_raster", entity: "team", project: "eco", deployment: "SELF_MANAGED", purpose: "PROFESSIONAL_FULL_SYNC", projectHandle: null }} />);
     await createPlanningRecord(user);
     await user.click(screen.getAllByRole("button", { name: "Source assets" })[0]);
     await user.click(screen.getByRole("button", { name: "Choose reviewed asset" }));
@@ -2569,7 +2591,7 @@ describe("authoritative professional workspace", () => {
 
   it("never presents Ridgeway fixture scenarios as a professional project's evidence", async () => {
     const user = userEvent.setup();
-    render(<Workspace mode="desktop" path="existing" localPreview={false} preflight={{ preflightId: "preflight_3", entity: "team", project: "eco", deployment: "DEDICATED" }} />);
+    render(<Workspace mode="desktop" path="existing" localPreview={false} preflight={{ preflightId: "preflight_3", entity: "team", project: "eco", deployment: "DEDICATED", purpose: "PROFESSIONAL_FULL_SYNC", projectHandle: null }} />);
     await user.click(screen.getByRole("button", { name: "Ecological scenarios" }));
     expect(screen.getByText(/No fixture scenarios have been copied/i)).toBeInTheDocument();
     expect(screen.queryByText("RW-TG-A-H1-NOW")).not.toBeInTheDocument();
@@ -2591,6 +2613,7 @@ describe("accessibility floor", () => {
     const { container } = render(<EcoApp mode="public-replay" publicFixture={publicRidgewayFixture} />);
     await user.click(screen.getByRole("button", { name: "Robustness board" }));
     await waitFor(() => expect(screen.getByRole("heading", { name: "Robustness Board" })).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Prepare field-review brief" })).not.toBeInTheDocument();
     const results = await axe.run(container, { resultTypes: ["violations"] });
     const blocking = results.violations.filter((item) => item.impact === "serious" || item.impact === "critical");
     expect(blocking).toEqual([]);

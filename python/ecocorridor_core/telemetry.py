@@ -51,7 +51,8 @@ from .reference_matrix_parser import REFERENCE_MATRIX_PARSER_SHA256
 
 _SAFE_COMPONENT = re.compile(r"[^A-Za-z0-9._-]+")
 _LOCAL_PATH = re.compile(
-    r"(?:[A-Za-z]:[\\/]|\\\\|/(?:Users|home|var|private|tmp|opt|etc)/)[^\s\"']+"
+    r"(?:(?<![A-Za-z0-9])[A-Za-z]:[\\/]|\\\\|/(?:Users|home|var|private|tmp|opt|etc)/)"
+    r"[^\s\"']+"
 )
 _SUPPORTED_EVENTS = frozenset(
     {
@@ -66,6 +67,7 @@ _SUPPORTED_EVENTS = frozenset(
         "reference_comparison",
         "evidence_export",
         "oversize_sync_approval",
+        "review_brief_draft",
     }
 )
 
@@ -571,6 +573,7 @@ class EcoTelemetryProjector:
             "reference_comparison": self._reference_comparison,
             "evidence_export": self._evidence_export,
             "oversize_sync_approval": self._oversize_sync_approval,
+            "review_brief_draft": self._review_brief_draft,
         }
         projection = handlers[event_type](row, payload)
         dumped = projection.model_dump(mode="json")
@@ -2673,6 +2676,164 @@ class EcoTelemetryProjector:
                     ],
                 )
             ],
+        )
+
+    def _review_brief_draft(
+        self, row: dict[str, Any], payload: dict[str, Any]
+    ) -> TelemetryProjection:
+        required = {
+            "schema_version",
+            "draft_id",
+            "source_mode",
+            "analysis_id",
+            "portfolio_id",
+            "model_revision_id",
+            "decision_board_sha256",
+            "draft_sha256",
+            "runner_receipt_sha256",
+            "trace_receipt_sha256",
+            "item_count",
+            "evidence_claim_set_sha256",
+            "created_at",
+        }
+        if set(payload) != required or payload.get("schema_version") != (
+            "ecocorridor-review-brief-draft-event/v1.0"
+        ):
+            raise CloudIntegrityError("ECO_REVIEW_BRIEF_EVENT_INVALID")
+        draft_id = str(payload["draft_id"])
+        if draft_id != row.get("subject_id"):
+            raise CloudIntegrityError("ECO_REVIEW_BRIEF_EVENT_MISMATCH")
+        try:
+            record = self.store.review_brief_draft_record(draft_id)
+            draft = record["draft"]
+            runner = record["runner"]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise CloudIntegrityError("ECO_REVIEW_BRIEF_DRAFT_INVALID") from exc
+        if draft.source_mode.value == "RIDGEWAY_SYNTHETIC":
+            # Synthetic tracing has a separate alias-only consent boundary. It
+            # must never inherit the professional full-sync artifact pipeline,
+            # even if a forged or legacy outbox row reaches this projector.
+            raise CloudPolicyError("ECO_SYNTHETIC_REVIEW_BRIEF_SYNC_FORBIDDEN")
+        evidence_claim_ids = sorted(
+            {claim_id for item in draft.items for claim_id in item.evidence_claim_ids}
+        )
+        expected = {
+            "source_mode": draft.source_mode.value,
+            "analysis_id": draft.analysis_id,
+            "portfolio_id": draft.portfolio_id,
+            "model_revision_id": draft.model_revision_id,
+            "decision_board_sha256": draft.decision_board_sha256,
+            "draft_sha256": record["draft_sha256"],
+            "runner_receipt_sha256": record["runner_sha256"],
+            "trace_receipt_sha256": canonical_sha256(draft.trace.model_dump(mode="json")),
+            "item_count": len(draft.items),
+            "evidence_claim_set_sha256": canonical_sha256(evidence_claim_ids),
+            "created_at": draft.created_at.isoformat(),
+        }
+        if any(payload.get(key) != value for key, value in expected.items()):
+            raise CloudIntegrityError("ECO_REVIEW_BRIEF_EVENT_MISMATCH")
+        run_kind = (
+            "guided_session"
+            if draft.source_mode.value == "RIDGEWAY_SYNTHETIC"
+            else "connectivity_analysis"
+        )
+        run_subject_id = (
+            "guided_ridgeway_v1"
+            if draft.source_mode.value == "RIDGEWAY_SYNTHETIC"
+            else draft.analysis_id
+        )
+        sequence = self._stream_sequence(
+            row,
+            run_kind=run_kind,
+            run_subject_id=run_subject_id,
+        )
+        cloud_record = {
+            "schema_version": "ecocorridor-review-brief-cloud-record/v1.0",
+            "draft": draft.model_dump(mode="json"),
+            "runner_receipt": runner.model_dump(mode="json"),
+        }
+        artifact = self._stage_json(
+            category="review-brief",
+            logical_id=f"{draft.analysis_id}:{draft.portfolio_id}:{draft.draft_id}",
+            value=cloud_record,
+            artifact_type="review_brief_draft",
+            logical_name=(f"review-brief/{_safe_component(draft.draft_id, fallback='draft')}.json"),
+        )
+        return self._base(
+            row,
+            run_kind=run_kind,
+            run_subject_id=run_subject_id,
+            event_sequence=sequence,
+            config={
+                "analysis_id": draft.analysis_id,
+                "portfolio_id": draft.portfolio_id,
+                "model_revision_id": draft.model_revision_id,
+                "decision_board_sha256": draft.decision_board_sha256,
+                "source_mode": draft.source_mode.value,
+                "draft_sha256": record["draft_sha256"],
+                "runner_receipt_sha256": record["runner_sha256"],
+            },
+            summary={
+                "draft_id": draft.draft_id,
+                "status": draft.status,
+                "disposition": draft.disposition_snapshot.disposition,
+                "item_count": len(draft.items),
+                "evidence_claim_count": len(evidence_claim_ids),
+                "provider_model": runner.provider_model,
+                "tool_call_count": len(runner.tool_calls),
+                "trace_readback_verified": draft.trace.readback_verified,
+                "created_at": draft.created_at.isoformat(),
+            },
+            tables=[
+                TableProjection(
+                    logical_name="review_brief_drafts",
+                    columns=[
+                        "draft_id",
+                        "analysis_id",
+                        "portfolio_id",
+                        "source_mode",
+                        "model_revision_id",
+                        "decision_board_sha256",
+                        "disposition",
+                        "safeguard_status",
+                        "review_mask_triggered",
+                        "item_count",
+                        "evidence_claim_count",
+                        "provider_model",
+                        "tool_calls",
+                        "trace_id",
+                        "weave_call_id",
+                        "wandb_run_id",
+                        "trace_readback_verified",
+                        "supersedes_draft_id",
+                        "created_at",
+                    ],
+                    rows=[
+                        [
+                            draft.draft_id,
+                            draft.analysis_id,
+                            draft.portfolio_id,
+                            draft.source_mode.value,
+                            draft.model_revision_id,
+                            draft.decision_board_sha256,
+                            draft.disposition_snapshot.disposition,
+                            draft.disposition_snapshot.safeguard_status,
+                            draft.disposition_snapshot.review_mask_triggered,
+                            len(draft.items),
+                            len(evidence_claim_ids),
+                            runner.provider_model,
+                            runner.tool_calls,
+                            draft.trace.trace_id,
+                            draft.trace.weave_call_id,
+                            draft.trace.wandb_run_id,
+                            draft.trace.readback_verified,
+                            draft.supersedes_draft_id,
+                            draft.created_at.isoformat(),
+                        ]
+                    ],
+                )
+            ],
+            artifacts=[artifact],
         )
 
     def _evidence_export(self, row: dict[str, Any], payload: dict[str, Any]) -> TelemetryProjection:

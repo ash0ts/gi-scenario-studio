@@ -129,7 +129,7 @@ def test_schema_110_empty_reference_tables_gain_parser_provenance_atomically(
 
     migrated = EcoProjectStore(root)
     try:
-        assert migrated._connection.execute("PRAGMA user_version").fetchone()[0] == 113
+        assert migrated._connection.execute("PRAGMA user_version").fetchone()[0] == 116
         for table in (
             "eco_reference_comparison_plans",
             "eco_reference_comparison_results",
@@ -186,7 +186,7 @@ def test_schema_111_appends_reference_completion_without_rewriting_legacy_outbox
 
     migrated = EcoProjectStore(case["store"].root)
     try:
-        assert migrated._connection.execute("PRAGMA user_version").fetchone()[0] == 113
+        assert migrated._connection.execute("PRAGMA user_version").fetchone()[0] == 116
         assert migrated.analysis(analysis_id)["analysis_kind"] == "REFERENCE"
         intent = migrated.reference_completion_intent(analysis_id)
         assert intent is not None
@@ -1069,7 +1069,7 @@ def test_reference_result_roundtrip_and_byte_identical_replay(reference_case) ->
     assert {item.claim_id: item for item in loaded_claims} == {
         item.claim_id: item for item in claims
     }
-    assert store._connection.execute("PRAGMA user_version").fetchone()[0] == 113
+    assert store._connection.execute("PRAGMA user_version").fetchone()[0] == 116
     assert first["reference_matrix_parser_sha256"] == REFERENCE_MATRIX_PARSER_SHA256
     assert (
         store._connection.execute(

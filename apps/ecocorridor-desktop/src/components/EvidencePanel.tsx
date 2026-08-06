@@ -10,6 +10,7 @@ import { useDialogFocus } from "./useDialogFocus";
 const resolvedEvidenceSchema = z.object({
   claim: z.object({
     claim_id: z.string().min(1),
+    claim_kind: z.enum(["DIRECT_PAIR_METRIC", "DIRECT_REFERENCE_COMPARISON", "DIRECT_MAP_DIAGNOSTIC", "DIRECT_QA", "COST", "FEASIBILITY", "AGGREGATE_RULE", "PORTFOLIO_DISPOSITION", "MODEL_FITNESS_RECORD", "GUIDED_DECISION_RECORD"]).optional(),
     portfolio_id: z.string().min(1),
     scenario_id: z.string().min(1).nullable().optional(),
     pair_id: z.string().min(1).nullable().optional(),
@@ -17,7 +18,7 @@ const resolvedEvidenceSchema = z.object({
     units: z.string().min(1),
     reducer: z.string().min(1).optional(),
     text: z.string().min(1).optional(),
-    direct_run_ids: z.array(z.string().min(1)).min(1),
+    direct_run_ids: z.array(z.string().min(1)),
     nodes: z.array(z.object({ node_id: z.string().min(1), node_type: z.string().min(1), label: z.string().min(1), role: z.string().optional(), sha256: z.string().regex(/^[a-f0-9]{64}$/).optional(), artifact_id: z.string().optional() }).passthrough()).optional(),
     edges: z.array(z.object({ from_node_id: z.string().min(1), to_node_id: z.string().min(1), relation: z.string().min(1) }).passthrough()).optional(),
     limitations: z.array(z.string().min(1)).min(1).optional(),
@@ -53,12 +54,13 @@ interface EvidencePanelProps {
   verified: boolean;
   publicMode: boolean;
   projectHandle: string | null;
+  showAssistant?: boolean;
   allowAssistantConfiguration?: boolean;
   assistantUnavailableReason?: string;
   onClose: () => void;
 }
 
-export function EvidencePanel({ open, selection, fixture, verified, publicMode, projectHandle, allowAssistantConfiguration = false, assistantUnavailableReason = "A verified Restricted professional-project binding is required before a provider-backed traced assistant can be configured.", onClose }: EvidencePanelProps) {
+export function EvidencePanel({ open, selection, fixture, verified, publicMode, projectHandle, showAssistant = true, allowAssistantConfiguration = false, assistantUnavailableReason = "A verified Restricted professional-project binding is required before a provider-backed traced assistant can be configured.", onClose }: EvidencePanelProps) {
   const [compact, setCompact] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 980px)").matches);
   const [resolutionState, setResolutionState] = useState<"idle" | "resolving" | "resolved" | "failed">("idle");
   const [resolved, setResolved] = useState<ResolvedEvidence | null>(null);
@@ -95,9 +97,13 @@ export function EvidencePanel({ open, selection, fixture, verified, publicMode, 
       if (!active) return;
       const parsed = resolvedEvidenceSchema.parse(rpcData(result));
       const professional = selection.source === "PROFESSIONAL_CLAIM";
+      const modelFitness = parsed.claim.claim_kind === "MODEL_FITNESS_RECORD";
+      const retainedDecisionRecord = parsed.claim.claim_kind === "GUIDED_DECISION_RECORD";
+      const nonSolverRecord = modelFitness || retainedDecisionRecord;
       const numericSelection = Number(selection.value);
-      const projectionMismatch = !professional && (
+      const projectionMismatch = !professional && !nonSolverRecord && (
         parsed.claim.scenario_id !== selection.scenarioId
+        || !selection.runId
         || !parsed.claim.direct_run_ids.includes(selection.runId)
         || parsed.claim.units !== selection.units
         || typeof parsed.claim.value !== "number"
@@ -106,13 +112,19 @@ export function EvidencePanel({ open, selection, fixture, verified, publicMode, 
       );
       const referenceToleranceMismatch = professional && typeof selection.value === "boolean" && (
         parsed.claim.scenario_id !== selection.scenarioId
-        || !parsed.claim.direct_run_ids.includes(selection.runId)
+        || (selection.runId ? !parsed.claim.direct_run_ids.includes(selection.runId) : false)
         || parsed.claim.units !== selection.units
         || parsed.claim.value !== selection.value
       );
-      const professionalGraphMissing = professional
+      const professionalRunMismatch = professional && Boolean(selection.runId)
+        && !parsed.claim.direct_run_ids.includes(selection.runId as string);
+      const professionalEvidenceClassMismatch = professional && !nonSolverRecord && (
+        (parsed.claim.claim_kind?.startsWith("DIRECT_") === true && parsed.claim.direct_run_ids.length === 0)
+        || (["COST", "FEASIBILITY"].includes(parsed.claim.claim_kind ?? "") && parsed.claim.direct_run_ids.length > 0)
+      );
+      const professionalGraphMissing = (professional || nonSolverRecord)
         && (!parsed.claim.nodes?.length || !parsed.claim.edges?.length || !(parsed.claim.limitations?.length || parsed.limitations?.length));
-      const guidedPackageMissing = !professional && (
+      const guidedPackageMissing = !professional && !nonSolverRecord && (
         !parsed.direct_runs || parsed.direct_runs.length < 2
         || !parsed.artifact_records
         || !parsed.engine_manifest_sha256
@@ -121,8 +133,9 @@ export function EvidencePanel({ open, selection, fixture, verified, publicMode, 
         || parsed.qa !== "ACCEPTED_DIRECT_CIRCUITSCAPE"
         || !parsed.limitations?.length
       );
-      if (parsed.claim.claim_id !== selection.claimId || parsed.claim.portfolio_id !== selection.portfolioId || projectionMismatch || referenceToleranceMismatch || professionalGraphMissing || guidedPackageMissing) {
-        throw new Error("The resolved claim does not match the selected projection value and direct-run identity.");
+      const portfolioIdentityMismatch = !modelFitness && parsed.claim.portfolio_id !== selection.portfolioId;
+      if (parsed.claim.claim_id !== selection.claimId || portfolioIdentityMismatch || projectionMismatch || referenceToleranceMismatch || professionalRunMismatch || professionalEvidenceClassMismatch || professionalGraphMissing || guidedPackageMissing) {
+        throw new Error("The resolved claim does not match the selected projection or retained evidence identity.");
       }
       setResolved(parsed);
       setResolutionState("resolved");
@@ -149,6 +162,8 @@ export function EvidencePanel({ open, selection, fixture, verified, publicMode, 
     () => resolved?.claim.direct_run_ids ?? [selection.runId, selection.baselineRunId].filter((item): item is string => Boolean(item)),
     [resolved, selection.baselineRunId, selection.runId],
   );
+  const hasDirectRuns = directRunIds.length > 0;
+  const evidenceClass = resolved?.claim.claim_kind ?? (publicMode ? "DIRECT_PAIR_METRIC" : "RETAINED_DECISION_EVIDENCE");
   const evidenceNodeLabels = useMemo(
     () => new Map((resolved?.claim.nodes ?? []).map((node) => [node.node_id, node.label])),
     [resolved],
@@ -176,7 +191,7 @@ export function EvidencePanel({ open, selection, fixture, verified, publicMode, 
         <button className="icon-button" type="button" onClick={onClose} aria-label="Close evidence"><Icon name="close" /></button>
       </div>
       <div className="evidence-title">
-        <span className={`claim-state claim-${claimReady ? "verified" : "projection"}`}>{claimReady ? (publicMode ? "Pinned public manifest" : "Worker evidence resolved") : resolutionState === "resolving" ? "Resolving direct evidence" : "Evidence unavailable"}</span>
+        <span className={`claim-state claim-${claimReady ? "verified" : "projection"}`}>{claimReady ? (publicMode ? "Pinned public manifest" : hasDirectRuns ? "Worker evidence resolved" : "Worker decision evidence resolved") : resolutionState === "resolving" ? "Resolving retained evidence" : "Evidence unavailable"}</span>
         <h2 tabIndex={-1}>{selection.title}</h2>
         {claimReady ? <p className="claim-value"><strong>{claimValue}</strong> <span>{claimUnits}</span></p> : <p className="claim-value"><strong>Withheld</strong> <span>until the exact evidence chain resolves</span></p>}
       </div>
@@ -191,7 +206,7 @@ export function EvidencePanel({ open, selection, fixture, verified, publicMode, 
           <div><dt>Claim ID</dt><dd className="mono">{selection.claimId}</dd></div>
           <div><dt>Portfolio</dt><dd className="mono">{selection.portfolioId}</dd></div>
           <div><dt>Scenario</dt><dd className="mono">{(resolved?.claim.scenario_id ?? selection.scenarioId) || "Portfolio-level rule"}</dd></div>
-          <div><dt>Direct-run reference{directRunIds.length > 1 ? "s" : ""}</dt><dd className="mono">{directRunIds.join(" · ")}</dd></div>
+          {hasDirectRuns ? <div><dt>Direct-run reference{directRunIds.length > 1 ? "s" : ""}</dt><dd className="mono">{directRunIds.join(" · ")}</dd></div> : <div><dt>Evidence class</dt><dd>{evidenceClass.replaceAll("_", " ").toLowerCase()} · not a solver output</dd></div>}
           <div><dt>Reducer / claim</dt><dd>{resolved?.claim.reducer ?? resolved?.claim.text ?? selection.reducer}</dd></div>
           {resolved?.claim.pair_id && <div><dt>Controlling pair</dt><dd className="mono">{resolved.claim.pair_id}</dd></div>}
         </dl>
@@ -199,8 +214,8 @@ export function EvidencePanel({ open, selection, fixture, verified, publicMode, 
           <h3 id="source-chain-heading">Resolved source chain</h3>
           <ol className="source-chain">
             <li><span>01</span><div><strong>Claim and decision rule</strong><small>{selection.claimId}</small></div></li>
-            <li><span>02</span><div><strong>Direct Circuitscape runs</strong><small>{directRunIds.join(" · ")}</small></div></li>
-            <li><span>03</span><div><strong>Scenario + reviewed portfolio mutation</strong><small>{(resolved?.claim.scenario_id ?? selection.scenarioId) || "Portfolio-level reducer"} · exact graph below</small></div></li>
+            <li><span>02</span><div><strong>{hasDirectRuns ? "Direct Circuitscape runs" : "Reviewed non-solver basis"}</strong><small>{hasDirectRuns ? directRunIds.join(" · ") : `${evidenceClass.replaceAll("_", " ").toLowerCase()} provenance in the exact graph below`}</small></div></li>
+            <li><span>03</span><div><strong>{hasDirectRuns ? "Scenario + reviewed portfolio mutation" : "Portfolio decision record"}</strong><small>{(resolved?.claim.scenario_id ?? selection.scenarioId) || "Portfolio-level evidence"} · exact graph below</small></div></li>
             <li><span>04</span><div><strong>Resistance and focal assets</strong><small>{resolved?.claim.nodes ? `${resolved.claim.nodes.filter((node) => node.node_type === "ASSET" || node.node_type === "RASTER_DIFF").length} resolved asset/diff nodes` : resolved ? `${resolved.artifact_records?.length ?? 0} retained artifact records` : "Pinned synthetic public evidence package"}</small></div></li>
             <li><span>05</span><div><strong>Engine, QA, assumptions</strong><small>{resolved?.engine_manifest_sha256 ? `${resolved.qa} · ${resolved.engine_manifest_sha256.slice(0, 12)}…` : resolved?.claim.nodes ? `${resolved.claim.nodes.length} evidence nodes · ${resolved.claim.edges?.length ?? 0} links` : `Manifest ${fixture?.manifestSha256?.slice(0, 12)}…`}</small></div></li>
           </ol>
@@ -239,9 +254,9 @@ export function EvidencePanel({ open, selection, fixture, verified, publicMode, 
         <h3>Assumption boundary</h3>
         <p>{selection.assumption}</p>
         {(resolved?.claim.limitations ?? resolved?.limitations ?? (fixture ? [fixture.disclaimer] : [])).map((limitation) => <p key={limitation}>{limitation}</p>)}
-        <p>A direct Circuitscape result is not observed animal movement, crossing use, collision reduction, population viability, biodiversity benefit, or an approved corridor.</p>
+        <p>{hasDirectRuns ? "A direct Circuitscape result" : "This retained decision evidence"} is not observed animal movement, crossing use, collision reduction, population viability, biodiversity benefit, or an approved corridor.{!hasDirectRuns ? " It is not a Circuitscape output." : ""}</p>
       </section>
-      {!publicMode && <EvidenceAssistantPanel projectHandle={projectHandle} evidenceId={selection.claimId} claimReady={claimReady} allowConfiguration={allowAssistantConfiguration} unavailableReason={assistantUnavailableReason} />}
+      {!publicMode && showAssistant && <EvidenceAssistantPanel projectHandle={projectHandle} evidenceId={selection.claimId} claimReady={claimReady} allowConfiguration={allowAssistantConfiguration} unavailableReason={assistantUnavailableReason} />}
       <div className="rail-footer">
         {resolved?.cloud_references && hasNativeExternalLinkHost() ? <>
           <button className="secondary-button" type="button" disabled={linkState === "opening"} onClick={() => void openCloudReference("run", resolved.cloud_references!.analysis_run_id)}>

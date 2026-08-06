@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import inspect
 import json
 import math
 import os
@@ -15,9 +16,10 @@ import sys
 import tempfile
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, Protocol, TextIO
+from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr, ValidationError, field_validator, model_validator
 from scenario_platform.archive import (
@@ -71,7 +73,9 @@ from .claim_safety import (
     assert_safe_rendered_ecological_copy,
     assert_strict_ecological_claim,
 )
+from .cloud_origins import validate_wandb_deployment_origins
 from .contracts import (
+    FITNESS_LIMITATION,
     OVERSIZE_SYNC_ACKNOWLEDGEMENT,
     AssetKind,
     CloudDisposition,
@@ -166,7 +170,14 @@ from .metrics import (
     validate_portfolio_disposition_support,
 )
 from .observability import ECOCORRIDOR_APP_PROFILE as APP_PROFILE
-from .observability import EcoRpcObservabilityAdapter, derive_cloud_sync_state
+from .observability import (
+    RIDGEWAY_SYNTHETIC_TRACE_CONSENT,
+    RIDGEWAY_SYNTHETIC_TRACE_PAYLOAD_CLASSES,
+    RIDGEWAY_SYNTHETIC_TRACE_POLICY,
+    EcoRpcObservabilityAdapter,
+    SyntheticTraceConsentBinding,
+    derive_cloud_sync_state,
+)
 from .professional_validation import (
     ModelFinding,
     validate_professional_bundle,
@@ -196,6 +207,31 @@ from .reference_workflow import (
     recover_pending_reference_results,
 )
 from .resource_observability import ProcessResourceRecorder
+from .review_brief import (
+    REVIEW_BRIEF_ACKNOWLEDGEMENT,
+    RIDGEWAY_COST_EVIDENCE_PREFIX,
+    RIDGEWAY_HYPOTHESIS_EVIDENCE_PREFIX,
+    ReviewBriefAcknowledgement,
+    ReviewBriefCloudBoundary,
+    ReviewBriefDraft,
+    ReviewBriefFailureStage,
+    ReviewBriefFeedbackRecord,
+    ReviewBriefPreflight,
+    ReviewBriefRejectedRunnerReceipt,
+    ReviewBriefRejectionAudit,
+    ReviewBriefRunner,
+    ReviewBriefRunnerResult,
+    ReviewBriefSafetyError,
+    ReviewBriefSource,
+    ReviewBriefSourceMode,
+    build_deterministic_review_items,
+    mark_stale,
+    professional_review_source,
+    rejection_error_code,
+    render_review_brief,
+    ridgeway_review_source,
+    runner_request,
+)
 from .ridgeway import (
     build_public_ui_projection,
     build_ridgeway_fixture,
@@ -546,6 +582,7 @@ class GuidedCheckpointParams(GuidedSessionParams):
 
 
 class ObservabilityPreflightParams(PlatformContractModel):
+    project_directory: str | None = None
     entity: str
     project: str
     deployment: Literal["WANDB_CLOUD", "DEDICATED", "SELF_MANAGED"]
@@ -581,6 +618,44 @@ class ObservabilityPreflightParams(PlatformContractModel):
         )
         return value.rstrip("/")
 
+    @model_validator(mode="after")
+    def validate_deployment_origins(self) -> ObservabilityPreflightParams:
+        api_base_url, web_base_url = validate_wandb_deployment_origins(
+            deployment=self.deployment,
+            api_base_url=self.api_base_url,
+            web_base_url=self.web_base_url,
+        )
+        object.__setattr__(self, "api_base_url", api_base_url)
+        object.__setattr__(self, "web_base_url", web_base_url)
+        return self
+
+
+class SyntheticTracePreflightParams(ProjectParams):
+    entity: str
+    project: str
+    deployment: Literal["WANDB_CLOUD", "DEDICATED", "SELF_MANAGED"]
+    api_base_url: str
+    web_base_url: str | None = None
+    consent: str
+    api_key: SecretStr
+
+    @model_validator(mode="after")
+    def validate_synthetic_trace_request(self) -> SyntheticTracePreflightParams:
+        if self.consent != RIDGEWAY_SYNTHETIC_TRACE_CONSENT:
+            raise ValueError("the exact Ridgeway CC0 trace-only consent is required")
+        api_base_url, web_base_url = validate_wandb_deployment_origins(
+            deployment=self.deployment,
+            api_base_url=self.api_base_url,
+            web_base_url=self.web_base_url,
+        )
+        object.__setattr__(self, "api_base_url", api_base_url)
+        object.__setattr__(self, "web_base_url", web_base_url)
+        return self
+
+
+class SyntheticTraceConnectParams(ProjectParams):
+    preflight_id: str = Field(pattern=r"^synthetic_trace_preflight_[A-Za-z0-9_-]{8,128}$")
+
 
 class ObservabilityConnectParams(ProjectParams):
     preflight_id: str
@@ -608,6 +683,8 @@ class ObservabilityLinkParams(ProjectParams):
 
 class ObservabilityAdapter(Protocol):
     def validate(self, *, binding: dict[str, Any]) -> dict[str, Any]: ...
+
+    def validate_synthetic_trace_target(self, *, binding: dict[str, Any]) -> dict[str, Any]: ...
 
     def sync(
         self,
@@ -692,6 +769,38 @@ class AssistantTraceParams(AssistantCallParams):
     pass
 
 
+class ReviewBriefSelectionParams(ProjectAnalysisParams):
+    portfolio_id: str = Field(min_length=1, max_length=256)
+
+
+class ReviewBriefPrepareParams(AssistantCallParams):
+    analysis_id: str = Field(min_length=1, max_length=256)
+    portfolio_id: str = Field(min_length=1, max_length=256)
+    supersedes_draft_id: str | None = Field(default=None, min_length=1, max_length=256)
+    experimental_agent_acknowledged: bool = False
+
+
+class ReviewBriefGetParams(ProjectParams):
+    draft_id: str = Field(min_length=1, max_length=256)
+
+
+class ReviewBriefListParams(ProjectParams):
+    analysis_id: str | None = Field(default=None, min_length=1, max_length=256)
+    portfolio_id: str | None = Field(default=None, min_length=1, max_length=256)
+
+
+class ReviewBriefAcknowledgeParams(ReviewBriefGetParams):
+    acknowledgement_id: str = Field(min_length=1, max_length=256)
+    reviewer: str = Field(min_length=1, max_length=256)
+    acknowledgement: Literal[REVIEW_BRIEF_ACKNOWLEDGEMENT]
+
+
+class ReviewBriefFeedbackParams(ReviewBriefGetParams):
+    feedback_id: str = Field(min_length=1, max_length=256)
+    rating: Literal["HELPFUL", "NOT_HELPFUL"]
+    comment: str = Field(default="", max_length=1_024)
+
+
 class AssistantFeedbackSink(Protocol):
     def record_feedback(
         self,
@@ -701,6 +810,13 @@ class AssistantFeedbackSink(Protocol):
         rating: str,
         comment: str,
     ) -> dict[str, Any]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class _ReviewBriefResolution:
+    source: ReviewBriefSource
+    association: AssistantRunAssociation | None = None
+    authorization: AssistantEvidenceAuthorization | None = None
 
 
 class _Method:
@@ -1249,6 +1365,7 @@ class RPCDispatcher:
         observability_adapter: ObservabilityAdapter | None = None,
         evidence_assistant: EvidenceAssistant | None = None,
         assistant_runtime: ProviderBackedAssistantRuntime | None = None,
+        review_brief_runner: ReviewBriefRunner | None = None,
         assistant_feedback_sink: AssistantFeedbackSink | None = None,
         observability_credentials: InMemoryCredentialSession | None = None,
         download_opener: Any = None,
@@ -1270,6 +1387,7 @@ class RPCDispatcher:
         self.observability_adapter = observability_adapter
         self.evidence_assistant = evidence_assistant
         self.assistant_runtime = assistant_runtime
+        self.review_brief_runner = review_brief_runner
         self.assistant_feedback_sink = assistant_feedback_sink
         adapter_credentials = getattr(observability_adapter, "credentials", None)
         self.observability_credentials = (
@@ -1285,6 +1403,8 @@ class RPCDispatcher:
                 "dispatcher and observability adapter must share one credential session"
             )
         self._observability_preflights: dict[str, dict[str, Any]] = {}
+        self._synthetic_trace_preflights: dict[str, dict[str, Any]] = {}
+        self._synthetic_trace_targets: dict[Path, SyntheticTraceConsentBinding] = {}
         self.download_opener = download_opener
         self.engine_executable: Path | None = None
         self.engine_sha256: str | None = None
@@ -1555,6 +1675,16 @@ class RPCDispatcher:
             "observability.preflight", ObservabilityPreflightParams, self._observability_preflight
         )
         self._register(
+            "observability.synthetic_trace.preflight",
+            SyntheticTracePreflightParams,
+            self._observability_synthetic_trace_preflight,
+        )
+        self._register(
+            "observability.synthetic_trace.connect",
+            SyntheticTraceConnectParams,
+            self._observability_synthetic_trace_connect,
+        )
+        self._register(
             "observability.connect", ObservabilityConnectParams, self._observability_connect
         )
         self._register(
@@ -1577,6 +1707,16 @@ class RPCDispatcher:
         self._register("assistant.explain", AssistantExplainParams, self._assistant_explain)
         self._register("assistant.follow_up", AssistantExplainParams, self._assistant_follow_up)
         self._register("assistant.configure", AssistantConfigureParams, self._assistant_configure)
+        self._register(
+            "assistant.review_brief.configure_synthetic",
+            AssistantConfigureParams,
+            self._assistant_review_brief_configure_synthetic,
+        )
+        self._register(
+            "assistant.review_brief.status_synthetic",
+            ProjectParams,
+            self._assistant_review_brief_status_synthetic,
+        )
         self._register("assistant.status", ProjectParams, self._assistant_status)
         self._register("assistant.clear", ProjectParams, self._assistant_clear)
         self._register(
@@ -1594,6 +1734,36 @@ class RPCDispatcher:
         )
         self._register("assistant.feedback", AssistantFeedbackParams, self._assistant_feedback)
         self._register("assistant.get_trace", AssistantTraceParams, self._assistant_trace)
+        self._register(
+            "assistant.review_brief.preflight",
+            ReviewBriefSelectionParams,
+            self._review_brief_preflight,
+        )
+        self._register(
+            "assistant.review_brief.prepare",
+            ReviewBriefPrepareParams,
+            self._review_brief_prepare,
+        )
+        self._register(
+            "assistant.review_brief.get",
+            ReviewBriefGetParams,
+            self._review_brief_get,
+        )
+        self._register(
+            "assistant.review_brief.list",
+            ReviewBriefListParams,
+            self._review_brief_list,
+        )
+        self._register(
+            "assistant.review_brief.acknowledge",
+            ReviewBriefAcknowledgeParams,
+            self._review_brief_acknowledge,
+        )
+        self._register(
+            "assistant.review_brief.feedback",
+            ReviewBriefFeedbackParams,
+            self._review_brief_feedback,
+        )
 
     def _result(self, method: str, data: dict[str, Any]) -> PayloadResult:
         try:
@@ -1650,6 +1820,43 @@ class RPCDispatcher:
             store.close()
             raise
         return store
+
+    @staticmethod
+    def _require_professional_project(store: EcoProjectStore, *, operation: str) -> dict[str, Any]:
+        """Reject every professional cloud/assistant entry point for guided data."""
+
+        try:
+            project = store.project()
+        except KeyError as exc:
+            raise _fault(
+                "PROFESSIONAL_PROJECT_REQUIRED",
+                f"{operation} requires an initialized imported or planning project.",
+                category=ErrorCategory.SECURITY,
+                severity=Severity.BLOCKING,
+            ) from exc
+        mode = str(project.get("mode") or "")
+        if mode == "GUIDED":
+            raise _fault(
+                "PROFESSIONAL_CAPABILITY_GUIDED_PROJECT_BLOCKED",
+                (
+                    f"{operation} is a professional capability and cannot be enabled for "
+                    "the synthetic guided replay."
+                ),
+                category=ErrorCategory.SECURITY,
+                severity=Severity.BLOCKING,
+                remediation=(
+                    "Use the dedicated Ridgeway CC0 trace-only connection and Review Brief "
+                    "Agent methods instead."
+                ),
+            )
+        if mode not in {"IMPORTED", "PLANNING"}:
+            raise _fault(
+                "PROFESSIONAL_PROJECT_MODE_UNSUPPORTED",
+                f"{operation} requires an imported or planning project.",
+                category=ErrorCategory.SECURITY,
+                severity=Severity.BLOCKING,
+            )
+        return project
 
     @staticmethod
     def _project_resource_policy(store: EcoProjectStore) -> ResourcePolicy:
@@ -6301,7 +6508,218 @@ class RPCDispatcher:
     def _evidence_resolve(self, params: EvidenceResolveParams) -> PayloadResult:
         store = self._store(params.project_directory)
         try:
-            if store.project()["mode"] == "GUIDED" and self.guided_evidence is not None:
+            if (
+                store.project()["mode"] == "GUIDED"
+                and self.guided_evidence is not None
+                and params.claim_id.startswith(
+                    (RIDGEWAY_COST_EVIDENCE_PREFIX, RIDGEWAY_HYPOTHESIS_EVIDENCE_PREFIX)
+                )
+            ):
+                projection = self.guided_evidence.projection
+                portfolios = [
+                    item
+                    for item in projection.get("portfolios", [])
+                    if isinstance(item, dict) and isinstance(item.get("id"), str)
+                ]
+                matching = [
+                    item
+                    for item in portfolios
+                    if params.claim_id
+                    in {
+                        f"{RIDGEWAY_COST_EVIDENCE_PREFIX}{item['id']}",
+                        f"{RIDGEWAY_HYPOTHESIS_EVIDENCE_PREFIX}{item['id']}",
+                    }
+                ]
+                if len(matching) != 1:
+                    raise KeyError(params.claim_id)
+                portfolio = matching[0]
+                portfolio_id = str(portfolio["id"])
+                if params.claim_id.startswith(RIDGEWAY_COST_EVIDENCE_PREFIX):
+                    decision_brief = projection.get("decisionBrief")
+                    if not isinstance(decision_brief, dict):
+                        raise ValueError("guided decision brief is unavailable")
+                    cost = portfolio.get("costUsd")
+                    budget = decision_brief.get("budgetUsd")
+                    if (
+                        isinstance(cost, bool)
+                        or isinstance(budget, bool)
+                        or not isinstance(cost, (int, float))
+                        or not isinstance(budget, (int, float))
+                        or not math.isfinite(float(cost))
+                        or not math.isfinite(float(budget))
+                        or float(cost) <= float(budget)
+                    ):
+                        raise ValueError("guided over-budget record is inconsistent")
+                    value = float(cost)
+                    units = "USD"
+                    reducer = "Synthetic screening cost compared with the retained budget rule."
+                    record_payload: dict[str, Any] = {
+                        "portfolio_id": portfolio_id,
+                        "cost_usd": value,
+                        "budget_usd": float(budget),
+                    }
+                    limitation = (
+                        "Synthetic screening cost is not a bid, estimate of probable construction "
+                        "cost, funding decision, or approval."
+                    )
+                else:
+                    ranks = portfolio.get("hypothesisRanks")
+                    if (
+                        portfolio.get("projectionKey") != "single-hypothesis-collapse"
+                        or not isinstance(ranks, dict)
+                        or len(ranks) < 2
+                        or any(
+                            not isinstance(item, dict)
+                            or isinstance(item.get("rank"), bool)
+                            or not isinstance(item.get("rank"), int)
+                            for item in ranks.values()
+                        )
+                    ):
+                        raise ValueError("guided hypothesis-rank record is inconsistent")
+                    rank_values = [int(item["rank"]) for item in ranks.values()]
+                    value = float(max(rank_values) - min(rank_values))
+                    if value <= 0:
+                        raise ValueError("guided hypothesis ranks do not vary")
+                    units = "rank_positions"
+                    reducer = "Observed spread in the portfolio's retained within-hypothesis ranks."
+                    record_payload = {
+                        "portfolio_id": portfolio_id,
+                        "hypothesis_ranks": ranks,
+                        "rank_span": value,
+                    }
+                    limitation = (
+                        "Within-hypothesis screening ranks are not cross-species resistance values, "
+                        "animal-use predictions, or an optimal-corridor claim."
+                    )
+                record_sha256 = canonical_sha256(record_payload)
+                record_node_id = f"guided-decision-record:{params.claim_id}"
+                manifest_node_id = "guided-evidence-manifest:ridgeway-v1"
+                resolved = {
+                    "claim": {
+                        "claim_id": params.claim_id,
+                        "claim_kind": "GUIDED_DECISION_RECORD",
+                        "portfolio_id": portfolio_id,
+                        "scenario_id": None,
+                        "pair_id": None,
+                        "value": value,
+                        "units": units,
+                        "reducer": reducer,
+                        "text": "Manifest-bound synthetic decision record used by the Review Brief.",
+                        "direct_run_ids": [],
+                        "nodes": [
+                            {
+                                "node_id": record_node_id,
+                                "node_type": "GUIDED_DECISION_RECORD",
+                                "label": "Synthetic cost basis"
+                                if units == "USD"
+                                else "Synthetic hypothesis sensitivity",
+                                "role": "REVIEWED_NON_SOLVER_BASIS",
+                                "sha256": record_sha256,
+                            },
+                            {
+                                "node_id": manifest_node_id,
+                                "node_type": "EVIDENCE_MANIFEST",
+                                "label": "Pinned Ridgeway evidence manifest",
+                                "role": "IMMUTABLE_FIXTURE_IDENTITY",
+                                "sha256": self.guided_evidence.manifest_sha256,
+                            },
+                        ],
+                        "edges": [
+                            {
+                                "from_node_id": record_node_id,
+                                "to_node_id": manifest_node_id,
+                                "relation": "BOUND_TO_PINNED_FIXTURE",
+                            }
+                        ],
+                        "limitations": [limitation, CONNECTIVITY_LIMITATION],
+                    },
+                    "evidence_index_sha256": self.guided_evidence.manifest_sha256,
+                    "limitations": [limitation, CONNECTIVITY_LIMITATION],
+                }
+            else:
+                resolved = None
+            try:
+                fitness_evidence = (
+                    None
+                    if resolved is not None
+                    else store.resolve_model_fitness_evidence(params.claim_id)
+                )
+            except KeyError:
+                fitness_evidence = None
+            if resolved is not None:
+                pass
+            elif fitness_evidence is not None:
+                bundle = store.effective_bundle()
+                source_assets = list(fitness_evidence.get("source_assets", []))
+                evidence_node_id = f"model-fitness-evidence:{params.claim_id}"
+                revision_node_id = f"model-revision:{bundle.revision.revision_id}"
+                nodes: list[dict[str, Any]] = [
+                    {
+                        "node_id": evidence_node_id,
+                        "node_type": "MODEL_FITNESS_EVIDENCE",
+                        "label": "Model Fitness Passport evidence",
+                        "role": "REVIEWED_BASIS",
+                        "sha256": fitness_evidence["content_sha256"],
+                    },
+                    {
+                        "node_id": revision_node_id,
+                        "node_type": "MODEL_REVISION",
+                        "label": bundle.revision.revision_id,
+                        "role": "ACTIVE_REVISION",
+                        "sha256": bundle.revision.model_sha256,
+                    },
+                ]
+                edges: list[dict[str, str]] = [
+                    {
+                        "from_node_id": evidence_node_id,
+                        "to_node_id": revision_node_id,
+                        "relation": "SUPPORTS_ACTIVE_PASSPORT_REVISION",
+                    }
+                ]
+                for asset in source_assets:
+                    asset_id = str(asset["asset_id"])
+                    asset_node_id = f"asset:{asset_id}"
+                    nodes.append(
+                        {
+                            "node_id": asset_node_id,
+                            "node_type": "ASSET",
+                            "label": str(asset.get("title") or asset_id),
+                            "role": "REVIEWED_SOURCE",
+                            "sha256": str(asset["sha256"]),
+                        }
+                    )
+                    edges.append(
+                        {
+                            "from_node_id": asset_node_id,
+                            "to_node_id": evidence_node_id,
+                            "relation": "SUPPORTS_MODEL_FITNESS_EVIDENCE",
+                        }
+                    )
+                resolved = {
+                    "claim": {
+                        "claim_id": params.claim_id,
+                        "claim_kind": "MODEL_FITNESS_RECORD",
+                        "portfolio_id": "MODEL_FITNESS_PASSPORT",
+                        "scenario_id": None,
+                        "pair_id": None,
+                        "value": True,
+                        "units": "retained_review_basis",
+                        "reducer": "Model Fitness Passport evidence",
+                        "text": (
+                            "Checksum-verified active project evidence retained for the "
+                            "Model Fitness Passport."
+                        ),
+                        "direct_run_ids": [],
+                        "nodes": nodes,
+                        "edges": edges,
+                        "limitations": [FITNESS_LIMITATION, CONNECTIVITY_LIMITATION],
+                    },
+                    "model_revision": bundle.revision.model_dump(mode="json"),
+                    "model_bundle_sha256": canonical_sha256(bundle.model_dump(mode="json")),
+                    "source_assets": source_assets,
+                    "limitations": [FITNESS_LIMITATION, CONNECTIVITY_LIMITATION],
+                }
+            elif store.project()["mode"] == "GUIDED" and self.guided_evidence is not None:
                 materialized = self.guided_evidence.materialize(self.data_root / "guided-evidence")
                 resolved = self.guided_evidence.resolve_claim(params.claim_id, materialized)
             else:
@@ -7667,6 +8085,20 @@ class RPCDispatcher:
                 category=ErrorCategory.DATA_PROVIDER,
                 retryable=True,
             )
+        project_scope: dict[str, Any] | None = None
+        if params.project_directory is not None:
+            store = self._store(params.project_directory)
+            try:
+                project = self._require_professional_project(
+                    store, operation="Professional W&B destination preflight"
+                )
+                project_scope = {
+                    "project_root": store.root,
+                    "project_id": str(project["project_id"]),
+                }
+            finally:
+                store.close()
+
         key = params.api_key.get_secret_value()
         try:
             with (
@@ -7730,6 +8162,7 @@ class RPCDispatcher:
             **binding,
             "preflight_id": preflight_id,
             "verified_at": datetime.now(UTC).isoformat(),
+            **(project_scope or {}),
         }
         return self._result(
             "observability.preflight",
@@ -7741,6 +8174,258 @@ class RPCDispatcher:
                 "binding_preview": {
                     key: value for key, value in binding.items() if key not in {"scope_evidence"}
                 },
+            },
+        )
+
+    def _ridgeway_synthetic_trace_identity(self, store: EcoProjectStore) -> dict[str, str]:
+        project = store.project()
+        if project["mode"] != "GUIDED" or self.guided_evidence is None:
+            raise _fault(
+                "RIDGEWAY_SYNTHETIC_TRACE_GUIDED_ONLY",
+                "Synthetic tracing is available only for the verified local Ridgeway replay.",
+                category=ErrorCategory.SECURITY,
+                severity=Severity.BLOCKING,
+            )
+        projection = self.guided_evidence.projection
+        if projection.get("cc0") is not True or projection.get("releaseReplayEligible") is not True:
+            raise _fault(
+                "RIDGEWAY_SYNTHETIC_TRACE_RESOURCE_UNVERIFIED",
+                "The local Ridgeway resource is not the manifest-approved CC0 replay.",
+                category=ErrorCategory.SECURITY,
+                severity=Severity.BLOCKING,
+            )
+        try:
+            session = store.guided("guided_ridgeway_v1")
+        except KeyError as exc:
+            raise _fault(
+                "RIDGEWAY_SYNTHETIC_TRACE_SESSION_REQUIRED",
+                "Open the verified Ridgeway replay before connecting synthetic tracing.",
+                category=ErrorCategory.SECURITY,
+                severity=Severity.BLOCKING,
+            ) from exc
+        if session["projection"] != projection:
+            raise _fault(
+                "RIDGEWAY_SYNTHETIC_TRACE_RESOURCE_DRIFT",
+                "The open Ridgeway projection differs from the verified resource.",
+                category=ErrorCategory.SECURITY,
+                severity=Severity.BLOCKING,
+            )
+        return {
+            "project_id": str(project["project_id"]),
+            "projection_sha256": self.guided_evidence.projection_sha256,
+            "manifest_sha256": self.guided_evidence.manifest_sha256,
+            "archive_sha256": self.guided_evidence.archive_sha256,
+        }
+
+    @staticmethod
+    def _synthetic_trace_candidate(
+        params: SyntheticTracePreflightParams,
+        identity: dict[str, str],
+    ) -> dict[str, Any]:
+        return {
+            "policy": RIDGEWAY_SYNTHETIC_TRACE_POLICY,
+            "entity": params.entity,
+            "project": params.project,
+            "deployment": params.deployment,
+            "api_base_url": params.api_base_url.rstrip("/"),
+            "web_base_url": (params.web_base_url or params.api_base_url).rstrip("/"),
+            "profile_namespace": APP_PROFILE.namespace,
+            "fixture_id": "ridgeway-verified-replay-v1.2",
+            "guided_session_id": "guided_ridgeway_v1",
+            "wandb_run_id": APP_PROFILE.run_id(
+                "guided_session",
+                "guided_ridgeway_v1-"
+                + hashlib.sha256(identity["project_id"].encode("utf-8")).hexdigest()[:12],
+            ),
+            "license": "CC0-1.0",
+            "projection_sha256": identity["projection_sha256"],
+            "manifest_sha256": identity["manifest_sha256"],
+            "archive_sha256": identity["archive_sha256"],
+            "consent_sha256": canonical_sha256(RIDGEWAY_SYNTHETIC_TRACE_CONSENT),
+            "allowed_payload_classes": list(RIDGEWAY_SYNTHETIC_TRACE_PAYLOAD_CLASSES),
+            "visibility_claim": "NONE",
+            "restricted_verified": False,
+            "full_sync_allowed": False,
+            "artifact_upload_allowed": False,
+        }
+
+    def _observability_synthetic_trace_preflight(
+        self, params: SyntheticTracePreflightParams
+    ) -> PayloadResult:
+        validator = getattr(self.observability_adapter, "validate_synthetic_trace_target", None)
+        if not callable(validator):
+            raise _fault(
+                "RIDGEWAY_SYNTHETIC_TRACE_ADAPTER_UNAVAILABLE",
+                "The trace-only W&B identity verifier is unavailable.",
+                category=ErrorCategory.DATA_PROVIDER,
+                severity=Severity.BLOCKING,
+            )
+        store = self._store(params.project_directory)
+        try:
+            identity = self._ridgeway_synthetic_trace_identity(store)
+            root = store.root
+        finally:
+            store.close()
+        candidate = self._synthetic_trace_candidate(params, identity)
+        key = params.api_key.get_secret_value()
+        try:
+            with (
+                self.observability_credentials.candidate(key),
+                self.observability_credentials.environment(),
+            ):
+                validation = validator(binding=candidate)
+        except Exception as exc:
+            raise _fault(
+                "RIDGEWAY_SYNTHETIC_TRACE_PREFLIGHT_FAILED",
+                "The existing W&B project identity could not be verified for CC0 trace-only use.",
+                category=ErrorCategory.DATA_PROVIDER,
+                severity=Severity.BLOCKING,
+                remediation=(
+                    "Check the exact entity, project, endpoint, and API key. This check does "
+                    "not assert project visibility and never creates a destination."
+                ),
+                retryable=True,
+                technical_message=type(exc).__name__,
+            ) from exc
+        finally:
+            key = ""
+        if (
+            validation.get("verified") is not True
+            or validation.get("visibility_claim") != "NONE"
+            or validation.get("restricted_verified") is not False
+            or not isinstance(validation.get("external_project_id"), str)
+            or not validation["external_project_id"]
+        ):
+            raise _fault(
+                "RIDGEWAY_SYNTHETIC_TRACE_IDENTITY_INVALID",
+                "The W&B identity verifier returned an invalid trace-only receipt.",
+                category=ErrorCategory.SECURITY,
+                severity=Severity.BLOCKING,
+            )
+        verified_at = datetime.now(UTC)
+        expires_at = verified_at + timedelta(minutes=10)
+        preflight_id = new_id("synthetic_trace_preflight")
+        self._synthetic_trace_preflights[preflight_id] = {
+            "preflight_id": preflight_id,
+            "project_root": root,
+            "project_id": identity["project_id"],
+            "candidate": candidate,
+            "external_project_id": validation["external_project_id"],
+            "verified_at": verified_at,
+            "expires_at": expires_at,
+            "weave_capability": "PENDING_NATIVE_AGENT_PREFLIGHT",
+        }
+        return self._result(
+            "observability.synthetic_trace.preflight",
+            {
+                "preflight_id": preflight_id,
+                "scope": "CC0_SYNTHETIC_TRACE_ONLY",
+                "allowed": True,
+                "message": (
+                    "Existing W&B project identity verified. Visibility was not asserted; "
+                    "exact Weave write/readback remains pending until provider configuration."
+                ),
+                "visibility_claim": "NONE",
+                "restricted_verified": False,
+                "weave_capability": "PENDING_NATIVE_AGENT_PREFLIGHT",
+                "expires_at": expires_at.isoformat(),
+                "binding_preview": {
+                    "entity": candidate["entity"],
+                    "project": candidate["project"],
+                    "deployment": candidate["deployment"],
+                    "fixture_id": candidate["fixture_id"],
+                    "wandb_run_id": candidate["wandb_run_id"],
+                    "license": candidate["license"],
+                    "allowed_payload_classes": candidate["allowed_payload_classes"],
+                },
+            },
+        )
+
+    def _observability_synthetic_trace_connect(
+        self, params: SyntheticTraceConnectParams
+    ) -> PayloadResult:
+        # Single-use receipts are consumed before any project or resource check.
+        preflight = self._synthetic_trace_preflights.pop(params.preflight_id, None)
+        if preflight is None:
+            raise _fault(
+                "RIDGEWAY_SYNTHETIC_TRACE_PREFLIGHT_REQUIRED",
+                "The single-use Ridgeway trace preflight is missing, expired, or consumed.",
+                category=ErrorCategory.SECURITY,
+                severity=Severity.BLOCKING,
+            )
+        if datetime.now(UTC) > preflight["expires_at"]:
+            raise _fault(
+                "RIDGEWAY_SYNTHETIC_TRACE_PREFLIGHT_EXPIRED",
+                "The Ridgeway trace preflight expired before it was connected.",
+                category=ErrorCategory.SECURITY,
+                severity=Severity.BLOCKING,
+            )
+        store = self._store(params.project_directory)
+        try:
+            identity = self._ridgeway_synthetic_trace_identity(store)
+            if (
+                store.root != preflight["project_root"]
+                or identity["project_id"] != preflight["project_id"]
+                or any(
+                    identity[key] != preflight["candidate"][key]
+                    for key in ("projection_sha256", "manifest_sha256", "archive_sha256")
+                )
+            ):
+                raise _fault(
+                    "RIDGEWAY_SYNTHETIC_TRACE_SOURCE_CHANGED",
+                    "The guided project or verified Ridgeway resources changed after preflight.",
+                    category=ErrorCategory.SECURITY,
+                    severity=Severity.BLOCKING,
+                )
+            existing_envelope = store.synthetic_trace_binding()
+            if existing_envelope is None:
+                binding = SyntheticTraceConsentBinding(
+                    **preflight["candidate"],
+                    external_project_id=preflight["external_project_id"],
+                    first_connected_at=datetime.now(UTC),
+                )
+                binding_sha256 = store.set_synthetic_trace_binding(binding.model_dump(mode="json"))
+            else:
+                stored_payload = {
+                    key: value
+                    for key, value in existing_envelope.items()
+                    if key not in {"binding_sha256", "connected_at"}
+                }
+                binding = SyntheticTraceConsentBinding.model_validate(stored_payload)
+                candidate_binding = SyntheticTraceConsentBinding(
+                    **preflight["candidate"],
+                    external_project_id=preflight["external_project_id"],
+                    first_connected_at=binding.first_connected_at,
+                )
+                if candidate_binding.identity_sha256 != binding.identity_sha256:
+                    raise _fault(
+                        "RIDGEWAY_SYNTHETIC_TRACE_REBIND_BLOCKED",
+                        "A guided project cannot be rebound to a different trace destination.",
+                        category=ErrorCategory.SECURITY,
+                        severity=Severity.BLOCKING,
+                    )
+                binding_sha256 = str(existing_envelope["binding_sha256"])
+            self._synthetic_trace_targets[store.root] = binding
+        finally:
+            store.close()
+        return self._result(
+            "observability.synthetic_trace.connect",
+            {
+                "connected": True,
+                "state": "SYNTHETIC_TRACE_TARGET_VERIFIED",
+                "binding_sha256": binding_sha256,
+                "entity": binding.entity,
+                "project": binding.project,
+                "deployment": binding.deployment,
+                "visibility_claim": "NONE",
+                "restricted_verified": False,
+                "full_sync_allowed": False,
+                "artifact_upload_allowed": False,
+                "weave_capability": "PENDING_NATIVE_AGENT_PREFLIGHT",
+                "message": (
+                    "Synthetic trace-only destination connected. Project visibility was not "
+                    "asserted; no professional evidence or artifact sync was enabled."
+                ),
             },
         )
 
@@ -7761,23 +8446,36 @@ class RPCDispatcher:
                 severity=Severity.BLOCKING,
                 remediation="Verify the Restricted destination again.",
             )
-        try:
-            with self.observability_credentials.environment():
-                scope = self.scope_resolver.resolve(
-                    entity=preflight["entity"],
-                    project=preflight["project"],
-                    deployment=preflight["deployment"],
-                    api_base_url=preflight["api_base_url"],
-                )
-        except RuntimeError as exc:
-            raise _fault(
-                "WANDB_RESTRICTED_SCOPE_UNVERIFIABLE",
-                "The destination can no longer be authoritatively verified as Restricted.",
-                category=ErrorCategory.SECURITY,
-                severity=Severity.BLOCKING,
-            ) from exc
         store = self._store(params.project_directory)
         try:
+            project = self._require_professional_project(
+                store, operation="Professional W&B destination binding"
+            )
+            if preflight.get("project_root") is not None and (
+                preflight["project_root"] != store.root
+                or preflight.get("project_id") != str(project["project_id"])
+            ):
+                raise _fault(
+                    "OBSERVABILITY_PREFLIGHT_PROJECT_MISMATCH",
+                    "The professional destination preflight belongs to another local project.",
+                    category=ErrorCategory.SECURITY,
+                    severity=Severity.BLOCKING,
+                )
+            try:
+                with self.observability_credentials.environment():
+                    scope = self.scope_resolver.resolve(
+                        entity=preflight["entity"],
+                        project=preflight["project"],
+                        deployment=preflight["deployment"],
+                        api_base_url=preflight["api_base_url"],
+                    )
+            except RuntimeError as exc:
+                raise _fault(
+                    "WANDB_RESTRICTED_SCOPE_UNVERIFIABLE",
+                    "The destination can no longer be authoritatively verified as Restricted.",
+                    category=ErrorCategory.SECURITY,
+                    severity=Severity.BLOCKING,
+                ) from exc
             existing = store.observability()
             identity = (
                 preflight["entity"],
@@ -7803,7 +8501,7 @@ class RPCDispatcher:
             binding = existing or {
                 key: value
                 for key, value in preflight.items()
-                if key not in {"preflight_id", "verified_at"}
+                if key not in {"preflight_id", "verified_at", "project_root", "project_id"}
             }
             # Schema v1.0 development builds briefly persisted a free-form
             # reviewer name on the binding. It is never authority and must not
@@ -8236,7 +8934,68 @@ class RPCDispatcher:
             )
         store = self._store(params.project_directory)
         try:
-            if store.observability() is None:
+            professional_binding = store.observability()
+            if professional_binding is None and kind == "trace":
+                envelope = store.synthetic_trace_binding()
+                if envelope is not None:
+                    payload = {
+                        key: value
+                        for key, value in envelope.items()
+                        if key not in {"binding_sha256", "connected_at"}
+                    }
+                    target = SyntheticTraceConsentBinding.model_validate(payload)
+                    verifier = getattr(
+                        self.observability_adapter,
+                        "revalidate_synthetic_trace_binding",
+                        None,
+                    )
+                    if not callable(verifier):
+                        raise _fault(
+                            "RIDGEWAY_SYNTHETIC_TRACE_IDENTITY_VERIFIER_UNAVAILABLE",
+                            "The trace destination cannot be revalidated.",
+                            category=ErrorCategory.SECURITY,
+                            severity=Severity.BLOCKING,
+                        )
+                    with self.observability_credentials.environment():
+                        verifier(target)
+                    try:
+                        draft = store.review_brief_draft_by_trace(params.reference_id)
+                    except KeyError as exc:
+                        raise _fault(
+                            "RIDGEWAY_SYNTHETIC_TRACE_NOT_FOUND",
+                            "No immutable Ridgeway Review Brief draft has this trace identity.",
+                            category=ErrorCategory.USER_FIXABLE,
+                        ) from exc
+                    if (
+                        draft.source_mode != ReviewBriefSourceMode.RIDGEWAY_SYNTHETIC
+                        or draft.trace.wandb_run_id != target.wandb_run_id
+                    ):
+                        raise _fault(
+                            "RIDGEWAY_SYNTHETIC_TRACE_ASSOCIATION_INVALID",
+                            "The retained draft does not belong to this trace-only target.",
+                            category=ErrorCategory.SECURITY,
+                            severity=Severity.BLOCKING,
+                        )
+                    parsed = urlsplit(draft.trace.trace_url)
+                    expected = urlsplit(target.web_base_url)
+                    if (
+                        parsed.scheme != expected.scheme
+                        or parsed.netloc != expected.netloc
+                        or target.entity not in parsed.path.split("/")
+                        or target.project not in parsed.path.split("/")
+                        or parsed.username
+                        or parsed.password
+                        or parsed.query
+                        or parsed.fragment
+                    ):
+                        raise _fault(
+                            "RIDGEWAY_SYNTHETIC_TRACE_URL_INVALID",
+                            "The retained Weave URL differs from its immutable trace destination.",
+                            category=ErrorCategory.SECURITY,
+                            severity=Severity.BLOCKING,
+                        )
+                    return self._result("observability.open_trace", {"url": draft.trace.trace_url})
+            if professional_binding is None:
                 raise _fault(
                     "OBSERVABILITY_BINDING_REQUIRED",
                     "No verified project binding exists.",
@@ -8262,9 +9021,22 @@ class RPCDispatcher:
 
     @staticmethod
     def _assistant_failure(exc: BaseException) -> RPCFault:
-        code = str(exc)
-        if not code.startswith(("ASSISTANT_", "TRACED_ASSISTANT_", "WANDB_", "OBSERVABILITY_")):
-            code = "ASSISTANT_PROVIDER_OR_TRACE_FAILURE"
+        candidate = str(exc)
+        safe_prefixes = (
+            "ASSISTANT_",
+            "TRACED_ASSISTANT_",
+            "WANDB_",
+            "OBSERVABILITY_",
+            "REVIEW_BRIEF_",
+            "RIDGEWAY_",
+            "NATIVE_AGENT_",
+        )
+        code = (
+            candidate
+            if candidate.startswith(safe_prefixes)
+            and re.fullmatch(r"[A-Z][A-Z0-9_]{2,127}", candidate)
+            else "ASSISTANT_PROVIDER_OR_TRACE_FAILURE"
+        )
         security = any(
             marker in code
             for marker in (
@@ -8278,25 +9050,77 @@ class RPCDispatcher:
                 "UNAUTHORIZED",
                 "FABRICATED",
                 "UNSAFE",
+                "URL_INVALID",
+                "BOUNDARY_REJECTED",
+            )
+        )
+        resource_limit = any(
+            marker in code
+            for marker in (
+                "CONTEXT_TOO_LARGE",
+                "FRAME_TOO_LARGE",
+                "TOOL_LIMIT",
+                "RESOURCE_LIMIT",
+            )
+        )
+        source_revalidation = any(
+            marker in code
+            for marker in (
+                "STALE",
+                "REVISION",
+                "SNAPSHOT",
+                "ENSEMBLE",
+                "QA_REJECT",
+                "EVIDENCE_RESOLUTION",
             )
         )
         retryable = any(
-            marker in code for marker in ("UNAVAILABLE", "HTTP_", "TRACE_FLUSH", "TRACE_READBACK")
+            marker in code
+            for marker in (
+                "UNAVAILABLE",
+                "HTTP_",
+                "TRACE_FLUSH",
+                "TRACE_READBACK",
+                "DEADLINE_EXCEEDED",
+            )
         )
+        if security:
+            category = ErrorCategory.SECURITY
+            severity = Severity.BLOCKING
+            user_message = (
+                "The assistant request was blocked by project authorization or evidence safety."
+            )
+            remediation = (
+                "Revalidate the authorized W&B destination and selected evidence before retrying."
+            )
+        elif resource_limit:
+            category = ErrorCategory.RESOURCE_LIMIT
+            severity = Severity.BLOCKING
+            user_message = "The bounded assistant request exceeds a configured resource limit."
+            remediation = (
+                "Reduce the authorized evidence selection, then prepare a new bounded request."
+            )
+        elif source_revalidation:
+            category = ErrorCategory.MODEL_QUALITY
+            severity = Severity.BLOCKING
+            user_message = "The selected evidence is no longer valid for this assistant request."
+            remediation = (
+                "Return to the current Robustness Board, resolve the cited source condition, "
+                "and prepare a new brief."
+            )
+        else:
+            category = ErrorCategory.DATA_PROVIDER
+            severity = Severity.ERROR
+            user_message = "The traced assistant could not return a validated response."
+            remediation = (
+                "Check the model-provider credential, provider endpoint, and Weave connection."
+            )
         return _fault(
             code,
-            (
-                "The assistant request was blocked by project authorization or evidence safety."
-                if security
-                else "The traced assistant could not return a validated response."
-            ),
-            category=ErrorCategory.SECURITY if security else ErrorCategory.DATA_PROVIDER,
-            severity=Severity.BLOCKING if security else Severity.ERROR,
-            remediation=(
-                "Revalidate the exact Restricted W&B binding and inspect the selected evidence."
-                if security
-                else "Check the model-provider credential, provider endpoint, and Weave connection."
-            ),
+            user_message,
+            category=category,
+            severity=severity,
+            remediation=remediation,
             retryable=retryable,
         )
 
@@ -8310,6 +9134,13 @@ class RPCDispatcher:
         project_root = self._allowed_path(
             params.project_directory, must_exist=True, purpose="assistant project"
         )
+        store = self._store(params.project_directory)
+        try:
+            self._require_professional_project(
+                store, operation="Professional assistant configuration"
+            )
+        finally:
+            store.close()
         key = params.api_key.get_secret_value()
         try:
             status = self.assistant_runtime.configure(
@@ -8332,6 +9163,87 @@ class RPCDispatcher:
             )
             status = self.assistant_runtime.status(project_root=project_root)
         return self._result("assistant.status", status)
+
+    def _assistant_review_brief_configure_synthetic(
+        self, params: AssistantConfigureParams
+    ) -> PayloadResult:
+        if self.assistant_runtime is None:
+            raise _fault(
+                "TRACED_ASSISTANT_RUNTIME_UNAVAILABLE",
+                "The native Review Brief Agent runtime is unavailable.",
+                category=ErrorCategory.DATA_PROVIDER,
+            )
+        configure = getattr(self.assistant_runtime, "configure_synthetic_review_brief", None)
+        validator = getattr(self.observability_adapter, "validate_synthetic_trace_target", None)
+        if not callable(configure) or not callable(validator):
+            raise _fault(
+                "RIDGEWAY_REVIEW_BRIEF_AGENT_UNAVAILABLE",
+                "The CC0 trace-only Review Brief Agent adapter is unavailable.",
+                category=ErrorCategory.DATA_PROVIDER,
+                severity=Severity.BLOCKING,
+            )
+        project_root = self._allowed_path(
+            params.project_directory, must_exist=True, purpose="guided Review Brief project"
+        )
+        store = self._store(params.project_directory)
+        try:
+            self._ridgeway_synthetic_trace_identity(store)
+            envelope = store.synthetic_trace_binding()
+        finally:
+            store.close()
+        if envelope is None:
+            raise _fault(
+                "RIDGEWAY_SYNTHETIC_TRACE_BINDING_REQUIRED",
+                "Connect the explicit CC0 trace-only W&B destination first.",
+                category=ErrorCategory.SECURITY,
+                severity=Severity.BLOCKING,
+            )
+        payload = {
+            key: value
+            for key, value in envelope.items()
+            if key not in {"binding_sha256", "connected_at"}
+        }
+        try:
+            target = SyntheticTraceConsentBinding.model_validate(payload)
+            candidate = {
+                key: value
+                for key, value in target.model_dump(mode="json").items()
+                if key not in {"external_project_id", "first_connected_at"}
+            }
+            with self.observability_credentials.environment():
+                current = validator(binding=candidate)
+            if current.get("external_project_id") != target.external_project_id:
+                raise PermissionError("WANDB_PROJECT_IDENTITY_MISMATCH")
+        except (PermissionError, RuntimeError, ValueError) as exc:
+            raise self._assistant_failure(exc) from exc
+        key = params.api_key.get_secret_value()
+        try:
+            status = configure(
+                project_root=project_root,
+                target=target,
+                configuration=params.configuration,
+                api_key=key,
+            )
+        except (AssistantSafetyError, PermissionError, RuntimeError, ValueError) as exc:
+            raise self._assistant_failure(exc) from exc
+        finally:
+            key = ""
+        return self._result("assistant.review_brief.configure_synthetic", status)
+
+    def _assistant_review_brief_status_synthetic(self, params: ProjectParams) -> PayloadResult:
+        if self.assistant_runtime is None:
+            status: dict[str, Any] = {"configured": False, "provider": None}
+        else:
+            project_root = self._allowed_path(
+                params.project_directory, must_exist=True, purpose="guided Review Brief project"
+            )
+            status_reader = getattr(self.assistant_runtime, "synthetic_review_brief_status", None)
+            status = (
+                status_reader(project_root=project_root)
+                if callable(status_reader)
+                else {"configured": False, "provider": None}
+            )
+        return self._result("assistant.review_brief.status_synthetic", status)
 
     def _assistant_clear(self, params: ProjectParams) -> PayloadResult:
         if self.assistant_runtime is not None:
@@ -8500,6 +9412,8 @@ class RPCDispatcher:
         evidence_ids: Sequence[str],
         association: AssistantRunAssociation,
         sensitive_policy: SensitiveContextPolicy,
+        additional_asset_ids: Sequence[str] = (),
+        additional_authorization_records: Sequence[dict[str, Any]] = (),
     ) -> AuthorizedEvidenceSelection:
         """Authorize the immutable analysis snapshot before any Weave/provider operation."""
 
@@ -8610,6 +9524,16 @@ class RPCDispatcher:
                         severity=Severity.BLOCKING,
                     )
                 referenced_asset_ids.add(asset_id)
+        for asset_id in additional_asset_ids:
+            if asset_id not in snapshot_assets:
+                raise _fault(
+                    "ASSISTANT_EVIDENCE_ASSET_UNRESOLVED",
+                    "A reviewed supporting record cites an asset outside the immutable analysis snapshot.",
+                    category=ErrorCategory.MODEL_QUALITY,
+                    severity=Severity.BLOCKING,
+                    object_reference=asset_id,
+                )
+            referenced_asset_ids.add(asset_id)
 
         scientific_ids = scientific_asset_ids(snapshot)
         try:
@@ -8722,6 +9646,19 @@ class RPCDispatcher:
                     "representation": representation,
                     "authorization": authorization.model_dump(mode="json"),
                     "uploaded_authorization": uploaded_asset.authorization.model_dump(mode="json"),
+                }
+            )
+        for record in sorted(
+            additional_authorization_records,
+            key=lambda item: canonical_sha256(item),
+        ):
+            # These records remain local authorization inputs.  Only their
+            # deterministic digest participates in the decision; project text
+            # or identifiers never cross the provider boundary.
+            authorization_projection.append(
+                {
+                    "reviewed_record_sha256": canonical_sha256(record),
+                    "record_kind": "MODEL_FITNESS_EVIDENCE",
                 }
             )
 
@@ -9151,6 +10088,785 @@ class RPCDispatcher:
             },
         )
 
+    def _review_brief_provider_state(
+        self,
+        project_root: Path,
+        source_mode: ReviewBriefSourceMode,
+    ) -> tuple[str | None, bool, bool]:
+        if self.review_brief_runner is not None:
+            model = str(
+                getattr(self.review_brief_runner, "provider_model", "injected-review-brief-runner")
+            )
+            return model, True, True
+        if self.assistant_runtime is None:
+            return None, False, False
+        try:
+            if source_mode == ReviewBriefSourceMode.RIDGEWAY_SYNTHETIC:
+                reader = getattr(self.assistant_runtime, "synthetic_review_brief_status", None)
+                status = (
+                    reader(project_root=project_root)
+                    if callable(reader)
+                    else {"configured": False, "provider": None}
+                )
+            else:
+                status = self.assistant_runtime.status(project_root=project_root)
+        except (PermissionError, RuntimeError, ValueError):
+            return None, False, False
+        provider = status.get("provider") if isinstance(status, dict) else None
+        model = (
+            str(provider.get("model"))
+            if isinstance(provider, dict) and provider.get("model")
+            else None
+        )
+        configured = bool(status.get("configured") and model) if isinstance(status, dict) else False
+        runner_factory = getattr(self.assistant_runtime, "review_brief_runner", None)
+        return model, configured, bool(configured and callable(runner_factory))
+
+    def _review_brief_runner_for(
+        self,
+        *,
+        project_root: Path,
+        resolution: _ReviewBriefResolution,
+    ) -> ReviewBriefRunner:
+        if self.review_brief_runner is not None:
+            return self.review_brief_runner
+        factory = getattr(self.assistant_runtime, "review_brief_runner", None)
+        if not callable(factory):
+            raise ReviewBriefSafetyError("REVIEW_BRIEF_RUNNER_UNAVAILABLE")
+        supported = {
+            "project_root": project_root,
+            "association": resolution.association,
+            "authorization": resolution.authorization,
+            "source": resolution.source,
+        }
+        signature = inspect.signature(factory)
+        accepts_arbitrary = any(
+            item.kind == inspect.Parameter.VAR_KEYWORD for item in signature.parameters.values()
+        )
+        arguments = (
+            supported
+            if accepts_arbitrary
+            else {key: value for key, value in supported.items() if key in signature.parameters}
+        )
+        try:
+            runner = factory(**arguments)
+        except (PermissionError, RuntimeError, TypeError, ValueError) as exc:
+            raise ReviewBriefSafetyError("REVIEW_BRIEF_RUNNER_UNAVAILABLE") from exc
+        if not callable(getattr(runner, "prepare", None)):
+            raise ReviewBriefSafetyError("REVIEW_BRIEF_RUNNER_UNAVAILABLE")
+        return runner
+
+    def _resolve_review_brief_source(
+        self,
+        store: EcoProjectStore,
+        *,
+        analysis_id: str,
+        portfolio_id: str,
+    ) -> _ReviewBriefResolution:
+        project = store.project()
+        project_id = str(project["project_id"])
+        mode = str(project["mode"])
+        if mode == "GUIDED":
+            if analysis_id != "ridgeway-verified-replay-v1.2" or self.guided_evidence is None:
+                raise ReviewBriefSafetyError("REVIEW_BRIEF_RIDGEWAY_DIRECT_EVIDENCE_REQUIRED")
+            session = store.guided("guided_ridgeway_v1")
+            if session["projection"] != self.guided_evidence.projection:
+                raise ReviewBriefSafetyError("REVIEW_BRIEF_RIDGEWAY_PROJECTION_CHANGED")
+            fixture = build_ridgeway_fixture()
+            source = ridgeway_review_source(
+                project_id=project_id,
+                model_revision_id=fixture.bundle.revision.revision_id,
+                projection=self.guided_evidence.projection,
+                portfolio_id=portfolio_id,
+                evidence_manifest_sha256=self.guided_evidence.manifest_sha256,
+            )
+            materialized = self.guided_evidence.materialize(store.root / "guided-evidence")
+            try:
+                for claim_id in source.connectivity_claim_ids:
+                    resolved = self.guided_evidence.resolve_claim(claim_id, materialized)
+                    if not isinstance(resolved, dict) or not resolved:
+                        raise ValueError("empty guided evidence projection")
+                for evidence_id in source.model_fitness_evidence_ids:
+                    resolved = store.resolve_model_fitness_evidence(evidence_id)
+                    if not isinstance(resolved, dict) or not resolved:
+                        raise ValueError("empty guided model-fitness evidence projection")
+                for evidence_id in source.decision_record_evidence_ids:
+                    expected = {
+                        f"{RIDGEWAY_COST_EVIDENCE_PREFIX}{portfolio_id}",
+                        f"{RIDGEWAY_HYPOTHESIS_EVIDENCE_PREFIX}{portfolio_id}",
+                    }
+                    if evidence_id not in expected:
+                        raise ValueError("guided decision record escapes the selected portfolio")
+                    # The source constructor already checked the typed cost or
+                    # rank payload; exact prefix + portfolio equality binds the
+                    # opaque record to this selected manifest projection.
+            except (GuidedEvidenceError, KeyError, TypeError, ValueError) as exc:
+                raise ReviewBriefSafetyError(
+                    "REVIEW_BRIEF_RIDGEWAY_DIRECT_EVIDENCE_REQUIRED"
+                ) from exc
+            return _ReviewBriefResolution(source=source)
+
+        if mode not in {"IMPORTED", "PLANNING"}:
+            raise ReviewBriefSafetyError("REVIEW_BRIEF_PROJECT_MODE_UNSUPPORTED")
+        try:
+            analysis = store.analysis(analysis_id)
+            if analysis["state"] != AnalysisState.COMPLETED.value:
+                raise ValueError("analysis is not complete")
+            if analysis.get("analysis_kind") != "ALTERNATIVES":
+                raise ValueError("analysis is not an alternatives analysis")
+            plan = ConnectivityRunPlan.model_validate(analysis["plan"])
+            bundle = store.analysis_bundle(analysis_id)
+            active = store.effective_bundle()
+            if (
+                active.revision.revision_id != bundle.revision.revision_id
+                or active.revision.model_sha256 != bundle.revision.model_sha256
+            ):
+                raise ReviewBriefSafetyError("REVIEW_BRIEF_ANALYSIS_REVISION_STALE")
+            _, summaries, claims = store.analysis_results(analysis_id)
+            matches = [item for item in summaries if item.portfolio_id == portfolio_id]
+            if len(matches) != 1:
+                raise ValueError("portfolio summary is missing or ambiguous")
+            summary = matches[0]
+            portfolio_claims = [item for item in claims if item.portfolio_id == portfolio_id]
+            direct_claims = [item for item in portfolio_claims if item.direct_run_ids]
+            direct_run_ids = {
+                *summary.direct_run_ids,
+                *(run_id for claim in direct_claims for run_id in claim.direct_run_ids),
+            }
+            if not direct_claims or not direct_run_ids:
+                raise ReviewBriefSafetyError("REVIEW_BRIEF_DIRECT_EVIDENCE_REQUIRED")
+            verified = {
+                run_id: store.verify_authoritative_direct_run(
+                    run_id,
+                    expected_analysis_id=analysis_id,
+                ).terminal_sha256
+                for run_id in sorted(direct_run_ids)
+            }
+            association = self._assistant_run_association(
+                store,
+                run_kind="connectivity_analysis",
+                run_subject_id=analysis_id,
+                analysis_id=analysis_id,
+            )
+            authoritative_reference_results = store.reference_comparison_results(
+                revision_id=bundle.revision.revision_id,
+                model_sha256=bundle.revision.model_sha256,
+                engine_manifest_sha256=plan.engine_manifest_sha256,
+            )
+            fitness_findings = self._model_fitness_evidence_findings(
+                store,
+                bundle,
+                authoritative_reference_results=authoritative_reference_results,
+            )
+            if any(item.severity == "BLOCKING" for item in fitness_findings):
+                raise ReviewBriefSafetyError("REVIEW_BRIEF_MODEL_FITNESS_EVIDENCE_REQUIRED")
+            # Build the finding inventory once with opaque placeholders so the
+            # exact subset of Passport evidence used by this brief can be
+            # authorized before the authorization-bound board hash is created.
+            preliminary_source = professional_review_source(
+                bundle=bundle,
+                plan=plan,
+                summary=summary,
+                claims=portfolio_claims,
+                active_model_revision_id=active.revision.revision_id,
+                verified_direct_run_sha256=verified,
+                authorization_sha256="0" * 64,
+                evidence_authorization_decision_id="evidence_auth_" + "0" * 24,
+                current_authorizations_sha256="0" * 64,
+            )
+            # Connectivity values remain rooted in the verified direct ensemble,
+            # while reviewed cost and feasibility records are also authorized as
+            # non-solver decision evidence.  Keeping both classes explicit lets
+            # the field brief cover practical gaps without ever presenting cost
+            # or feasibility as a Circuitscape result.
+            evidence_ids = [item.claim_id for item in portfolio_claims]
+            supporting_asset_ids: set[str] = set()
+            supporting_authorization_records: list[dict[str, Any]] = []
+            for evidence_id in preliminary_source.model_fitness_evidence_ids:
+                if evidence_id in evidence_ids:
+                    continue
+                try:
+                    retained = store.resolve_model_fitness_evidence(evidence_id)
+                except (KeyError, TypeError, ValueError) as exc:
+                    raise ReviewBriefSafetyError(
+                        "REVIEW_BRIEF_MODEL_FITNESS_EVIDENCE_REQUIRED"
+                    ) from exc
+                for asset in retained.get("source_assets", []):
+                    if not isinstance(asset, dict) or not isinstance(asset.get("asset_id"), str):
+                        raise ReviewBriefSafetyError("REVIEW_BRIEF_MODEL_FITNESS_EVIDENCE_REQUIRED")
+                    supporting_asset_ids.add(str(asset["asset_id"]))
+                supporting_authorization_records.append(
+                    {
+                        "evidence_id_sha256": hashlib.sha256(
+                            evidence_id.encode("utf-8")
+                        ).hexdigest(),
+                        "evidence_kind": str(retained.get("evidence_kind") or ""),
+                        "revision_id_sha256": hashlib.sha256(
+                            str(retained.get("revision_id") or "").encode("utf-8")
+                        ).hexdigest(),
+                        "model_sha256": str(retained.get("model_sha256") or ""),
+                        "content_sha256": str(retained.get("content_sha256") or ""),
+                    }
+                )
+            policy = self._validated_evidence_sensitive_policy(
+                store,
+                evidence_ids,
+                SensitiveContextPolicy(),
+            )
+            selection = self._authorize_evidence_selection(
+                store,
+                project_id=project_id,
+                analysis_id=analysis_id,
+                evidence_ids=evidence_ids,
+                association=association,
+                sensitive_policy=policy,
+                additional_asset_ids=sorted(supporting_asset_ids),
+                additional_authorization_records=supporting_authorization_records,
+            )
+            authorization = selection.authorization
+            source = professional_review_source(
+                bundle=bundle,
+                plan=plan,
+                summary=summary,
+                claims=portfolio_claims,
+                active_model_revision_id=active.revision.revision_id,
+                verified_direct_run_sha256=verified,
+                authorization_sha256=canonical_sha256(authorization.model_dump(mode="json")),
+                evidence_authorization_decision_id=authorization.decision_id,
+                current_authorizations_sha256=authorization.current_authorizations_sha256,
+            )
+            return _ReviewBriefResolution(
+                source=source,
+                association=association,
+                authorization=authorization,
+            )
+        except RPCFault:
+            raise
+        except ReviewBriefSafetyError:
+            raise
+        except (KeyError, TypeError, ValidationError, ValueError) as exc:
+            raise ReviewBriefSafetyError("REVIEW_BRIEF_SOURCE_INCOMPLETE") from exc
+
+    def _blocked_review_brief_preflight(
+        self,
+        store: EcoProjectStore,
+        *,
+        analysis_id: str,
+        portfolio_id: str,
+        error_code: str,
+    ) -> ReviewBriefPreflight:
+        project = store.project()
+        guided = str(project["mode"]) == "GUIDED"
+        scenario_count = 1
+        disposition: Literal["PASSES", "FAILS", "SURVEY_FIRST", "INCOMPLETE"] = "INCOMPLETE"
+        next_action = (
+            "Resolve the blocking evidence, authorization, provider, or trace requirement."
+        )
+        model_revision_id = "unavailable"
+        try:
+            if guided:
+                fixture = build_ridgeway_fixture()
+                model_revision_id = fixture.bundle.revision.revision_id
+                if self.guided_evidence is not None:
+                    scenarios = self.guided_evidence.projection.get("scenarios", [])
+                    scenario_count = max(1, len(scenarios) if isinstance(scenarios, list) else 0)
+            else:
+                analysis = store.analysis(analysis_id)
+                plan = ConnectivityRunPlan.model_validate(analysis["plan"])
+                scenario_count = max(1, len(plan.scenario_ids))
+                model_revision_id = plan.revision_id
+                _, summaries, _ = store.analysis_results(analysis_id)
+                summary = next(
+                    (item for item in summaries if item.portfolio_id == portfolio_id),
+                    None,
+                )
+                if summary is not None:
+                    disposition = summary.disposition.value
+                    next_action = summary.next_action
+        except (KeyError, TypeError, ValidationError, ValueError):
+            pass
+        source_mode = (
+            ReviewBriefSourceMode.RIDGEWAY_SYNTHETIC
+            if guided
+            else ReviewBriefSourceMode.PROFESSIONAL
+        )
+        provider_model, provider_ready, weave_ready = self._review_brief_provider_state(
+            store.root, source_mode
+        )
+        direct_guided = bool(
+            guided
+            and self.guided_evidence is not None
+            and self.guided_evidence.projection.get("cc0") is True
+            and self.guided_evidence.projection.get("releaseReplayEligible") is True
+        )
+        return ReviewBriefPreflight(
+            source_mode=source_mode,
+            project_title=str(project["title"]),
+            analysis_id=analysis_id,
+            portfolio_id=portfolio_id,
+            model_revision_id=model_revision_id,
+            decision_board_sha256=canonical_sha256(
+                {
+                    "analysis_id": analysis_id,
+                    "portfolio_id": portfolio_id,
+                    "model_revision_id": model_revision_id,
+                    "blocked": error_code,
+                }
+            ),
+            scenario_count=scenario_count,
+            evidence_claim_count=0,
+            deterministic_available=False,
+            deterministic_items=[],
+            disposition=disposition,
+            next_action=next_action,
+            cloud_boundary=(
+                ReviewBriefCloudBoundary.CC0_SYNTHETIC
+                if direct_guided
+                else ReviewBriefCloudBoundary.BLOCKED
+            ),
+            provider_model=provider_model,
+            provider_ready=provider_ready,
+            weave_ready=weave_ready,
+            eligible=False,
+            blocked_reason=f"The authoritative Review Brief gate is blocked ({error_code}).",
+        )
+
+    def _review_brief_preflight_for_resolution(
+        self,
+        store: EcoProjectStore,
+        resolution: _ReviewBriefResolution,
+    ) -> ReviewBriefPreflight:
+        source = resolution.source
+        provider_model, provider_ready, weave_ready = self._review_brief_provider_state(
+            store.root, source.source_mode
+        )
+        eligible = bool(provider_ready and weave_ready and source.evidence_claim_ids)
+        deterministic_items = build_deterministic_review_items(source)
+        blocked_reason = None
+        if not provider_ready:
+            blocked_reason = "Configure an approved provider credential for this project."
+        elif not weave_ready:
+            blocked_reason = "A trace-read-back capable Weave runner is unavailable."
+        elif not source.evidence_claim_ids:
+            blocked_reason = "No directly verified evidence claim is available for this portfolio."
+        return ReviewBriefPreflight(
+            source_mode=source.source_mode,
+            project_title=source.project_title,
+            analysis_id=source.analysis_id,
+            portfolio_id=source.portfolio_id,
+            model_revision_id=source.model_revision_id,
+            decision_board_sha256=source.decision_board_sha256,
+            scenario_count=len(source.scenario_ids),
+            evidence_claim_count=len(source.evidence_claim_ids),
+            deterministic_available=bool(deterministic_items),
+            deterministic_items=deterministic_items,
+            disposition=source.disposition,
+            next_action=source.next_action,
+            cloud_boundary=(
+                ReviewBriefCloudBoundary.CC0_SYNTHETIC
+                if source.source_mode == ReviewBriefSourceMode.RIDGEWAY_SYNTHETIC
+                else ReviewBriefCloudBoundary.RESTRICTED_VERIFIED
+            ),
+            provider_model=provider_model,
+            provider_ready=provider_ready,
+            weave_ready=weave_ready,
+            eligible=eligible,
+            blocked_reason=blocked_reason,
+        )
+
+    def _review_brief_preflight(self, params: ReviewBriefSelectionParams) -> PayloadResult:
+        store = self._store(params.project_directory)
+        try:
+            try:
+                resolution = self._resolve_review_brief_source(
+                    store,
+                    analysis_id=params.analysis_id,
+                    portfolio_id=params.portfolio_id,
+                )
+                preflight = self._review_brief_preflight_for_resolution(store, resolution)
+            except RPCFault as exc:
+                preflight = self._blocked_review_brief_preflight(
+                    store,
+                    analysis_id=params.analysis_id,
+                    portfolio_id=params.portfolio_id,
+                    error_code=exc.error.code,
+                )
+            except ReviewBriefSafetyError as exc:
+                preflight = self._blocked_review_brief_preflight(
+                    store,
+                    analysis_id=params.analysis_id,
+                    portfolio_id=params.portfolio_id,
+                    error_code=rejection_error_code(exc),
+                )
+        finally:
+            store.close()
+        return self._result(
+            "assistant.review_brief.preflight",
+            preflight.model_dump(mode="json"),
+        )
+
+    def _review_brief_prepare(self, params: ReviewBriefPrepareParams) -> PayloadResult:
+        store = self._store(params.project_directory)
+        resolution: _ReviewBriefResolution | None = None
+        runner_invoked = False
+        runner_result: ReviewBriefRunnerResult | None = None
+        failure_stage = ReviewBriefFailureStage.LOCAL_PRECONDITION
+        try:
+            prior = store.review_brief_call_record(params.call_id)
+            if prior is not None:
+                if prior["disposition"] == "REJECTED":
+                    raise _fault(
+                        "REVIEW_BRIEF_CALL_PREVIOUSLY_REJECTED",
+                        "This Review Brief call was already rejected and cannot be reused.",
+                        category=ErrorCategory.SECURITY,
+                        severity=Severity.BLOCKING,
+                    )
+                prior_draft = ReviewBriefDraft.model_validate(prior["draft"])
+                if (
+                    prior_draft.analysis_id != params.analysis_id
+                    or prior_draft.portfolio_id != params.portfolio_id
+                ):
+                    raise _fault(
+                        "REVIEW_BRIEF_CALL_IDENTITY_REUSED",
+                        "The Review Brief call identity belongs to another decision scope.",
+                        category=ErrorCategory.SECURITY,
+                        severity=Severity.BLOCKING,
+                    )
+                current_prior = self._review_brief_current_draft(store, prior_draft)
+                return self._result(
+                    "assistant.review_brief.prepare",
+                    {
+                        "draft": current_prior.model_dump(mode="json"),
+                        "acknowledgement": (
+                            acknowledgement.model_dump(mode="json")
+                            if (
+                                acknowledgement := store.review_brief_acknowledgement(
+                                    current_prior.draft_id
+                                )
+                            )
+                            is not None
+                            else None
+                        ),
+                    },
+                )
+            failure_stage = ReviewBriefFailureStage.AUTHORIZATION
+            resolution = self._resolve_review_brief_source(
+                store,
+                analysis_id=params.analysis_id,
+                portfolio_id=params.portfolio_id,
+            )
+            preflight = self._review_brief_preflight_for_resolution(store, resolution)
+            if not preflight.eligible:
+                raise ReviewBriefSafetyError("REVIEW_BRIEF_PREFLIGHT_BLOCKED")
+            if (
+                preflight.experimental_acknowledgement_required
+                and not params.experimental_agent_acknowledged
+            ):
+                raise ReviewBriefSafetyError("REVIEW_BRIEF_EXPERIMENTAL_ACKNOWLEDGEMENT_REQUIRED")
+            latest = store.latest_review_brief_draft(
+                analysis_id=params.analysis_id,
+                portfolio_id=params.portfolio_id,
+            )
+            expected_parent = latest.draft_id if latest is not None else None
+            if params.supersedes_draft_id != expected_parent:
+                raise ReviewBriefSafetyError("REVIEW_BRIEF_SUPERSEDES_MISMATCH")
+            runner = self._review_brief_runner_for(
+                project_root=store.root,
+                resolution=resolution,
+            )
+            request = runner_request(resolution.source)
+            runner_invoked = True
+            failure_stage = ReviewBriefFailureStage.PROVIDER_PREFLIGHT
+            capability_preflight = getattr(runner, "preflight", None)
+            if callable(capability_preflight):
+                capability = capability_preflight(request=request)
+                if not all(
+                    getattr(capability, field, False) is True
+                    for field in (
+                        "tool_calling_verified",
+                        "strict_structured_output_verified",
+                        "trace_readback_verified",
+                    )
+                ):
+                    raise ReviewBriefSafetyError("REVIEW_BRIEF_RUNNER_CAPABILITY_PREFLIGHT_FAILED")
+            failure_stage = ReviewBriefFailureStage.AGENT_EXECUTION
+            raw_runner_result = runner.prepare(request=request)
+            failure_stage = ReviewBriefFailureStage.OUTPUT_VALIDATION
+            runner_result = ReviewBriefRunnerResult.model_validate(raw_runner_result)
+            failure_stage = ReviewBriefFailureStage.TRACE_READBACK
+            if resolution.association is not None and (
+                runner_result.trace.association_id != resolution.association.association_id
+                or runner_result.trace.wandb_run_id != resolution.association.wandb_run_id
+            ):
+                raise ReviewBriefSafetyError("REVIEW_BRIEF_TRACE_ASSOCIATION_MISMATCH")
+            failure_stage = ReviewBriefFailureStage.AUTHORIZATION
+            current = self._resolve_review_brief_source(
+                store,
+                analysis_id=params.analysis_id,
+                portfolio_id=params.portfolio_id,
+            )
+            if current.source.decision_board_sha256 != resolution.source.decision_board_sha256:
+                raise ReviewBriefSafetyError("REVIEW_BRIEF_SOURCE_CHANGED_DURING_PREPARE")
+            failure_stage = ReviewBriefFailureStage.OUTPUT_VALIDATION
+            draft = render_review_brief(
+                call_id=params.call_id,
+                source=current.source,
+                result=runner_result,
+                created_at=datetime.now(UTC),
+                supersedes_draft_id=params.supersedes_draft_id,
+            )
+            failure_stage = ReviewBriefFailureStage.PERSISTENCE
+            store.publish_review_brief_draft(
+                call_id=params.call_id,
+                draft=draft,
+                runner_result=runner_result,
+                source=current.source,
+            )
+        except BaseException as exc:
+            if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                raise
+            error_code = exc.error.code if isinstance(exc, RPCFault) else rejection_error_code(exc)
+            try:
+                project_id = str(store.project()["project_id"])
+                if store.review_brief_call_record(params.call_id) is None:
+                    store.record_review_brief_rejection(
+                        ReviewBriefRejectionAudit(
+                            call_id=params.call_id,
+                            project_id=project_id,
+                            analysis_id=params.analysis_id,
+                            portfolio_id=params.portfolio_id,
+                            error_code=error_code,
+                            failure_stage=failure_stage,
+                            decision_board_sha256=(
+                                resolution.source.decision_board_sha256
+                                if resolution is not None
+                                else None
+                            ),
+                            runner_invoked=runner_invoked,
+                            runner_receipt=(
+                                ReviewBriefRejectedRunnerReceipt(
+                                    provider_call_id_sha256=(runner_result.provider_call_id_sha256),
+                                    provider_model=runner_result.provider_model,
+                                    tool_calls=runner_result.tool_calls,
+                                    trace=runner_result.trace,
+                                )
+                                if runner_result is not None
+                                else None
+                            ),
+                            created_at=datetime.now(UTC),
+                        )
+                    )
+            except (KeyError, RuntimeError, ValueError):
+                pass
+            if isinstance(exc, RPCFault):
+                raise
+            if error_code.startswith(("REVIEW_BRIEF_AGENT_", "RIDGEWAY_", "NATIVE_AGENT_")):
+                raise self._assistant_failure(RuntimeError(error_code)) from exc
+            raise _fault(
+                error_code,
+                "No Review Brief draft was saved because an evidence, authorization, provider, or trace gate failed.",
+                category=ErrorCategory.SECURITY,
+                severity=Severity.BLOCKING,
+                retryable=error_code
+                in {
+                    "REVIEW_BRIEF_RUNNER_UNAVAILABLE",
+                    "REVIEW_BRIEF_PREPARE_FAILED",
+                },
+            ) from exc
+        finally:
+            store.close()
+        return self._result(
+            "assistant.review_brief.prepare",
+            {"draft": draft.model_dump(mode="json"), "acknowledgement": None},
+        )
+
+    def _review_brief_current_draft(
+        self,
+        store: EcoProjectStore,
+        draft: ReviewBriefDraft,
+    ) -> ReviewBriefDraft:
+        try:
+            current = self._resolve_review_brief_source(
+                store,
+                analysis_id=draft.analysis_id,
+                portfolio_id=draft.portfolio_id,
+            )
+            current_sha256 = current.source.decision_board_sha256
+        except (RPCFault, ReviewBriefSafetyError):
+            current_sha256 = "0" * 64
+        return mark_stale(draft, current_decision_board_sha256=current_sha256)
+
+    def _review_brief_get(self, params: ReviewBriefGetParams) -> PayloadResult:
+        store = self._store(params.project_directory)
+        try:
+            draft = self._review_brief_current_draft(
+                store,
+                store.review_brief_draft(params.draft_id),
+            )
+            acknowledgement = store.review_brief_acknowledgement(draft.draft_id)
+        finally:
+            store.close()
+        return self._result(
+            "assistant.review_brief.get",
+            {
+                "draft": draft.model_dump(mode="json"),
+                "acknowledgement": (
+                    acknowledgement.model_dump(mode="json") if acknowledgement is not None else None
+                ),
+            },
+        )
+
+    def _review_brief_list(self, params: ReviewBriefListParams) -> PayloadResult:
+        store = self._store(params.project_directory)
+        try:
+            drafts = [
+                self._review_brief_current_draft(store, item)
+                for item in store.list_review_brief_drafts(
+                    analysis_id=params.analysis_id,
+                    portfolio_id=params.portfolio_id,
+                )
+            ]
+            acknowledgements = [
+                acknowledgement
+                for item in drafts
+                if (acknowledgement := store.review_brief_acknowledgement(item.draft_id))
+                is not None
+            ]
+        finally:
+            store.close()
+        return self._result(
+            "assistant.review_brief.list",
+            {
+                "drafts": [item.model_dump(mode="json") for item in drafts],
+                "acknowledgements": [item.model_dump(mode="json") for item in acknowledgements],
+            },
+        )
+
+    def _review_brief_acknowledge(self, params: ReviewBriefAcknowledgeParams) -> PayloadResult:
+        store = self._store(params.project_directory)
+        try:
+            draft = store.review_brief_draft(params.draft_id)
+            acknowledgement = store.review_brief_acknowledgement(params.draft_id)
+            if acknowledgement is not None:
+                if (
+                    acknowledgement.acknowledgement_id != params.acknowledgement_id
+                    or acknowledgement.reviewer != params.reviewer
+                    or acknowledgement.statement != params.acknowledgement
+                ):
+                    raise ValueError("review brief was already acknowledged differently")
+                recorded = acknowledgement
+            else:
+                current = self._resolve_review_brief_source(
+                    store,
+                    analysis_id=draft.analysis_id,
+                    portfolio_id=draft.portfolio_id,
+                )
+                acknowledgement = ReviewBriefAcknowledgement(
+                    acknowledgement_id=params.acknowledgement_id,
+                    draft_id=params.draft_id,
+                    reviewer=params.reviewer,
+                    statement=params.acknowledgement,
+                    acknowledged_at=datetime.now(UTC),
+                    model_unchanged=True,
+                    portfolio_selected=False,
+                )
+                recorded = store.attest_review_brief(
+                    acknowledgement=acknowledgement,
+                    current_model_revision_id=current.source.model_revision_id,
+                    current_decision_board_sha256=current.source.decision_board_sha256,
+                )
+            acknowledgement = store.review_brief_acknowledgement(params.draft_id)
+            if acknowledgement is None or acknowledgement != recorded:
+                raise ValueError("review brief acknowledgement failed authoritative readback")
+        except (ReviewBriefSafetyError, ValueError) as exc:
+            raise _fault(
+                "REVIEW_BRIEF_ACKNOWLEDGEMENT_BLOCKED",
+                "The Review Brief is stale or its current evidence cannot be revalidated.",
+                category=ErrorCategory.SECURITY,
+                severity=Severity.BLOCKING,
+            ) from exc
+        finally:
+            store.close()
+        return self._result(
+            "assistant.review_brief.acknowledge",
+            {
+                "recorded": True,
+                "acknowledgement": acknowledgement.model_dump(mode="json"),
+            },
+        )
+
+    def _review_brief_feedback(self, params: ReviewBriefFeedbackParams) -> PayloadResult:
+        project_root = self._allowed_path(
+            params.project_directory,
+            must_exist=True,
+            purpose="review brief project",
+        )
+        store = self._store(params.project_directory)
+        try:
+            draft = store.review_brief_draft(params.draft_id)
+            evidence_ids = [
+                evidence_id for item in draft.items for evidence_id in item.evidence_claim_ids
+            ]
+            policy = (
+                SensitiveContextPolicy()
+                if draft.source_mode == ReviewBriefSourceMode.RIDGEWAY_SYNTHETIC
+                else self._validated_evidence_sensitive_policy(
+                    store,
+                    evidence_ids,
+                    SensitiveContextPolicy(),
+                )
+            )
+            try:
+                comment = validate_feedback_comment(params.comment, policy)
+            except AssistantSafetyError as exc:
+                raise self._assistant_failure(exc) from exc
+            existing = store.review_brief_feedback(params.feedback_id)
+            if existing is not None:
+                if (
+                    existing.draft_id != params.draft_id
+                    or existing.rating != params.rating
+                    or existing.comment != comment
+                ):
+                    raise _fault(
+                        "REVIEW_BRIEF_FEEDBACK_ID_REUSED",
+                        "This feedback identity is already bound to different feedback.",
+                        category=ErrorCategory.SECURITY,
+                    )
+                feedback = existing
+            else:
+                recorder = getattr(self.assistant_runtime, "record_review_brief_feedback", None)
+                if not callable(recorder):
+                    raise _fault(
+                        "REVIEW_BRIEF_FEEDBACK_TRACE_UNAVAILABLE",
+                        "Feedback cannot be recorded unless the exact Weave Agents trace can be read back.",
+                        category=ErrorCategory.DATA_PROVIDER,
+                    )
+                try:
+                    trace_receipt = recorder(
+                        project_root=project_root,
+                        draft=draft,
+                        feedback_id=params.feedback_id,
+                        rating=params.rating,
+                        comment=comment,
+                    )
+                except (AssistantSafetyError, PermissionError, RuntimeError, ValueError) as exc:
+                    raise self._assistant_failure(exc) from exc
+                feedback = ReviewBriefFeedbackRecord(
+                    feedback_id=params.feedback_id,
+                    draft_id=params.draft_id,
+                    rating=params.rating,
+                    comment=comment,
+                    recorded_at=datetime.now(UTC),
+                    trace_receipt=trace_receipt,
+                )
+                store.record_review_brief_feedback(feedback)
+        finally:
+            store.close()
+        return self._result(
+            "assistant.review_brief.feedback",
+            {"recorded": True, "feedback": feedback.model_dump(mode="json")},
+        )
+
     def _assistant_feedback(self, params: AssistantFeedbackParams) -> PayloadResult:
         project_root = self._allowed_path(
             params.project_directory, must_exist=True, purpose="assistant project"
@@ -9273,6 +10989,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     assistant_runtime = ProviderBackedAssistantRuntime(
         scope_resolver=scope_resolver,
         observability_credentials=observability_credentials,
+        synthetic_trace_identity_verifier=(
+            observability_adapter.revalidate_synthetic_trace_binding
+        ),
     )
     dispatcher = RPCDispatcher(
         data_root=arguments.app_data_root,

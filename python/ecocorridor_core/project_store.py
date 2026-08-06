@@ -156,7 +156,8 @@ def _assumption_node_id(limitation: str) -> str:
 
 
 _RENDERER_LOCAL_PATH = re.compile(
-    r"(?:[A-Za-z]:[\\/]|\\\\|/(?:Users|home|var|private|tmp|opt|etc)/)[^\s\"']+"
+    r"(?:(?<![A-Za-z0-9])[A-Za-z]:[\\/]|\\\\|/(?:Users|home|var|private|tmp|opt|etc)/)"
+    r"[^\s\"']+"
 )
 
 
@@ -489,6 +490,12 @@ CREATE TABLE IF NOT EXISTS eco_observability (
     payload_json TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS eco_synthetic_trace_bindings (
+    project_id TEXT PRIMARY KEY REFERENCES eco_projects(project_id) ON DELETE CASCADE,
+    binding_sha256 TEXT NOT NULL CHECK(length(binding_sha256) = 64),
+    payload_json TEXT NOT NULL,
+    connected_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS eco_guided_sessions (
     session_id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES eco_projects(project_id) ON DELETE CASCADE,
@@ -522,6 +529,177 @@ CREATE TABLE IF NOT EXISTS eco_assistant_rejection_audits (
     project_id TEXT NOT NULL REFERENCES eco_projects(project_id) ON DELETE CASCADE,
     operation TEXT NOT NULL CHECK(operation IN ('evidence.explain','evidence_intake.extract')),
     error_code TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    payload_sha256 TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS eco_review_brief_drafts (
+    draft_id TEXT PRIMARY KEY,
+    call_id TEXT NOT NULL UNIQUE,
+    project_id TEXT NOT NULL REFERENCES eco_projects(project_id) ON DELETE CASCADE,
+    analysis_id TEXT NOT NULL,
+    portfolio_id TEXT NOT NULL,
+    model_revision_id TEXT NOT NULL,
+    decision_board_sha256 TEXT NOT NULL,
+    supersedes_draft_id TEXT UNIQUE REFERENCES eco_review_brief_drafts(draft_id),
+    payload_json TEXT NOT NULL,
+    payload_sha256 TEXT NOT NULL,
+    runner_json TEXT NOT NULL,
+    runner_sha256 TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS eco_review_brief_scope_idx
+ON eco_review_brief_drafts(project_id,analysis_id,portfolio_id,created_at,draft_id);
+CREATE UNIQUE INDEX IF NOT EXISTS eco_review_brief_draft_project_key
+ON eco_review_brief_drafts(draft_id,project_id);
+CREATE TABLE IF NOT EXISTS eco_review_brief_items (
+    draft_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    item_sequence INTEGER NOT NULL CHECK(item_sequence > 0),
+    payload_json TEXT NOT NULL,
+    payload_sha256 TEXT NOT NULL CHECK(
+      length(payload_sha256)=64
+      AND payload_sha256=lower(payload_sha256)
+      AND payload_sha256 NOT GLOB '*[^0-9a-f]*'
+    ),
+    PRIMARY KEY(draft_id,item_id),
+    UNIQUE(draft_id,item_sequence),
+    FOREIGN KEY(draft_id,project_id)
+      REFERENCES eco_review_brief_drafts(draft_id,project_id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS eco_review_brief_finding_selections (
+    draft_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    finding_alias TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    selection_sequence INTEGER NOT NULL CHECK(selection_sequence > 0),
+    payload_json TEXT NOT NULL,
+    payload_sha256 TEXT NOT NULL CHECK(
+      length(payload_sha256)=64
+      AND payload_sha256=lower(payload_sha256)
+      AND payload_sha256 NOT GLOB '*[^0-9a-f]*'
+    ),
+    PRIMARY KEY(draft_id,finding_alias),
+    UNIQUE(draft_id,item_id),
+    UNIQUE(draft_id,selection_sequence),
+    FOREIGN KEY(draft_id,project_id)
+      REFERENCES eco_review_brief_drafts(draft_id,project_id) ON DELETE CASCADE,
+    FOREIGN KEY(draft_id,item_id)
+      REFERENCES eco_review_brief_items(draft_id,item_id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS eco_review_brief_evidence_edges (
+    edge_id TEXT PRIMARY KEY,
+    draft_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    edge_sequence INTEGER NOT NULL CHECK(edge_sequence > 0),
+    edge_kind TEXT NOT NULL CHECK(edge_kind IN ('EVIDENCE_CLAIM','DIRECT_RUN','SCENARIO')),
+    target_id TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    payload_sha256 TEXT NOT NULL CHECK(
+      length(payload_sha256)=64
+      AND payload_sha256=lower(payload_sha256)
+      AND payload_sha256 NOT GLOB '*[^0-9a-f]*'
+    ),
+    UNIQUE(draft_id,item_id,edge_sequence),
+    UNIQUE(draft_id,item_id,edge_kind,target_id),
+    FOREIGN KEY(draft_id,project_id)
+      REFERENCES eco_review_brief_drafts(draft_id,project_id) ON DELETE CASCADE,
+    FOREIGN KEY(draft_id,item_id)
+      REFERENCES eco_review_brief_items(draft_id,item_id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS eco_review_brief_agent_executions (
+    execution_id TEXT PRIMARY KEY,
+    draft_id TEXT NOT NULL UNIQUE,
+    call_id TEXT NOT NULL UNIQUE,
+    project_id TEXT NOT NULL,
+    snapshot_sha256 TEXT NOT NULL CHECK(
+      length(snapshot_sha256)=64
+      AND snapshot_sha256=lower(snapshot_sha256)
+      AND snapshot_sha256 NOT GLOB '*[^0-9a-f]*'
+    ),
+    payload_json TEXT NOT NULL,
+    payload_sha256 TEXT NOT NULL CHECK(
+      length(payload_sha256)=64
+      AND payload_sha256=lower(payload_sha256)
+      AND payload_sha256 NOT GLOB '*[^0-9a-f]*'
+    ),
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(draft_id,project_id)
+      REFERENCES eco_review_brief_drafts(draft_id,project_id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS eco_review_brief_tool_receipts (
+    execution_id TEXT NOT NULL REFERENCES eco_review_brief_agent_executions(execution_id)
+      ON DELETE CASCADE,
+    tool_sequence INTEGER NOT NULL CHECK(tool_sequence > 0),
+    tool_name TEXT NOT NULL CHECK(tool_name IN (
+      'review_brief_get_scope','review_brief_list_findings','review_brief_get_findings',
+      'review_brief_list_option_constraints','review_brief_list_model_fitness_gaps',
+      'review_brief_resolve_evidence_aliases','review_brief_get_reference_status',
+      'review_brief_get_authorization_status'
+    )),
+    payload_json TEXT NOT NULL,
+    payload_sha256 TEXT NOT NULL CHECK(
+      length(payload_sha256)=64
+      AND payload_sha256=lower(payload_sha256)
+      AND payload_sha256 NOT GLOB '*[^0-9a-f]*'
+    ),
+    PRIMARY KEY(execution_id,tool_sequence)
+);
+CREATE TABLE IF NOT EXISTS eco_review_brief_validations (
+    draft_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    payload_sha256 TEXT NOT NULL CHECK(
+      length(payload_sha256)=64
+      AND payload_sha256=lower(payload_sha256)
+      AND payload_sha256 NOT GLOB '*[^0-9a-f]*'
+    ),
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(draft_id,project_id)
+      REFERENCES eco_review_brief_drafts(draft_id,project_id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS eco_review_brief_trace_references (
+    draft_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    trace_id TEXT NOT NULL,
+    weave_call_id TEXT NOT NULL,
+    wandb_run_id TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    payload_sha256 TEXT NOT NULL CHECK(
+      length(payload_sha256)=64
+      AND payload_sha256=lower(payload_sha256)
+      AND payload_sha256 NOT GLOB '*[^0-9a-f]*'
+    ),
+    created_at TEXT NOT NULL,
+    UNIQUE(project_id,trace_id),
+    UNIQUE(project_id,weave_call_id),
+    FOREIGN KEY(draft_id,project_id)
+      REFERENCES eco_review_brief_drafts(draft_id,project_id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS eco_review_brief_rejections (
+    call_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES eco_projects(project_id) ON DELETE CASCADE,
+    analysis_id TEXT NOT NULL,
+    portfolio_id TEXT NOT NULL,
+    error_code TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    payload_sha256 TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS eco_review_brief_attestations (
+    acknowledgement_id TEXT PRIMARY KEY,
+    draft_id TEXT NOT NULL UNIQUE REFERENCES eco_review_brief_drafts(draft_id),
+    project_id TEXT NOT NULL REFERENCES eco_projects(project_id) ON DELETE CASCADE,
+    payload_json TEXT NOT NULL,
+    payload_sha256 TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS eco_review_brief_feedback (
+    feedback_id TEXT PRIMARY KEY,
+    draft_id TEXT NOT NULL REFERENCES eco_review_brief_drafts(draft_id),
+    project_id TEXT NOT NULL REFERENCES eco_projects(project_id) ON DELETE CASCADE,
     payload_json TEXT NOT NULL,
     payload_sha256 TEXT NOT NULL,
     created_at TEXT NOT NULL
@@ -718,6 +896,13 @@ BEFORE INSERT ON eco_evidence_claims
 WHEN EXISTS (SELECT 1 FROM eco_reference_comparison_claims WHERE claim_id=NEW.claim_id)
 BEGIN SELECT RAISE(ABORT, 'analysis claim identity collides with reference evidence'); END;
 
+CREATE TRIGGER IF NOT EXISTS eco_synthetic_trace_binding_immutable_update
+BEFORE UPDATE ON eco_synthetic_trace_bindings
+BEGIN SELECT RAISE(ABORT, 'synthetic trace binding is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS eco_synthetic_trace_binding_immutable_delete
+BEFORE DELETE ON eco_synthetic_trace_bindings
+BEGIN SELECT RAISE(ABORT, 'synthetic trace binding is immutable'); END;
+
 CREATE TRIGGER IF NOT EXISTS eco_outbox_evidence_immutable
 BEFORE UPDATE OF project_id,analysis_id,event_type,subject_id,stream_id,stream_sequence,
                  outbox_sequence,payload_json,payload_sha256,
@@ -769,6 +954,81 @@ CREATE TRIGGER IF NOT EXISTS eco_assistant_rejection_excludes_answer
 BEFORE INSERT ON eco_assistant_rejection_audits
 WHEN EXISTS (SELECT 1 FROM eco_assistant_records WHERE call_id=NEW.call_id)
 BEGIN SELECT RAISE(ABORT, 'answered assistant call cannot become rejected'); END;
+
+CREATE TRIGGER IF NOT EXISTS eco_review_brief_draft_immutable_update
+BEFORE UPDATE ON eco_review_brief_drafts
+BEGIN SELECT RAISE(ABORT, 'review brief draft is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS eco_review_brief_draft_immutable_delete
+BEFORE DELETE ON eco_review_brief_drafts
+BEGIN SELECT RAISE(ABORT, 'review brief draft is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS eco_review_brief_item_immutable_update
+BEFORE UPDATE ON eco_review_brief_items
+BEGIN SELECT RAISE(ABORT, 'review brief item is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS eco_review_brief_item_immutable_delete
+BEFORE DELETE ON eco_review_brief_items
+BEGIN SELECT RAISE(ABORT, 'review brief item is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS eco_review_brief_selection_immutable_update
+BEFORE UPDATE ON eco_review_brief_finding_selections
+BEGIN SELECT RAISE(ABORT, 'review brief finding selection is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS eco_review_brief_selection_immutable_delete
+BEFORE DELETE ON eco_review_brief_finding_selections
+BEGIN SELECT RAISE(ABORT, 'review brief finding selection is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS eco_review_brief_evidence_edge_immutable_update
+BEFORE UPDATE ON eco_review_brief_evidence_edges
+BEGIN SELECT RAISE(ABORT, 'review brief evidence edge is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS eco_review_brief_evidence_edge_immutable_delete
+BEFORE DELETE ON eco_review_brief_evidence_edges
+BEGIN SELECT RAISE(ABORT, 'review brief evidence edge is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS eco_review_brief_execution_immutable_update
+BEFORE UPDATE ON eco_review_brief_agent_executions
+BEGIN SELECT RAISE(ABORT, 'review brief agent execution is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS eco_review_brief_execution_immutable_delete
+BEFORE DELETE ON eco_review_brief_agent_executions
+BEGIN SELECT RAISE(ABORT, 'review brief agent execution is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS eco_review_brief_tool_receipt_immutable_update
+BEFORE UPDATE ON eco_review_brief_tool_receipts
+BEGIN SELECT RAISE(ABORT, 'review brief tool receipt is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS eco_review_brief_tool_receipt_immutable_delete
+BEFORE DELETE ON eco_review_brief_tool_receipts
+BEGIN SELECT RAISE(ABORT, 'review brief tool receipt is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS eco_review_brief_validation_immutable_update
+BEFORE UPDATE ON eco_review_brief_validations
+BEGIN SELECT RAISE(ABORT, 'review brief validation is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS eco_review_brief_validation_immutable_delete
+BEFORE DELETE ON eco_review_brief_validations
+BEGIN SELECT RAISE(ABORT, 'review brief validation is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS eco_review_brief_trace_reference_immutable_update
+BEFORE UPDATE ON eco_review_brief_trace_references
+BEGIN SELECT RAISE(ABORT, 'review brief trace reference is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS eco_review_brief_trace_reference_immutable_delete
+BEFORE DELETE ON eco_review_brief_trace_references
+BEGIN SELECT RAISE(ABORT, 'review brief trace reference is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS eco_review_brief_rejection_immutable_update
+BEFORE UPDATE ON eco_review_brief_rejections
+BEGIN SELECT RAISE(ABORT, 'review brief rejection is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS eco_review_brief_rejection_immutable_delete
+BEFORE DELETE ON eco_review_brief_rejections
+BEGIN SELECT RAISE(ABORT, 'review brief rejection is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS eco_review_brief_attestation_immutable_update
+BEFORE UPDATE ON eco_review_brief_attestations
+BEGIN SELECT RAISE(ABORT, 'review brief attestation is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS eco_review_brief_attestation_immutable_delete
+BEFORE DELETE ON eco_review_brief_attestations
+BEGIN SELECT RAISE(ABORT, 'review brief attestation is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS eco_review_brief_feedback_immutable_update
+BEFORE UPDATE ON eco_review_brief_feedback
+BEGIN SELECT RAISE(ABORT, 'review brief feedback is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS eco_review_brief_feedback_immutable_delete
+BEFORE DELETE ON eco_review_brief_feedback
+BEGIN SELECT RAISE(ABORT, 'review brief feedback is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS eco_review_brief_draft_excludes_rejection
+BEFORE INSERT ON eco_review_brief_drafts
+WHEN EXISTS (SELECT 1 FROM eco_review_brief_rejections WHERE call_id=NEW.call_id)
+BEGIN SELECT RAISE(ABORT, 'rejected review brief call cannot publish a draft'); END;
+CREATE TRIGGER IF NOT EXISTS eco_review_brief_rejection_excludes_draft
+BEFORE INSERT ON eco_review_brief_rejections
+WHEN EXISTS (SELECT 1 FROM eco_review_brief_drafts WHERE call_id=NEW.call_id)
+BEGIN SELECT RAISE(ABORT, 'published review brief call cannot become rejected'); END;
 """
 
 
@@ -781,7 +1041,7 @@ BEFORE INSERT ON eco_telemetry_outbox
 WHEN NEW.event_type NOT IN (
   'bundle_import','semantic_revision','model_attestation','analysis_plan','guided_session','guided_checkpoint',
   'direct_job_terminal','analysis_completion','reference_comparison','evidence_export',
-  'oversize_sync_approval'
+  'oversize_sync_approval','review_brief_draft'
 )
 BEGIN SELECT RAISE(ABORT, 'unsupported telemetry event type'); END;
 CREATE TRIGGER IF NOT EXISTS eco_outbox_event_type_update
@@ -789,7 +1049,7 @@ BEFORE UPDATE OF event_type ON eco_telemetry_outbox
 WHEN NEW.event_type NOT IN (
   'bundle_import','semantic_revision','model_attestation','analysis_plan','guided_session','guided_checkpoint',
   'direct_job_terminal','analysis_completion','reference_comparison','evidence_export',
-  'oversize_sync_approval'
+  'oversize_sync_approval','review_brief_draft'
 )
 BEGIN SELECT RAISE(ABORT, 'unsupported telemetry event type'); END;
 COMMIT;
@@ -849,6 +1109,9 @@ class EcoProjectStore:
             111,
             112,
             113,
+            114,
+            115,
+            116,
         }:
             self._connection.close()
             raise RuntimeError(f"unsupported EcoCorridor database version: {version}")
@@ -1124,12 +1387,46 @@ class EcoProjectStore:
             )
         if version < 109:
             self._connection.execute("DROP TRIGGER IF EXISTS eco_outbox_evidence_immutable")
+        if version < 116:
+            # Schema 115 retained the complete draft and runner receipts only as
+            # checked blobs. Backfill the normalized immutable evidence graph in
+            # one transaction so an interrupted upgrade can never leave a draft
+            # that appears partially published.
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                for row in self._connection.execute(
+                    "SELECT * FROM eco_review_brief_drafts ORDER BY created_at,draft_id"
+                ).fetchall():
+                    draft = self._review_brief_draft_from_row(row)
+                    runner_json = str(row["runner_json"])
+                    if hashlib.sha256(runner_json.encode("utf-8")).hexdigest() != str(
+                        row["runner_sha256"]
+                    ):
+                        raise RuntimeError(
+                            "schema-115 review brief runner failed its retained checksum"
+                        )
+                    from .review_brief import ReviewBriefRunnerResult
+
+                    runner = ReviewBriefRunnerResult.model_validate_json(runner_json)
+                    self._insert_review_brief_normalized(
+                        self._connection,
+                        project_id=str(row["project_id"]),
+                        call_id=str(row["call_id"]),
+                        draft=draft,
+                        runner=runner,
+                    )
+            except BaseException:
+                self._connection.rollback()
+                self._connection.close()
+                raise
+            else:
+                self._connection.commit()
         # The v112 definition also freezes ``analysis_kind``. Recreate rather
         # than relying on ``IF NOT EXISTS`` against a pre-v112 trigger body.
         self._connection.execute("DROP TRIGGER IF EXISTS eco_analysis_plan_immutable")
         self._connection.executescript(_MIGRATION_105_TRIGGERS)
         self._connection.executescript(_MIGRATION_106_EVENT_POLICY)
-        self._connection.execute("PRAGMA user_version=113")
+        self._connection.execute("PRAGMA user_version=116")
         # Expired leases are process-abandoned cloud work, not scientific state.
         # Releasing them at open makes retry durable without stealing a live lease.
         self.recover_expired_outbox_leases()
@@ -1516,6 +1813,110 @@ class EcoProjectStore:
         if row is None:
             raise KeyError(f"{record_type}:{record_id}")
         return json.loads(row["payload_json"])
+
+    def resolve_model_fitness_evidence(self, evidence_id: str) -> dict[str, Any]:
+        """Resolve one active Passport evidence reference without treating it as a solver claim.
+
+        Fitness dimensions may cite either an active checksum-verified project asset or an
+        immutable worker-retained evidence record.  This resolver accepts only IDs actually
+        named by the active Model Fitness Passport and verifies every retained source byte
+        before returning a local, claim-shaped evidence projection.
+        """
+
+        bundle = self.effective_bundle()
+        authorized_ids = {
+            item for dimension in bundle.fitness.dimensions for item in dimension.evidence_ids
+        }
+        if evidence_id not in authorized_ids:
+            raise KeyError(evidence_id)
+        assets = {item.asset_id: item for item in bundle.assets}
+
+        def verify_asset(asset: ConnectivityAsset) -> dict[str, Any]:
+            path = self.resolve_asset_path(asset.relative_path)
+            _read_verified_regular_file(
+                path,
+                expected_sha256=asset.sha256,
+                expected_byte_size=asset.byte_size,
+                capture_bytes=False,
+            )
+            return asset.model_dump(mode="json")
+
+        if evidence_id in assets:
+            source_assets = [verify_asset(assets[evidence_id])]
+            return {
+                "evidence_id": evidence_id,
+                "evidence_kind": "ACTIVE_ASSET",
+                "revision_id": bundle.revision.revision_id,
+                "model_sha256": bundle.revision.model_sha256,
+                "content_sha256": assets[evidence_id].sha256,
+                "source_assets": source_assets,
+            }
+
+        # A reviewed Passport may cite an authoritative reference-comparison
+        # result (or one of its retained comparison claims).  Resolve those
+        # through the repository's full immutable validation path rather than
+        # treating the opaque ID as a generic record.  The caller still applies
+        # the model-fitness/reference-policy gate before using this projection.
+        for result, claims in self.reference_comparison_results(
+            revision_id=bundle.revision.revision_id,
+            model_sha256=bundle.revision.model_sha256,
+        ):
+            reference_ids = {result.result_id, *(claim.claim_id for claim in claims)}
+            if evidence_id not in reference_ids or result.status != "PASSED":
+                continue
+            source_asset_ids: set[str] = set()
+            for claim in claims:
+                for node in claim.nodes:
+                    if node.node_type != "ASSET":
+                        continue
+                    candidate = node.node_id.removeprefix("asset:")
+                    if candidate in assets:
+                        source_asset_ids.add(candidate)
+                    elif str(node.label) in assets:
+                        source_asset_ids.add(str(node.label))
+            source_assets = [verify_asset(assets[item]) for item in sorted(source_asset_ids)]
+            reference_payload = {
+                "result": result.model_dump(mode="json"),
+                "claims": [item.model_dump(mode="json") for item in claims],
+            }
+            return {
+                "evidence_id": evidence_id,
+                "evidence_kind": "REFERENCE_COMPARISON",
+                "revision_id": bundle.revision.revision_id,
+                "model_sha256": bundle.revision.model_sha256,
+                "content_sha256": canonical_sha256(reference_payload),
+                "source_assets": source_assets,
+            }
+
+        retained = self.get_record("model_fitness_evidence", evidence_id)
+        content = retained.get("content")
+        source_asset_ids = retained.get("source_asset_ids")
+        if (
+            retained.get("schema_version") != "ecocorridor-model-fitness-evidence/v1.0"
+            or retained.get("evidence_id") != evidence_id
+            or retained.get("revision_id") != bundle.revision.revision_id
+            or retained.get("model_sha256") != bundle.revision.model_sha256
+            or not isinstance(content, dict)
+            or retained.get("content_sha256") != canonical_sha256(content)
+            or not isinstance(source_asset_ids, list)
+            or any(not isinstance(item, str) or not item for item in source_asset_ids)
+        ):
+            raise ValueError("model-fitness evidence record failed active-revision integrity")
+        if len(source_asset_ids) != len(set(source_asset_ids)):
+            raise ValueError("model-fitness evidence source assets are duplicated")
+        try:
+            source_assets = [verify_asset(assets[item]) for item in source_asset_ids]
+        except KeyError as exc:
+            raise ValueError("model-fitness evidence cites a non-active source asset") from exc
+        return {
+            "evidence_id": evidence_id,
+            "evidence_kind": "RETAINED_RECORD",
+            "revision_id": bundle.revision.revision_id,
+            "model_sha256": bundle.revision.model_sha256,
+            "content_sha256": str(retained["content_sha256"]),
+            "source_assets": source_assets,
+            "record": retained,
+        }
 
     def get_record_revision(
         self, record_type: str, record_id: str, revision: int
@@ -6731,6 +7132,69 @@ class EcoProjectStore:
         ).fetchone()
         return json.loads(row["payload_json"]) if row else None
 
+    def set_synthetic_trace_binding(self, payload: dict[str, Any]) -> str:
+        """Persist an immutable Ridgeway trace-only destination outside full sync.
+
+        The record is intentionally separate from ``eco_observability`` so no
+        professional upload, artifact, run, or scope-verification path can
+        interpret CC0 consent as a Restricted project binding.
+        """
+
+        project = self.project()
+        if project["mode"] != "GUIDED":
+            raise ValueError("synthetic trace binding requires a guided project")
+        if payload.get("policy") != "RIDGEWAY_CC0_TRACE_ONLY":
+            raise ValueError("synthetic trace binding policy is invalid")
+        if (
+            payload.get("visibility_claim") != "NONE"
+            or payload.get("restricted_verified") is not False
+            or payload.get("full_sync_allowed") is not False
+            or payload.get("artifact_upload_allowed") is not False
+        ):
+            raise ValueError("synthetic trace binding cannot grant cloud visibility or sync")
+        project_id = str(project["project_id"])
+        payload_json = canonical_json(payload)
+        binding_sha256 = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+        with self.transaction() as connection:
+            existing = connection.execute(
+                "SELECT binding_sha256,payload_json FROM eco_synthetic_trace_bindings "
+                "WHERE project_id=?",
+                (project_id,),
+            ).fetchone()
+            if existing is not None:
+                if (
+                    str(existing["binding_sha256"]) != binding_sha256
+                    or str(existing["payload_json"]) != payload_json
+                ):
+                    raise ValueError(
+                        "synthetic trace destination is immutable for this guided project"
+                    )
+                return binding_sha256
+            connection.execute(
+                "INSERT INTO eco_synthetic_trace_bindings("
+                "project_id,binding_sha256,payload_json,connected_at) VALUES(?,?,?,?)",
+                (project_id, binding_sha256, payload_json, _now()),
+            )
+        return binding_sha256
+
+    def synthetic_trace_binding(self) -> dict[str, Any] | None:
+        project_id = str(self.project()["project_id"])
+        row = self._connection.execute(
+            "SELECT binding_sha256,payload_json,connected_at "
+            "FROM eco_synthetic_trace_bindings WHERE project_id=?",
+            (project_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        payload_json = str(row["payload_json"])
+        binding_sha256 = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+        if binding_sha256 != str(row["binding_sha256"]):
+            raise RuntimeError("synthetic trace binding integrity check failed")
+        payload = json.loads(payload_json)
+        payload["binding_sha256"] = binding_sha256
+        payload["connected_at"] = str(row["connected_at"])
+        return payload
+
     def set_guided(self, session_id: str, state: str, projection: dict[str, Any]) -> int:
         project_id = self.project()["project_id"]
         projection_json = canonical_json(projection)
@@ -7065,16 +7529,29 @@ class EcoProjectStore:
         project_id = self.project()["project_id"]
         if association.get("project_id") != project_id:
             raise ValueError("assistant rejection association belongs to another project")
-        if provider_abort_trace is not None and (
-            provider_abort_trace.get("call_id") != call_id
-            or provider_abort_trace.get("completed") is not False
-            or provider_abort_trace.get("persisted") is not True
-            or provider_abort_trace.get("trace_readback_verified") is not True
-            or provider_abort_trace.get("association") != association
-        ):
-            raise ValueError("assistant rejection abort trace is not verified provider evidence")
+        if provider_abort_trace is not None:
+            completed = provider_abort_trace.get("completed")
+            if (
+                provider_abort_trace.get("call_id") != call_id
+                or completed not in {True, False}
+                or provider_abort_trace.get("persisted") is not True
+                or provider_abort_trace.get("trace_readback_verified") is not True
+                or provider_abort_trace.get("association") != association
+                or (
+                    completed is True
+                    and (
+                        provider_abort_trace.get("answer_returned") is not False
+                        or not provider_abort_trace.get("trace_id")
+                        or not provider_abort_trace.get("weave_call_id")
+                    )
+                )
+            ):
+                raise ValueError("assistant rejection trace is not verified provider evidence")
+        completed_trace_verified = bool(
+            provider_abort_trace is not None and provider_abort_trace.get("completed") is True
+        )
         payload = {
-            "schema_version": "ecocorridor-assistant-rejection-audit/v1.0",
+            "schema_version": "ecocorridor-assistant-rejection-audit/v1.1",
             "call_id": call_id,
             "project_id": project_id,
             "operation": operation,
@@ -7086,7 +7563,7 @@ class EcoProjectStore:
             "association": association,
             "provider_abort_trace": provider_abort_trace,
             "provider_abort_trace_verified": provider_abort_trace is not None,
-            "completed_trace_readback_verified": False,
+            "completed_trace_readback_verified": completed_trace_verified,
             "answer_returned": False,
         }
         payload_json = canonical_json(payload)
@@ -7144,7 +7621,11 @@ class EcoProjectStore:
             payload.get("call_id") != call_id
             or payload.get("disposition") != "REJECTED"
             or payload.get("provider_completed") is not True
-            or payload.get("completed_trace_readback_verified") is not False
+            or payload.get("completed_trace_readback_verified")
+            is not bool(
+                isinstance(payload.get("provider_abort_trace"), dict)
+                and payload["provider_abort_trace"].get("completed") is True
+            )
             or payload.get("answer_returned") is not False
         ):
             raise ValueError("assistant rejection audit has an invalid safety disposition")
@@ -7185,18 +7666,1106 @@ class EcoProjectStore:
         return {"answer": json.loads(row["answer_json"]), "trace_id": row["trace_id"]}
 
     def assistant_answer_by_trace(self, trace_id: str) -> dict[str, Any] | None:
-        """Resolve one retained assistant answer by its confirmed Weave trace identity."""
+        """Resolve one retained assistant response by confirmed Weave trace identity.
 
-        rows = self._connection.execute(
+        Review Briefs retain their exact trace URL inside the immutable draft
+        rather than the general-purpose assistant-answer table. Return the same
+        narrow answer-shaped projection so the observability adapter can apply
+        its existing destination URL allowlist without knowing the domain table.
+        """
+
+        answer_rows = self._connection.execute(
             "SELECT answer_json,trace_id FROM eco_assistant_records WHERE trace_id=? "
             "ORDER BY call_id LIMIT 2",
             (trace_id,),
         ).fetchall()
+        draft_rows = self._connection.execute(
+            "SELECT * FROM eco_review_brief_drafts ORDER BY created_at,draft_id"
+        ).fetchall()
+        matching_drafts = [
+            draft
+            for row in draft_rows
+            if (
+                draft := self.review_brief_draft_record(str(row["draft_id"]))["draft"]
+            ).trace.trace_id
+            == trace_id
+        ]
+        if len(answer_rows) + len(matching_drafts) > 1:
+            raise ValueError("assistant trace identity resolves to multiple retained answers")
+        if answer_rows:
+            return {
+                "answer": json.loads(answer_rows[0]["answer_json"]),
+                "trace_id": answer_rows[0]["trace_id"],
+            }
+        if not matching_drafts:
+            return None
+        draft = matching_drafts[0]
+        return {
+            "answer": {
+                "trace_id": draft.trace.trace_id,
+                "weave_call_id": draft.trace.weave_call_id,
+                "trace_url": draft.trace.trace_url,
+            },
+            "trace_id": draft.trace.trace_id,
+        }
+
+    @staticmethod
+    def _review_brief_normalized_rows(
+        *,
+        project_id: str,
+        call_id: str,
+        draft: Any,
+        runner: Any,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Create the canonical relational projection of one accepted agent result."""
+
+        if len(draft.items) != len(runner.selections):
+            raise ValueError("review brief items differ from the agent selections")
+        if runner.trace != draft.trace:
+            raise ValueError("review brief agent execution has a different trace")
+
+        def sealed(payload: dict[str, Any]) -> tuple[str, str]:
+            payload_json = canonical_json(payload)
+            return payload_json, hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+
+        created_at = draft.created_at.isoformat()
+        execution_id = (
+            "review_execution_"
+            + canonical_sha256(
+                {
+                    "call_id": call_id,
+                    "draft_id": draft.draft_id,
+                    "snapshot_sha256": runner.snapshot_sha256,
+                    "provider_call_id_sha256": runner.provider_call_id_sha256,
+                    "trace_id": runner.trace.trace_id,
+                }
+            )[:24]
+        )
+        rows: dict[str, list[dict[str, Any]]] = {
+            "items": [],
+            "selections": [],
+            "edges": [],
+            "executions": [],
+            "tools": [],
+            "validations": [],
+            "traces": [],
+        }
+        for item_sequence, (item, selection) in enumerate(
+            zip(draft.items, runner.selections, strict=True),
+            start=1,
+        ):
+            item_payload = {
+                "schema_version": "ecocorridor-review-brief-item/v1.0",
+                "draft_id": draft.draft_id,
+                "item_sequence": item_sequence,
+                "item": item.model_dump(mode="json"),
+            }
+            item_json, item_sha256 = sealed(item_payload)
+            rows["items"].append(
+                {
+                    "draft_id": draft.draft_id,
+                    "project_id": project_id,
+                    "item_id": item.item_id,
+                    "item_sequence": item_sequence,
+                    "payload_json": item_json,
+                    "payload_sha256": item_sha256,
+                }
+            )
+            selection_payload = {
+                "schema_version": "ecocorridor-review-brief-finding-selection/v1.0",
+                "draft_id": draft.draft_id,
+                "item_id": item.item_id,
+                "selection_sequence": item_sequence,
+                "selection": selection.model_dump(mode="json"),
+            }
+            selection_json, selection_sha256 = sealed(selection_payload)
+            rows["selections"].append(
+                {
+                    "draft_id": draft.draft_id,
+                    "project_id": project_id,
+                    "finding_alias": selection.finding_alias,
+                    "item_id": item.item_id,
+                    "selection_sequence": item_sequence,
+                    "payload_json": selection_json,
+                    "payload_sha256": selection_sha256,
+                }
+            )
+            edge_sequence = 0
+            for edge_kind, targets in (
+                ("EVIDENCE_CLAIM", item.evidence_claim_ids),
+                ("DIRECT_RUN", item.direct_run_ids),
+                ("SCENARIO", item.scenario_ids),
+            ):
+                for target_id in targets:
+                    edge_sequence += 1
+                    edge_identity = {
+                        "draft_id": draft.draft_id,
+                        "item_id": item.item_id,
+                        "edge_kind": edge_kind,
+                        "target_id": target_id,
+                    }
+                    edge_id = f"review_edge_{canonical_sha256(edge_identity)[:24]}"
+                    edge_payload = {
+                        "schema_version": "ecocorridor-review-brief-evidence-edge/v1.0",
+                        "edge_id": edge_id,
+                        "edge_sequence": edge_sequence,
+                        **edge_identity,
+                    }
+                    edge_json, edge_sha256 = sealed(edge_payload)
+                    rows["edges"].append(
+                        {
+                            "edge_id": edge_id,
+                            "draft_id": draft.draft_id,
+                            "project_id": project_id,
+                            "item_id": item.item_id,
+                            "edge_sequence": edge_sequence,
+                            "edge_kind": edge_kind,
+                            "target_id": target_id,
+                            "payload_json": edge_json,
+                            "payload_sha256": edge_sha256,
+                        }
+                    )
+
+        execution_payload = {
+            "schema_version": "ecocorridor-review-brief-agent-execution/v1.0",
+            "execution_id": execution_id,
+            "draft_id": draft.draft_id,
+            "call_id": call_id,
+            "snapshot_sha256": runner.snapshot_sha256,
+            "runner_kind": runner.runner_kind,
+            "provider_call_id_sha256": runner.provider_call_id_sha256,
+            "provider_model": runner.provider_model,
+            "input_tokens": runner.input_tokens,
+            "output_tokens": runner.output_tokens,
+            "elapsed_ms": runner.elapsed_ms,
+            "selection_count": len(runner.selections),
+            "tool_call_count": len(runner.tool_calls),
+            "created_at": created_at,
+        }
+        execution_json, execution_sha256 = sealed(execution_payload)
+        rows["executions"].append(
+            {
+                "execution_id": execution_id,
+                "draft_id": draft.draft_id,
+                "call_id": call_id,
+                "project_id": project_id,
+                "snapshot_sha256": runner.snapshot_sha256,
+                "payload_json": execution_json,
+                "payload_sha256": execution_sha256,
+                "created_at": created_at,
+            }
+        )
+        for tool_sequence, tool_name in enumerate(runner.tool_calls, start=1):
+            tool_payload = {
+                "schema_version": "ecocorridor-review-brief-tool-receipt/v1.0",
+                "execution_id": execution_id,
+                "draft_id": draft.draft_id,
+                "snapshot_sha256": runner.snapshot_sha256,
+                "trace_id": runner.trace.trace_id,
+                "tool_sequence": tool_sequence,
+                "tool_name": tool_name,
+            }
+            tool_json, tool_sha256 = sealed(tool_payload)
+            rows["tools"].append(
+                {
+                    "execution_id": execution_id,
+                    "tool_sequence": tool_sequence,
+                    "tool_name": tool_name,
+                    "payload_json": tool_json,
+                    "payload_sha256": tool_sha256,
+                }
+            )
+        validation_payload = {
+            "schema_version": "ecocorridor-review-brief-validation-record/v1.0",
+            "draft_id": draft.draft_id,
+            "validation": draft.validation.model_dump(mode="json"),
+        }
+        validation_json, validation_sha256 = sealed(validation_payload)
+        rows["validations"].append(
+            {
+                "draft_id": draft.draft_id,
+                "project_id": project_id,
+                "payload_json": validation_json,
+                "payload_sha256": validation_sha256,
+                "created_at": created_at,
+            }
+        )
+        trace_payload = {
+            "schema_version": "ecocorridor-review-brief-trace-reference/v1.0",
+            "draft_id": draft.draft_id,
+            "trace": draft.trace.model_dump(mode="json"),
+        }
+        trace_json, trace_sha256 = sealed(trace_payload)
+        rows["traces"].append(
+            {
+                "draft_id": draft.draft_id,
+                "project_id": project_id,
+                "trace_id": draft.trace.trace_id,
+                "weave_call_id": draft.trace.weave_call_id,
+                "wandb_run_id": draft.trace.wandb_run_id,
+                "payload_json": trace_json,
+                "payload_sha256": trace_sha256,
+                "created_at": created_at,
+            }
+        )
+        return rows
+
+    def _verify_review_brief_normalized(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        project_id: str,
+        call_id: str,
+        draft: Any,
+        runner: Any,
+    ) -> None:
+        expected = self._review_brief_normalized_rows(
+            project_id=project_id,
+            call_id=call_id,
+            draft=draft,
+            runner=runner,
+        )
+        specifications = (
+            (
+                "items",
+                "eco_review_brief_items",
+                "draft_id=?",
+                (draft.draft_id,),
+                "item_sequence",
+                (
+                    "draft_id",
+                    "project_id",
+                    "item_id",
+                    "item_sequence",
+                    "payload_json",
+                    "payload_sha256",
+                ),
+            ),
+            (
+                "selections",
+                "eco_review_brief_finding_selections",
+                "draft_id=?",
+                (draft.draft_id,),
+                "selection_sequence",
+                (
+                    "draft_id",
+                    "project_id",
+                    "finding_alias",
+                    "item_id",
+                    "selection_sequence",
+                    "payload_json",
+                    "payload_sha256",
+                ),
+            ),
+            (
+                "edges",
+                "eco_review_brief_evidence_edges",
+                "draft_id=?",
+                (draft.draft_id,),
+                "item_id,edge_sequence",
+                (
+                    "edge_id",
+                    "draft_id",
+                    "project_id",
+                    "item_id",
+                    "edge_sequence",
+                    "edge_kind",
+                    "target_id",
+                    "payload_json",
+                    "payload_sha256",
+                ),
+            ),
+            (
+                "executions",
+                "eco_review_brief_agent_executions",
+                "draft_id=?",
+                (draft.draft_id,),
+                "execution_id",
+                (
+                    "execution_id",
+                    "draft_id",
+                    "call_id",
+                    "project_id",
+                    "snapshot_sha256",
+                    "payload_json",
+                    "payload_sha256",
+                    "created_at",
+                ),
+            ),
+            (
+                "tools",
+                "eco_review_brief_tool_receipts",
+                (
+                    "execution_id=(SELECT execution_id FROM "
+                    "eco_review_brief_agent_executions WHERE draft_id=?)"
+                ),
+                (draft.draft_id,),
+                "tool_sequence",
+                (
+                    "execution_id",
+                    "tool_sequence",
+                    "tool_name",
+                    "payload_json",
+                    "payload_sha256",
+                ),
+            ),
+            (
+                "validations",
+                "eco_review_brief_validations",
+                "draft_id=?",
+                (draft.draft_id,),
+                "draft_id",
+                (
+                    "draft_id",
+                    "project_id",
+                    "payload_json",
+                    "payload_sha256",
+                    "created_at",
+                ),
+            ),
+            (
+                "traces",
+                "eco_review_brief_trace_references",
+                "draft_id=?",
+                (draft.draft_id,),
+                "draft_id",
+                (
+                    "draft_id",
+                    "project_id",
+                    "trace_id",
+                    "weave_call_id",
+                    "wandb_run_id",
+                    "payload_json",
+                    "payload_sha256",
+                    "created_at",
+                ),
+            ),
+        )
+        for key, table, where, parameters, order_by, columns in specifications:
+            actual_rows = connection.execute(
+                f"SELECT {','.join(columns)} FROM {table} WHERE {where} ORDER BY {order_by}",
+                parameters,
+            ).fetchall()
+            actual = [{column: row[column] for column in columns} for row in actual_rows]
+            if actual != expected[key]:
+                raise ValueError(f"review brief normalized {key} failed integrity validation")
+            for row in actual:
+                payload_json = str(row["payload_json"])
+                if hashlib.sha256(payload_json.encode("utf-8")).hexdigest() != str(
+                    row["payload_sha256"]
+                ):
+                    raise ValueError(f"review brief normalized {key} failed its checksum")
+
+    def _insert_review_brief_normalized(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        project_id: str,
+        call_id: str,
+        draft: Any,
+        runner: Any,
+    ) -> None:
+        expected = self._review_brief_normalized_rows(
+            project_id=project_id,
+            call_id=call_id,
+            draft=draft,
+            runner=runner,
+        )
+        existing = sum(
+            int(connection.execute(query, parameters).fetchone()[0])
+            for query, parameters in (
+                (
+                    "SELECT COUNT(*) FROM eco_review_brief_items WHERE draft_id=?",
+                    (draft.draft_id,),
+                ),
+                (
+                    "SELECT COUNT(*) FROM eco_review_brief_finding_selections WHERE draft_id=?",
+                    (draft.draft_id,),
+                ),
+                (
+                    "SELECT COUNT(*) FROM eco_review_brief_evidence_edges WHERE draft_id=?",
+                    (draft.draft_id,),
+                ),
+                (
+                    "SELECT COUNT(*) FROM eco_review_brief_agent_executions WHERE draft_id=?",
+                    (draft.draft_id,),
+                ),
+                (
+                    "SELECT COUNT(*) FROM eco_review_brief_validations WHERE draft_id=?",
+                    (draft.draft_id,),
+                ),
+                (
+                    "SELECT COUNT(*) FROM eco_review_brief_trace_references WHERE draft_id=?",
+                    (draft.draft_id,),
+                ),
+            )
+        )
+        if existing:
+            self._verify_review_brief_normalized(
+                connection,
+                project_id=project_id,
+                call_id=call_id,
+                draft=draft,
+                runner=runner,
+            )
+            return
+
+        insertions = (
+            (
+                "items",
+                (
+                    "INSERT INTO eco_review_brief_items(draft_id,project_id,item_id,"
+                    "item_sequence,payload_json,payload_sha256) VALUES(?,?,?,?,?,?)"
+                ),
+                (
+                    "draft_id",
+                    "project_id",
+                    "item_id",
+                    "item_sequence",
+                    "payload_json",
+                    "payload_sha256",
+                ),
+            ),
+            (
+                "selections",
+                (
+                    "INSERT INTO eco_review_brief_finding_selections(draft_id,project_id,"
+                    "finding_alias,item_id,selection_sequence,payload_json,payload_sha256) "
+                    "VALUES(?,?,?,?,?,?,?)"
+                ),
+                (
+                    "draft_id",
+                    "project_id",
+                    "finding_alias",
+                    "item_id",
+                    "selection_sequence",
+                    "payload_json",
+                    "payload_sha256",
+                ),
+            ),
+            (
+                "edges",
+                (
+                    "INSERT INTO eco_review_brief_evidence_edges(edge_id,draft_id,project_id,"
+                    "item_id,edge_sequence,edge_kind,target_id,payload_json,payload_sha256) "
+                    "VALUES(?,?,?,?,?,?,?,?,?)"
+                ),
+                (
+                    "edge_id",
+                    "draft_id",
+                    "project_id",
+                    "item_id",
+                    "edge_sequence",
+                    "edge_kind",
+                    "target_id",
+                    "payload_json",
+                    "payload_sha256",
+                ),
+            ),
+            (
+                "executions",
+                (
+                    "INSERT INTO eco_review_brief_agent_executions(execution_id,draft_id,call_id,"
+                    "project_id,snapshot_sha256,payload_json,payload_sha256,created_at) "
+                    "VALUES(?,?,?,?,?,?,?,?)"
+                ),
+                (
+                    "execution_id",
+                    "draft_id",
+                    "call_id",
+                    "project_id",
+                    "snapshot_sha256",
+                    "payload_json",
+                    "payload_sha256",
+                    "created_at",
+                ),
+            ),
+            (
+                "tools",
+                (
+                    "INSERT INTO eco_review_brief_tool_receipts(execution_id,tool_sequence,"
+                    "tool_name,payload_json,payload_sha256) VALUES(?,?,?,?,?)"
+                ),
+                (
+                    "execution_id",
+                    "tool_sequence",
+                    "tool_name",
+                    "payload_json",
+                    "payload_sha256",
+                ),
+            ),
+            (
+                "validations",
+                (
+                    "INSERT INTO eco_review_brief_validations(draft_id,project_id,payload_json,"
+                    "payload_sha256,created_at) VALUES(?,?,?,?,?)"
+                ),
+                ("draft_id", "project_id", "payload_json", "payload_sha256", "created_at"),
+            ),
+            (
+                "traces",
+                (
+                    "INSERT INTO eco_review_brief_trace_references(draft_id,project_id,trace_id,"
+                    "weave_call_id,wandb_run_id,payload_json,payload_sha256,created_at) "
+                    "VALUES(?,?,?,?,?,?,?,?)"
+                ),
+                (
+                    "draft_id",
+                    "project_id",
+                    "trace_id",
+                    "weave_call_id",
+                    "wandb_run_id",
+                    "payload_json",
+                    "payload_sha256",
+                    "created_at",
+                ),
+            ),
+        )
+        for key, statement, columns in insertions:
+            for row in expected[key]:
+                connection.execute(statement, tuple(row[column] for column in columns))
+        self._verify_review_brief_normalized(
+            connection,
+            project_id=project_id,
+            call_id=call_id,
+            draft=draft,
+            runner=runner,
+        )
+
+    def publish_review_brief_draft(
+        self,
+        *,
+        call_id: str,
+        draft: Any,
+        runner_result: Any,
+        source: Any,
+    ) -> Any:
+        """Atomically publish one immutable, trace-verified unconfirmed draft.
+
+        The provider result is retained for deterministic replay, but only the
+        locally rendered draft is exposed to the renderer. A call ID can end in
+        exactly one draft or one rejection audit.
+        """
+
+        from .review_brief import (
+            ReviewBriefDraft,
+            ReviewBriefRunnerResult,
+            ReviewBriefSource,
+            validate_rendered_review_brief,
+        )
+
+        validated_draft = ReviewBriefDraft.model_validate(draft)
+        validated_runner = ReviewBriefRunnerResult.model_validate(runner_result)
+        if not isinstance(source, ReviewBriefSource):
+            raise TypeError("review brief persistence requires its authoritative source")
+        validate_rendered_review_brief(
+            validated_draft,
+            source=source,
+            result=validated_runner,
+        )
+        if validated_draft.status != "UNCONFIRMED":
+            raise ValueError("only an unconfirmed review brief can be persisted")
+        if validated_runner.trace != validated_draft.trace:
+            raise ValueError("review brief draft does not retain the verified runner trace")
+        project_id = str(self.project()["project_id"])
+        if (
+            source.project_id != project_id
+            or source.source_mode != validated_draft.source_mode
+            or source.analysis_id != validated_draft.analysis_id
+            or source.portfolio_id != validated_draft.portfolio_id
+            or source.model_revision_id != validated_draft.model_revision_id
+            or source.decision_board_sha256 != validated_draft.decision_board_sha256
+        ):
+            raise ValueError("review brief source identity differs from the project draft")
+        payload_json = canonical_json(validated_draft.model_dump(mode="json"))
+        payload_sha256 = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+        runner_json = canonical_json(validated_runner.model_dump(mode="json"))
+        runner_sha256 = hashlib.sha256(runner_json.encode("utf-8")).hexdigest()
+        run_kind = (
+            "guided_session"
+            if validated_draft.source_mode.value == "RIDGEWAY_SYNTHETIC"
+            else "connectivity_analysis"
+        )
+        run_subject_id = (
+            "guided_ridgeway_v1"
+            if validated_draft.source_mode.value == "RIDGEWAY_SYNTHETIC"
+            else validated_draft.analysis_id
+        )
+        outbox_payload = {
+            "schema_version": "ecocorridor-review-brief-draft-event/v1.0",
+            "draft_id": validated_draft.draft_id,
+            "source_mode": validated_draft.source_mode.value,
+            "analysis_id": validated_draft.analysis_id,
+            "portfolio_id": validated_draft.portfolio_id,
+            "model_revision_id": validated_draft.model_revision_id,
+            "decision_board_sha256": validated_draft.decision_board_sha256,
+            "draft_sha256": payload_sha256,
+            "runner_receipt_sha256": runner_sha256,
+            "trace_receipt_sha256": canonical_sha256(validated_draft.trace.model_dump(mode="json")),
+            "item_count": len(validated_draft.items),
+            "evidence_claim_set_sha256": canonical_sha256(
+                sorted(
+                    {
+                        claim_id
+                        for item in validated_draft.items
+                        for claim_id in item.evidence_claim_ids
+                    }
+                )
+            ),
+            "created_at": validated_draft.created_at.isoformat(),
+        }
+        with self.transaction() as connection:
+            rejected = connection.execute(
+                "SELECT 1 FROM eco_review_brief_rejections WHERE call_id=?",
+                (call_id,),
+            ).fetchone()
+            if rejected is not None:
+                raise ValueError("rejected review brief call cannot publish a draft")
+            existing = connection.execute(
+                "SELECT * FROM eco_review_brief_drafts WHERE call_id=?",
+                (call_id,),
+            ).fetchone()
+            if existing is not None:
+                if (
+                    str(existing["project_id"]) != project_id
+                    or str(existing["draft_id"]) != validated_draft.draft_id
+                    or str(existing["payload_json"]) != payload_json
+                    or str(existing["payload_sha256"]) != payload_sha256
+                    or str(existing["runner_json"]) != runner_json
+                    or str(existing["runner_sha256"]) != runner_sha256
+                ):
+                    raise ValueError("review brief call identity was reused")
+                self._verify_review_brief_normalized(
+                    connection,
+                    project_id=project_id,
+                    call_id=call_id,
+                    draft=validated_draft,
+                    runner=validated_runner,
+                )
+                if validated_draft.source_mode.value == "PROFESSIONAL":
+                    self._enqueue_outbox(
+                        connection,
+                        project_id=project_id,
+                        analysis_id=validated_draft.analysis_id,
+                        event_type="review_brief_draft",
+                        subject_id=validated_draft.draft_id,
+                        stream_id=f"{run_kind}:{run_subject_id}",
+                        payload=outbox_payload,
+                        idempotency_key=f"review_brief_draft:{validated_draft.draft_id}",
+                    )
+                return validated_draft
+
+            latest = connection.execute(
+                "SELECT draft.draft_id FROM eco_review_brief_drafts AS draft "
+                "WHERE draft.project_id=? AND draft.analysis_id=? AND draft.portfolio_id=? "
+                "AND NOT EXISTS (SELECT 1 FROM eco_review_brief_drafts AS child "
+                "WHERE child.supersedes_draft_id=draft.draft_id) "
+                "ORDER BY draft.created_at DESC,draft.draft_id DESC LIMIT 1",
+                (project_id, validated_draft.analysis_id, validated_draft.portfolio_id),
+            ).fetchone()
+            expected_parent = str(latest["draft_id"]) if latest is not None else None
+            if validated_draft.supersedes_draft_id != expected_parent:
+                raise ValueError("review brief supersedes identity is not the current draft")
+            if expected_parent is not None:
+                parent = connection.execute(
+                    "SELECT analysis_id,portfolio_id FROM eco_review_brief_drafts WHERE draft_id=?",
+                    (expected_parent,),
+                ).fetchone()
+                if parent is None or (
+                    str(parent["analysis_id"]) != validated_draft.analysis_id
+                    or str(parent["portfolio_id"]) != validated_draft.portfolio_id
+                ):
+                    raise ValueError("review brief supersedes another decision scope")
+            connection.execute(
+                "INSERT INTO eco_review_brief_drafts("
+                "draft_id,call_id,project_id,analysis_id,portfolio_id,model_revision_id,"
+                "decision_board_sha256,supersedes_draft_id,payload_json,payload_sha256,"
+                "runner_json,runner_sha256,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    validated_draft.draft_id,
+                    call_id,
+                    project_id,
+                    validated_draft.analysis_id,
+                    validated_draft.portfolio_id,
+                    validated_draft.model_revision_id,
+                    validated_draft.decision_board_sha256,
+                    validated_draft.supersedes_draft_id,
+                    payload_json,
+                    payload_sha256,
+                    runner_json,
+                    runner_sha256,
+                    validated_draft.created_at.isoformat(),
+                ),
+            )
+            self._insert_review_brief_normalized(
+                connection,
+                project_id=project_id,
+                call_id=call_id,
+                draft=validated_draft,
+                runner=validated_runner,
+            )
+            if validated_draft.source_mode.value == "PROFESSIONAL":
+                self._enqueue_outbox(
+                    connection,
+                    project_id=project_id,
+                    analysis_id=validated_draft.analysis_id,
+                    event_type="review_brief_draft",
+                    subject_id=validated_draft.draft_id,
+                    stream_id=f"{run_kind}:{run_subject_id}",
+                    payload=outbox_payload,
+                    idempotency_key=f"review_brief_draft:{validated_draft.draft_id}",
+                )
+        return validated_draft
+
+    def review_brief_draft_record(self, draft_id: str) -> dict[str, Any]:
+        """Return a checksum-verified draft plus its alias-only runner receipt."""
+
+        from .review_brief import ReviewBriefRunnerResult
+
+        row = self._connection.execute(
+            "SELECT * FROM eco_review_brief_drafts WHERE draft_id=? AND project_id=?",
+            (draft_id, self.project()["project_id"]),
+        ).fetchone()
+        if row is None:
+            raise KeyError(draft_id)
+        draft = self._review_brief_draft_from_row(row)
+        runner_json = str(row["runner_json"])
+        runner_sha256 = hashlib.sha256(runner_json.encode("utf-8")).hexdigest()
+        if runner_sha256 != str(row["runner_sha256"]):
+            raise ValueError("review brief runner receipt failed its local checksum")
+        runner = ReviewBriefRunnerResult.model_validate_json(runner_json)
+        if runner.trace != draft.trace:
+            raise ValueError("review brief runner receipt has a different trace")
+        self._verify_review_brief_normalized(
+            self._connection,
+            project_id=str(row["project_id"]),
+            call_id=str(row["call_id"]),
+            draft=draft,
+            runner=runner,
+        )
+        return {
+            "draft": draft,
+            "runner": runner,
+            "draft_sha256": str(row["payload_sha256"]),
+            "runner_sha256": runner_sha256,
+        }
+
+    @staticmethod
+    def _review_brief_draft_from_row(row: sqlite3.Row) -> Any:
+        from .review_brief import ReviewBriefDraft
+
+        payload_json = str(row["payload_json"])
+        if hashlib.sha256(payload_json.encode("utf-8")).hexdigest() != str(row["payload_sha256"]):
+            raise ValueError("review brief draft failed its local checksum")
+        draft = ReviewBriefDraft.model_validate_json(payload_json)
+        if (
+            draft.draft_id != str(row["draft_id"])
+            or draft.analysis_id != str(row["analysis_id"])
+            or draft.portfolio_id != str(row["portfolio_id"])
+            or draft.model_revision_id != str(row["model_revision_id"])
+            or draft.decision_board_sha256 != str(row["decision_board_sha256"])
+        ):
+            raise ValueError("review brief draft identity is inconsistent")
+        return draft
+
+    def review_brief_draft(self, draft_id: str) -> Any:
+        return self.review_brief_draft_record(draft_id)["draft"]
+
+    def review_brief_draft_by_trace(self, trace_id: str) -> Any:
+        rows = self._connection.execute(
+            "SELECT * FROM eco_review_brief_drafts WHERE project_id=? ORDER BY created_at,draft_id",
+            (self.project()["project_id"],),
+        ).fetchall()
+        drafts = [self.review_brief_draft_record(str(row["draft_id"]))["draft"] for row in rows]
+        matches = [draft for draft in drafts if draft.trace.trace_id == trace_id]
+        if len(matches) != 1:
+            raise KeyError(trace_id)
+        return matches[0]
+
+    def list_review_brief_drafts(
+        self,
+        *,
+        analysis_id: str | None = None,
+        portfolio_id: str | None = None,
+    ) -> list[Any]:
+        project_id = str(self.project()["project_id"])
+        clauses = ["project_id=?"]
+        parameters: list[str] = [project_id]
+        if analysis_id is not None:
+            clauses.append("analysis_id=?")
+            parameters.append(analysis_id)
+        if portfolio_id is not None:
+            clauses.append("portfolio_id=?")
+            parameters.append(portfolio_id)
+        rows = self._connection.execute(
+            "SELECT * FROM eco_review_brief_drafts WHERE "
+            + " AND ".join(clauses)
+            + " ORDER BY created_at DESC,draft_id DESC",
+            tuple(parameters),
+        ).fetchall()
+        return [self.review_brief_draft_record(str(row["draft_id"]))["draft"] for row in rows]
+
+    def latest_review_brief_draft(self, *, analysis_id: str, portfolio_id: str) -> Any | None:
+        rows = self.list_review_brief_drafts(
+            analysis_id=analysis_id,
+            portfolio_id=portfolio_id,
+        )
         if not rows:
             return None
-        if len(rows) != 1:
-            raise ValueError("assistant trace identity resolves to multiple retained answers")
-        return {"answer": json.loads(rows[0]["answer_json"]), "trace_id": rows[0]["trace_id"]}
+        child_parent_ids = {
+            draft.supersedes_draft_id for draft in rows if draft.supersedes_draft_id is not None
+        }
+        tips = [draft for draft in rows if draft.draft_id not in child_parent_ids]
+        if len(tips) != 1:
+            raise ValueError("review brief version chain has multiple current drafts")
+        return tips[0]
+
+    def record_review_brief_rejection(self, audit: Any) -> Any:
+        from .review_brief import ReviewBriefRejectionAudit
+
+        validated = ReviewBriefRejectionAudit.model_validate(audit)
+        project_id = str(self.project()["project_id"])
+        if validated.project_id != project_id:
+            raise ValueError("review brief rejection belongs to another project")
+        base = validated.model_copy(update={"audit_sha256": None, "local_audit_verified": False})
+        payload_json = canonical_json(base.model_dump(mode="json"))
+        payload_sha256 = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+        with self.transaction() as connection:
+            published = connection.execute(
+                "SELECT 1 FROM eco_review_brief_drafts WHERE call_id=?",
+                (validated.call_id,),
+            ).fetchone()
+            if published is not None:
+                raise ValueError("published review brief call cannot become rejected")
+            existing = connection.execute(
+                "SELECT * FROM eco_review_brief_rejections WHERE call_id=?",
+                (validated.call_id,),
+            ).fetchone()
+            if existing is not None:
+                if (
+                    str(existing["project_id"]) != project_id
+                    or str(existing["payload_json"]) != payload_json
+                    or str(existing["payload_sha256"]) != payload_sha256
+                ):
+                    raise ValueError("review brief call identity was reused")
+            else:
+                connection.execute(
+                    "INSERT INTO eco_review_brief_rejections("
+                    "call_id,project_id,analysis_id,portfolio_id,error_code,payload_json,"
+                    "payload_sha256,created_at) VALUES(?,?,?,?,?,?,?,?)",
+                    (
+                        validated.call_id,
+                        project_id,
+                        validated.analysis_id,
+                        validated.portfolio_id,
+                        validated.error_code,
+                        payload_json,
+                        payload_sha256,
+                        validated.created_at.isoformat(),
+                    ),
+                )
+        return self.review_brief_rejection(validated.call_id)
+
+    def review_brief_rejection(self, call_id: str) -> Any:
+        from .review_brief import ReviewBriefRejectionAudit
+
+        row = self._connection.execute(
+            "SELECT payload_json,payload_sha256 FROM eco_review_brief_rejections "
+            "WHERE call_id=? AND project_id=?",
+            (call_id, self.project()["project_id"]),
+        ).fetchone()
+        if row is None:
+            raise KeyError(call_id)
+        payload_json = str(row["payload_json"])
+        digest = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+        if digest != str(row["payload_sha256"]):
+            raise ValueError("review brief rejection failed its local checksum")
+        audit = ReviewBriefRejectionAudit.model_validate_json(payload_json)
+        return audit.model_copy(update={"audit_sha256": digest, "local_audit_verified": True})
+
+    def review_brief_call_record(self, call_id: str) -> dict[str, Any] | None:
+        draft = self._connection.execute(
+            "SELECT * FROM eco_review_brief_drafts WHERE call_id=? AND project_id=?",
+            (call_id, self.project()["project_id"]),
+        ).fetchone()
+        rejected = self._connection.execute(
+            "SELECT 1 FROM eco_review_brief_rejections WHERE call_id=? AND project_id=?",
+            (call_id, self.project()["project_id"]),
+        ).fetchone()
+        if draft is not None and rejected is not None:
+            raise ValueError("review brief call has conflicting terminal dispositions")
+        if draft is not None:
+            return {
+                "disposition": "DRAFTED",
+                "draft": self.review_brief_draft_record(str(draft["draft_id"]))["draft"],
+            }
+        if rejected is not None:
+            return {"disposition": "REJECTED", "audit": self.review_brief_rejection(call_id)}
+        return None
+
+    def attest_review_brief(
+        self,
+        *,
+        acknowledgement: Any,
+        current_model_revision_id: str,
+        current_decision_board_sha256: str,
+    ) -> Any:
+        from .review_brief import ReviewBriefAcknowledgement
+
+        validated = ReviewBriefAcknowledgement.model_validate(acknowledgement)
+        project_id = str(self.project()["project_id"])
+        payload_json = canonical_json(validated.model_dump(mode="json"))
+        payload_sha256 = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+
+        def intent(value: ReviewBriefAcknowledgement) -> dict[str, Any]:
+            return value.model_dump(mode="json", exclude={"acknowledged_at"})
+
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM eco_review_brief_drafts WHERE draft_id=? AND project_id=?",
+                (validated.draft_id, project_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError(validated.draft_id)
+            draft = self.review_brief_draft_record(validated.draft_id)["draft"]
+            if (
+                draft.status != "UNCONFIRMED"
+                or draft.model_revision_id != current_model_revision_id
+                or draft.decision_board_sha256 != current_decision_board_sha256
+            ):
+                raise ValueError("a stale review brief cannot be acknowledged")
+            existing = connection.execute(
+                "SELECT * FROM eco_review_brief_attestations WHERE draft_id=?",
+                (validated.draft_id,),
+            ).fetchone()
+            if existing is not None:
+                retained = self.review_brief_acknowledgement(validated.draft_id)
+                if retained is None or intent(retained) != intent(validated):
+                    raise ValueError("review brief was already acknowledged differently")
+                return retained
+            identity_collision = connection.execute(
+                "SELECT draft_id FROM eco_review_brief_attestations WHERE acknowledgement_id=?",
+                (validated.acknowledgement_id,),
+            ).fetchone()
+            if identity_collision is not None:
+                raise ValueError("review brief acknowledgement identity belongs to another draft")
+            connection.execute(
+                "INSERT INTO eco_review_brief_attestations("
+                "acknowledgement_id,draft_id,project_id,payload_json,payload_sha256,created_at) "
+                "VALUES(?,?,?,?,?,?)",
+                (
+                    validated.acknowledgement_id,
+                    validated.draft_id,
+                    project_id,
+                    payload_json,
+                    payload_sha256,
+                    validated.acknowledged_at.isoformat(),
+                ),
+            )
+        retained = self.review_brief_acknowledgement(validated.draft_id)
+        if retained is None or intent(retained) != intent(validated):
+            raise ValueError("review brief acknowledgement failed authoritative readback")
+        return retained
+
+    def review_brief_acknowledgement(self, draft_id: str) -> Any | None:
+        from .review_brief import ReviewBriefAcknowledgement
+
+        project_id = str(self.project()["project_id"])
+        self.review_brief_draft_record(draft_id)
+        row = self._connection.execute(
+            "SELECT acknowledgement_id,draft_id,project_id,payload_json,payload_sha256,created_at "
+            "FROM eco_review_brief_attestations "
+            "WHERE draft_id=? AND project_id=?",
+            (draft_id, project_id),
+        ).fetchone()
+        if row is None:
+            return None
+        payload_json = str(row["payload_json"])
+        if hashlib.sha256(payload_json.encode("utf-8")).hexdigest() != str(row["payload_sha256"]):
+            raise ValueError("review brief acknowledgement failed its local checksum")
+        acknowledgement = ReviewBriefAcknowledgement.model_validate_json(payload_json)
+        if (
+            acknowledgement.acknowledgement_id != str(row["acknowledgement_id"])
+            or acknowledgement.draft_id != str(row["draft_id"])
+            or acknowledgement.draft_id != draft_id
+            or str(row["project_id"]) != project_id
+            or acknowledgement.acknowledged_at.isoformat() != str(row["created_at"])
+        ):
+            raise ValueError("review brief acknowledgement identity is inconsistent")
+        return acknowledgement
+
+    def record_review_brief_feedback(self, feedback: Any) -> Any:
+        from .review_brief import ReviewBriefFeedbackRecord
+
+        validated = ReviewBriefFeedbackRecord.model_validate(feedback)
+        project_id = str(self.project()["project_id"])
+        payload_json = canonical_json(validated.model_dump(mode="json"))
+        payload_sha256 = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+        with self.transaction() as connection:
+            draft_row = connection.execute(
+                "SELECT * FROM eco_review_brief_drafts WHERE draft_id=? AND project_id=?",
+                (validated.draft_id, project_id),
+            ).fetchone()
+            if draft_row is None:
+                raise KeyError(validated.draft_id)
+            draft = self.review_brief_draft_record(validated.draft_id)["draft"]
+            if (
+                validated.trace_receipt.trace_id != draft.trace.trace_id
+                or validated.trace_receipt.weave_call_id != draft.trace.weave_call_id
+                or validated.trace_receipt.wandb_run_id != draft.trace.wandb_run_id
+            ):
+                raise ValueError("review brief feedback receipt differs from the draft trace")
+            existing = connection.execute(
+                "SELECT * FROM eco_review_brief_feedback WHERE feedback_id=?",
+                (validated.feedback_id,),
+            ).fetchone()
+            if existing is not None:
+                if (
+                    str(existing["draft_id"]) != validated.draft_id
+                    or str(existing["payload_json"]) != payload_json
+                    or str(existing["payload_sha256"]) != payload_sha256
+                ):
+                    raise ValueError("review brief feedback identity was reused")
+                return validated
+            connection.execute(
+                "INSERT INTO eco_review_brief_feedback("
+                "feedback_id,draft_id,project_id,payload_json,payload_sha256,created_at) "
+                "VALUES(?,?,?,?,?,?)",
+                (
+                    validated.feedback_id,
+                    validated.draft_id,
+                    project_id,
+                    payload_json,
+                    payload_sha256,
+                    validated.recorded_at.isoformat(),
+                ),
+            )
+        return validated
+
+    def review_brief_feedback(self, feedback_id: str) -> Any | None:
+        from .review_brief import ReviewBriefFeedbackRecord
+
+        row = self._connection.execute(
+            "SELECT payload_json,payload_sha256 FROM eco_review_brief_feedback "
+            "WHERE feedback_id=? AND project_id=?",
+            (feedback_id, self.project()["project_id"]),
+        ).fetchone()
+        if row is None:
+            return None
+        payload_json = str(row["payload_json"])
+        if hashlib.sha256(payload_json.encode("utf-8")).hexdigest() != str(row["payload_sha256"]):
+            raise ValueError("review brief feedback failed its local checksum")
+        feedback = ReviewBriefFeedbackRecord.model_validate_json(payload_json)
+        if feedback.feedback_id != feedback_id:
+            raise ValueError("review brief feedback identity is inconsistent")
+        draft = self.review_brief_draft_record(feedback.draft_id)["draft"]
+        if (
+            feedback.trace_receipt.trace_id != draft.trace.trace_id
+            or feedback.trace_receipt.weave_call_id != draft.trace.weave_call_id
+            or feedback.trace_receipt.wandb_run_id != draft.trace.wandb_run_id
+        ):
+            raise ValueError("review brief feedback receipt differs from the draft trace")
+        return feedback
 
     def _validated_export_package(
         self,

@@ -1,0 +1,59 @@
+{
+  "$id": "https://schemas.ecocorridor.local/1.0/ReviewBriefTraceReceipt.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "association_id": {
+      "minLength": 1,
+      "title": "Association Id",
+      "type": "string"
+    },
+    "flushed": {
+      "const": true,
+      "default": true,
+      "title": "Flushed",
+      "type": "boolean"
+    },
+    "readback_verified": {
+      "const": true,
+      "default": true,
+      "title": "Readback Verified",
+      "type": "boolean"
+    },
+    "trace_id": {
+      "minLength": 1,
+      "title": "Trace Id",
+      "type": "string"
+    },
+    "trace_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Trace Url"
+    },
+    "wandb_run_id": {
+      "minLength": 1,
+      "title": "Wandb Run Id",
+      "type": "string"
+    },
+    "weave_call_id": {
+      "minLength": 1,
+      "title": "Weave Call Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "trace_id",
+    "weave_call_id",
+    "association_id",
+    "wandb_run_id"
+  ],
+  "title": "ReviewBriefTraceReceipt",
+  "type": "object"
+}

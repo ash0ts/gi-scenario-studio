@@ -12,6 +12,8 @@ import sys
 PACKAGED_RUNTIME_PACKAGES = (
     "geopandas",
     "numpy",
+    "openai",
+    "openai-agents",
     "pydantic",
     "pyogrio",
     "rasterio",
@@ -27,6 +29,8 @@ PACKAGED_RUNTIME_CAPABILITIES = (
     "sklearn_extratrees",
     "wandb_offline_table_artifact",
     "deterministic_external_redaction",
+    "openai_agents_structured_tool_runtime",
+    "weave_openai_agents_processor",
 )
 FORBIDDEN_PROBE_CREDENTIALS = (
     "ECOCORRIDOR_PROVIDER_API_KEY",
@@ -69,21 +73,47 @@ def _probe_professional_runtime() -> dict[str, bool]:
 
     _require_offline_credential_free_probe()
 
+    import agents
     import numpy
-    import wandb
     import weave
     from pydantic import BaseModel
     from scenario_platform.observability import redact_external_identifiers
     from scipy.stats import qmc
     from sklearn.ensemble import ExtraTreesClassifier, ExtraTreesRegressor
+    from weave.integrations.openai_agents.openai_agents import WeaveTracingProcessor
     from weave.utils import sanitize
+
+    import wandb
+
+    if not getattr(agents, "__version__", ""):
+        raise RuntimeError("The OpenAI Agents SDK is unavailable.")
 
     class ProbeContract(BaseModel):
         value: int
 
+    @agents.function_tool
+    def resolve_probe_alias(alias: str) -> str:
+        """Return one synthetic alias without accessing project state."""
+
+        return alias
+
     contract = ProbeContract.model_validate({"value": 17})
     if contract.model_dump() != {"value": 17}:
         raise RuntimeError("Pydantic contract validation is unavailable.")
+    agent_probe = agents.Agent(
+        name="EcoCorridor packaged runtime probe",
+        instructions="Use only the synthetic alias tool.",
+        model="not-invoked",
+        tools=[resolve_probe_alias],
+        output_type=ProbeContract,
+    )
+    if (
+        agent_probe.output_type is not ProbeContract
+        or len(agent_probe.tools) != 1
+        or agent_probe.tools[0].name != "resolve_probe_alias"
+        or agent_probe.tools[0].params_json_schema.get("properties", {}).get("alias") is None
+    ):
+        raise RuntimeError("The OpenAI Agents structured tool runtime is unavailable.")
 
     sobol = qmc.Sobol(d=2, scramble=True, seed=17).random_base2(m=1)
     if sobol.shape != (2, 2) or not numpy.isfinite(sobol).all():
@@ -151,6 +181,18 @@ def _probe_professional_runtime() -> dict[str, bool]:
 
     if not callable(weave.init) or not callable(weave.op):
         raise TypeError("The Weave tracing entrypoint is unavailable.")
+    processor = WeaveTracingProcessor()
+    if not all(
+        callable(getattr(processor, member, None))
+        for member in (
+            "on_trace_start",
+            "on_trace_end",
+            "on_span_start",
+            "on_span_end",
+            "force_flush",
+        )
+    ):
+        raise TypeError("The Weave OpenAI Agents tracing processor is unavailable.")
     traced_probe = weave.op(lambda value: value)
     if not callable(traced_probe):
         raise TypeError("The Weave tracing entrypoint could not wrap an operation.")
@@ -173,16 +215,19 @@ def _probe_professional_runtime() -> dict[str, bool]:
 def packaged_runtime_inventory() -> dict[str, object]:
     """Import and exercise every packaged professional runtime dependency."""
 
+    import agents
     import geopandas
     import numpy
+    import openai
     import pydantic
     import pyogrio
     import rasterio
     import scipy
     import shapely
     import sklearn
-    import wandb
     import weave
+
+    import wandb
 
     return {
         "schema_version": "1.0",
@@ -190,6 +235,8 @@ def packaged_runtime_inventory() -> dict[str, object]:
         "python_packages": {
             "geopandas": geopandas.__version__,
             "numpy": numpy.__version__,
+            "openai": openai.__version__,
+            "openai-agents": agents.__version__,
             "pydantic": pydantic.__version__,
             "pyogrio": pyogrio.__version__,
             "rasterio": rasterio.__version__,
@@ -210,6 +257,14 @@ def packaged_runtime_inventory() -> dict[str, object]:
 if __name__ == "__main__":
     if sys.argv[1:] == ["--packaged-runtime-inventory"]:
         print(json.dumps(packaged_runtime_inventory(), sort_keys=True))
+    elif sys.argv[1:] == ["--review-brief-agent-subprocess"]:
+        from ecocorridor_core.review_brief_agent_process import main as review_brief_main
+
+        raise SystemExit(review_brief_main())
+    elif sys.argv[1:] == ["--native-assistant-agent-subprocess"]:
+        from ecocorridor_core.native_agents_process import main as native_assistant_main
+
+        raise SystemExit(native_assistant_main())
     else:
         from ecocorridor_core.rpc_worker import main
 

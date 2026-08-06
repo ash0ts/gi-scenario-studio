@@ -116,6 +116,7 @@ def test_worker_packaging_uses_only_worktree_local_caches_and_defensive_environm
 @pytest.mark.parametrize(
     "required_pair",
     [
+        ("--collect-all", "agents"),
         ("--collect-all", "wandb"),
         ("--collect-all", "weave"),
         ("--hidden-import", "pydantic"),
@@ -303,6 +304,8 @@ def test_packaged_worker_inventory_must_match_declared_native_runtime() -> None:
         "python_packages": {
             "geopandas": "1.1.4",
             "numpy": "2.4.1",
+            "openai": "2.53.0",
+            "openai-agents": "0.18.3",
             "pydantic": "2.13.4",
             "pyogrio": "0.13.0",
             "pyinstaller": "6.21.0",
@@ -328,6 +331,8 @@ def test_packaged_worker_inventory_must_match_declared_native_runtime() -> None:
         "sklearn_extratrees": True,
         "wandb_offline_table_artifact": True,
         "deterministic_external_redaction": True,
+        "openai_agents_structured_tool_runtime": True,
+        "weave_openai_agents_processor": True,
     }
     smoke.validate_packaged_runtime_inventory(packaged, declared)
     packaged["python_packages"]["wandb"] = "0.0.0"
@@ -470,6 +475,106 @@ def test_worker_entrypoint_emits_one_credential_free_professional_runtime_record
     record = json.loads(lines[0])
     assert set(record["python_packages"]) == smoke.PACKAGED_RUNTIME_PACKAGES
     assert record["capabilities"] == dict.fromkeys(smoke.PACKAGED_RUNTIME_CAPABILITIES, True)
+
+
+@pytest.mark.parametrize(
+    ("mode", "protocol", "error_code"),
+    [
+        (
+            "--review-brief-agent-subprocess",
+            "ecocorridor-review-brief-agent-ipc/v1",
+            "REVIEW_BRIEF_AGENT_INVOCATION_FAILED",
+        ),
+        (
+            "--native-assistant-agent-subprocess",
+            "ecocorridor-native-single-turn-agents/v1",
+            "NATIVE_AGENT_INVOCATION_FAILED",
+        ),
+    ],
+)
+def test_worker_agent_self_entry_returns_credential_free_framed_rejection(
+    mode: str,
+    protocol: str,
+    error_code: str,
+) -> None:
+    smoke = _load_script("smoke_ecocorridor_release_bundle.py")
+    entrypoint = Path(__file__).resolve().parents[2] / "scripts/ecocorridor_worker_entry.py"
+    environment = smoke.clean_environment()
+    assert not any(
+        name in environment
+        for name in (
+            "ECOCORRIDOR_PROVIDER_API_KEY",
+            "OPENAI_API_KEY",
+            "WANDB_API_KEY",
+            "WEAVE_API_KEY",
+        )
+    )
+
+    completed = subprocess.run(
+        [sys.executable, str(entrypoint), mode],
+        env=environment,
+        input=b"00000002\n{}",
+        capture_output=True,
+        timeout=60,
+        check=False,
+    )
+
+    assert completed.returncode == 0
+    assert completed.stderr == b""
+    smoke._parse_agent_rejection_frame(
+        completed.stdout,
+        expected_protocol=protocol,
+        expected_error_code=error_code,
+    )
+
+
+def test_release_smoke_invokes_both_packaged_agent_self_entry_modes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    smoke = _load_script("smoke_ecocorridor_release_bundle.py")
+    calls: list[tuple[list[str], dict[str, str], bytes]] = []
+
+    def fake_run(command: list[str], **kwargs: object) -> object:
+        mode = command[1]
+        expected = {
+            "--review-brief-agent-subprocess": (
+                "ecocorridor-review-brief-agent-ipc/v1",
+                "REVIEW_BRIEF_AGENT_INVOCATION_FAILED",
+            ),
+            "--native-assistant-agent-subprocess": (
+                "ecocorridor-native-single-turn-agents/v1",
+                "NATIVE_AGENT_INVOCATION_FAILED",
+            ),
+        }[mode]
+        record = {
+            "protocol_version": expected[0],
+            "ok": False,
+            "result": None,
+            "error_code": expected[1],
+        }
+        if mode == "--review-brief-agent-subprocess":
+            record["capability"] = None
+        body = json.dumps(record, separators=(",", ":")).encode("utf-8")
+        calls.append((command, kwargs["env"], kwargs["input"]))
+        return type(
+            "Completed",
+            (),
+            {
+                "returncode": 0,
+                "stderr": b"",
+                "stdout": f"{len(body):08x}\n".encode("ascii") + body,
+            },
+        )()
+
+    monkeypatch.setattr(smoke.subprocess, "run", fake_run)
+    smoke.run_packaged_agent_protocol_rejections(tmp_path / "ecocorridor-worker")
+
+    assert [call[0][1] for call in calls] == [
+        "--review-brief-agent-subprocess",
+        "--native-assistant-agent-subprocess",
+    ]
+    assert all(call[2] == b"00000002\n{}" for call in calls)
+    assert all("WANDB_API_KEY" not in call[1] and "OPENAI_API_KEY" not in call[1] for call in calls)
 
 
 @pytest.mark.parametrize(

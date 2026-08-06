@@ -36,6 +36,8 @@ PACKAGED_RUNTIME_PACKAGES = frozenset(
     {
         "geopandas",
         "numpy",
+        "openai",
+        "openai-agents",
         "pydantic",
         "pyogrio",
         "rasterio",
@@ -54,7 +56,21 @@ PACKAGED_RUNTIME_CAPABILITIES = frozenset(
         "sklearn_extratrees",
         "wandb_offline_table_artifact",
         "deterministic_external_redaction",
+        "openai_agents_structured_tool_runtime",
+        "weave_openai_agents_processor",
     }
+)
+PACKAGED_AGENT_REJECTION_PROTOCOLS = (
+    (
+        "--review-brief-agent-subprocess",
+        "ecocorridor-review-brief-agent-ipc/v1",
+        "REVIEW_BRIEF_AGENT_INVOCATION_FAILED",
+    ),
+    (
+        "--native-assistant-agent-subprocess",
+        "ecocorridor-native-single-turn-agents/v1",
+        "NATIVE_AGENT_INVOCATION_FAILED",
+    ),
 )
 
 
@@ -334,6 +350,63 @@ def run_packaged_runtime_inventory(worker: Path, dependency_inventory: Path) -> 
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise SystemExit("The packaged worker runtime inventory is invalid JSON.") from exc
     validate_packaged_runtime_inventory(packaged, declared)
+
+
+def _parse_agent_rejection_frame(
+    payload: bytes,
+    *,
+    expected_protocol: str,
+    expected_error_code: str,
+) -> None:
+    """Validate one credential-free child rejection without importing app code."""
+
+    header, separator, remainder = payload.partition(b"\n")
+    if separator != b"\n" or len(header) != 8 or not re.fullmatch(rb"[0-9a-f]{8}", header):
+        raise SystemExit("The packaged agent subprocess returned an invalid frame header.")
+    declared_length = int(header, 16)
+    body = remainder[:declared_length]
+    if declared_length <= 0 or len(body) != declared_length or remainder[declared_length:]:
+        raise SystemExit("The packaged agent subprocess returned an invalid frame body.")
+    try:
+        record = json.loads(body)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SystemExit("The packaged agent subprocess returned invalid JSON.") from exc
+    expected_keys = {"protocol_version", "ok", "result", "error_code"}
+    if expected_protocol == "ecocorridor-review-brief-agent-ipc/v1":
+        expected_keys.add("capability")
+    if (
+        not isinstance(record, dict)
+        or set(record) != expected_keys
+        or record.get("protocol_version") != expected_protocol
+        or record.get("ok") is not False
+        or record.get("error_code") != expected_error_code
+        or record.get("result") is not None
+        or record.get("capability") is not None
+    ):
+        raise SystemExit("The packaged agent subprocess did not fail closed.")
+
+
+def run_packaged_agent_protocol_rejections(worker: Path) -> None:
+    """Prove both frozen self-entry modes reject before credentials or network."""
+
+    environment = clean_environment()
+    malformed_request = b"00000002\n{}"
+    for mode, protocol, error_code in PACKAGED_AGENT_REJECTION_PROTOCOLS:
+        completed = subprocess.run(
+            [str(worker), mode],
+            env=environment,
+            input=malformed_request,
+            capture_output=True,
+            timeout=60,
+            check=False,
+        )
+        if completed.returncode or completed.stderr.strip():
+            raise SystemExit("The packaged agent subprocess did not return a clean rejection.")
+        _parse_agent_rejection_frame(
+            completed.stdout,
+            expected_protocol=protocol,
+            expected_error_code=error_code,
+        )
 
 
 def validate_staged_data_classification(
@@ -803,6 +876,7 @@ def main() -> int:
         expected_target=arguments.expected_target,
     )
     run_packaged_runtime_inventory(worker, dependency_inventory)
+    run_packaged_agent_protocol_rejections(worker)
     validate_staged_data_classification(
         data_manifest,
         guided_projection,

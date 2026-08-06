@@ -1,0 +1,370 @@
+{
+  "$defs": {
+    "ReviewBriefActionKind": {
+      "enum": [
+        "INSPECT_EVIDENCE",
+        "FIELD_VERIFY",
+        "OBTAIN_QUALIFIED_REVIEW",
+        "RESOLVE_LAND_OR_OWNERSHIP",
+        "RESOLVE_AUTHORIZATION",
+        "COMPLETE_COST_BASIS",
+        "REVISE_MODEL_AND_RERUN"
+      ],
+      "title": "ReviewBriefActionKind",
+      "type": "string"
+    },
+    "ReviewBriefAuthorizedSnapshot": {
+      "additionalProperties": false,
+      "properties": {
+        "analysis_id_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Analysis Id Sha256",
+          "type": "string"
+        },
+        "authorization_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Authorization Sha256",
+          "type": "string"
+        },
+        "current_authorizations_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Current Authorizations Sha256",
+          "type": "string"
+        },
+        "disposition": {
+          "enum": [
+            "PASSES",
+            "FAILS",
+            "SURVEY_FIRST",
+            "INCOMPLETE"
+          ],
+          "title": "Disposition",
+          "type": "string"
+        },
+        "evidence_authorization_decision_id": {
+          "pattern": "^evidence_auth_[0-9a-f]{24}$",
+          "title": "Evidence Authorization Decision Id",
+          "type": "string"
+        },
+        "findings": {
+          "items": {
+            "$ref": "#/$defs/ReviewBriefFindingContext"
+          },
+          "maxItems": 64,
+          "minItems": 1,
+          "title": "Findings",
+          "type": "array"
+        },
+        "model_revision_id_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Model Revision Id Sha256",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "review-brief-agent-context/v1",
+          "default": "review-brief-agent-context/v1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "snapshot_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Snapshot Sha256",
+          "type": "string"
+        },
+        "source_mode": {
+          "$ref": "#/$defs/ReviewBriefSourceMode"
+        }
+      },
+      "required": [
+        "snapshot_sha256",
+        "source_mode",
+        "disposition",
+        "analysis_id_sha256",
+        "model_revision_id_sha256",
+        "evidence_authorization_decision_id",
+        "current_authorizations_sha256",
+        "authorization_sha256",
+        "findings"
+      ],
+      "title": "ReviewBriefAuthorizedSnapshot",
+      "type": "object"
+    },
+    "ReviewBriefEvidenceBranch": {
+      "additionalProperties": false,
+      "description": "One opaque provider alias classified without revealing its local identity.",
+      "properties": {
+        "evidence_alias": {
+          "pattern": "^E[1-9][0-9]{0,3}$",
+          "title": "Evidence Alias",
+          "type": "string"
+        },
+        "evidence_class": {
+          "$ref": "#/$defs/ReviewBriefEvidenceClass"
+        }
+      },
+      "required": [
+        "evidence_alias",
+        "evidence_class"
+      ],
+      "title": "ReviewBriefEvidenceBranch",
+      "type": "object"
+    },
+    "ReviewBriefEvidenceClass": {
+      "description": "Closed provenance branch visible to the agent instead of raw evidence.",
+      "enum": [
+        "DIRECT_CIRCUITSCAPE_RESULT",
+        "DIRECT_CURRENT_DIAGNOSTIC",
+        "RETAINED_DECISION_RULE",
+        "RETAINED_MODEL_FITNESS",
+        "RETAINED_FEASIBILITY",
+        "RETAINED_COST_BASIS",
+        "RETAINED_HYPOTHESIS_COMPARISON",
+        "RETAINED_REFERENCE_COMPARISON",
+        "RETAINED_DATA_AUTHORIZATION"
+      ],
+      "title": "ReviewBriefEvidenceClass",
+      "type": "string"
+    },
+    "ReviewBriefFindingContext": {
+      "additionalProperties": false,
+      "properties": {
+        "direct_run_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Direct Run Count",
+          "type": "integer"
+        },
+        "evidence_aliases": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 64,
+          "minItems": 1,
+          "title": "Evidence Aliases",
+          "type": "array"
+        },
+        "evidence_branches": {
+          "items": {
+            "$ref": "#/$defs/ReviewBriefEvidenceBranch"
+          },
+          "maxItems": 64,
+          "title": "Evidence Branches",
+          "type": "array"
+        },
+        "evidence_classes": {
+          "items": {
+            "$ref": "#/$defs/ReviewBriefEvidenceClass"
+          },
+          "title": "Evidence Classes",
+          "type": "array"
+        },
+        "finding_alias": {
+          "pattern": "^F[1-9][0-9]{0,3}$",
+          "title": "Finding Alias",
+          "type": "string"
+        },
+        "finding_kind": {
+          "$ref": "#/$defs/ReviewBriefFindingKind"
+        },
+        "permitted_actions": {
+          "items": {
+            "$ref": "#/$defs/ReviewBriefActionKind"
+          },
+          "minItems": 1,
+          "title": "Permitted Actions",
+          "type": "array"
+        },
+        "permitted_disciplines": {
+          "items": {
+            "$ref": "#/$defs/ReviewerDiscipline"
+          },
+          "minItems": 1,
+          "title": "Permitted Disciplines",
+          "type": "array"
+        },
+        "priority": {
+          "$ref": "#/$defs/ReviewBriefPriority"
+        },
+        "reason_facets": {
+          "items": {
+            "$ref": "#/$defs/ReviewBriefReasonFacet"
+          },
+          "title": "Reason Facets",
+          "type": "array"
+        },
+        "review_topic": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReviewBriefTopic"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "scenario_aliases": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 64,
+          "title": "Scenario Aliases",
+          "type": "array"
+        },
+        "scenario_breadth": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReviewBriefScenarioBreadth"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "finding_alias",
+        "finding_kind",
+        "priority",
+        "evidence_aliases",
+        "permitted_actions",
+        "permitted_disciplines"
+      ],
+      "title": "ReviewBriefFindingContext",
+      "type": "object"
+    },
+    "ReviewBriefFindingKind": {
+      "enum": [
+        "RULE_FAILURE",
+        "SURVEY_FIRST",
+        "SAFEGUARD",
+        "REVIEW_MASK",
+        "FEASIBILITY_GAP",
+        "MODEL_FITNESS",
+        "QA",
+        "ASSUMPTION",
+        "COST",
+        "REFERENCE",
+        "AUTHORIZATION"
+      ],
+      "title": "ReviewBriefFindingKind",
+      "type": "string"
+    },
+    "ReviewBriefPriority": {
+      "enum": [
+        "BLOCKING",
+        "BEFORE_FEASIBILITY",
+        "FOLLOW_UP"
+      ],
+      "title": "ReviewBriefPriority",
+      "type": "string"
+    },
+    "ReviewBriefReasonFacet": {
+      "description": "Closed reason codes; never model-authored prose or scientific values.",
+      "enum": [
+        "CONFIGURED_RULE_NOT_MET",
+        "SURVEY_EVIDENCE_GAP",
+        "SAFEGUARD_NONREGRESSION_NOT_MET",
+        "REVIEW_MASK_THRESHOLD_TRIGGERED",
+        "FEASIBILITY_BASIS_INCOMPLETE",
+        "LAND_ACCESS_UNRESOLVED",
+        "MAINTENANCE_RESPONSIBILITY_UNRESOLVED",
+        "CULTURAL_REVIEW_UNRESOLVED",
+        "PERMITTING_REVIEW_UNRESOLVED",
+        "TRAFFIC_OR_STRUCTURAL_REVIEW_UNRESOLVED",
+        "ECOLOGICAL_FIELD_RISK_UNRESOLVED",
+        "MODEL_FITNESS_BASIS_INCOMPLETE",
+        "DIRECT_RUN_QA_NOT_ACCEPTED",
+        "ECOLOGICAL_ASSUMPTION_UNRESOLVED",
+        "HYPOTHESIS_SENSITIVITY",
+        "COST_RULE_EXCEEDED",
+        "REFERENCE_COMPARISON_NOT_ACCEPTED",
+        "DATA_AUTHORIZATION_NOT_VERIFIED"
+      ],
+      "title": "ReviewBriefReasonFacet",
+      "type": "string"
+    },
+    "ReviewBriefScenarioBreadth": {
+      "enum": [
+        "PROJECT_WIDE",
+        "SINGLE_SCENARIO",
+        "SCENARIO_SUBSET",
+        "COMPLETE_ENSEMBLE"
+      ],
+      "title": "ReviewBriefScenarioBreadth",
+      "type": "string"
+    },
+    "ReviewBriefSourceMode": {
+      "enum": [
+        "RIDGEWAY_SYNTHETIC",
+        "PROFESSIONAL"
+      ],
+      "title": "ReviewBriefSourceMode",
+      "type": "string"
+    },
+    "ReviewBriefTopic": {
+      "description": "Closed, non-narrative facet used to route a finding to the right review.",
+      "enum": [
+        "REQUIRED_RULE",
+        "SURVEY_OR_FIELD_DATA",
+        "SAFEGUARD_REVIEW",
+        "CURRENT_REDISTRIBUTION_MASK",
+        "GENERAL_FEASIBILITY",
+        "LAND_ACCESS_OR_OWNERSHIP",
+        "MAINTENANCE_RESPONSIBILITY",
+        "CULTURAL_REVIEW",
+        "PERMITTING_REVIEW",
+        "TRAFFIC_OR_STRUCTURAL_FEASIBILITY",
+        "ECOLOGICAL_FIELD_RISK",
+        "MODEL_FITNESS_BASIS",
+        "DIRECT_RUN_QA",
+        "ECOLOGICAL_ASSUMPTION",
+        "COST_BASIS",
+        "REFERENCE_COMPARISON",
+        "DATA_AUTHORIZATION"
+      ],
+      "title": "ReviewBriefTopic",
+      "type": "string"
+    },
+    "ReviewerDiscipline": {
+      "enum": [
+        "ECOLOGY",
+        "FIELD",
+        "ENGINEERING",
+        "LAND",
+        "MAINTENANCE",
+        "CULTURAL",
+        "PERMITTING",
+        "COST"
+      ],
+      "title": "ReviewerDiscipline",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.ecocorridor.local/1.0/ReviewBriefRequest.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "call_alias": {
+      "const": "CALL1",
+      "default": "CALL1",
+      "title": "Call Alias",
+      "type": "string"
+    },
+    "operation": {
+      "const": "REVIEW_BRIEF_PREPARE",
+      "default": "REVIEW_BRIEF_PREPARE",
+      "title": "Operation",
+      "type": "string"
+    },
+    "snapshot": {
+      "$ref": "#/$defs/ReviewBriefAuthorizedSnapshot"
+    }
+  },
+  "required": [
+    "snapshot"
+  ],
+  "title": "ReviewBriefRequest",
+  "type": "object"
+}

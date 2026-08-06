@@ -177,7 +177,7 @@ export interface EvidenceSelection {
   status: "verified" | "projection" | "review";
   portfolioId: string;
   scenarioId: string;
-  runId: string;
+  runId?: string;
   baselineRunId?: string;
   reducer: string;
   assumption: string;
@@ -339,7 +339,9 @@ export interface ObservabilityPreflight {
   preflightId: string;
   entity: string;
   project: string;
-  deployment: "DEDICATED" | "SELF_MANAGED";
+  deployment: "WANDB_CLOUD" | "DEDICATED" | "SELF_MANAGED";
+  purpose: "PROFESSIONAL_FULL_SYNC" | "RIDGEWAY_SYNTHETIC_TRACE_ONLY";
+  projectHandle: string | null;
 }
 
 export type ProjectBindingState =

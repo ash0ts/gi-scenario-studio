@@ -11,6 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PROFESSIONAL_RUNTIME_COLLECTIONS = (
+    ("--collect-all", "agents"),
     ("--collect-all", "wandb"),
     ("--collect-all", "weave"),
     ("--hidden-import", "pydantic"),
@@ -100,6 +101,8 @@ def main() -> int:
         "scipy.stats.qmc",
         "--hidden-import",
         "sklearn.ensemble",
+        "--collect-all",
+        "agents",
         "--collect-all",
         "wandb",
         "--collect-all",

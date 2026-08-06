@@ -220,6 +220,23 @@ current direct evidence.
   complete answer from locally revalidated evidence, and release evaluation
   independently re-renders it byte-for-byte so plausible unsupported habitat,
   survey, or feasibility prose cannot pass as a validated answer.
+- The Review Brief Agent now uses the pinned OpenAI Agents SDK with W&B's native
+  `WeaveTracingProcessor`. One short-lived process receives only an authorized,
+  alias-only snapshot and exposes eight named read-only tools; sessions,
+  parallel tools, generic RPC/database access, filesystem access, search,
+  mutation, approval, and export are absent. The provider returns only closed
+  finding/action/discipline selections. Local deterministic code renders all
+  visible copy and direct-run citations, and the repository atomically saves an
+  immutable `UNCONFIRMED` draft only after validation, source revalidation,
+  trace flush, and exact Weave readback. The exhaustive local checklist remains
+  the production default until a real provider-backed campaign passes.
+- A protected 14-case × three-method Review Brief campaign, exact campaign
+  verifier, append-only historical Report publisher, and claim-bound Canvas-film
+  renderer are implemented. They intentionally produce no claimed result or
+  media without the real provider calls, complete native Agents conversations,
+  exact W&B run association, immutable artifact roundtrip, and source-commit
+  checks. The synthetic Ridgeway trace-only lane is distinct from professional
+  full synchronization; the public replay remains offline and agent-free.
 - The Evidence Intake Assistant desktop eligibility now matches the worker's
   fail-closed document boundary: only authorized retained UTF-8 plain text or
   Markdown can enable extraction; raw sensitive classes and PDF/non-text inputs
@@ -399,15 +416,20 @@ startup state before release.
    passes the protected hash-roundtrip workflow against that destination.
 5. **Provider-backed Weave evaluation.** A separately supplied model-provider
    credential, real flushed/read-back Weave traces, the pinned evaluation
-   dataset, deterministic scorer results, and practitioner usefulness ratings
-   are still required. Evaluation is deliberately two-stage:
+   datasets, deterministic scorer results, and practitioner usefulness ratings
+   are still required. The general assistant evaluation is deliberately two-stage:
    `--evaluation-only` publishes immutable case records explicitly marked
    `release_eligible=false`, then the validator binds signed feedback to those
    exact case/answer hashes, provider calls/models, Weave traces, W&B run, and
    evaluation call without rerunning the provider. Missing, blank, fallback,
    duplicate, or different-model provider identities fail closed. Rejected
    adversarial cases require typed, persisted abort readback with an exact
-   ordered trace-step prefix.
+   ordered trace-step prefix. Separately, the protected Review Brief workflow
+   must run its fixed three-method, fourteen-case campaign on `main`, prove the
+   required native Agents conversations and fail-closed cases, log the campaign
+   artifact, render media only from that verified artifact, and append only its
+   owned section to the existing historical W&B Report. No such campaign or
+   Report section is claimed by the source implementation.
 6. **Release signing.** Apple signing/notarization and Windows code-signing
    credentials must produce real signed installers and signed update metadata.
 7. **Public deployment.** GitHub Pages must be enabled and the synthetic-only

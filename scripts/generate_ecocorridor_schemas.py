@@ -9,6 +9,17 @@ from pathlib import Path
 from typing import Any
 
 from ecocorridor_core.contracts import PUBLIC_CONTRACTS
+from ecocorridor_core.review_brief import (
+    AuthorizedReviewSnapshot,
+    ReviewBriefAgentOutput,
+    ReviewBriefAttestation,
+    ReviewBriefDraft,
+    ReviewBriefItem,
+    ReviewBriefPreflight,
+    ReviewBriefRequest,
+    ReviewBriefTraceReceipt,
+    ReviewBriefValidation,
+)
 from ecocorridor_core.schema import (
     annotate_bundle_identity_schema,
     render_public_schemas,
@@ -18,6 +29,24 @@ from ecocorridor_core.schema import (
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_DIRECTORY = ROOT / "schemas" / "ecocorridor" / "v1.0"
 TYPESCRIPT_OUTPUT = ROOT / "apps" / "ecocorridor-desktop" / "src" / "generated" / "contracts.ts"
+
+REVIEW_BRIEF_PUBLIC_CONTRACTS = (
+    ("ReviewBriefRequest", ReviewBriefRequest),
+    ("AuthorizedReviewSnapshot", AuthorizedReviewSnapshot),
+    ("ReviewBriefAgentOutput", ReviewBriefAgentOutput),
+    ("ReviewBriefDraft", ReviewBriefDraft),
+    ("ReviewBriefItem", ReviewBriefItem),
+    ("ReviewBriefPreflight", ReviewBriefPreflight),
+    ("ReviewBriefTraceReceipt", ReviewBriefTraceReceipt),
+    ("ReviewBriefValidation", ReviewBriefValidation),
+    ("ReviewBriefAttestation", ReviewBriefAttestation),
+)
+
+
+def _named_contracts() -> tuple[tuple[str, type[Any]], ...]:
+    return tuple((contract.__name__, contract) for contract in PUBLIC_CONTRACTS) + (
+        REVIEW_BRIEF_PUBLIC_CONTRACTS
+    )
 
 
 def _literal(value: Any) -> str:
@@ -150,9 +179,8 @@ def render_typescript() -> str:
         "",
     ]
     names: list[str] = []
-    for contract in PUBLIC_CONTRACTS:
+    for name, contract in _named_contracts():
         schema = contract.model_json_schema(mode="validation")
-        name = contract.__name__
         if name == "ConnectivityProjectBundle":
             annotate_bundle_identity_schema(schema)
         names.append(name)
@@ -171,10 +199,17 @@ def render_typescript() -> str:
 
 
 def _expected_artifacts() -> dict[Path, str]:
-    artifacts = {
-        SCHEMA_DIRECTORY / filename: content
-        for filename, content in render_public_schemas().items()
-    }
+    rendered = render_public_schemas()
+    index = json.loads(rendered["index.json"])
+    for name, contract in REVIEW_BRIEF_PUBLIC_CONTRACTS:
+        schema = contract.model_json_schema(mode="validation")
+        schema["title"] = name
+        schema["$schema"] = "https://json-schema.org/draft/2020-12/schema"
+        schema["$id"] = f"https://schemas.ecocorridor.local/1.0/{name}.schema.json"
+        rendered[f"{name}.schema.json"] = json.dumps(schema, sort_keys=True, indent=2) + "\n"
+        index["contracts"].append({"file": f"{name}.schema.json", "name": name})
+    rendered["index.json"] = json.dumps(index, sort_keys=True, indent=2) + "\n"
+    artifacts = {SCHEMA_DIRECTORY / filename: content for filename, content in rendered.items()}
     artifacts[TYPESCRIPT_OUTPUT] = render_typescript()
     return artifacts
 
@@ -210,7 +245,19 @@ def main(argv: list[str] | None = None) -> int:
         print("EcoCorridor public contract artifacts are current")
         return 0
 
-    schema_paths = write_public_schemas(SCHEMA_DIRECTORY)
+    # The base writer deliberately prunes removed core contracts. Review Brief
+    # schemas are then written from the same complete expected-artifact set.
+    write_public_schemas(SCHEMA_DIRECTORY)
+    expected = _expected_artifacts()
+    schema_paths: list[Path] = []
+    for path, content in expected.items():
+        if path == TYPESCRIPT_OUTPUT:
+            continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_schema = path.with_suffix(path.suffix + ".tmp")
+        temporary_schema.write_text(content, encoding="utf-8", newline="\n")
+        temporary_schema.replace(path)
+        schema_paths.append(path)
     TYPESCRIPT_OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     temporary = TYPESCRIPT_OUTPUT.with_suffix(".ts.tmp")
     temporary.write_text(render_typescript(), encoding="utf-8", newline="\n")

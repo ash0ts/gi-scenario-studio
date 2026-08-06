@@ -4,11 +4,12 @@ import { z } from "zod";
 import { ConnectivityCostBasisSchema, ConnectivityDecisionBriefSchema, ConnectivityDecisionRuleSchema, ConnectivityModelFitnessSchema, ConnectivityScenarioSchema, FocalAreaSetSchema, InterventionOptionSchema, InterventionSiteSchema, ResistanceHypothesisSchema, ResourcePolicySchema, RiskReviewMaskSchema, SafeguardRecordSchema, SensitiveDataAuthorizationSchema } from "../generated/contracts";
 import type { ConnectivityModelFitness, GridAlignmentPlan, PortfolioDecisionSummary } from "../generated/contracts";
 import { evidenceFor, formatUsd, hypothesisRankRange, mapEvidenceFor, pairEvidenceFor, scenarioFor } from "../data/ridgeway";
-import { chooseConnectivityAsset, chooseConnectivityBundle, createProjectWorkspace, hasNativeHost, hostErrorMessage, hostRequest, rpcData, saveExportCopy } from "../lib/host";
+import { chooseConnectivityAsset, chooseConnectivityBundle, createProjectWorkspace, hasNativeHost, hostErrorMessage, hostRequest, openObservabilityReference, rpcData, saveExportCopy } from "../lib/host";
 import { DetailedCloudUploadPreviewSchema, ObservabilitySyncResponseSchema, Sha256Schema } from "../lib/observabilityContracts";
 import { guidedDispositionLabel } from "../lib/decisionCopy";
 import { parseFocalPairCsv, parsePositiveIntegerCsv } from "../lib/focalInput";
 import { AnalysisPlanReceiptSchema, AnalysisPrepareResponseSchema, AnalysisStateResponseSchema, AnalysisStatusResponseSchema, assetRequirements, assetUsesRasterGrid, buildAssetAddParams, buildAssetInspectParams, buildPlanningCreateParams, CostBasisGetResponseSchema, CostBasisSaveResponseSchema, createAssetDraft, DecisionBoardResponseSchema, DigitizationDraftSchema, DigitizationPreviewResponseSchema, DigitizationPublicationResponseSchema, ExportCreateResponseSchema, ExportEligibilityResponseSchema, GridApprovalResponseSchema, GridPreviewResponseSchema, GuidedControlResponseSchema, GuidedRerunStatusSchema, InterventionPreviewResponseSchema, InterventionSaveResponseSchema, ModelAttestResponseSchema, ModelValidationResponseSchema, planningRequirements, ProfessionalProjectStateSchema, ProviderDownloadResponseSchema, RasterInspectionSchema, RecordSaveResponseSchema, type AssetDraft } from "../lib/professional";
+import { isReviewBriefInvocationCurrent, REVIEW_BRIEF_ACKNOWLEDGEMENT, RIDGEWAY_REVIEW_BRIEF_ANALYSIS_ID, ReviewBriefAcknowledgementResponseSchema, ReviewBriefDraftResponseSchema, ReviewBriefFeedbackResponseSchema, ReviewBriefListResponseSchema, ReviewBriefPreflightSchema, reviewBriefCurrentDraft, reviewBriefScopeKey, type ReviewBriefAcknowledgement, type ReviewBriefDraft, type ReviewBriefInvocationIdentity, type ReviewBriefPreflight, type ReviewBriefRunState, type ReviewBriefScope } from "../lib/reviewBrief";
 import type { AssetDeployment, EntryPath, EvidenceSelection, GuidedDesktopSession, GuidedEventDraft, OpaqueFileHandle, PlanningState, ProfessionalAnalysisWorkspace, ProfessionalAssetRecord, ProfessionalGridApproval, ProfessionalModelRecords, ProfessionalProjectCandidate, ProfessionalProjectSession, RasterGrid, RasterInspection, RidgewayFixture, RidgewayPortfolio, RpcPayload, WorkflowStepId } from "../types";
 import { CorridorTransect } from "./CorridorTransect";
 import { CurrentRasterScrubber } from "./CurrentRasterScrubber";
@@ -16,6 +17,7 @@ import { Icon } from "./Icon";
 import { IntakeAssistantPanel } from "./IntakeAssistantPanel";
 import { ProfessionalScenarioEvidence } from "./ProfessionalScenarioEvidence";
 import { ReferenceComparisonPanel } from "./ReferenceComparisonPanel";
+import { ReviewBriefAgentPanel, type ReviewBriefOperationMessage } from "./ReviewBriefAgentPanel";
 import { useWorkspaceDraft } from "./WorkspaceDrafts";
 
 interface ScreensProps {
@@ -42,6 +44,9 @@ interface ScreensProps {
   professionalAnalysis: ProfessionalAnalysisWorkspace;
   onProfessionalAnalysis: (analysis: ProfessionalAnalysisWorkspace) => void;
   observabilityDeployment: "DEDICATED" | "SELF_MANAGED" | null;
+  observabilityConnected: boolean;
+  observabilityMessage: string;
+  onConnectObservability?: () => void;
   fixture: RidgewayFixture | null;
   fixtureVerified: boolean;
   guidedProjectionError: string | null;
@@ -2193,18 +2198,313 @@ function professionalEvidenceFor(
     status: "verified",
     portfolioId: summary.portfolio_id,
     scenarioId,
-    runId: summary.direct_run_ids?.[0] ?? "resolved-from-claim",
     reducer,
     assumption: "Interpret only within the selected reviewed scenario, resistance hypothesis, focal set, and direct engine settings.",
     source: "PROFESSIONAL_CLAIM",
   };
 }
 
-function RobustnessScreen({ path, selectedPortfolio, onPortfolio, onEvidence, fixture, fixtureVerified, guidedProjectionError, projectSession, professionalAnalysis, onProfessionalAnalysis }: Pick<ScreensProps, "path" | "selectedPortfolio" | "onPortfolio" | "onEvidence" | "fixture" | "fixtureVerified" | "guidedProjectionError" | "projectSession" | "professionalAnalysis" | "onProfessionalAnalysis">) {
+function RobustnessScreen({ path, publicMode, selectedPortfolio, onPortfolio, onEvidence, fixture, fixtureVerified, guidedProjectionError, projectSession, guidedSession, professionalAnalysis, onProfessionalAnalysis, observabilityConnected, observabilityMessage, onConnectObservability }: Pick<ScreensProps, "path" | "publicMode" | "selectedPortfolio" | "onPortfolio" | "onEvidence" | "fixture" | "fixtureVerified" | "guidedProjectionError" | "projectSession" | "guidedSession" | "professionalAnalysis" | "onProfessionalAnalysis" | "observabilityConnected" | "observabilityMessage" | "onConnectObservability">) {
   const [scrub, setScrub] = useState(50);
   const [selectedEvidenceScenarioId, setSelectedEvidenceScenarioId] = useState<string | null>(null);
   const [boardState, setBoardState] = useState<"idle" | "loading" | "error">("idle");
   const [boardMessage, setBoardMessage] = useState("");
+  const [reviewBriefOpen, setReviewBriefOpen] = useState(false);
+  const [reviewBriefPreflight, setReviewBriefPreflight] = useState<ReviewBriefPreflight | null>(null);
+  const [reviewBriefRunState, setReviewBriefRunState] = useState<ReviewBriefRunState>({ state: "IDLE" });
+  const [reviewBriefDrafts, setReviewBriefDrafts] = useState<ReviewBriefDraft[]>([]);
+  const [reviewBriefAcknowledgements, setReviewBriefAcknowledgements] = useState<ReviewBriefAcknowledgement[]>([]);
+  const [activeReviewBriefDraftId, setActiveReviewBriefDraftId] = useState<string | null>(null);
+  const [reviewBriefState, setReviewBriefState] = useState<"idle" | "preflighting" | "error">("idle");
+  const [reviewBriefMessage, setReviewBriefMessage] = useState<ReviewBriefOperationMessage | null>(null);
+  const [reviewBriefInvocation, setReviewBriefInvocation] = useState<ReviewBriefInvocationIdentity | null>(null);
+  const reviewBriefInvocationRef = useRef<ReviewBriefInvocationIdentity | null>(null);
+  const professionalBriefSummary = professionalAnalysis.decisionBoard?.summaries.find((summary) => summary.portfolio_id === professionalAnalysis.selectedPortfolioId)
+    ?? professionalAnalysis.decisionBoard?.summaries[0]
+    ?? null;
+  const reviewBriefPortfolioId = path === "guided" ? selectedPortfolio?.id ?? null : professionalBriefSummary?.portfolio_id ?? null;
+  const reviewBriefAnalysisId = path === "guided" ? RIDGEWAY_REVIEW_BRIEF_ANALYSIS_ID : professionalAnalysis.plannedAnalysisId;
+  const reviewBriefProjectHandle = path === "guided" ? guidedSession?.projectHandle ?? null : projectSession?.projectHandle ?? null;
+  const currentReviewBriefScopeKey = reviewBriefProjectHandle && reviewBriefAnalysisId && reviewBriefPortfolioId
+    ? reviewBriefScopeKey({
+      project_handle: reviewBriefProjectHandle,
+      analysis_id: reviewBriefAnalysisId,
+      portfolio_id: reviewBriefPortfolioId,
+    })
+    : "UNAVAILABLE";
+  const currentReviewBriefScopeKeyRef = useRef(currentReviewBriefScopeKey);
+  currentReviewBriefScopeKeyRef.current = currentReviewBriefScopeKey;
+
+  useEffect(() => {
+    setReviewBriefOpen(false);
+    setReviewBriefPreflight(null);
+    setReviewBriefRunState({ state: "IDLE" });
+    setReviewBriefDrafts([]);
+    setReviewBriefAcknowledgements([]);
+    setActiveReviewBriefDraftId(null);
+    setReviewBriefState("idle");
+    setReviewBriefMessage(null);
+  }, [reviewBriefAnalysisId, reviewBriefPortfolioId, reviewBriefProjectHandle]);
+
+  const reviewBriefParams = (): ReviewBriefScope => {
+    if (publicMode) throw new Error("The public replay is offline and agent-free.");
+    if (!reviewBriefProjectHandle || !reviewBriefAnalysisId || !reviewBriefPortfolioId) {
+      throw new Error("A complete selected portfolio and immutable analysis are required.");
+    }
+    return {
+      project_handle: reviewBriefProjectHandle,
+      analysis_id: reviewBriefAnalysisId,
+      portfolio_id: reviewBriefPortfolioId,
+    };
+  };
+
+  const loadReviewBriefDrafts = async (params: ReviewBriefScope = reviewBriefParams()) => {
+    const response = await hostRequest<RpcPayload<unknown>>("assistant.review_brief.list", params);
+    return ReviewBriefListResponseSchema.parse(rpcData(response));
+  };
+
+  const openReviewBrief = async () => {
+    if (reviewBriefInvocationRef.current) {
+      if (reviewBriefPreflight) setReviewBriefOpen(true);
+      setReviewBriefMessage({
+        tone: "INFO",
+        text: "A bounded Review Brief invocation is already running. Its scope remains locked until the terminal worker response.",
+      });
+      return;
+    }
+    const requestedScopeKey = currentReviewBriefScopeKey;
+    setReviewBriefState("preflighting");
+    setReviewBriefMessage(null);
+    try {
+      const params = reviewBriefParams();
+      if (reviewBriefScopeKey(params) !== requestedScopeKey) return;
+      const response = await hostRequest<RpcPayload<unknown>>("assistant.review_brief.preflight", params);
+      const preflight = ReviewBriefPreflightSchema.parse(rpcData(response));
+      if (preflight.analysis_id !== params.analysis_id || preflight.portfolio_id !== params.portfolio_id) {
+        throw new Error("The Review Brief preflight belongs to another evidence source.");
+      }
+      const history = await loadReviewBriefDrafts(params);
+      const currentDraft = reviewBriefCurrentDraft(history.drafts);
+      if (currentReviewBriefScopeKeyRef.current !== requestedScopeKey) return;
+      setReviewBriefPreflight(preflight);
+      setReviewBriefDrafts(history.drafts);
+      setReviewBriefAcknowledgements(history.acknowledgements);
+      setActiveReviewBriefDraftId(currentDraft?.draft_id ?? null);
+      setReviewBriefRunState({ state: "IDLE" });
+      setReviewBriefOpen(true);
+      setReviewBriefState("idle");
+    } catch (error) {
+      if (currentReviewBriefScopeKeyRef.current !== requestedScopeKey) return;
+      setReviewBriefState("error");
+      setReviewBriefMessage({ tone: "ERROR", text: hostErrorMessage(error, "The authoritative Review Brief preflight could not be completed.") });
+    }
+  };
+
+  const prepareReviewBrief = async (experimentalAgentAcknowledged: boolean) => {
+    if (reviewBriefInvocationRef.current) {
+      setReviewBriefMessage({
+        tone: "INFO",
+        text: "A bounded Review Brief invocation is already running; a second invocation was not started.",
+      });
+      return;
+    }
+    const params = reviewBriefParams();
+    const invocationScopeKey = reviewBriefScopeKey(params);
+    const invocationId = `review_brief_call_${(crypto.randomUUID ? crypto.randomUUID() : String(Date.now())).replaceAll("-", "")}`;
+    const invocationIdentity = { invocation_id: invocationId, scope_key: invocationScopeKey };
+    reviewBriefInvocationRef.current = invocationIdentity;
+    setReviewBriefInvocation(invocationIdentity);
+    const startedAt = new Date().toISOString();
+    setReviewBriefRunState({ state: "RUNNING", stage: "VERIFYING_PORTFOLIO", started_at: startedAt });
+    setReviewBriefMessage(null);
+    try {
+      const latest = reviewBriefCurrentDraft(reviewBriefDrafts);
+      const response = await hostRequest<RpcPayload<unknown>>("assistant.review_brief.prepare", {
+        ...params,
+        call_id: invocationId,
+        supersedes_draft_id: latest?.draft_id ?? null,
+        experimental_agent_acknowledged: experimentalAgentAcknowledged,
+      }, { timeoutMs: 420_000 });
+      const prepared = ReviewBriefDraftResponseSchema.parse(rpcData(response));
+      if (!isReviewBriefInvocationCurrent(
+        reviewBriefInvocationRef.current,
+        invocationId,
+        invocationScopeKey,
+        currentReviewBriefScopeKeyRef.current,
+      )) return;
+      const draft = prepared.draft;
+      if (prepared.acknowledgement) {
+        setReviewBriefAcknowledgements((current) => [
+          prepared.acknowledgement!,
+          ...current.filter((item) => item.draft_id !== prepared.acknowledgement!.draft_id),
+        ]);
+      }
+      setReviewBriefDrafts((current) => [
+        draft,
+        ...current.filter((item) => item.draft_id !== draft.draft_id),
+      ]);
+      setActiveReviewBriefDraftId(draft.draft_id);
+      setReviewBriefRunState({ state: "READY", draft_id: draft.draft_id });
+      setReviewBriefMessage({ tone: "SUCCESS", text: "The validated, trace-read-back brief was saved as an immutable UNCONFIRMED draft." });
+      try {
+        const history = await loadReviewBriefDrafts(params);
+        if (!isReviewBriefInvocationCurrent(
+          reviewBriefInvocationRef.current,
+          invocationId,
+          invocationScopeKey,
+          currentReviewBriefScopeKeyRef.current,
+        )) return;
+        setReviewBriefDrafts(history.drafts);
+        setReviewBriefAcknowledgements(history.acknowledgements);
+      } catch (refreshError) {
+        if (currentReviewBriefScopeKeyRef.current === invocationScopeKey) {
+          setReviewBriefMessage({ tone: "WARNING", text: `The immutable draft was saved, but its history could not be refreshed: ${hostErrorMessage(refreshError, "Reopen this drawer to retry the history read.")}` });
+        }
+      }
+    } catch (error) {
+      if (currentReviewBriefScopeKeyRef.current === invocationScopeKey) {
+        setReviewBriefRunState({
+          state: "FAILED",
+          code: "REVIEW_BRIEF_PREPARE_FAILED",
+          message: hostErrorMessage(error, "No Review Brief draft was saved."),
+        });
+      }
+    } finally {
+      if (reviewBriefInvocationRef.current?.invocation_id === invocationId) {
+        reviewBriefInvocationRef.current = null;
+        setReviewBriefInvocation(null);
+      }
+    }
+  };
+
+  const inspectReviewBriefEvidence = (claimId: string) => {
+    if (path !== "guided" && professionalBriefSummary) {
+      onEvidence(professionalEvidenceFor(
+        professionalBriefSummary,
+        claimId,
+        `Review Brief evidence for ${professionalBriefSummary.portfolio_id}`,
+        "Resolved by worker",
+        "direct evidence",
+        "Review Brief finding selected from the immutable decision board and resolved locally.",
+      ));
+      return;
+    }
+    if (fixture && selectedPortfolio) {
+      for (const result of selectedPortfolio.scenarioResults) {
+        const pair = result.pairResults.find((item) => item.claimId === claimId);
+        if (pair) {
+          onEvidence(pairEvidenceFor(fixture, selectedPortfolio, true, result, pair));
+          return;
+        }
+        if (claimId === `ECO-MAP-${selectedPortfolio.id}-${result.scenarioId}`) {
+          onEvidence(mapEvidenceFor(fixture, selectedPortfolio, true, result));
+          return;
+        }
+      }
+      if (!selectedPortfolio.id) {
+        setReviewBriefMessage({ tone: "ERROR", text: "The selected teaching projection has no published portfolio identity." });
+        return;
+      }
+      const retainedRecordTitle = claimId.startsWith("ECO-COST-")
+        ? "Synthetic screening cost record"
+        : claimId.startsWith("ECO-HYPOTHESIS-")
+          ? "Synthetic hypothesis-sensitivity record"
+          : "Model Fitness Passport evidence";
+      onEvidence({
+        claimId,
+        title: retainedRecordTitle,
+        value: true,
+        units: "retained_review_basis",
+        status: "verified",
+        portfolioId: selectedPortfolio.id,
+        scenarioId: "",
+        reducer: "Reviewed evidence retained for the active Model Fitness Passport revision.",
+        assumption: "This is reviewed non-solver evidence. It does not establish observed movement, ecological benefit, approval, or design readiness.",
+        source: "GUIDED_PROJECTION",
+      });
+      return;
+    }
+    setReviewBriefMessage({ tone: "ERROR", text: "The cited claim could not be matched to the currently selected immutable portfolio." });
+  };
+
+  const openReviewBriefTrace = async (traceId: string) => {
+    if (!reviewBriefProjectHandle) return;
+    const operationScopeKey = currentReviewBriefScopeKey;
+    try {
+      await openObservabilityReference(reviewBriefProjectHandle, "trace", traceId);
+      if (currentReviewBriefScopeKeyRef.current !== operationScopeKey) return;
+      setReviewBriefMessage({ tone: "SUCCESS", text: "Opened the confirmed Weave Agents trace in the system browser." });
+    } catch (error) {
+      if (currentReviewBriefScopeKeyRef.current !== operationScopeKey) return;
+      setReviewBriefMessage({ tone: "ERROR", text: hostErrorMessage(error, "The confirmed Weave trace could not be opened.") });
+    }
+  };
+
+  const acknowledgeReviewBrief = async (draftId: string, acknowledgement: typeof REVIEW_BRIEF_ACKNOWLEDGEMENT, reviewer: string) => {
+    if (!reviewBriefProjectHandle) return;
+    const operationScopeKey = currentReviewBriefScopeKey;
+    try {
+      const response = await hostRequest<RpcPayload<unknown>>("assistant.review_brief.acknowledge", {
+        project_handle: reviewBriefProjectHandle,
+        draft_id: draftId,
+        acknowledgement_id: `review_brief_ack_${(crypto.randomUUID ? crypto.randomUUID() : String(Date.now())).replaceAll("-", "")}`,
+        reviewer,
+        acknowledgement,
+      });
+      const recorded = ReviewBriefAcknowledgementResponseSchema.parse(rpcData(response));
+      if (currentReviewBriefScopeKeyRef.current !== operationScopeKey) return;
+      setReviewBriefAcknowledgements((current) => [
+        recorded.acknowledgement,
+        ...current.filter((item) => item.draft_id !== recorded.acknowledgement.draft_id),
+      ]);
+      setReviewBriefMessage({ tone: "SUCCESS", text: "Recorded factual-completeness review only; the model and portfolio disposition are unchanged." });
+    } catch (error) {
+      if (currentReviewBriefScopeKeyRef.current !== operationScopeKey) return;
+      setReviewBriefMessage({ tone: "ERROR", text: hostErrorMessage(error, "The non-approval review acknowledgement was not recorded.") });
+    }
+  };
+
+  const recordReviewBriefFeedback = async (draftId: string, rating: "HELPFUL" | "NOT_HELPFUL") => {
+    if (!reviewBriefProjectHandle) return;
+    const operationScopeKey = currentReviewBriefScopeKey;
+    try {
+      const response = await hostRequest<RpcPayload<unknown>>("assistant.review_brief.feedback", {
+        project_handle: reviewBriefProjectHandle,
+        draft_id: draftId,
+        feedback_id: `review_brief_feedback_${(crypto.randomUUID ? crypto.randomUUID() : String(Date.now())).replaceAll("-", "")}`,
+        rating,
+        comment: "",
+      });
+      ReviewBriefFeedbackResponseSchema.parse(rpcData(response));
+      if (currentReviewBriefScopeKeyRef.current !== operationScopeKey) return;
+      setReviewBriefMessage({ tone: "SUCCESS", text: "Usefulness feedback was attached to this immutable draft and trace reference." });
+    } catch (error) {
+      if (currentReviewBriefScopeKeyRef.current !== operationScopeKey) return;
+      setReviewBriefMessage({ tone: "ERROR", text: hostErrorMessage(error, "Review Brief feedback was not recorded.") });
+    }
+  };
+
+  const reviewBriefPanel = reviewBriefPreflight ? <ReviewBriefAgentPanel
+    open={reviewBriefOpen}
+    preflight={reviewBriefPreflight}
+    runState={reviewBriefRunState}
+    drafts={reviewBriefDrafts}
+    activeDraftId={activeReviewBriefDraftId}
+    acknowledgements={reviewBriefAcknowledgements}
+    projectHandle={reviewBriefProjectHandle}
+    observabilityConnected={observabilityConnected}
+    observabilityMessage={observabilityMessage}
+    operationMessage={reviewBriefMessage}
+    onClose={() => setReviewBriefOpen(false)}
+    onGenerate={(experimentalAcknowledged) => void prepareReviewBrief(experimentalAcknowledged)}
+    onConnectObservability={onConnectObservability}
+    onProviderStatusChange={() => { void openReviewBrief(); }}
+    onSelectDraft={setActiveReviewBriefDraftId}
+    onInspectEvidence={inspectReviewBriefEvidence}
+    onOpenTrace={(traceId) => void openReviewBriefTrace(traceId)}
+    onRecordReview={(draftId, acknowledgement, reviewer) => void acknowledgeReviewBrief(draftId, acknowledgement, reviewer)}
+    onFeedback={(draftId, rating) => void recordReviewBriefFeedback(draftId, rating)}
+  /> : null;
   const loadBoard = async () => {
     if (!projectSession || !professionalAnalysis.plannedAnalysisId) return;
     setBoardState("loading"); setBoardMessage("");
@@ -2238,11 +2538,13 @@ function RobustnessScreen({ path, selectedPortfolio, onPortfolio, onEvidence, fi
         <PageIntro kicker="Robustness before ranking" title={board ? "Direct evidence, weakest case first." : "Load only complete portfolio ensembles."} description="No raw effective resistance is aggregated across species, focal sets, grids, or incompatible hypotheses. Every displayed disposition comes from the worker's direct evidence board." badge={<StatusPill state={board ? dispositionState : statusComplete ? "review" : "fail"}>{board ? `${board.summaries.length} complete portfolios` : statusComplete ? "Decision board available" : "Complete direct evidence required"}</StatusPill>} />
         {!board ? <section className="paper-panel blocked-workspace"><Icon name={statusComplete ? "evidence" : "lock"} /><div><h2>{statusComplete ? "The exact analysis is complete; load its decision board." : "No professional portfolio is comparable yet."}</h2><p>{statusComplete ? "The worker will return only summaries whose complete required target-and-safeguard ensembles and decision claims are retained." : "Ridgeway teaching results are not project results and are never copied into this project. Finish the immutable direct analysis first."}</p><button className="primary-button" type="button" disabled={!statusComplete || boardState === "loading"} onClick={() => void loadBoard()}>{boardState === "loading" ? "Resolving exact evidence…" : "Load exact decision board"}</button></div></section> : <>
           <section className="paper-panel acceptance-matrix"><div className="panel-heading"><div><span className="section-kicker">Acceptance matrix first</span><h2>Every configured rule, safeguard, and feasibility disposition</h2></div><span className="mono">{board.claim_language}</span></div><p className="matrix-interpretation"><strong>How to read reduction:</strong> each value is baseline-relative inside its own scenario. It is not observed animal movement, crossing use, collision reduction, population benefit, or an approved corridor.</p><p className="table-scroll-hint" aria-hidden="true">Scroll horizontally to compare controlling scenario, safeguard, cost, and next action →</p><div className="table-scroll" tabIndex={0} role="region" aria-label="Scrollable professional portfolio decision matrix"><table><thead><tr><th>Inspect</th><th>Portfolio</th><th>Rule disposition</th><th>Worst within-scenario reduction</th><th>Controlling scenario</th><th>Safeguard</th><th>Review mask</th><th>Cost</th></tr></thead><tbody>{board.summaries.map((summary) => <tr className={summary.portfolio_id === selected?.portfolio_id ? "is-selected" : ""} key={summary.portfolio_id}><td><input type="radio" name="professional-portfolio" checked={summary.portfolio_id === selected?.portfolio_id} onChange={() => onProfessionalAnalysis({ ...professionalAnalysis, selectedPortfolioId: summary.portfolio_id })} aria-label={`Inspect portfolio ${summary.portfolio_id}`} /></td><td className="mono">{summary.portfolio_id}</td><td><StatusPill state={summary.disposition === "PASSES" ? "pass" : summary.disposition === "SURVEY_FIRST" ? "review" : "fail"}>{summary.disposition.replace("_", " ")}</StatusPill></td><td>{summary.worst_resistance_reduction_percent == null ? "Not reportable" : `${summary.worst_resistance_reduction_percent.toFixed(2)}%`}</td><td className="mono">{summary.controlling_scenario_id ?? "—"}</td><td><StatusPill state={summary.safeguard_passed === true ? "pass" : summary.safeguard_passed === false ? "fail" : "review"}>{summary.safeguard_passed === true ? "Pass" : summary.safeguard_passed === false ? "Fail" : "Review"}</StatusPill></td><td><StatusPill state={summary.review_mask_triggered ? "review" : "pass"}>{summary.review_mask_triggered ? "Review" : "Below review threshold"}</StatusPill></td><td>{new Intl.NumberFormat("en-US", { style: "currency", currency: summary.currency, maximumFractionDigits: 0 }).format(summary.cost)}</td></tr>)}</tbody></table></div></section>
-          {selected && <section className={`portfolio-verdict verdict-${dispositionState}`}><div><span className="section-kicker">Selected directly evaluated portfolio</span><h2 className="mono">{selected.portfolio_id}</h2><p>{selected.next_action}</p></div><dl><div><dt>Controlling scenario</dt><dd className="mono">{selected.controlling_scenario_id ?? "Not identified"}<small>within its own reviewed hypothesis</small>{controllingRule?.evidence_claim_id && <button className="table-button" type="button" onClick={() => onEvidence(professionalEvidenceFor(selected, controllingRule.evidence_claim_id!, `Controlling direct result for ${selected.portfolio_id}`, String(controllingRule.observed_value), "percent", controllingRule.explanation, controllingRule.scenario_id ?? ""))}>Trace controlling direct value</button>}</dd></div><div><dt>Controlling pair</dt><dd className="mono">{selected.controlling_pair_id ?? "Not identified"}<small>no cross-guild aggregation</small></dd></div><div><dt>Safeguard outcome</dt><dd>{selected.safeguard_passed === true ? "Pass" : selected.safeguard_passed === false ? "Fail" : "Review"}<small>{selected.review_mask_triggered ? "diagnostic mask review triggered" : "no configured mask trigger"}</small></dd></div><div><dt>Screening cost</dt><dd>{new Intl.NumberFormat("en-US", { style: "currency", currency: selected.currency, maximumFractionDigits: 0 }).format(selected.cost)}<small>cost remains outside the physics cache</small></dd></div></dl><div className="professional-next-action"><strong>{selected.disposition === "PASSES" ? "Meets the configured screening rules—not selected or approved." : selected.disposition === "SURVEY_FIRST" ? "Survey first; no intervention recommendation." : "Does not meet the configured screening rules."}</strong>{selected.unresolved_feasibility?.length ? <ul>{selected.unresolved_feasibility.map((item) => <li key={item}>{item}</li>)}</ul> : <span>No unresolved feasibility text was returned; field and engineering review remain required.</span>}{selected.disposition_evidence_claim_id && <button className="table-button" type="button" onClick={() => onEvidence(professionalEvidenceFor(selected, selected.disposition_evidence_claim_id!, `Screening disposition for ${selected.portfolio_id}`, selected.disposition, "screening disposition", "Complete portfolio disposition over retained rules, safeguards, feasibility records, and direct-run evidence."))}>Trace portfolio disposition</button>}</div></section>}
+          {selected && <section className={`portfolio-verdict verdict-${dispositionState}`}><div><span className="section-kicker">Selected directly evaluated portfolio</span><h2 className="mono">{selected.portfolio_id}</h2><p>{selected.next_action}</p></div><dl><div><dt>Controlling scenario</dt><dd className="mono">{selected.controlling_scenario_id ?? "Not identified"}<small>within its own reviewed hypothesis</small>{controllingRule?.evidence_claim_id && <button className="table-button" type="button" onClick={() => onEvidence(professionalEvidenceFor(selected, controllingRule.evidence_claim_id!, `Controlling direct result for ${selected.portfolio_id}`, String(controllingRule.observed_value), "percent", controllingRule.explanation, controllingRule.scenario_id ?? ""))}>Trace controlling direct value</button>}</dd></div><div><dt>Controlling pair</dt><dd className="mono">{selected.controlling_pair_id ?? "Not identified"}<small>no cross-guild aggregation</small></dd></div><div><dt>Safeguard outcome</dt><dd>{selected.safeguard_passed === true ? "Pass" : selected.safeguard_passed === false ? "Fail" : "Review"}<small>{selected.review_mask_triggered ? "diagnostic mask review triggered" : "no configured mask trigger"}</small></dd></div><div><dt>Screening cost</dt><dd>{new Intl.NumberFormat("en-US", { style: "currency", currency: selected.currency, maximumFractionDigits: 0 }).format(selected.cost)}<small>cost remains outside the physics cache</small></dd></div></dl><div className="verdict-evidence-actions"><button className="secondary-button" type="button" disabled={reviewBriefState === "preflighting" || reviewBriefInvocation !== null} onClick={() => void openReviewBrief()}><Icon name="spark" /> {reviewBriefInvocation ? "Review Brief invocation running…" : reviewBriefState === "preflighting" ? "Verifying Review Brief scope…" : "Prepare field-review brief"}</button><small>Read-only agent traversal; local validation renders and saves only an UNCONFIRMED draft.</small></div><div className="professional-next-action"><strong>{selected.disposition === "PASSES" ? "Meets the configured screening rules—not selected or approved." : selected.disposition === "SURVEY_FIRST" ? "Survey first; no intervention recommendation." : "Does not meet the configured screening rules."}</strong>{selected.unresolved_feasibility?.length ? <ul>{selected.unresolved_feasibility.map((item) => <li key={item}>{item}</li>)}</ul> : <span>No unresolved feasibility text was returned; field and engineering review remain required.</span>}{selected.disposition_evidence_claim_id && <button className="table-button" type="button" onClick={() => onEvidence(professionalEvidenceFor(selected, selected.disposition_evidence_claim_id!, `Screening disposition for ${selected.portfolio_id}`, selected.disposition, "screening disposition", "Complete portfolio disposition over retained rules, safeguards, feasibility records, and direct-run evidence."))}>Trace portfolio disposition</button>}</div></section>}
           {selected && projectSession && initialProfessionalScenarioId && <ProfessionalScenarioEvidence projectHandle={projectSession.projectHandle} analysisId={board.analysis_id} portfolioId={selected.portfolio_id} scenarioIds={plannedScenarioIds} initialScenarioId={initialProfessionalScenarioId} onEvidence={onEvidence} />}
           {selected && <section className="paper-panel table-panel"><div className="panel-heading"><div><span className="section-kicker">Rule-by-rule evidence</span><h2>Trace direct-computed values to solver runs</h2></div><span className="mono">{selected.rule_dispositions.length} rules</span></div><div className="table-scroll" tabIndex={0} role="region" aria-label="Scrollable rule-by-rule direct evidence"><table><thead><tr><th>Rule</th><th>Scenario</th><th>Pair</th><th>Direct value</th><th>Result</th><th>Explanation</th><th>Evidence</th></tr></thead><tbody>{selected.rule_dispositions.map((rule) => <tr key={`${rule.rule_id}-${rule.scenario_id ?? "all"}-${rule.pair_id ?? "all"}`}><td className="mono">{rule.rule_id}</td><td className="mono">{rule.scenario_id ?? "portfolio"}</td><td className="mono">{rule.pair_id ?? "—"}</td><td>{rule.observed_value == null ? "—" : String(rule.observed_value)}</td><td><StatusPill state={rule.passed ? "pass" : "fail"}>{rule.passed ? "Pass" : "Fail"}</StatusPill></td><td>{rule.explanation}</td><td>{rule.evidence_claim_id ? <button className="table-button" type="button" onClick={() => onEvidence(professionalEvidenceFor(selected, rule.evidence_claim_id!, `Direct evidence for ${rule.rule_id}`, rule.observed_value == null ? "Resolved by worker" : String(rule.observed_value), "Resolved from claim", rule.explanation, rule.scenario_id ?? selected.controlling_scenario_id ?? ""))}>Trace claim</button> : <span>Not numeric evidence</span>}</td></tr>)}</tbody></table></div></section>}
         </>}
         {boardMessage && <p className={`operation-message ${boardState === "error" ? "error" : "success"}`} role={boardState === "error" ? "alert" : "status"}>{boardMessage}</p>}
+        {reviewBriefMessage && <p className={`operation-message ${reviewBriefMessage.tone === "ERROR" ? "error" : reviewBriefMessage.tone === "WARNING" ? "review" : "success"}`} role={reviewBriefMessage.tone === "ERROR" ? "alert" : "status"}>{reviewBriefMessage.text}</p>}
+        {reviewBriefPanel}
       </>
     );
   }
@@ -2282,6 +2584,7 @@ function RobustnessScreen({ path, selectedPortfolio, onPortfolio, onEvidence, fi
         <div className="verdict-evidence-actions">
           <button className="secondary-button" type="button" onClick={() => onEvidence(evidenceFor(fixture, portfolio, true, controlling))}><Icon name="evidence" /> Trace controlling resistance</button>
           <button className="secondary-button" type="button" onClick={() => onEvidence(mapEvidenceFor(fixture, portfolio, true, controlling))}><Icon name="map" /> Trace controlling road-mask diagnostic</button>
+          {!publicMode && <button className="secondary-button" type="button" disabled={reviewBriefState === "preflighting" || reviewBriefInvocation !== null} onClick={() => void openReviewBrief()}><Icon name="spark" /> {reviewBriefInvocation ? "Review Brief invocation running…" : reviewBriefState === "preflighting" ? "Verifying Review Brief scope…" : "Prepare field-review brief"}</button>}
           <small>Each trace opens only the named evidence chain. Cost is resolved from the fixture cost basis in the evidence package.</small>
         </div>
       </section>
@@ -2292,6 +2595,8 @@ function RobustnessScreen({ path, selectedPortfolio, onPortfolio, onEvidence, fi
           <section className="paper-panel table-panel focal-matrix"><div className="panel-heading focal-matrix-heading"><div><span className="section-kicker">Synchronized focal-pair matrix</span><h2>{evidenceScenario.guild} · {evidenceScenario.hypothesis}</h2></div><label><span>Scenario shown in matrix and raster</span><select value={evidenceResult.scenarioId} onChange={(event) => setSelectedEvidenceScenarioId(event.target.value)}>{portfolio.scenarioResults.map((result) => { const item = scenarioFor(fixture, result); return <option key={result.scenarioId} value={result.scenarioId}>{item.guild} · {item.hypothesis} · {result.resistanceChangePct.toFixed(2)}%</option>; })}</select></label></div><p className="matrix-interpretation"><strong>Pair rule:</strong> {evidenceScenario.purpose === "safeguard" ? "No required safeguard pair may increase modeled effective resistance." : "Every required target pair must reduce modeled effective resistance by at least 3%."} Values compare only this scenario with its own direct baseline. Raw effective resistance is shown in the reviewed model's resistance units and is never aggregated across scenarios.</p><div className="table-scroll" tabIndex={0} role="region" aria-label={`Scrollable focal-pair evidence for ${evidenceResult.scenarioId}`}><table><thead><tr><th>Required focal pair</th><th>Baseline effective resistance (model units)</th><th>Selected effective resistance (model units)</th><th>Baseline-relative change</th><th>Rule</th><th>Exact direct identity</th><th>Evidence</th></tr></thead><tbody>{evidenceResult.pairResults.map((pair) => <tr key={pair.pairId}><td className="mono">{pair.pairId}</td><td className="mono">{pair.baselineEffectiveResistance.toPrecision(7)}</td><td className="mono">{pair.portfolioEffectiveResistance.toPrecision(7)}</td><td className={pair.baselineRelativeChangePct > 0 ? "value-adverse" : "value-good"}>{pair.baselineRelativeChangePct > 0 ? "+" : ""}{pair.baselineRelativeChangePct.toFixed(2)}%</td><td><StatusPill state={pair.passed ? "pass" : "fail"}>{pair.passed ? "Pass" : "Fail"}</StatusPill></td><td><details className="pair-lineage"><summary>Runs and matrix hashes</summary><dl><div><dt>Baseline run</dt><dd className="mono">{pair.baselineRunId}</dd></div><div><dt>Baseline matrix</dt><dd className="mono">sha256:{pair.baselineMatrixSha256}</dd></div><div><dt>Selected run</dt><dd className="mono">{pair.portfolioRunId}</dd></div><div><dt>Selected matrix</dt><dd className="mono">sha256:{pair.portfolioMatrixSha256}</dd></div></dl></details></td><td><button className="table-button" type="button" onClick={() => onEvidence(pairEvidenceFor(fixture, portfolio, true, evidenceResult, pair))}>Trace focal pair</button></td></tr>)}</tbody></table></div><div className="focal-matrix-footer"><span><strong>Scenario reducer</strong>{evidenceResult.resistanceChangePct.toFixed(2)}% weakest required pair</span><span><strong>Road-mask diagnostic</strong>{evidenceResult.reviewMaskChangePct.toFixed(2)}% redistribution · not animal use</span><button className="table-button" type="button" onClick={() => onEvidence(evidenceFor(fixture, portfolio, true, evidenceResult))}>Trace scenario reducer</button></div></section>
         <section className="paper-panel next-action-panel"><span className="section-kicker">Professional next action</span><h2>Model evidence narrows the field. Field evidence decides what is feasible.</h2><ol><li><span>01</span><div><strong>Ecological reconnaissance</strong><p>Confirm habitat condition, barriers, seasonal use, and unmodeled mortality pathways.</p></div></li><li><span>02</span><div><strong>Engineering screening</strong><p>Review structure, drainage, utilities, traffic, fencing limits, access, and constructability.</p></div></li><li><span>03</span><div><strong>Governance and ownership</strong><p>Resolve land rights, cultural review, maintenance responsibility, and data permissions.</p></div></li><li><span>04</span><div><strong>Revise the model</strong><p>Record new evidence as a semantic revision; do not overwrite the decision record.</p></div></li></ol></section>
       </div>
+      {reviewBriefMessage && <p className={`operation-message ${reviewBriefMessage.tone === "ERROR" ? "error" : reviewBriefMessage.tone === "WARNING" ? "review" : "success"}`} role={reviewBriefMessage.tone === "ERROR" ? "alert" : "status"}>{reviewBriefMessage.text}</p>}
+      {reviewBriefPanel}
     </>
   );
 }
@@ -2629,7 +2934,7 @@ export function ScreenContent(props: ScreensProps) {
     case "rules-costs": return <RulesCostsScreen path={props.path} planning={props.planning} onPlanning={props.onPlanning} fixture={props.fixture} guidedProjectionError={props.guidedProjectionError} projectSession={props.projectSession} professionalAssets={props.professionalAssets} professionalRecords={props.professionalRecords} onProfessionalRecords={props.onProfessionalRecords} observabilityDeployment={props.observabilityDeployment} />;
     case "run-plan": return <RunPlanScreen path={props.path} fixture={props.fixture} guidedProjectionError={props.guidedProjectionError} projectSession={props.projectSession} professionalAnalysis={props.professionalAnalysis} onProfessionalAnalysis={props.onProfessionalAnalysis} />;
     case "direct-runs": return <DirectRunsScreen path={props.path} publicMode={props.publicMode} guidedSession={props.guidedSession} onGuidedEvent={props.onGuidedEvent} fixture={props.fixture} fixtureVerified={props.fixtureVerified} guidedProjectionError={props.guidedProjectionError} projectSession={props.projectSession} professionalAnalysis={props.professionalAnalysis} onProfessionalAnalysis={props.onProfessionalAnalysis} />;
-    case "robustness": return <RobustnessScreen path={props.path} selectedPortfolio={props.selectedPortfolio} onPortfolio={props.onPortfolio} onEvidence={props.onEvidence} fixture={props.fixture} fixtureVerified={props.fixtureVerified} guidedProjectionError={props.guidedProjectionError} projectSession={props.projectSession} professionalAnalysis={props.professionalAnalysis} onProfessionalAnalysis={props.onProfessionalAnalysis} />;
+    case "robustness": return <RobustnessScreen path={props.path} publicMode={props.publicMode} selectedPortfolio={props.selectedPortfolio} onPortfolio={props.onPortfolio} onEvidence={props.onEvidence} fixture={props.fixture} fixtureVerified={props.fixtureVerified} guidedProjectionError={props.guidedProjectionError} projectSession={props.projectSession} guidedSession={props.guidedSession} professionalAnalysis={props.professionalAnalysis} onProfessionalAnalysis={props.onProfessionalAnalysis} observabilityConnected={props.observabilityConnected} observabilityMessage={props.observabilityMessage} onConnectObservability={props.onConnectObservability} />;
     case "evidence-package": return <EvidencePackageScreen path={props.path} publicMode={props.publicMode} selectedPortfolio={props.selectedPortfolio} onEvidence={props.onEvidence} fixture={props.fixture} fixtureVerified={props.fixtureVerified} guidedProjectionError={props.guidedProjectionError} projectSession={props.projectSession} professionalAnalysis={props.professionalAnalysis} onProfessionalAnalysis={props.onProfessionalAnalysis} />;
   }
 }

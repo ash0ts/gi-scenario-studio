@@ -16,6 +16,7 @@ from scenario_platform.contracts import ContractModel, TypedError, canonical_jso
 from scenario_platform.observability import ProjectScopeEvidence
 
 from .assistants import AssistantAnswer, AssistantRunAssociation, IntakeDraft
+from .cloud_origins import validate_wandb_deployment_origins
 from .contracts import (
     APPROVAL_AUDIT_RESERVATION_BYTES_PER_PROJECTION,
     OPERATIONAL_METADATA_RESERVATION_BYTES_PER_PROJECTION,
@@ -48,6 +49,12 @@ from .contracts import (
 from .digitization import DigitizationPreview, DigitizationPublication
 from .export import ConnectivityExportManifest
 from .reference_matrix_parser import REFERENCE_MATRIX_PARSER_SHA256
+from .review_brief import (
+    ReviewBriefAcknowledgement,
+    ReviewBriefDraft,
+    ReviewBriefFeedbackRecord,
+    ReviewBriefPreflight,
+)
 
 API_VERSION = "1.0"
 DataT = TypeVar("DataT", bound=ContractModel)
@@ -745,8 +752,53 @@ class GuidedEvidenceClaimProjection(ContractModel):
     direct_run_ids: list[str] = Field(min_length=1)
 
 
+class ModelFitnessEvidenceProjection(ContractModel):
+    """Local Evidence Rail projection for a retained Passport basis.
+
+    It deliberately cannot look like a Circuitscape result: the value is only
+    a Boolean retained-record disposition and direct-run references are forbidden.
+    """
+
+    claim_id: str
+    claim_kind: Literal["MODEL_FITNESS_RECORD"] = "MODEL_FITNESS_RECORD"
+    portfolio_id: Literal["MODEL_FITNESS_PASSPORT"] = "MODEL_FITNESS_PASSPORT"
+    scenario_id: None = None
+    pair_id: None = None
+    value: Literal[True] = True
+    units: Literal["retained_review_basis"] = "retained_review_basis"
+    reducer: Literal["Model Fitness Passport evidence"] = "Model Fitness Passport evidence"
+    text: str = Field(min_length=1)
+    direct_run_ids: list[str] = Field(default_factory=list, max_length=0)
+    nodes: list[dict[str, Any]] = Field(min_length=2)
+    edges: list[dict[str, Any]] = Field(min_length=1)
+    limitations: list[str] = Field(min_length=1)
+
+
+class GuidedDecisionRecordProjection(ContractModel):
+    """Manifest-bound synthetic cost or hypothesis record, never a solver result."""
+
+    claim_id: str
+    claim_kind: Literal["GUIDED_DECISION_RECORD"] = "GUIDED_DECISION_RECORD"
+    portfolio_id: str
+    scenario_id: None = None
+    pair_id: None = None
+    value: float
+    units: Literal["USD", "rank_positions"]
+    reducer: str = Field(min_length=1)
+    text: str = Field(min_length=1)
+    direct_run_ids: list[str] = Field(default_factory=list, max_length=0)
+    nodes: list[dict[str, Any]] = Field(min_length=2)
+    edges: list[dict[str, Any]] = Field(min_length=1)
+    limitations: list[str] = Field(min_length=1)
+
+
 class EvidenceResolveData(ContractModel):
-    claim: ConnectivityEvidenceClaim | GuidedEvidenceClaimProjection
+    claim: (
+        ConnectivityEvidenceClaim
+        | GuidedEvidenceClaimProjection
+        | ModelFitnessEvidenceProjection
+        | GuidedDecisionRecordProjection
+    )
     analysis_id: str | None = None
     analysis_plan_sha256: Sha256Digest | None = None
     model_revision: ModelRevision | None = None
@@ -858,6 +910,33 @@ class ObservabilityPreflightData(ContractModel):
     allowed: Literal[True]
     message: str
     binding_preview: dict[str, Any]
+
+
+class SyntheticTracePreflightData(ContractModel):
+    preflight_id: str
+    scope: Literal["CC0_SYNTHETIC_TRACE_ONLY"]
+    allowed: Literal[True]
+    message: str
+    visibility_claim: Literal["NONE"]
+    restricted_verified: Literal[False]
+    weave_capability: Literal["PENDING_NATIVE_AGENT_PREFLIGHT"]
+    expires_at: AwareDatetime
+    binding_preview: dict[str, Any]
+
+
+class SyntheticTraceConnectData(ContractModel):
+    connected: Literal[True]
+    state: Literal["SYNTHETIC_TRACE_TARGET_VERIFIED"]
+    binding_sha256: Sha256Digest
+    entity: str
+    project: str
+    deployment: Literal["WANDB_CLOUD", "DEDICATED", "SELF_MANAGED"]
+    visibility_claim: Literal["NONE"]
+    restricted_verified: Literal[False]
+    full_sync_allowed: Literal[False]
+    artifact_upload_allowed: Literal[False]
+    weave_capability: Literal["PENDING_NATIVE_AGENT_PREFLIGHT"]
+    message: str
 
 
 class CloudSyncPlanData(ContractModel):
@@ -1104,6 +1183,11 @@ class ObservabilityBindingData(ContractModel):
             )
         if self.verified is not True:
             raise ValueError("a bound observability state requires verified exact scope")
+        validate_wandb_deployment_origins(
+            deployment=str(self.deployment),
+            api_base_url=str(self.api_base_url),
+            web_base_url=str(self.web_base_url),
+        )
         scope = self.scope_evidence
         assert scope is not None
         if (
@@ -1370,6 +1454,26 @@ class AssistantTraceData(ContractModel):
         return self
 
 
+class ReviewBriefDraftData(ContractModel):
+    draft: ReviewBriefDraft
+    acknowledgement: ReviewBriefAcknowledgement | None = None
+
+
+class ReviewBriefListData(ContractModel):
+    drafts: list[ReviewBriefDraft]
+    acknowledgements: list[ReviewBriefAcknowledgement] = Field(default_factory=list)
+
+
+class ReviewBriefAcknowledgementData(ContractModel):
+    recorded: Literal[True]
+    acknowledgement: ReviewBriefAcknowledgement
+
+
+class ReviewBriefFeedbackData(ContractModel):
+    recorded: Literal[True]
+    feedback: ReviewBriefFeedbackRecord
+
+
 RPC_RESPONSE_DATA_CONTRACTS: dict[str, type[ContractModel]] = {
     "connectivity.bundle.inspect": BundleInspectData,
     "connectivity.bundle.import": BundleImportData,
@@ -1421,6 +1525,8 @@ RPC_RESPONSE_DATA_CONTRACTS: dict[str, type[ContractModel]] = {
     "connectivity.guided.cancel": GuidedControlData,
     "connectivity.guided.checkpoint": GuidedCheckpointEventData,
     "observability.preflight": ObservabilityPreflightData,
+    "observability.synthetic_trace.preflight": SyntheticTracePreflightData,
+    "observability.synthetic_trace.connect": SyntheticTraceConnectData,
     "observability.connect": ObservabilityConnectData,
     "observability.validate_binding": ObservabilityBindingResultData,
     "observability.get_status": ObservabilityBindingData,
@@ -1432,6 +1538,8 @@ RPC_RESPONSE_DATA_CONTRACTS: dict[str, type[ContractModel]] = {
     "observability.open_artifact": ObservabilityLinkData,
     "observability.open_trace": ObservabilityLinkData,
     "assistant.configure": AssistantStatusData,
+    "assistant.review_brief.configure_synthetic": AssistantStatusData,
+    "assistant.review_brief.status_synthetic": AssistantStatusData,
     "assistant.status": AssistantStatusData,
     "assistant.clear": AssistantStatusData,
     "assistant.explain": AssistantAnswerData,
@@ -1441,6 +1549,12 @@ RPC_RESPONSE_DATA_CONTRACTS: dict[str, type[ContractModel]] = {
     "assistant.intake.confirm": IntakeConfirmData,
     "assistant.feedback": AssistantFeedbackData,
     "assistant.get_trace": AssistantTraceData,
+    "assistant.review_brief.preflight": ReviewBriefPreflight,
+    "assistant.review_brief.prepare": ReviewBriefDraftData,
+    "assistant.review_brief.get": ReviewBriefDraftData,
+    "assistant.review_brief.list": ReviewBriefListData,
+    "assistant.review_brief.acknowledge": ReviewBriefAcknowledgementData,
+    "assistant.review_brief.feedback": ReviewBriefFeedbackData,
 }
 
 

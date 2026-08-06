@@ -13,6 +13,7 @@ from ecocorridor_core.assistant_runtime import ProviderBackedAssistantRuntime
 from ecocorridor_core.assistants import (
     APPROVED_TRACE_STEPS,
     INTAKE_LIMITATION,
+    AssistantRunAssociation,
     ProviderResponse,
     TraceReadback,
 )
@@ -562,6 +563,7 @@ def _dispatcher(
         observability_credentials=wandb_credentials,
         provider_factory=provider_factory,
         trace_factory=lambda _target, _root: trace,
+        allow_legacy_test_seam=True,
     )
     dispatcher = RPCDispatcher(
         data_root=tmp_path,
@@ -731,6 +733,50 @@ def test_provider_completed_intake_is_locally_audited_when_weave_readback_fails(
         assert audit["provider_completed"] is True
         assert audit["completed_trace_readback_verified"] is False
         assert audit["answer_returned"] is False
+    finally:
+        store.close()
+
+
+def test_rejection_audit_retains_completed_native_agents_trace_without_answer(
+    tmp_path: Path,
+) -> None:
+    _, project, _, _ = _dispatcher(tmp_path)
+    association = AssistantRunAssociation.create(
+        project_id="project-1",
+        wandb_external_project_id="wandb-project-immutable-1",
+        wandb_run_id="analysis-run-native",
+        wandb_run_kind="connectivity_analysis",
+        run_subject_id="analysis-1",
+        analysis_id="analysis-1",
+    )
+    completed_trace = {
+        "call_id": "native-rejected",
+        "completed": True,
+        "persisted": True,
+        "trace_readback_verified": True,
+        "answer_returned": False,
+        "trace_id": "trace_native_rejected",
+        "weave_call_id": "weave_native_rejected",
+        "trace_url": "https://wandb.example/eco-team/restricted-project/weave/traces/weave_native_rejected",
+        "association": association.model_dump(mode="json"),
+    }
+    store = EcoProjectStore(project)
+    try:
+        audit = store.record_assistant_rejection(
+            call_id="native-rejected",
+            operation="evidence.explain",
+            error_code="ASSISTANT_FABRICATED_EVIDENCE",
+            provider_call_id_sha256=hashlib.sha256(b"provider-native").hexdigest(),
+            provider_model="explicit-model-v1",
+            association=association.model_dump(mode="json"),
+            provider_abort_trace=completed_trace,
+        )
+        assert audit["completed_trace_readback_verified"] is True
+        assert audit["provider_abort_trace_verified"] is True
+        assert audit["provider_abort_trace"]["weave_call_id"] == "weave_native_rejected"
+        assert audit["answer_returned"] is False
+        with pytest.raises(KeyError):
+            store.assistant_answer("native-rejected")
     finally:
         store.close()
 
@@ -1158,6 +1204,45 @@ def test_assistant_rechecks_exact_scope_and_clear_zeroes_runtime_session(tmp_pat
     status = dispatcher.dispatch("assistant.status", {"project_directory": str(project)})["data"]
     assert status["configured"] is False
     assert status["provider"] is None
+
+
+@pytest.mark.parametrize(
+    ("code", "category", "remediation_fragment"),
+    [
+        (
+            "REVIEW_BRIEF_AGENT_CONTEXT_TOO_LARGE",
+            "RESOURCE_LIMIT",
+            "Reduce the authorized evidence selection",
+        ),
+        (
+            "RIDGEWAY_SYNTHETIC_TRACE_IDENTITY_MISMATCH",
+            "SECURITY",
+            "Revalidate the authorized W&B destination",
+        ),
+        (
+            "NATIVE_AGENT_TRACE_READBACK_FAILED",
+            "DATA_PROVIDER",
+            "Weave connection",
+        ),
+    ],
+)
+def test_assistant_failure_preserves_safe_native_agent_codes_and_remediation(
+    code: str,
+    category: str,
+    remediation_fragment: str,
+) -> None:
+    fault = RPCDispatcher._assistant_failure(RuntimeError(code))
+    assert fault.error.code == code
+    assert fault.error.category.value == category
+    assert remediation_fragment in (fault.error.remediation or "")
+
+
+def test_assistant_failure_does_not_echo_untyped_exception_content() -> None:
+    fault = RPCDispatcher._assistant_failure(
+        RuntimeError("REVIEW_BRIEF_AGENT_TRACE_FAILED provider-secret-value")
+    )
+    assert fault.error.code == "ASSISTANT_PROVIDER_OR_TRACE_FAILURE"
+    assert "provider-secret-value" not in json.dumps(fault.error.model_dump(mode="json"))
 
 
 def test_assistant_rejects_changed_exact_scope_evidence_before_provider_call(

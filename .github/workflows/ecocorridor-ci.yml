@@ -42,6 +42,7 @@ jobs:
           --extra dev
           --extra science
           --extra ecocorridor
+          --extra ecocorridor-agents
           --extra ecocorridor-report
           --extra export
           --extra observability
@@ -254,6 +255,7 @@ jobs:
           uv sync --locked
           --extra science
           --extra ecocorridor
+          --extra ecocorridor-agents
           --extra ecocorridor-report
           --extra export
           --extra observability

@@ -218,6 +218,50 @@ def test_assistant_release_topology_separates_evaluation_from_signed_feedback(
     )
 
 
+def test_review_brief_evaluation_workflow_is_locked_to_exact_target_and_order(
+    policy: ModuleType,
+) -> None:
+    root = Path(__file__).resolve().parents[2]
+    workflow = (root / ".github" / "workflows" / policy.REVIEW_BRIEF_EVALUATION_WORKFLOW).read_text(
+        encoding="utf-8"
+    )
+
+    assert policy.evaluate_review_brief_evaluation_topology(workflow) == []
+    assert workflow.count('--wandb-api-base-url "${WANDB_BASE_URL}"') == 2
+    assert workflow.count('--wandb-web-base-url "${WANDB_WEB_BASE_URL}"') == 2
+
+    missing_publisher_target = workflow.replace(
+        '            --wandb-web-base-url "${WANDB_WEB_BASE_URL}" \\\n'
+        '            --report-url "${WANDB_REPORT_URL}"',
+        '            --report-url "${WANDB_REPORT_URL}"',
+        1,
+    )
+    findings = policy.evaluate_review_brief_evaluation_topology(missing_publisher_target)
+    assert any("wandb-web-base-url" in item for item in findings)
+
+    wrong_order = (
+        workflow.replace(
+            "- name: Render only the complete verified campaign",
+            "- name: __ORDER_SENTINEL__",
+            1,
+        )
+        .replace(
+            "- name: Append only the verified owned section to the existing Report",
+            "- name: Render only the complete verified campaign",
+            1,
+        )
+        .replace(
+            "- name: __ORDER_SENTINEL__",
+            "- name: Append only the verified owned section to the existing Report",
+            1,
+        )
+    )
+    assert any(
+        "test, run, render, append, and preserve in order" in item
+        for item in policy.evaluate_review_brief_evaluation_topology(wrong_order)
+    )
+
+
 def test_assistant_release_topology_rejects_a_single_stage_rating_cycle(
     policy: ModuleType,
 ) -> None:
@@ -1137,8 +1181,8 @@ def test_eco_workflow_policy_requires_locked_sync_before_helper(policy: ModuleTy
     invocation = f"uv run --no-sync python {policy.ECOCORRIDOR_GEOSPATIAL_HELPER}"
     release = workflows[policy.ECOCORRIDOR_RELEASE_WORKFLOW]
     sync = (
-        "uv sync --locked --extra science --extra ecocorridor --extra ecocorridor-report "
-        "--extra export "
+        "uv sync --locked --extra science --extra ecocorridor --extra ecocorridor-agents "
+        "--extra ecocorridor-report --extra export "
         "--extra observability --extra release"
     )
     assert f"{sync}\n          {invocation}" in release

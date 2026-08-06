@@ -24,13 +24,19 @@ export function hasNativeExternalLinkHost(): boolean {
   return Boolean(window.__TAURI_INTERNALS__);
 }
 
-export async function hostRequest<T>(method: string, params: Record<string, unknown>): Promise<T> {
+export async function hostRequest<T>(
+  method: string,
+  params: Record<string, unknown>,
+  options: { timeoutMs?: number } = {},
+): Promise<T> {
   const bridge = customBridge();
   if (bridge) return bridge.request<T>(method, params);
   if (!window.__TAURI_INTERNALS__) {
     throw new Error("The verified EcoCorridor desktop host is not available.");
   }
-  return invoke<T>("worker_request", { request: { method, params } });
+  return invoke<T>("worker_request", {
+    request: { method, params, ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}) },
+  });
 }
 
 export function rpcData<T>(result: RpcPayload<T> | T): T {

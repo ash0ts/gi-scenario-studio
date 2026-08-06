@@ -1,0 +1,440 @@
+{
+  "$defs": {
+    "ReviewBriefActionKind": {
+      "enum": [
+        "INSPECT_EVIDENCE",
+        "FIELD_VERIFY",
+        "OBTAIN_QUALIFIED_REVIEW",
+        "RESOLVE_LAND_OR_OWNERSHIP",
+        "RESOLVE_AUTHORIZATION",
+        "COMPLETE_COST_BASIS",
+        "REVISE_MODEL_AND_RERUN"
+      ],
+      "title": "ReviewBriefActionKind",
+      "type": "string"
+    },
+    "ReviewBriefDispositionSnapshot": {
+      "additionalProperties": false,
+      "properties": {
+        "controlling_scenario_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Controlling Scenario Id"
+        },
+        "disposition": {
+          "enum": [
+            "PASSES",
+            "FAILS",
+            "SURVEY_FIRST",
+            "INCOMPLETE"
+          ],
+          "title": "Disposition",
+          "type": "string"
+        },
+        "next_action": {
+          "minLength": 1,
+          "title": "Next Action",
+          "type": "string"
+        },
+        "review_mask_triggered": {
+          "title": "Review Mask Triggered",
+          "type": "boolean"
+        },
+        "safeguard_status": {
+          "enum": [
+            "PASS",
+            "FAIL",
+            "REVIEW"
+          ],
+          "title": "Safeguard Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "disposition",
+        "next_action",
+        "safeguard_status",
+        "review_mask_triggered"
+      ],
+      "title": "ReviewBriefDispositionSnapshot",
+      "type": "object"
+    },
+    "ReviewBriefFindingKind": {
+      "enum": [
+        "RULE_FAILURE",
+        "SURVEY_FIRST",
+        "SAFEGUARD",
+        "REVIEW_MASK",
+        "FEASIBILITY_GAP",
+        "MODEL_FITNESS",
+        "QA",
+        "ASSUMPTION",
+        "COST",
+        "REFERENCE",
+        "AUTHORIZATION"
+      ],
+      "title": "ReviewBriefFindingKind",
+      "type": "string"
+    },
+    "ReviewBriefItem": {
+      "additionalProperties": false,
+      "properties": {
+        "action_kind": {
+          "$ref": "#/$defs/ReviewBriefActionKind"
+        },
+        "direct_run_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Direct Run Ids",
+          "type": "array"
+        },
+        "evidence_claim_ids": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence Claim Ids",
+          "type": "array"
+        },
+        "finding_kind": {
+          "$ref": "#/$defs/ReviewBriefFindingKind"
+        },
+        "item_id": {
+          "minLength": 1,
+          "title": "Item Id",
+          "type": "string"
+        },
+        "priority": {
+          "$ref": "#/$defs/ReviewBriefPriority"
+        },
+        "rendered_text": {
+          "minLength": 1,
+          "title": "Rendered Text",
+          "type": "string"
+        },
+        "review_topic": {
+          "$ref": "#/$defs/ReviewBriefTopic"
+        },
+        "reviewer_disciplines": {
+          "items": {
+            "$ref": "#/$defs/ReviewerDiscipline"
+          },
+          "minItems": 1,
+          "title": "Reviewer Disciplines",
+          "type": "array"
+        },
+        "scenario_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Scenario Ids",
+          "type": "array"
+        },
+        "state": {
+          "const": "OPEN",
+          "default": "OPEN",
+          "title": "State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "item_id",
+        "finding_kind",
+        "review_topic",
+        "priority",
+        "action_kind",
+        "reviewer_disciplines",
+        "evidence_claim_ids",
+        "rendered_text"
+      ],
+      "title": "ReviewBriefItem",
+      "type": "object"
+    },
+    "ReviewBriefPriority": {
+      "enum": [
+        "BLOCKING",
+        "BEFORE_FEASIBILITY",
+        "FOLLOW_UP"
+      ],
+      "title": "ReviewBriefPriority",
+      "type": "string"
+    },
+    "ReviewBriefSourceMode": {
+      "enum": [
+        "RIDGEWAY_SYNTHETIC",
+        "PROFESSIONAL"
+      ],
+      "title": "ReviewBriefSourceMode",
+      "type": "string"
+    },
+    "ReviewBriefTopic": {
+      "description": "Closed, non-narrative facet used to route a finding to the right review.",
+      "enum": [
+        "REQUIRED_RULE",
+        "SURVEY_OR_FIELD_DATA",
+        "SAFEGUARD_REVIEW",
+        "CURRENT_REDISTRIBUTION_MASK",
+        "GENERAL_FEASIBILITY",
+        "LAND_ACCESS_OR_OWNERSHIP",
+        "MAINTENANCE_RESPONSIBILITY",
+        "CULTURAL_REVIEW",
+        "PERMITTING_REVIEW",
+        "TRAFFIC_OR_STRUCTURAL_FEASIBILITY",
+        "ECOLOGICAL_FIELD_RISK",
+        "MODEL_FITNESS_BASIS",
+        "DIRECT_RUN_QA",
+        "ECOLOGICAL_ASSUMPTION",
+        "COST_BASIS",
+        "REFERENCE_COMPARISON",
+        "DATA_AUTHORIZATION"
+      ],
+      "title": "ReviewBriefTopic",
+      "type": "string"
+    },
+    "ReviewBriefTrace": {
+      "additionalProperties": false,
+      "properties": {
+        "association_id": {
+          "minLength": 1,
+          "title": "Association Id",
+          "type": "string"
+        },
+        "flushed": {
+          "const": true,
+          "default": true,
+          "title": "Flushed",
+          "type": "boolean"
+        },
+        "readback_verified": {
+          "const": true,
+          "default": true,
+          "title": "Readback Verified",
+          "type": "boolean"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "title": "Trace Id",
+          "type": "string"
+        },
+        "trace_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace Url"
+        },
+        "wandb_run_id": {
+          "minLength": 1,
+          "title": "Wandb Run Id",
+          "type": "string"
+        },
+        "weave_call_id": {
+          "minLength": 1,
+          "title": "Weave Call Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "trace_id",
+        "weave_call_id",
+        "association_id",
+        "wandb_run_id"
+      ],
+      "title": "ReviewBriefTrace",
+      "type": "object"
+    },
+    "ReviewBriefValidation": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_ids_valid": {
+          "const": true,
+          "default": true,
+          "title": "Evidence Ids Valid",
+          "type": "boolean"
+        },
+        "numeric_and_unit_faithful": {
+          "const": true,
+          "default": true,
+          "title": "Numeric And Unit Faithful",
+          "type": "boolean"
+        },
+        "prohibited_claims": {
+          "const": 0,
+          "default": 0,
+          "title": "Prohibited Claims",
+          "type": "integer"
+        },
+        "required_limitations_present": {
+          "const": true,
+          "default": true,
+          "title": "Required Limitations Present",
+          "type": "boolean"
+        },
+        "sensitive_tokens": {
+          "const": 0,
+          "default": 0,
+          "title": "Sensitive Tokens",
+          "type": "integer"
+        },
+        "source_snapshot_revalidated": {
+          "const": true,
+          "default": true,
+          "title": "Source Snapshot Revalidated",
+          "type": "boolean"
+        },
+        "unauthorized_actions": {
+          "const": 0,
+          "default": 0,
+          "title": "Unauthorized Actions",
+          "type": "integer"
+        },
+        "unsupported_findings": {
+          "const": 0,
+          "default": 0,
+          "title": "Unsupported Findings",
+          "type": "integer"
+        },
+        "validator_version": {
+          "const": "review-brief-validator-v1",
+          "default": "review-brief-validator-v1",
+          "title": "Validator Version",
+          "type": "string"
+        }
+      },
+      "title": "ReviewBriefValidation",
+      "type": "object"
+    },
+    "ReviewerDiscipline": {
+      "enum": [
+        "ECOLOGY",
+        "FIELD",
+        "ENGINEERING",
+        "LAND",
+        "MAINTENANCE",
+        "CULTURAL",
+        "PERMITTING",
+        "COST"
+      ],
+      "title": "ReviewerDiscipline",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.ecocorridor.local/1.0/ReviewBriefDraft.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "analysis_id": {
+      "minLength": 1,
+      "title": "Analysis Id",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "decision_board_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Decision Board Sha256",
+      "type": "string"
+    },
+    "disposition_snapshot": {
+      "$ref": "#/$defs/ReviewBriefDispositionSnapshot"
+    },
+    "draft_id": {
+      "minLength": 1,
+      "title": "Draft Id",
+      "type": "string"
+    },
+    "items": {
+      "items": {
+        "$ref": "#/$defs/ReviewBriefItem"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "limitations": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Limitations",
+      "type": "array"
+    },
+    "model_revision_id": {
+      "minLength": 1,
+      "title": "Model Revision Id",
+      "type": "string"
+    },
+    "portfolio_id": {
+      "minLength": 1,
+      "title": "Portfolio Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "review-brief-draft/v1",
+      "default": "review-brief-draft/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "source_mode": {
+      "$ref": "#/$defs/ReviewBriefSourceMode"
+    },
+    "status": {
+      "default": "UNCONFIRMED",
+      "enum": [
+        "UNCONFIRMED",
+        "STALE"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "supersedes_draft_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Supersedes Draft Id"
+    },
+    "trace": {
+      "$ref": "#/$defs/ReviewBriefTrace"
+    },
+    "validation": {
+      "$ref": "#/$defs/ReviewBriefValidation"
+    }
+  },
+  "required": [
+    "draft_id",
+    "source_mode",
+    "analysis_id",
+    "portfolio_id",
+    "model_revision_id",
+    "decision_board_sha256",
+    "created_at",
+    "disposition_snapshot",
+    "items",
+    "limitations",
+    "trace",
+    "validation"
+  ],
+  "title": "ReviewBriefDraft",
+  "type": "object"
+}

@@ -273,10 +273,11 @@ def _outbox_state(repository: ScenarioRepository, outbox_id: str) -> dict[str, A
 
 
 def test_locked_wandb_sdk_exposes_exact_run_lookup_contract() -> None:
-    import wandb
     from scenario_platform import cloud_sync
     from wandb.apis.normalize import normalize_exceptions
     from wandb.errors import CommError
+
+    import wandb
 
     assert wandb.__version__ == "0.28.1"
     assert callable(wandb.Api.runs)
@@ -1203,7 +1204,10 @@ def test_cloud_scope_unverifiable_stops_before_sdk_use(tmp_path: Path) -> None:
     )
     target_payload = _target().model_dump(mode="json")
     target_payload["deployment"] = "wandb_cloud"
+    target_payload["api_base_url"] = "https://api.wandb.ai"
+    target_payload["web_base_url"] = "https://wandb.ai"
     target_payload["scope_evidence"]["deployment"] = "wandb_cloud"
+    target_payload["scope_evidence"]["api_base_url"] = "https://api.wandb.ai"
     target_payload["scope_evidence"]["evidence_kind"] = "PUBLIC_API_DOCUMENTED_EXACT"
     target = WandbTarget.model_validate(target_payload)
     with pytest.raises(CloudPolicyError, match="SCOPE_UNVERIFIABLE"):
@@ -1465,7 +1469,10 @@ def test_trace_deep_link_requires_retained_provider_readback_url(tmp_path: Path)
 def test_rpc_adapter_cannot_accept_fake_uploader_as_scope_substitute(tmp_path: Path) -> None:
     target_payload = _target().model_dump(mode="json")
     target_payload["deployment"] = "wandb_cloud"
+    target_payload["api_base_url"] = "https://api.wandb.ai"
+    target_payload["web_base_url"] = "https://wandb.ai"
     target_payload["scope_evidence"]["deployment"] = "wandb_cloud"
+    target_payload["scope_evidence"]["api_base_url"] = "https://api.wandb.ai"
     target_payload["scope_evidence"]["evidence_kind"] = "PUBLIC_API_DOCUMENTED_EXACT"
     target = WandbTarget.model_validate(target_payload)
     adapter = EcoRpcObservabilityAdapter(

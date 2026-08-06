@@ -62,7 +62,7 @@ jobs:
 
       - name: Install locked observability dependencies
         run: >-
-          uv sync --locked --extra ecocorridor --extra observability --extra release --extra dev
+          uv sync --locked --extra ecocorridor --extra ecocorridor-agents --extra observability --extra release --extra dev
 
       - name: Validate protected configuration without printing secrets
         shell: bash

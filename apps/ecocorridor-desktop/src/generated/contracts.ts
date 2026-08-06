@@ -1052,6 +1052,239 @@ export const SemanticModelDiffSchema = z.object({
 }).strict();
 export type SemanticModelDiff = z.infer<typeof SemanticModelDiffSchema>;
 
+export const ReviewBriefRequestSchema = z.object({
+  "call_alias": z.literal("CALL1").optional(),
+  "operation": z.literal("REVIEW_BRIEF_PREPARE").optional(),
+  "snapshot": z.object({
+  "schema_version": z.literal("review-brief-agent-context/v1").optional(),
+  "snapshot_sha256": z.string().regex(new RegExp("^[0-9a-f]{64}$")),
+  "source_mode": z.enum(["RIDGEWAY_SYNTHETIC", "PROFESSIONAL"]),
+  "disposition": z.enum(["PASSES", "FAILS", "SURVEY_FIRST", "INCOMPLETE"]),
+  "analysis_id_sha256": z.string().regex(new RegExp("^[0-9a-f]{64}$")),
+  "model_revision_id_sha256": z.string().regex(new RegExp("^[0-9a-f]{64}$")),
+  "evidence_authorization_decision_id": z.string().regex(new RegExp("^evidence_auth_[0-9a-f]{24}$")),
+  "current_authorizations_sha256": z.string().regex(new RegExp("^[0-9a-f]{64}$")),
+  "authorization_sha256": z.string().regex(new RegExp("^[0-9a-f]{64}$")),
+  "findings": z.array(z.object({
+  "finding_alias": z.string().regex(new RegExp("^F[1-9][0-9]{0,3}$")),
+  "finding_kind": z.enum(["RULE_FAILURE", "SURVEY_FIRST", "SAFEGUARD", "REVIEW_MASK", "FEASIBILITY_GAP", "MODEL_FITNESS", "QA", "ASSUMPTION", "COST", "REFERENCE", "AUTHORIZATION"]),
+  "review_topic": z.union([z.enum(["REQUIRED_RULE", "SURVEY_OR_FIELD_DATA", "SAFEGUARD_REVIEW", "CURRENT_REDISTRIBUTION_MASK", "GENERAL_FEASIBILITY", "LAND_ACCESS_OR_OWNERSHIP", "MAINTENANCE_RESPONSIBILITY", "CULTURAL_REVIEW", "PERMITTING_REVIEW", "TRAFFIC_OR_STRUCTURAL_FEASIBILITY", "ECOLOGICAL_FIELD_RISK", "MODEL_FITNESS_BASIS", "DIRECT_RUN_QA", "ECOLOGICAL_ASSUMPTION", "COST_BASIS", "REFERENCE_COMPARISON", "DATA_AUTHORIZATION"]), z.null()]).optional(),
+  "reason_facets": z.array(z.enum(["CONFIGURED_RULE_NOT_MET", "SURVEY_EVIDENCE_GAP", "SAFEGUARD_NONREGRESSION_NOT_MET", "REVIEW_MASK_THRESHOLD_TRIGGERED", "FEASIBILITY_BASIS_INCOMPLETE", "LAND_ACCESS_UNRESOLVED", "MAINTENANCE_RESPONSIBILITY_UNRESOLVED", "CULTURAL_REVIEW_UNRESOLVED", "PERMITTING_REVIEW_UNRESOLVED", "TRAFFIC_OR_STRUCTURAL_REVIEW_UNRESOLVED", "ECOLOGICAL_FIELD_RISK_UNRESOLVED", "MODEL_FITNESS_BASIS_INCOMPLETE", "DIRECT_RUN_QA_NOT_ACCEPTED", "ECOLOGICAL_ASSUMPTION_UNRESOLVED", "HYPOTHESIS_SENSITIVITY", "COST_RULE_EXCEEDED", "REFERENCE_COMPARISON_NOT_ACCEPTED", "DATA_AUTHORIZATION_NOT_VERIFIED"])).optional(),
+  "evidence_classes": z.array(z.enum(["DIRECT_CIRCUITSCAPE_RESULT", "DIRECT_CURRENT_DIAGNOSTIC", "RETAINED_DECISION_RULE", "RETAINED_MODEL_FITNESS", "RETAINED_FEASIBILITY", "RETAINED_COST_BASIS", "RETAINED_HYPOTHESIS_COMPARISON", "RETAINED_REFERENCE_COMPARISON", "RETAINED_DATA_AUTHORIZATION"])).optional(),
+  "priority": z.enum(["BLOCKING", "BEFORE_FEASIBILITY", "FOLLOW_UP"]),
+  "evidence_aliases": z.array(z.string()).min(1).max(64),
+  "evidence_branches": z.array(z.object({
+  "evidence_alias": z.string().regex(new RegExp("^E[1-9][0-9]{0,3}$")),
+  "evidence_class": z.enum(["DIRECT_CIRCUITSCAPE_RESULT", "DIRECT_CURRENT_DIAGNOSTIC", "RETAINED_DECISION_RULE", "RETAINED_MODEL_FITNESS", "RETAINED_FEASIBILITY", "RETAINED_COST_BASIS", "RETAINED_HYPOTHESIS_COMPARISON", "RETAINED_REFERENCE_COMPARISON", "RETAINED_DATA_AUTHORIZATION"]),
+}).strict()).max(64).optional(),
+  "scenario_aliases": z.array(z.string()).max(64).optional(),
+  "scenario_breadth": z.union([z.enum(["PROJECT_WIDE", "SINGLE_SCENARIO", "SCENARIO_SUBSET", "COMPLETE_ENSEMBLE"]), z.null()]).optional(),
+  "direct_run_count": z.number().int().min(0).optional(),
+  "permitted_actions": z.array(z.enum(["INSPECT_EVIDENCE", "FIELD_VERIFY", "OBTAIN_QUALIFIED_REVIEW", "RESOLVE_LAND_OR_OWNERSHIP", "RESOLVE_AUTHORIZATION", "COMPLETE_COST_BASIS", "REVISE_MODEL_AND_RERUN"])).min(1),
+  "permitted_disciplines": z.array(z.enum(["ECOLOGY", "FIELD", "ENGINEERING", "LAND", "MAINTENANCE", "CULTURAL", "PERMITTING", "COST"])).min(1),
+}).strict()).min(1).max(64),
+}).strict(),
+}).strict();
+export type ReviewBriefRequest = z.infer<typeof ReviewBriefRequestSchema>;
+
+export const AuthorizedReviewSnapshotSchema = z.object({
+  "schema_version": z.literal("review-brief-agent-context/v1").optional(),
+  "snapshot_sha256": z.string().regex(new RegExp("^[0-9a-f]{64}$")),
+  "source_mode": z.enum(["RIDGEWAY_SYNTHETIC", "PROFESSIONAL"]),
+  "disposition": z.enum(["PASSES", "FAILS", "SURVEY_FIRST", "INCOMPLETE"]),
+  "analysis_id_sha256": z.string().regex(new RegExp("^[0-9a-f]{64}$")),
+  "model_revision_id_sha256": z.string().regex(new RegExp("^[0-9a-f]{64}$")),
+  "evidence_authorization_decision_id": z.string().regex(new RegExp("^evidence_auth_[0-9a-f]{24}$")),
+  "current_authorizations_sha256": z.string().regex(new RegExp("^[0-9a-f]{64}$")),
+  "authorization_sha256": z.string().regex(new RegExp("^[0-9a-f]{64}$")),
+  "findings": z.array(z.object({
+  "finding_alias": z.string().regex(new RegExp("^F[1-9][0-9]{0,3}$")),
+  "finding_kind": z.enum(["RULE_FAILURE", "SURVEY_FIRST", "SAFEGUARD", "REVIEW_MASK", "FEASIBILITY_GAP", "MODEL_FITNESS", "QA", "ASSUMPTION", "COST", "REFERENCE", "AUTHORIZATION"]),
+  "review_topic": z.union([z.enum(["REQUIRED_RULE", "SURVEY_OR_FIELD_DATA", "SAFEGUARD_REVIEW", "CURRENT_REDISTRIBUTION_MASK", "GENERAL_FEASIBILITY", "LAND_ACCESS_OR_OWNERSHIP", "MAINTENANCE_RESPONSIBILITY", "CULTURAL_REVIEW", "PERMITTING_REVIEW", "TRAFFIC_OR_STRUCTURAL_FEASIBILITY", "ECOLOGICAL_FIELD_RISK", "MODEL_FITNESS_BASIS", "DIRECT_RUN_QA", "ECOLOGICAL_ASSUMPTION", "COST_BASIS", "REFERENCE_COMPARISON", "DATA_AUTHORIZATION"]), z.null()]).optional(),
+  "reason_facets": z.array(z.enum(["CONFIGURED_RULE_NOT_MET", "SURVEY_EVIDENCE_GAP", "SAFEGUARD_NONREGRESSION_NOT_MET", "REVIEW_MASK_THRESHOLD_TRIGGERED", "FEASIBILITY_BASIS_INCOMPLETE", "LAND_ACCESS_UNRESOLVED", "MAINTENANCE_RESPONSIBILITY_UNRESOLVED", "CULTURAL_REVIEW_UNRESOLVED", "PERMITTING_REVIEW_UNRESOLVED", "TRAFFIC_OR_STRUCTURAL_REVIEW_UNRESOLVED", "ECOLOGICAL_FIELD_RISK_UNRESOLVED", "MODEL_FITNESS_BASIS_INCOMPLETE", "DIRECT_RUN_QA_NOT_ACCEPTED", "ECOLOGICAL_ASSUMPTION_UNRESOLVED", "HYPOTHESIS_SENSITIVITY", "COST_RULE_EXCEEDED", "REFERENCE_COMPARISON_NOT_ACCEPTED", "DATA_AUTHORIZATION_NOT_VERIFIED"])).optional(),
+  "evidence_classes": z.array(z.enum(["DIRECT_CIRCUITSCAPE_RESULT", "DIRECT_CURRENT_DIAGNOSTIC", "RETAINED_DECISION_RULE", "RETAINED_MODEL_FITNESS", "RETAINED_FEASIBILITY", "RETAINED_COST_BASIS", "RETAINED_HYPOTHESIS_COMPARISON", "RETAINED_REFERENCE_COMPARISON", "RETAINED_DATA_AUTHORIZATION"])).optional(),
+  "priority": z.enum(["BLOCKING", "BEFORE_FEASIBILITY", "FOLLOW_UP"]),
+  "evidence_aliases": z.array(z.string()).min(1).max(64),
+  "evidence_branches": z.array(z.object({
+  "evidence_alias": z.string().regex(new RegExp("^E[1-9][0-9]{0,3}$")),
+  "evidence_class": z.enum(["DIRECT_CIRCUITSCAPE_RESULT", "DIRECT_CURRENT_DIAGNOSTIC", "RETAINED_DECISION_RULE", "RETAINED_MODEL_FITNESS", "RETAINED_FEASIBILITY", "RETAINED_COST_BASIS", "RETAINED_HYPOTHESIS_COMPARISON", "RETAINED_REFERENCE_COMPARISON", "RETAINED_DATA_AUTHORIZATION"]),
+}).strict()).max(64).optional(),
+  "scenario_aliases": z.array(z.string()).max(64).optional(),
+  "scenario_breadth": z.union([z.enum(["PROJECT_WIDE", "SINGLE_SCENARIO", "SCENARIO_SUBSET", "COMPLETE_ENSEMBLE"]), z.null()]).optional(),
+  "direct_run_count": z.number().int().min(0).optional(),
+  "permitted_actions": z.array(z.enum(["INSPECT_EVIDENCE", "FIELD_VERIFY", "OBTAIN_QUALIFIED_REVIEW", "RESOLVE_LAND_OR_OWNERSHIP", "RESOLVE_AUTHORIZATION", "COMPLETE_COST_BASIS", "REVISE_MODEL_AND_RERUN"])).min(1),
+  "permitted_disciplines": z.array(z.enum(["ECOLOGY", "FIELD", "ENGINEERING", "LAND", "MAINTENANCE", "CULTURAL", "PERMITTING", "COST"])).min(1),
+}).strict()).min(1).max(64),
+}).strict();
+export type AuthorizedReviewSnapshot = z.infer<typeof AuthorizedReviewSnapshotSchema>;
+
+export const ReviewBriefAgentOutputSchema = z.object({
+  "snapshot_sha256": z.string().regex(new RegExp("^[0-9a-f]{64}$")),
+  "selections": z.array(z.object({
+  "finding_alias": z.string().regex(new RegExp("^F[1-9][0-9]{0,3}$")),
+  "action_kind": z.enum(["INSPECT_EVIDENCE", "FIELD_VERIFY", "OBTAIN_QUALIFIED_REVIEW", "RESOLVE_LAND_OR_OWNERSHIP", "RESOLVE_AUTHORIZATION", "COMPLETE_COST_BASIS", "REVISE_MODEL_AND_RERUN"]),
+  "reviewer_disciplines": z.array(z.enum(["ECOLOGY", "FIELD", "ENGINEERING", "LAND", "MAINTENANCE", "CULTURAL", "PERMITTING", "COST"])).min(1),
+}).strict()).min(1),
+  "runner_kind": z.literal("OPENAI_AGENTS_SDK").optional(),
+  "provider_call_id_sha256": z.string().regex(new RegExp("^[0-9a-f]{64}$")),
+  "provider_model": z.string(),
+  "tool_calls": z.array(z.enum(["review_brief_get_scope", "review_brief_list_findings", "review_brief_get_findings", "review_brief_list_option_constraints", "review_brief_list_model_fitness_gaps", "review_brief_resolve_evidence_aliases", "review_brief_get_reference_status", "review_brief_get_authorization_status"])).min(1).max(8),
+  "input_tokens": z.union([z.number().int().min(0), z.null()]).optional(),
+  "output_tokens": z.union([z.number().int().min(0), z.null()]).optional(),
+  "elapsed_ms": z.union([z.number().int().min(0), z.null()]).optional(),
+  "trace": z.object({
+  "trace_id": z.string().min(1),
+  "weave_call_id": z.string().min(1),
+  "association_id": z.string().min(1),
+  "wandb_run_id": z.string().min(1),
+  "flushed": z.literal(true).optional(),
+  "readback_verified": z.literal(true).optional(),
+  "trace_url": z.union([z.string(), z.null()]).optional(),
+}).strict(),
+}).strict();
+export type ReviewBriefAgentOutput = z.infer<typeof ReviewBriefAgentOutputSchema>;
+
+export const ReviewBriefDraftSchema = z.object({
+  "schema_version": z.literal("review-brief-draft/v1").optional(),
+  "draft_id": z.string().min(1),
+  "status": z.enum(["UNCONFIRMED", "STALE"]).optional(),
+  "source_mode": z.enum(["RIDGEWAY_SYNTHETIC", "PROFESSIONAL"]),
+  "analysis_id": z.string().min(1),
+  "portfolio_id": z.string().min(1),
+  "model_revision_id": z.string().min(1),
+  "decision_board_sha256": z.string().regex(new RegExp("^[0-9a-f]{64}$")),
+  "created_at": z.string().refine((value) => !Number.isNaN(Date.parse(value)) && /(?:Z|[+-]\d{2}:\d{2})$/.test(value), "Expected timezone-aware ISO date-time"),
+  "supersedes_draft_id": z.union([z.string(), z.null()]).optional(),
+  "disposition_snapshot": z.object({
+  "disposition": z.enum(["PASSES", "FAILS", "SURVEY_FIRST", "INCOMPLETE"]),
+  "next_action": z.string().min(1),
+  "controlling_scenario_id": z.union([z.string(), z.null()]).optional(),
+  "safeguard_status": z.enum(["PASS", "FAIL", "REVIEW"]),
+  "review_mask_triggered": z.boolean(),
+}).strict(),
+  "items": z.array(z.object({
+  "item_id": z.string().min(1),
+  "finding_kind": z.enum(["RULE_FAILURE", "SURVEY_FIRST", "SAFEGUARD", "REVIEW_MASK", "FEASIBILITY_GAP", "MODEL_FITNESS", "QA", "ASSUMPTION", "COST", "REFERENCE", "AUTHORIZATION"]),
+  "review_topic": z.enum(["REQUIRED_RULE", "SURVEY_OR_FIELD_DATA", "SAFEGUARD_REVIEW", "CURRENT_REDISTRIBUTION_MASK", "GENERAL_FEASIBILITY", "LAND_ACCESS_OR_OWNERSHIP", "MAINTENANCE_RESPONSIBILITY", "CULTURAL_REVIEW", "PERMITTING_REVIEW", "TRAFFIC_OR_STRUCTURAL_FEASIBILITY", "ECOLOGICAL_FIELD_RISK", "MODEL_FITNESS_BASIS", "DIRECT_RUN_QA", "ECOLOGICAL_ASSUMPTION", "COST_BASIS", "REFERENCE_COMPARISON", "DATA_AUTHORIZATION"]),
+  "priority": z.enum(["BLOCKING", "BEFORE_FEASIBILITY", "FOLLOW_UP"]),
+  "action_kind": z.enum(["INSPECT_EVIDENCE", "FIELD_VERIFY", "OBTAIN_QUALIFIED_REVIEW", "RESOLVE_LAND_OR_OWNERSHIP", "RESOLVE_AUTHORIZATION", "COMPLETE_COST_BASIS", "REVISE_MODEL_AND_RERUN"]),
+  "reviewer_disciplines": z.array(z.enum(["ECOLOGY", "FIELD", "ENGINEERING", "LAND", "MAINTENANCE", "CULTURAL", "PERMITTING", "COST"])).min(1),
+  "evidence_claim_ids": z.array(z.string()).min(1),
+  "direct_run_ids": z.array(z.string()).optional(),
+  "scenario_ids": z.array(z.string()).optional(),
+  "rendered_text": z.string().min(1),
+  "state": z.literal("OPEN").optional(),
+}).strict()),
+  "limitations": z.array(z.string()).min(1),
+  "trace": z.object({
+  "trace_id": z.string().min(1),
+  "weave_call_id": z.string().min(1),
+  "association_id": z.string().min(1),
+  "wandb_run_id": z.string().min(1),
+  "flushed": z.literal(true).optional(),
+  "readback_verified": z.literal(true).optional(),
+  "trace_url": z.union([z.string(), z.null()]).optional(),
+}).strict(),
+  "validation": z.object({
+  "validator_version": z.literal("review-brief-validator-v1").optional(),
+  "evidence_ids_valid": z.literal(true).optional(),
+  "numeric_and_unit_faithful": z.literal(true).optional(),
+  "required_limitations_present": z.literal(true).optional(),
+  "unsupported_findings": z.literal(0).optional(),
+  "prohibited_claims": z.literal(0).optional(),
+  "sensitive_tokens": z.literal(0).optional(),
+  "unauthorized_actions": z.literal(0).optional(),
+  "source_snapshot_revalidated": z.literal(true).optional(),
+}).strict(),
+}).strict();
+export type ReviewBriefDraft = z.infer<typeof ReviewBriefDraftSchema>;
+
+export const ReviewBriefItemSchema = z.object({
+  "item_id": z.string().min(1),
+  "finding_kind": z.enum(["RULE_FAILURE", "SURVEY_FIRST", "SAFEGUARD", "REVIEW_MASK", "FEASIBILITY_GAP", "MODEL_FITNESS", "QA", "ASSUMPTION", "COST", "REFERENCE", "AUTHORIZATION"]),
+  "review_topic": z.enum(["REQUIRED_RULE", "SURVEY_OR_FIELD_DATA", "SAFEGUARD_REVIEW", "CURRENT_REDISTRIBUTION_MASK", "GENERAL_FEASIBILITY", "LAND_ACCESS_OR_OWNERSHIP", "MAINTENANCE_RESPONSIBILITY", "CULTURAL_REVIEW", "PERMITTING_REVIEW", "TRAFFIC_OR_STRUCTURAL_FEASIBILITY", "ECOLOGICAL_FIELD_RISK", "MODEL_FITNESS_BASIS", "DIRECT_RUN_QA", "ECOLOGICAL_ASSUMPTION", "COST_BASIS", "REFERENCE_COMPARISON", "DATA_AUTHORIZATION"]),
+  "priority": z.enum(["BLOCKING", "BEFORE_FEASIBILITY", "FOLLOW_UP"]),
+  "action_kind": z.enum(["INSPECT_EVIDENCE", "FIELD_VERIFY", "OBTAIN_QUALIFIED_REVIEW", "RESOLVE_LAND_OR_OWNERSHIP", "RESOLVE_AUTHORIZATION", "COMPLETE_COST_BASIS", "REVISE_MODEL_AND_RERUN"]),
+  "reviewer_disciplines": z.array(z.enum(["ECOLOGY", "FIELD", "ENGINEERING", "LAND", "MAINTENANCE", "CULTURAL", "PERMITTING", "COST"])).min(1),
+  "evidence_claim_ids": z.array(z.string()).min(1),
+  "direct_run_ids": z.array(z.string()).optional(),
+  "scenario_ids": z.array(z.string()).optional(),
+  "rendered_text": z.string().min(1),
+  "state": z.literal("OPEN").optional(),
+}).strict();
+export type ReviewBriefItem = z.infer<typeof ReviewBriefItemSchema>;
+
+export const ReviewBriefPreflightSchema = z.object({
+  "source_mode": z.enum(["RIDGEWAY_SYNTHETIC", "PROFESSIONAL"]),
+  "project_title": z.string().min(1),
+  "analysis_id": z.string().min(1),
+  "portfolio_id": z.string().min(1),
+  "model_revision_id": z.string().min(1),
+  "decision_board_sha256": z.string().regex(new RegExp("^[0-9a-f]{64}$")),
+  "scenario_count": z.number().int().gt(0),
+  "evidence_claim_count": z.number().int().min(0),
+  "deterministic_available": z.boolean().optional(),
+  "deterministic_items": z.array(z.object({
+  "item_id": z.string().min(1),
+  "finding_kind": z.enum(["RULE_FAILURE", "SURVEY_FIRST", "SAFEGUARD", "REVIEW_MASK", "FEASIBILITY_GAP", "MODEL_FITNESS", "QA", "ASSUMPTION", "COST", "REFERENCE", "AUTHORIZATION"]),
+  "review_topic": z.enum(["REQUIRED_RULE", "SURVEY_OR_FIELD_DATA", "SAFEGUARD_REVIEW", "CURRENT_REDISTRIBUTION_MASK", "GENERAL_FEASIBILITY", "LAND_ACCESS_OR_OWNERSHIP", "MAINTENANCE_RESPONSIBILITY", "CULTURAL_REVIEW", "PERMITTING_REVIEW", "TRAFFIC_OR_STRUCTURAL_FEASIBILITY", "ECOLOGICAL_FIELD_RISK", "MODEL_FITNESS_BASIS", "DIRECT_RUN_QA", "ECOLOGICAL_ASSUMPTION", "COST_BASIS", "REFERENCE_COMPARISON", "DATA_AUTHORIZATION"]),
+  "priority": z.enum(["BLOCKING", "BEFORE_FEASIBILITY", "FOLLOW_UP"]),
+  "action_kind": z.enum(["INSPECT_EVIDENCE", "FIELD_VERIFY", "OBTAIN_QUALIFIED_REVIEW", "RESOLVE_LAND_OR_OWNERSHIP", "RESOLVE_AUTHORIZATION", "COMPLETE_COST_BASIS", "REVISE_MODEL_AND_RERUN"]),
+  "reviewer_disciplines": z.array(z.enum(["ECOLOGY", "FIELD", "ENGINEERING", "LAND", "MAINTENANCE", "CULTURAL", "PERMITTING", "COST"])).min(1),
+  "evidence_claim_ids": z.array(z.string()).min(1),
+  "direct_run_ids": z.array(z.string()).optional(),
+  "scenario_ids": z.array(z.string()).optional(),
+  "rendered_text": z.string().min(1),
+}).strict()).optional(),
+  "disposition": z.enum(["PASSES", "FAILS", "SURVEY_FIRST", "INCOMPLETE"]),
+  "next_action": z.string().min(1),
+  "cloud_boundary": z.enum(["CC0_SYNTHETIC", "RESTRICTED_VERIFIED", "BLOCKED"]),
+  "provider_model": z.union([z.string(), z.null()]).optional(),
+  "provider_ready": z.boolean(),
+  "weave_ready": z.boolean(),
+  "agent_release_status": z.enum(["EXPERIMENTAL", "BENCHMARK_APPROVED"]).optional(),
+  "production_default": z.enum(["DETERMINISTIC_CHECKLIST", "REVIEW_BRIEF_AGENT"]).optional(),
+  "experimental_acknowledgement_required": z.boolean().optional(),
+  "eligible": z.boolean(),
+  "blocked_reason": z.union([z.string(), z.null()]).optional(),
+}).strict();
+export type ReviewBriefPreflight = z.infer<typeof ReviewBriefPreflightSchema>;
+
+export const ReviewBriefTraceReceiptSchema = z.object({
+  "trace_id": z.string().min(1),
+  "weave_call_id": z.string().min(1),
+  "association_id": z.string().min(1),
+  "wandb_run_id": z.string().min(1),
+  "flushed": z.literal(true).optional(),
+  "readback_verified": z.literal(true).optional(),
+  "trace_url": z.union([z.string(), z.null()]).optional(),
+}).strict();
+export type ReviewBriefTraceReceipt = z.infer<typeof ReviewBriefTraceReceiptSchema>;
+
+export const ReviewBriefValidationSchema = z.object({
+  "validator_version": z.literal("review-brief-validator-v1").optional(),
+  "evidence_ids_valid": z.literal(true).optional(),
+  "numeric_and_unit_faithful": z.literal(true).optional(),
+  "required_limitations_present": z.literal(true).optional(),
+  "unsupported_findings": z.literal(0).optional(),
+  "prohibited_claims": z.literal(0).optional(),
+  "sensitive_tokens": z.literal(0).optional(),
+  "unauthorized_actions": z.literal(0).optional(),
+  "source_snapshot_revalidated": z.literal(true).optional(),
+}).strict();
+export type ReviewBriefValidation = z.infer<typeof ReviewBriefValidationSchema>;
+
+export const ReviewBriefAttestationSchema = z.object({
+  "acknowledgement_id": z.string().min(1),
+  "draft_id": z.string().min(1),
+  "reviewer": z.string().min(1),
+  "statement": z.literal("I reviewed the cited evidence and limitations. This records review of the brief only; it does not select, approve, attest, or design a portfolio."),
+  "acknowledged_at": z.string().refine((value) => !Number.isNaN(Date.parse(value)) && /(?:Z|[+-]\d{2}:\d{2})$/.test(value), "Expected timezone-aware ISO date-time"),
+  "model_unchanged": z.literal(true).optional(),
+  "portfolio_selected": z.literal(false).optional(),
+}).strict();
+export type ReviewBriefAttestation = z.infer<typeof ReviewBriefAttestationSchema>;
+
 export const EcoCorridorContractSchemas = {
   ConnectivityProjectBundle: ConnectivityProjectBundleSchema,
   ConnectivityDecisionBrief: ConnectivityDecisionBriefSchema,
@@ -1087,4 +1320,13 @@ export const EcoCorridorContractSchemas = {
   ConnectivityExportEligibility: ConnectivityExportEligibilitySchema,
   ModelRevision: ModelRevisionSchema,
   SemanticModelDiff: SemanticModelDiffSchema,
+  ReviewBriefRequest: ReviewBriefRequestSchema,
+  AuthorizedReviewSnapshot: AuthorizedReviewSnapshotSchema,
+  ReviewBriefAgentOutput: ReviewBriefAgentOutputSchema,
+  ReviewBriefDraft: ReviewBriefDraftSchema,
+  ReviewBriefItem: ReviewBriefItemSchema,
+  ReviewBriefPreflight: ReviewBriefPreflightSchema,
+  ReviewBriefTraceReceipt: ReviewBriefTraceReceiptSchema,
+  ReviewBriefValidation: ReviewBriefValidationSchema,
+  ReviewBriefAttestation: ReviewBriefAttestationSchema,
 } as const;

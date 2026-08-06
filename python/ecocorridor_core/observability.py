@@ -14,10 +14,12 @@ import os
 import re
 from contextlib import nullcontext
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, Protocol
 from urllib.parse import urlsplit
 
+from pydantic import Field, model_validator
 from scenario_platform.cloud_sync import (
     DurableOutboxConsumer,
     InMemoryCredentialSession,
@@ -42,7 +44,8 @@ from .assistants import (
     TraceReadback,
     validate_feedback_comment,
 )
-from .contracts import canonical_sha256
+from .cloud_origins import validate_wandb_deployment_origins
+from .contracts import ContractModel, canonical_sha256
 from .telemetry import EcoTelemetryProjector
 
 ECOCORRIDOR_APP_PROFILE = AppProfile(
@@ -56,6 +59,7 @@ ECOCORRIDOR_APP_PROFILE = AppProfile(
         "guided_session",
         "search_benchmark",
         "assistant_evaluation",
+        "review_brief_evaluation",
         "evidence_export",
         "release_gate",
     ],
@@ -72,6 +76,9 @@ ECOCORRIDOR_APP_PROFILE = AppProfile(
         "evidence_package",
         "guided_fixture",
         "benchmark_dataset",
+        "review_brief_draft",
+        "review_brief_evaluation",
+        "review_brief_animation",
     ],
     registry_names={
         "guided": "wandb-registry-Datasets/ecocorridor-guided-fixture",
@@ -79,10 +86,99 @@ ECOCORRIDOR_APP_PROFILE = AppProfile(
         "proposer": "wandb-registry-Models/ecocorridor-search-proposer",
         "release": "wandb-registry-Release Evidence/ecocorridor-scenario-studio",
         "prompts": "wandb-registry-Prompts/ecocorridor-evidence-assistant",
+        "review_brief_agent": "wandb-registry-Prompts/ecocorridor-review-brief-agent",
     },
     keychain_service="org.ecocorridor.scenariostudio.credentials",
     app_data_root="EcoCorridorScenarioStudio",
 )
+
+RIDGEWAY_SYNTHETIC_TRACE_POLICY = "RIDGEWAY_CC0_TRACE_ONLY"
+RIDGEWAY_SYNTHETIC_TRACE_CONSENT = (
+    "I authorize alias-only agent interaction, immutable fixture and run hashes, and "
+    "trace receipts for the exact CC0 Ridgeway fixture to be sent to this W&B project. "
+    "This does not authorize professional project evidence, raw locations, full sync, "
+    "artifacts, model approval, or any claim about W&B project visibility."
+)
+RIDGEWAY_SYNTHETIC_TRACE_PAYLOAD_CLASSES = (
+    "ALIAS_ONLY_AGENT_TURNS",
+    "AGENTS_TRACE_RECEIPT",
+    "RIDGEWAY_FIXTURE_HASHES",
+    "RIDGEWAY_DIRECT_RUN_HASHES",
+)
+
+
+class SyntheticTraceConsentBinding(ContractModel):
+    """A trace-only W&B identity that deliberately carries no visibility claim.
+
+    This contract must never be accepted by the professional upload path.  It is
+    sufficient only for native Agents traces over the exact CC0 Ridgeway replay.
+    """
+
+    policy: Literal["RIDGEWAY_CC0_TRACE_ONLY"] = RIDGEWAY_SYNTHETIC_TRACE_POLICY
+    entity: str = Field(min_length=1, max_length=128)
+    project: str = Field(min_length=1, max_length=128)
+    external_project_id: str = Field(min_length=1, max_length=256)
+    deployment: Literal["WANDB_CLOUD", "DEDICATED", "SELF_MANAGED"]
+    api_base_url: str
+    web_base_url: str
+    profile_namespace: Literal["ecocorridor"] = "ecocorridor"
+    fixture_id: Literal["ridgeway-verified-replay-v1.2"] = "ridgeway-verified-replay-v1.2"
+    guided_session_id: Literal["guided_ridgeway_v1"] = "guided_ridgeway_v1"
+    wandb_run_id: str = Field(min_length=1, max_length=256)
+    license: Literal["CC0-1.0"] = "CC0-1.0"
+    projection_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    archive_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    consent_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    allowed_payload_classes: tuple[str, ...] = RIDGEWAY_SYNTHETIC_TRACE_PAYLOAD_CLASSES
+    visibility_claim: Literal["NONE"] = "NONE"
+    restricted_verified: Literal[False] = False
+    full_sync_allowed: Literal[False] = False
+    artifact_upload_allowed: Literal[False] = False
+    first_connected_at: datetime
+
+    @model_validator(mode="after")
+    def validate_trace_only_target(self) -> SyntheticTraceConsentBinding:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", self.entity):
+            raise ValueError("synthetic trace entity is not a safe W&B slug")
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", self.project):
+            raise ValueError("synthetic trace project is not a safe W&B slug")
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}", self.wandb_run_id):
+            raise ValueError("synthetic trace W&B run ID is not opaque")
+        if self.allowed_payload_classes != RIDGEWAY_SYNTHETIC_TRACE_PAYLOAD_CLASSES:
+            raise ValueError("synthetic trace payload classes cannot be broadened")
+        if self.consent_sha256 != canonical_sha256(RIDGEWAY_SYNTHETIC_TRACE_CONSENT):
+            raise ValueError("synthetic trace consent digest is invalid")
+        if self.first_connected_at.tzinfo is None:
+            raise ValueError("synthetic trace connection timestamp must be timezone-aware")
+        api_base_url, web_base_url = validate_wandb_deployment_origins(
+            deployment=self.deployment,
+            api_base_url=self.api_base_url,
+            web_base_url=self.web_base_url,
+        )
+        if api_base_url != self.api_base_url or web_base_url != self.web_base_url:
+            raise ValueError("synthetic trace W&B origins must be normalized")
+        return self
+
+    @property
+    def identity_sha256(self) -> str:
+        return canonical_sha256(
+            {
+                "policy": self.policy,
+                "entity": self.entity,
+                "project": self.project,
+                "external_project_id": self.external_project_id,
+                "deployment": self.deployment,
+                "api_base_url": self.api_base_url,
+                "web_base_url": self.web_base_url,
+                "projection_sha256": self.projection_sha256,
+                "manifest_sha256": self.manifest_sha256,
+                "archive_sha256": self.archive_sha256,
+                "consent_sha256": self.consent_sha256,
+                "wandb_run_id": self.wandb_run_id,
+            }
+        )
+
 
 _REFERENCE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}\Z")
 _SENSITIVE_WEAVE_KEYS = (
@@ -694,6 +790,91 @@ class EcoRpcObservabilityAdapter:
             "profile_namespace": self.profile.namespace,
         }
 
+    def validate_synthetic_trace_target(self, *, binding: dict[str, Any]) -> dict[str, Any]:
+        """Verify identity and SDK access without making a project-scope claim.
+
+        The exact Restricted resolver is intentionally not consulted here.  This
+        lane is restricted by its own fixed CC0 payload contract and cannot be
+        used by ``sync`` or converted into :class:`WandbTarget`.
+        """
+
+        required = {
+            "policy",
+            "entity",
+            "project",
+            "deployment",
+            "api_base_url",
+            "web_base_url",
+            "profile_namespace",
+            "fixture_id",
+            "guided_session_id",
+            "wandb_run_id",
+            "license",
+            "projection_sha256",
+            "manifest_sha256",
+            "archive_sha256",
+            "consent_sha256",
+            "allowed_payload_classes",
+            "visibility_claim",
+            "restricted_verified",
+            "full_sync_allowed",
+            "artifact_upload_allowed",
+        }
+        if set(binding) != required:
+            raise RuntimeError("RIDGEWAY_SYNTHETIC_TRACE_BINDING_INVALID")
+        if binding.get("policy") != RIDGEWAY_SYNTHETIC_TRACE_POLICY:
+            raise RuntimeError("RIDGEWAY_SYNTHETIC_TRACE_POLICY_INVALID")
+        try:
+            validate_wandb_deployment_origins(
+                deployment=str(binding["deployment"]),
+                api_base_url=str(binding["api_base_url"]),
+                web_base_url=str(binding["web_base_url"]),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RuntimeError("WANDB_DEPLOYMENT_ORIGIN_MISMATCH") from exc
+        if not os.environ.get("WANDB_API_KEY"):
+            raise RuntimeError("WANDB_CREDENTIAL_UNAVAILABLE")
+        try:
+            import wandb  # type: ignore[import-not-found]
+        except ImportError as exc:  # pragma: no cover - optional integration environment
+            raise RuntimeError("WANDB_SDK_UNAVAILABLE") from exc
+        try:
+            with self.credentials.environment():
+                api = wandb.Api(
+                    overrides={"base_url": str(binding["api_base_url"]).rstrip("/")},
+                    timeout=30,
+                )
+                project = api.project(str(binding["project"]), entity=str(binding["entity"]))
+                external_project_id = str(getattr(project, "id", "") or "")
+                path = list(getattr(project, "path", []) or [])
+                if not external_project_id or path != [
+                    str(binding["entity"]),
+                    str(binding["project"]),
+                ]:
+                    raise RuntimeError("WANDB_PROJECT_IDENTITY_MISMATCH")
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            raise RuntimeError("RIDGEWAY_SYNTHETIC_TRACE_ACCESS_UNAVAILABLE") from exc
+        return {
+            "verified": True,
+            "external_project_id": external_project_id,
+            "profile_namespace": self.profile.namespace,
+            "weave_capability": "PENDING_NATIVE_AGENT_PREFLIGHT",
+            "visibility_claim": "NONE",
+            "restricted_verified": False,
+        }
+
+    def revalidate_synthetic_trace_binding(self, target: SyntheticTraceConsentBinding) -> None:
+        candidate = {
+            key: value
+            for key, value in target.model_dump(mode="json").items()
+            if key not in {"external_project_id", "first_connected_at"}
+        }
+        current = self.validate_synthetic_trace_target(binding=candidate)
+        if current.get("external_project_id") != target.external_project_id:
+            raise RuntimeError("WANDB_PROJECT_IDENTITY_MISMATCH")
+
     def sync(
         self,
         *,
@@ -813,6 +994,14 @@ class EcoRpcObservabilityAdapter:
                     answer = record.get("answer")
                     if isinstance(answer, dict):
                         url = str(answer.get("trace_url", "")) or None
+                if url is None:
+                    review_lookup = getattr(store, "review_brief_draft_by_trace", None)
+                    try:
+                        draft = review_lookup(reference_id) if callable(review_lookup) else None
+                    except KeyError:
+                        draft = None
+                    if draft is not None:
+                        url = str(getattr(getattr(draft, "trace", None), "trace_url", "")) or None
             if url is None or not _allowed_target_url(url, target):
                 raise RuntimeError("OBSERVABILITY_REFERENCE_NOT_RESOLVED")
             return {"url": url}
@@ -831,6 +1020,11 @@ class EcoRpcObservabilityAdapter:
         if not api_base_url:
             raise ValueError("W&B API base URL is required")
         web_base_url = str(binding.get("web_base_url") or api_base_url)
+        api_base_url, web_base_url = validate_wandb_deployment_origins(
+            deployment=deployment,
+            api_base_url=api_base_url,
+            web_base_url=web_base_url,
+        )
         return WandbTarget(
             entity=str(binding["entity"]),
             project=str(binding["project"]),
@@ -846,8 +1040,12 @@ class EcoRpcObservabilityAdapter:
 
 __all__ = [
     "ECOCORRIDOR_APP_PROFILE",
+    "RIDGEWAY_SYNTHETIC_TRACE_CONSENT",
+    "RIDGEWAY_SYNTHETIC_TRACE_PAYLOAD_CLASSES",
+    "RIDGEWAY_SYNTHETIC_TRACE_POLICY",
     "EcoRpcObservabilityAdapter",
     "SdkWeaveClientFactory",
+    "SyntheticTraceConsentBinding",
     "WeaveClientFactory",
     "WeaveNestedTraceSink",
     "derive_cloud_sync_state",

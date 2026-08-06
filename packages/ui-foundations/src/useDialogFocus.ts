@@ -13,18 +13,23 @@ const FOCUSABLE = [
 export function useDialogFocus(open: boolean, onClose: () => void, enabled = true) {
   const containerRef = useRef<HTMLDivElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   useEffect(() => {
     if (!open || !enabled) return;
     returnFocusRef.current = document.activeElement as HTMLElement | null;
     const container = containerRef.current;
     const first = container?.querySelector<HTMLElement>(FOCUSABLE);
-    window.setTimeout(() => first?.focus(), 0);
+    const focusTimer = window.setTimeout(() => first?.focus(), 0);
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (event.key !== "Tab" || !container) return;
@@ -42,10 +47,11 @@ export function useDialogFocus(open: boolean, onClose: () => void, enabled = tru
     };
     document.addEventListener("keydown", onKeyDown);
     return () => {
+      window.clearTimeout(focusTimer);
       document.removeEventListener("keydown", onKeyDown);
       returnFocusRef.current?.focus();
     };
-  }, [enabled, onClose, open]);
+  }, [enabled, open]);
 
   return containerRef;
 }
