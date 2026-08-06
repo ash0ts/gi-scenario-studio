@@ -217,11 +217,14 @@ def _configure_weave_pii_redaction(runtime: Path) -> None:
     """Install an offline, cached Presidio engine before any Weave serialization."""
 
     try:
+        import dataclasses
+
         import tldextract
         import weave.utils.pii_redaction as weave_pii
         from presidio_analyzer import AnalyzerEngine
         from presidio_analyzer.nlp_engine import NlpEngineProvider
         from presidio_anonymizer import AnonymizerEngine
+        from weave.utils.sanitize import REDACTED_VALUE, redact_dataclass_fields, should_redact
     except ImportError as exc:
         raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_PII_REDACTION_UNAVAILABLE") from exc
 
@@ -237,11 +240,6 @@ def _configure_weave_pii_redaction(runtime: Path) -> None:
         suffix_list_urls=(),
         fallback_to_snapshot=True,
     )
-    # Every trace-integrity field is an opaque SHA-256 digest. Presidio's broad
-    # CRYPTO recognizer treats those non-secret digests as cryptocurrency and
-    # would destroy the exact readback gate. Credentials never enter trace
-    # payloads; keep all actual PII entities enabled while preserving hashes.
-    os.environ["WEAVE_REDACT_PII_EXCLUDE_FIELDS"] = "CRYPTO"
 
     @lru_cache(maxsize=1)
     def engines() -> tuple[Any, Any]:
@@ -255,11 +253,52 @@ def _configure_weave_pii_redaction(runtime: Path) -> None:
         return analyzer, AnonymizerEngine()
 
     weave_pii._get_engines = engines
-    digest = "0" * 64
+    original_redact_string = weave_pii.redact_pii_string
+
+    def redact_with_digest_fields(value: Any) -> Any:
+        if isinstance(value, str):
+            return original_redact_string(value)
+        if isinstance(value, dict):
+            redacted: dict[Any, Any] = {}
+            for key, nested in value.items():
+                if isinstance(key, str) and should_redact(key):
+                    redacted[key] = REDACTED_VALUE
+                elif (
+                    isinstance(key, str)
+                    and key.endswith("_sha256")
+                    and isinstance(nested, str)
+                    and re.fullmatch(r"[0-9a-f]{64}", nested)
+                ):
+                    redacted[key] = nested
+                else:
+                    redacted[key] = redact_with_digest_fields(nested)
+            return redacted
+        if isinstance(value, list):
+            return [redact_with_digest_fields(item) for item in value]
+        if dataclasses.is_dataclass(value):
+            return redact_dataclass_fields(value, redact_with_digest_fields)
+        return value
+
+    weave_pii.redact_pii = redact_with_digest_fields
+    digest = "a8142d6da77747b58e57708edfeaa9d83e3d465cf3503f9636affa9ef169a919"
     probe = weave_pii.redact_pii_string(
         f"Contact alice@example.com in Seattle. Evidence digest {digest}."
     )
-    if "alice@example.com" in probe or "Seattle" in probe or digest not in probe:
+    structured_probe = weave_pii.redact_pii(
+        {
+            "snapshot_sha256": digest,
+            "contact": "Contact alice@example.com in Seattle.",
+            "api_key": "must-not-survive",
+        }
+    )
+    if (
+        "alice@example.com" in probe
+        or "Seattle" in probe
+        or structured_probe.get("snapshot_sha256") != digest
+        or "alice@example.com" in str(structured_probe.get("contact"))
+        or "Seattle" in str(structured_probe.get("contact"))
+        or structured_probe.get("api_key") != REDACTED_VALUE
+    ):
         raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_PII_REDACTION_UNAVAILABLE")
 
 
