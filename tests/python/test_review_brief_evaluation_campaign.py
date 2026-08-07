@@ -910,6 +910,10 @@ def test_campaign_is_complete_and_recomputed_from_all_42_records(
     assert all(item.passed_case_count == 14 for item in campaign.scorecards)
     assert all(item.deterministic_gate_passed for item in campaign.scorecards)
     assert verify_review_brief_campaign(campaign) == campaign
+    sorted_round_trip = ReviewBriefCampaignArtifact.model_validate_json(
+        json.dumps(campaign.model_dump(mode="json"), sort_keys=True)
+    )
+    assert verify_review_brief_campaign(sorted_round_trip) == campaign
 
     tampered = campaign.model_dump(mode="json")
     tampered["records"][0]["scores"]["disposition_match"] = False

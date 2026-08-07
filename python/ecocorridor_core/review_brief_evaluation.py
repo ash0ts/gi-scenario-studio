@@ -901,7 +901,7 @@ class ReviewBriefCaseRecord(ContractModel):
     def validate_record(self) -> ReviewBriefCaseRecord:
         if self.execution.method_id != self.method_id or self.execution.case_id != self.case_id:
             raise ValueError("review-brief record identity differs from its execution")
-        if tuple(self.scores) != REQUIRED_SCORE_NAMES:
+        if set(self.scores) != set(REQUIRED_SCORE_NAMES):
             raise ValueError("review-brief record has unexpected deterministic scorers")
         if self.passed is not all(self.scores.values()):
             raise ValueError("review-brief record disposition differs from its scores")
