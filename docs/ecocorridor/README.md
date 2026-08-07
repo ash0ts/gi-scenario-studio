@@ -76,6 +76,7 @@ whole-tree exit.
 - [Review Brief agent evaluation and Report append](review-brief-agent-evaluation.md)
 - [Usefulness evidence program](usefulness-evidence-program.md)
 - [W&B usefulness narrative checkpoint](usefulness-narrative-checkpoint.md)
+- [Human-readable, reader-first W&B article](human-readable-wandb-report.md)
 - [Fair agent-complexity campaign](agent-complexity-campaign.md)
 - [Usefulness study audit contracts](usefulness-study-audit-contract.md)
 - [Usefulness protocol publication in W&B](usefulness-wandb-publication.md)
