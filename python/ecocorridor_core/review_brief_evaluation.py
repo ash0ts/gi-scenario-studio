@@ -947,7 +947,13 @@ class ReviewBriefDefaultMethodDecision(ContractModel):
     context_reduction_threshold_fraction: Literal[0.25]
     baseline_role_input_tokens: int | None = Field(default=None, ge=0)
     native_role_input_tokens: int | None = Field(default=None, ge=0)
-    context_reduction_fraction: float | None = Field(default=None, ge=-1, le=1)
+    # ``1 - candidate / baseline`` is bounded above by 1 but has no finite
+    # lower bound when the candidate consumes substantially more context.
+    context_reduction_fraction: float | None = Field(
+        default=None,
+        le=1,
+        allow_inf_nan=False,
+    )
     context_reduction_verified: bool
     role_quality_noninferior: bool
     safety_quality_noninferior: bool

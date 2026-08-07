@@ -925,6 +925,15 @@ def test_campaign_is_complete_and_recomputed_from_all_42_records(
     assert below_materiality.default_method_decision.decision == "KEEP_DETERMINISTIC"
     assert below_materiality.default_method_decision.promotion_gate_passed is False
 
+    context_increase = _perfect_campaign(
+        dataset,
+        baseline_input_tokens=100,
+        native_input_tokens=300,
+    )
+    assert context_increase.default_method_decision.context_reduction_fraction == -2.0
+    assert context_increase.default_method_decision.context_reduction_verified is False
+    assert context_increase.default_method_decision.decision == "KEEP_DETERMINISTIC"
+
     promotion_eligible = _perfect_campaign(dataset, provider_costs_available=True)
     assert promotion_eligible.default_method_decision.cost_comparison_complete is True
     assert promotion_eligible.default_method_decision.promotion_gate_passed is True
