@@ -70,7 +70,7 @@ _SAFE_MODEL_INPUT = (
     "Prepare the bounded review-finding selection. Use only the registered "
     "read-only tools and return only the required structured output."
 )
-REVIEW_BRIEF_MODEL_VISIBLE_CONTEXT_VERSION = "review-brief-model-visible-context/v4"
+REVIEW_BRIEF_MODEL_VISIBLE_CONTEXT_VERSION = "review-brief-model-visible-context/v5"
 REVIEW_BRIEF_MAX_TOOL_OUTPUT_BYTES = 48 * 1024
 _RETURN_STRUCTURED_OUTPUT = "RETURN_STRUCTURED_OUTPUT"
 
@@ -310,6 +310,14 @@ def _with_next_required_tool(
     return {**payload, "next_required_tool": next_required_tool}
 
 
+def _is_exact_next_tool(context: _InvocationContext, tool_name: str) -> bool:
+    """Expose only the next authorized tool while retaining the input order guard."""
+
+    required = required_review_brief_tools(context.snapshot)
+    completed = len(context.tool_calls)
+    return completed < len(required) and required[completed] == tool_name
+
+
 def _branch_payload(item: Any) -> dict[str, Any]:
     return {
         "finding_alias": item.finding_alias,
@@ -479,10 +487,14 @@ def _build_tools(context: _InvocationContext) -> list[Any]:
     guards_out = [ToolOutputGuardrail(output_guard, name="review_brief_alias_only_output")]
 
     def decorate(name: str, description: str) -> Any:
+        def is_enabled(wrapper: RunContextWrapper[_InvocationContext], _agent: Any) -> bool:
+            return _is_exact_next_tool(wrapper.context, name)
+
         return function_tool(
             name_override=name,
             description_override=description,
             strict_mode=True,
+            is_enabled=is_enabled,
             tool_input_guardrails=guards_in,
             tool_output_guardrails=guards_out,
             timeout=5.0,
@@ -1040,7 +1052,8 @@ def _instructions_for_snapshot(snapshot: ReviewBriefAuthorizedSnapshot) -> str:
         "and permitted_disciplines. For that finding, set action_kind to the first "
         "permitted_actions value and set reviewer_disciplines to the complete "
         "permitted_disciplines list in the same order. Never infer, substitute, omit, reorder, "
-        "or add an enum value. Every tool response includes next_required_tool. Call that exact "
+        "or add an enum value. Only the exact next authorized tool is exposed at each "
+        "intermediate turn, and every tool response includes next_required_tool. Call that exact "
         "tool next; do not return the structured output until it equals "
         "RETURN_STRUCTURED_OUTPUT. The local validator independently rechecks every selection. "
         "Return "

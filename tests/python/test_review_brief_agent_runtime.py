@@ -44,6 +44,7 @@ from ecocorridor_core.review_brief_agent_process import (
     _finding_payload,
     _get_trace_call_with_retry,
     _InvocationContext,
+    _is_exact_next_tool,
     _model,
     _raise_stage_failure,
     _readback_generation_calls,
@@ -970,14 +971,15 @@ def test_model_visible_context_is_incremental_closed_and_canonically_accounted()
     }
 
     manifest = review_brief_model_visible_context(snapshot)
-    assert manifest["schema_version"] == "review-brief-model-visible-context/v4"
+    assert manifest["schema_version"] == "review-brief-model-visible-context/v5"
     assert "set action_kind to the first permitted_actions value" in manifest["instructions"]
     assert (
         "reviewer_disciplines to the complete permitted_disciplines list in the same order"
         in manifest["instructions"]
     )
     assert "independently rechecks every selection" in manifest["instructions"]
-    assert "Every tool response includes next_required_tool" in manifest["instructions"]
+    assert "every tool response includes next_required_tool" in manifest["instructions"]
+    assert "Only the exact next authorized tool is exposed" in manifest["instructions"]
     exchanges = manifest["ordered_tool_exchanges"]
     expected_tools = list(required_review_brief_tools(snapshot))
     assert [item["output"]["next_required_tool"] for item in exchanges] == [
@@ -992,6 +994,26 @@ def test_model_visible_context_is_incremental_closed_and_canonically_accounted()
     raw = json.dumps(manifest, sort_keys=True)
     for forbidden in ("project-1", "analysis-1", "portfolio-1", "revision-1"):
         assert forbidden not in raw
+
+
+def test_only_exact_next_required_tool_is_enabled_per_turn() -> None:
+    context = _InvocationContext(
+        request=ReviewBriefRunnerRequest.model_validate(_child().runner_request),
+        child=_child(),
+    )
+    required = list(required_review_brief_tools(context.snapshot))
+    for completed, expected in enumerate(required):
+        context.tool_calls = required[:completed]
+        assert _is_exact_next_tool(context, expected) is True
+        assert all(
+            not _is_exact_next_tool(context, candidate)
+            for candidate in REVIEW_BRIEF_AGENT_TOOLS
+            if candidate != expected
+        )
+    context.tool_calls = required
+    assert all(
+        not _is_exact_next_tool(context, candidate) for candidate in REVIEW_BRIEF_AGENT_TOOLS
+    )
 
 
 def test_snapshot_fails_closed_when_one_call_alias_coverage_is_impossible() -> None:
