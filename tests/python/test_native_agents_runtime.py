@@ -188,6 +188,8 @@ def test_fixed_operations_have_exact_exported_prompts_and_no_schema_escape_hatch
     assert "local deterministic renderer" in NATIVE_EVIDENCE_EXPLAIN_PROMPT
     assert "exact document" in NATIVE_EVIDENCE_INTAKE_PROMPT
     assert "ReviewBriefAnswer" in NATIVE_REVIEW_BRIEF_EVALUATION_PROMPT
+    assert "No expected answer" in NATIVE_REVIEW_BRIEF_EVALUATION_PROMPT
+    assert "authorized_answer_contract" not in NATIVE_REVIEW_BRIEF_EVALUATION_PROMPT
     assert "schema" not in NativeSingleTurnPayload.model_fields
     with pytest.raises(ValueError, match="fixed task"):
         NativeSingleTurnPayload.create(

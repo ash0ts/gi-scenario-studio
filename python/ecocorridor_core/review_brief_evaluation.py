@@ -36,6 +36,8 @@ from .review_brief import (
     ReviewBriefFindingSelection,
     ReviewBriefPriority,
     ReviewBriefRejectionAudit,
+    ReviewBriefRetrievalObservation,
+    ReviewBriefRunnerResult,
     ReviewBriefTopic,
     topic_permissions,
     validate_selection_appropriateness,
@@ -56,6 +58,17 @@ METHOD_IDS = (
     "deterministic_exhaustive",
     "existing_single_shot_full_context",
     "native_read_only_agent",
+)
+# New usefulness studies use a separate method vocabulary and schema.  Keeping
+# it out of ``METHOD_IDS`` preserves byte verification for the historical
+# signed three-method campaign while exposing fair comparator and ablation IDs
+# to the next campaign implementation.
+USEFULNESS_METHOD_IDS = (
+    "deterministic_exhaustive",
+    "fair_full_context",
+    "adaptive_read_only_agent",
+    "forced_exhaustive_agent",
+    "oracle_minimal_context",
 )
 NATIVE_AGENT_TOOL_NAMES = (
     "review_brief_get_scope",
@@ -631,6 +644,79 @@ class ReviewBriefExecutionObservation(ContractModel):
         if len(self.tool_attempts) != len(set(self.tool_attempts)):
             raise ValueError("review-brief tool attempt IDs must be unique")
         return self
+
+
+class ReviewBriefRetrievalMetrics(ContractModel):
+    """Recomputable adaptive/ablation retrieval measurements for new studies."""
+
+    traversal_mode: Literal["ADAPTIVE", "FORCED_EXHAUSTIVE"]
+    stop_reason: Literal["SELECTION_READY", "FORCED_EXHAUSTIVE_COMPLETE"]
+    tool_call_count: int = Field(ge=1)
+    initial_context_bytes: int = Field(ge=1, le=64 * 1024)
+    cumulative_context_bytes: int = Field(ge=1, le=64 * 1024)
+    tool_output_bytes: int = Field(ge=0)
+    unique_finding_alias_count: int = Field(ge=0)
+    unique_evidence_alias_count: int = Field(ge=0)
+    duplicate_finding_alias_count: int = Field(ge=0)
+    duplicate_evidence_alias_count: int = Field(ge=0)
+    observations: list[ReviewBriefRetrievalObservation] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_totals(self) -> ReviewBriefRetrievalMetrics:
+        if self.tool_call_count != len(self.observations):
+            raise ValueError("retrieval metric tool count differs from its receipts")
+        if self.tool_output_bytes != sum(item.output_bytes for item in self.observations):
+            raise ValueError("retrieval metric output bytes differ from its receipts")
+        if self.cumulative_context_bytes != self.observations[-1].cumulative_context_bytes:
+            raise ValueError("retrieval metric cumulative context differs from its receipts")
+        if self.initial_context_bytes + self.tool_output_bytes != self.cumulative_context_bytes:
+            raise ValueError("retrieval metric context budget is inconsistent")
+        if self.unique_finding_alias_count != len(
+            {alias for item in self.observations for alias in item.returned_finding_aliases}
+        ):
+            raise ValueError("retrieval metric finding count differs from its receipts")
+        if self.unique_evidence_alias_count != len(
+            {alias for item in self.observations for alias in item.returned_evidence_aliases}
+        ):
+            raise ValueError("retrieval metric evidence count differs from its receipts")
+        if self.duplicate_finding_alias_count != sum(
+            item.duplicate_finding_alias_count for item in self.observations
+        ):
+            raise ValueError("retrieval metric finding duplicates differ from its receipts")
+        if self.duplicate_evidence_alias_count != sum(
+            item.duplicate_evidence_alias_count for item in self.observations
+        ):
+            raise ValueError("retrieval metric evidence duplicates differ from its receipts")
+        return self
+
+    @classmethod
+    def from_runner_result(cls, result: ReviewBriefRunnerResult) -> ReviewBriefRetrievalMetrics:
+        observations = list(result.retrieval_observations)
+        if not observations:
+            raise ValueError("retrieval metrics require explicit tool receipts")
+        return cls(
+            traversal_mode=result.traversal_mode,
+            stop_reason=result.stop_reason,
+            tool_call_count=len(observations),
+            initial_context_bytes=(
+                observations[0].cumulative_context_bytes - observations[0].output_bytes
+            ),
+            cumulative_context_bytes=observations[-1].cumulative_context_bytes,
+            tool_output_bytes=sum(item.output_bytes for item in observations),
+            unique_finding_alias_count=len(
+                {alias for item in observations for alias in item.returned_finding_aliases}
+            ),
+            unique_evidence_alias_count=len(
+                {alias for item in observations for alias in item.returned_evidence_aliases}
+            ),
+            duplicate_finding_alias_count=sum(
+                item.duplicate_finding_alias_count for item in observations
+            ),
+            duplicate_evidence_alias_count=sum(
+                item.duplicate_evidence_alias_count for item in observations
+            ),
+            observations=observations,
+        )
 
 
 class ReviewBriefProviderCostBasis(ContractModel):

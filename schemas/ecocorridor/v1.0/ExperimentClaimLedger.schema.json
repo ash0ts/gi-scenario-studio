@@ -1,0 +1,151 @@
+{
+  "$defs": {
+    "ClaimLevel": {
+      "enum": [
+        "TRACE_INTEGRITY",
+        "SYNTHETIC_TASK_CORRECTNESS",
+        "PRACTITIONER_WORKFLOW_IMPROVEMENT",
+        "EXTERNAL_WORKFLOW_UTILITY"
+      ],
+      "title": "ClaimLevel",
+      "type": "string"
+    },
+    "ClaimStatus": {
+      "enum": [
+        "BLOCKED",
+        "NOT_SUPPORTED",
+        "SUPPORTED"
+      ],
+      "title": "ClaimStatus",
+      "type": "string"
+    },
+    "ExperimentClaimRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "bounded_claim": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Bounded Claim",
+          "type": "string"
+        },
+        "claim_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Claim Id",
+          "type": "string"
+        },
+        "level": {
+          "$ref": "#/$defs/ClaimLevel"
+        },
+        "limitations": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Limitations",
+          "type": "array"
+        },
+        "reason": {
+          "maxLength": 1600,
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ClaimStatus"
+        },
+        "supporting_evidence_sha256s": {
+          "default": [],
+          "items": {
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "title": "Supporting Evidence Sha256S",
+          "type": "array"
+        }
+      },
+      "required": [
+        "claim_id",
+        "level",
+        "status",
+        "bounded_claim",
+        "reason",
+        "limitations"
+      ],
+      "title": "ExperimentClaimRecord",
+      "type": "object"
+    }
+  },
+  "$id": "https://schemas.ecocorridor.local/1.0/ExperimentClaimLedger.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "claims": {
+      "items": {
+        "$ref": "#/$defs/ExperimentClaimRecord"
+      },
+      "maxItems": 6,
+      "minItems": 4,
+      "title": "Claims",
+      "type": "array"
+    },
+    "generated_at": {
+      "format": "date-time",
+      "title": "Generated At",
+      "type": "string"
+    },
+    "ledger_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Ledger Id",
+      "type": "string"
+    },
+    "ledger_sha256": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Ledger Sha256"
+    },
+    "prohibited_inferences": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Prohibited Inferences",
+      "type": "array"
+    },
+    "protocol_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Protocol Sha256",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "ecocorridor-usefulness-study/v1.0",
+      "default": "ecocorridor-usefulness-study/v1.0",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "ledger_id",
+    "protocol_sha256",
+    "generated_at",
+    "claims",
+    "prohibited_inferences"
+  ],
+  "title": "ExperimentClaimLedger",
+  "type": "object"
+}

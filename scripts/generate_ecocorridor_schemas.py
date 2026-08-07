@@ -25,6 +25,7 @@ from ecocorridor_core.schema import (
     render_public_schemas,
     write_public_schemas,
 )
+from ecocorridor_core.usefulness_study import USEFULNESS_STUDY_CONTRACTS
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_DIRECTORY = ROOT / "schemas" / "ecocorridor" / "v1.0"
@@ -46,7 +47,7 @@ REVIEW_BRIEF_PUBLIC_CONTRACTS = (
 def _named_contracts() -> tuple[tuple[str, type[Any]], ...]:
     return tuple((contract.__name__, contract) for contract in PUBLIC_CONTRACTS) + (
         REVIEW_BRIEF_PUBLIC_CONTRACTS
-    )
+    ) + tuple((contract.__name__, contract) for contract in USEFULNESS_STUDY_CONTRACTS)
 
 
 def _literal(value: Any) -> str:
@@ -201,7 +202,10 @@ def render_typescript() -> str:
 def _expected_artifacts() -> dict[Path, str]:
     rendered = render_public_schemas()
     index = json.loads(rendered["index.json"])
-    for name, contract in REVIEW_BRIEF_PUBLIC_CONTRACTS:
+    extension_contracts = REVIEW_BRIEF_PUBLIC_CONTRACTS + tuple(
+        (contract.__name__, contract) for contract in USEFULNESS_STUDY_CONTRACTS
+    )
+    for name, contract in extension_contracts:
         schema = contract.model_json_schema(mode="validation")
         schema["title"] = name
         schema["$schema"] = "https://json-schema.org/draft/2020-12/schema"

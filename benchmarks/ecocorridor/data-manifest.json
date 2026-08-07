@@ -1208,6 +1208,22 @@
       "public_replay_allowed": true
     },
     {
+      "path": "benchmarks/ecocorridor/usefulness/manifest.json",
+      "sha256": "349aa36c0476cd4c0fa9cf43ee5d0619015ec664bfdf7f5a2f2f6068c70bbdff",
+      "byte_size": 12568,
+      "media_type": "application/json",
+      "asset_role": "SUPPORTING_EVIDENCE",
+      "repository_use": "BENCHMARK_ONLY",
+      "ownership": "EcoCorridor Scenario Studio contributors",
+      "license": "CC0-1.0",
+      "provenance": "SELF_AUTHORED_SYNTHETIC",
+      "synthetic": true,
+      "sensitivity": "PUBLIC",
+      "contains_real_locations": false,
+      "contains_species_occurrences": false,
+      "public_replay_allowed": false
+    },
+    {
       "path": "python/ecocorridor_core/data/assistant_evaluation_cases.json",
       "sha256": "ca818fd0e36eb7046d48ffcb31bd4567e7526c5a409d1579ba32abdcf2182e45",
       "byte_size": 2728,

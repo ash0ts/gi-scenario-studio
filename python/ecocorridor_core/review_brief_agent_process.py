@@ -38,6 +38,7 @@ from .review_brief import (
     ReviewBriefFindingSelection,
     ReviewBriefPriority,
     ReviewBriefReasonFacet,
+    ReviewBriefRetrievalObservation,
     ReviewBriefRunnerRequest,
     ReviewBriefRunnerResult,
     ReviewBriefSafetyError,
@@ -71,7 +72,7 @@ _SAFE_MODEL_INPUT = (
     "Prepare the bounded review-finding selection. Use only the registered "
     "read-only tools and return only the required structured output."
 )
-REVIEW_BRIEF_MODEL_VISIBLE_CONTEXT_VERSION = "review-brief-model-visible-context/v6"
+REVIEW_BRIEF_MODEL_VISIBLE_CONTEXT_VERSION = "review-brief-model-visible-context/v9"
 REVIEW_BRIEF_MAX_TOOL_OUTPUT_BYTES = 48 * 1024
 _RETURN_STRUCTURED_OUTPUT = "RETURN_STRUCTURED_OUTPUT"
 _AUTHORIZED_READ_TOKEN = "READ_AUTHORIZED_SNAPSHOT"
@@ -155,6 +156,12 @@ _CLOSED_TOOL_VALUE_TOKENS = frozenset(
         "FAILS",
         "SURVEY_FIRST",
         "INCOMPLETE",
+        "ADAPTIVE",
+        "FORCED_EXHAUSTIVE",
+        "SELECTION_READY",
+        "FORCED_EXHAUSTIVE_COMPLETE",
+        "FIXED_READ_ONLY",
+        "NEUTRAL_COUNT_ONLY",
     }
 )
 
@@ -166,16 +173,36 @@ class _InvocationContext:
     tool_calls: list[str] = field(default_factory=list)
     inspected_finding_aliases: set[str] = field(default_factory=set)
     resolved_evidence_aliases: set[str] = field(default_factory=set)
+    seen_finding_aliases: set[str] = field(default_factory=set)
+    seen_evidence_aliases: set[str] = field(default_factory=set)
+    retrieval_observations: list[ReviewBriefRetrievalObservation] = field(default_factory=list)
+    pending_tool: dict[str, Any] | None = None
     output_validated: bool = False
     output_sha256: str | None = None
     binding_sha256: str = field(init=False)
+    initial_context_bytes: int = field(init=False)
+    initial_context_sha256: str = field(init=False)
+    cumulative_context_bytes: int = field(init=False)
 
     def __post_init__(self) -> None:
         self.binding_sha256 = canonical_sha256(self.child.binding.model_dump(mode="json"))
+        initial_context = review_brief_initial_model_visible_context_bytes(
+            self.snapshot,
+            traversal_mode=self.traversal_mode,
+        )
+        self.initial_context_bytes = len(initial_context)
+        self.initial_context_sha256 = hashlib.sha256(initial_context).hexdigest()
+        self.cumulative_context_bytes = self.initial_context_bytes
+        if self.initial_context_bytes > REVIEW_BRIEF_MAX_CONTEXT_BYTES:
+            raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_CONTEXT_TOO_LARGE")
 
     @property
     def snapshot(self) -> ReviewBriefAuthorizedSnapshot:
         return self.request.snapshot
+
+    @property
+    def traversal_mode(self) -> Literal["ADAPTIVE", "FORCED_EXHAUSTIVE"]:
+        return self.request.traversal_mode
 
     def revalidate(self, *, tool_name: str, raw_arguments: str) -> None:
         self.child.binding.assert_authorization_lease_active()
@@ -183,9 +210,14 @@ class _InvocationContext:
             raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_NOT_ALLOWED")
         if len(self.tool_calls) >= REVIEW_BRIEF_MAX_TOOL_CALLS:
             raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_LIMIT_EXCEEDED")
-        required = required_review_brief_tools(self.snapshot)
-        if len(self.tool_calls) >= len(required) or tool_name != required[len(self.tool_calls)]:
-            raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_ORDER_INVALID")
+        if self.pending_tool is not None:
+            raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_RECEIPT_PENDING")
+        if self.traversal_mode == "FORCED_EXHAUSTIVE":
+            required = required_review_brief_tools(self.snapshot)
+            if len(self.tool_calls) >= len(required) or tool_name != required[len(self.tool_calls)]:
+                raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_ORDER_INVALID")
+        elif tool_name not in _adaptive_available_tools(self):
+            raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_NOT_AVAILABLE")
         expected_snapshot = canonical_sha256(
             self.snapshot.model_dump(mode="json", exclude={"snapshot_sha256"})
         )
@@ -226,18 +258,24 @@ class _InvocationContext:
             raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_ARGUMENTS_INVALID") from exc
         if not isinstance(arguments, dict):
             raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_ARGUMENTS_INVALID")
-        inspected_findings: set[str] = set()
-        resolved_evidence: set[str] = set()
+        inspected_findings: list[str] = []
+        resolved_evidence: list[str] = []
+        discovery_scope: set[str] | None = None
+        discovery_error: str | None = None
         if tool_name == "review_brief_get_findings":
             if set(arguments) != {"finding_aliases"}:
                 raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_ARGUMENTS_INVALID")
             query = _FindingQuery.model_validate(arguments)
-            inspected_findings.update(query.finding_aliases)
+            discovery_scope = self.seen_finding_aliases
+            discovery_error = "REVIEW_BRIEF_AGENT_FINDING_ALIAS_NOT_DISCOVERED"
+            inspected_findings.extend(query.finding_aliases)
         elif tool_name == "review_brief_resolve_evidence_aliases":
             if set(arguments) != {"evidence_aliases"}:
                 raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_ARGUMENTS_INVALID")
             query = _EvidenceQuery.model_validate(arguments)
-            resolved_evidence.update(query.evidence_aliases)
+            discovery_scope = self.seen_evidence_aliases
+            discovery_error = "REVIEW_BRIEF_AGENT_EVIDENCE_ALIAS_NOT_DISCOVERED"
+            resolved_evidence.extend(query.evidence_aliases)
         elif arguments != _authorized_read_arguments():
             raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_ARGUMENTS_INVALID")
         argument_aliases = {
@@ -246,27 +284,121 @@ class _InvocationContext:
         permitted = finding_aliases | evidence_aliases | scenario_aliases
         if not argument_aliases.issubset(permitted):
             raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_ALIAS_NOT_AUTHORIZED")
-        self.inspected_finding_aliases.update(inspected_findings)
-        self.resolved_evidence_aliases.update(resolved_evidence)
+        if (
+            self.traversal_mode == "ADAPTIVE"
+            and discovery_scope is not None
+            and not argument_aliases.issubset(discovery_scope)
+        ):
+            raise ReviewBriefAgentRuntimeError(discovery_error or "REVIEW_BRIEF_AGENT_TOOL_INVALID")
         self.tool_calls.append(tool_name)
+        self.pending_tool = {
+            "tool_name": tool_name,
+            "requested_finding_aliases": inspected_findings,
+            "requested_evidence_aliases": resolved_evidence,
+        }
+
+    def complete_tool(self, *, tool_name: str, payload: dict[str, Any]) -> dict[str, Any]:
+        pending = self.pending_tool
+        if pending is None or pending["tool_name"] != tool_name:
+            raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_RECEIPT_MISSING")
+        strings = _extract_strings(payload)
+        returned_findings = list(
+            dict.fromkeys(value for value in strings if re.fullmatch(r"F[1-9][0-9]{0,3}", value))
+        )
+        returned_evidence = list(
+            dict.fromkeys(value for value in strings if re.fullmatch(r"E[1-9][0-9]{0,3}", value))
+        )
+        permitted_findings = {item.finding_alias for item in self.snapshot.findings}
+        permitted_evidence = {
+            alias for item in self.snapshot.findings for alias in item.evidence_aliases
+        }
+        if not set(returned_findings).issubset(permitted_findings) or not set(
+            returned_evidence
+        ).issubset(permitted_evidence):
+            raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_OUTPUT_NOT_CLOSED")
+        new_findings = [
+            alias for alias in returned_findings if alias not in self.seen_finding_aliases
+        ]
+        new_evidence = [
+            alias for alias in returned_evidence if alias not in self.seen_evidence_aliases
+        ]
+        self.seen_finding_aliases.update(returned_findings)
+        self.seen_evidence_aliases.update(returned_evidence)
+        if tool_name == "review_brief_get_findings":
+            self.inspected_finding_aliases.update(pending["requested_finding_aliases"])
+        elif tool_name == "review_brief_resolve_evidence_aliases":
+            self.resolved_evidence_aliases.update(pending["requested_evidence_aliases"])
+        response = _with_traversal_state(context=self, payload=payload)
+        output_bytes = len(
+            output_payload := json.dumps(
+                response, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+            ).encode("utf-8")
+        )
+        cumulative_context_bytes = self.cumulative_context_bytes + output_bytes
+        if cumulative_context_bytes > REVIEW_BRIEF_MAX_CONTEXT_BYTES:
+            raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_CONTEXT_TOO_LARGE")
+        observation = ReviewBriefRetrievalObservation(
+            sequence=len(self.tool_calls),
+            tool_name=tool_name,
+            requested_finding_aliases=pending["requested_finding_aliases"],
+            requested_evidence_aliases=pending["requested_evidence_aliases"],
+            returned_finding_aliases=returned_findings,
+            returned_evidence_aliases=returned_evidence,
+            new_finding_aliases=new_findings,
+            new_evidence_aliases=new_evidence,
+            duplicate_finding_alias_count=len(returned_findings) - len(new_findings),
+            duplicate_evidence_alias_count=len(returned_evidence) - len(new_evidence),
+            output_bytes=output_bytes,
+            output_sha256=hashlib.sha256(output_payload).hexdigest(),
+            cumulative_context_bytes=cumulative_context_bytes,
+        )
+        self.retrieval_observations.append(observation)
+        self.cumulative_context_bytes = cumulative_context_bytes
+        self.pending_tool = None
+        return response
 
     def validate_selection(self, output: _AgentSelectionOutput) -> None:
         if output.snapshot_sha256 != self.snapshot.snapshot_sha256:
             raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_OUTPUT_SNAPSHOT_MISMATCH")
         findings = {item.finding_alias: item for item in self.snapshot.findings}
         selected = {item.finding_alias: item for item in output.selections}
-        if set(selected) != set(findings):
-            raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_REQUIRED_FINDING_RECALL_FAILED")
-        required_tools = list(required_review_brief_tools(self.snapshot))
-        if self.tool_calls != required_tools:
-            raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_REQUIRED_TRAVERSAL_MISSING")
+        if not set(selected).issubset(findings):
+            raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_FINDING_SCOPE_INVALID")
+        if self.pending_tool is not None or len(self.retrieval_observations) != len(
+            self.tool_calls
+        ):
+            raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_RECEIPT_MISSING")
         expected_findings = set(findings)
         expected_evidence = {
             alias for item in self.snapshot.findings for alias in item.evidence_aliases
         }
-        if self.inspected_finding_aliases != expected_findings:
-            raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_FINDING_TRAVERSAL_INCOMPLETE")
-        if self.resolved_evidence_aliases != expected_evidence:
+        if self.traversal_mode == "FORCED_EXHAUSTIVE":
+            required_tools = list(required_review_brief_tools(self.snapshot))
+            if self.tool_calls != required_tools:
+                raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_REQUIRED_TRAVERSAL_MISSING")
+            if set(selected) != expected_findings:
+                raise ReviewBriefAgentRuntimeError(
+                    "REVIEW_BRIEF_AGENT_REQUIRED_FINDING_RECALL_FAILED"
+                )
+        elif (
+            len(self.tool_calls) < 3
+            or self.tool_calls[:2] != ["review_brief_get_scope", "review_brief_list_findings"]
+            or "review_brief_get_findings" not in self.tool_calls
+        ):
+            raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_REQUIRED_TRAVERSAL_MISSING")
+        if self.traversal_mode == "FORCED_EXHAUSTIVE":
+            if self.inspected_finding_aliases != expected_findings:
+                raise ReviewBriefAgentRuntimeError(
+                    "REVIEW_BRIEF_AGENT_FINDING_TRAVERSAL_INCOMPLETE"
+                )
+        elif not set(selected).issubset(self.inspected_finding_aliases):
+            raise ReviewBriefAgentRuntimeError(
+                "REVIEW_BRIEF_AGENT_SELECTED_FINDING_NOT_INSPECTED"
+            )
+        if (
+            self.traversal_mode == "FORCED_EXHAUSTIVE"
+            and self.resolved_evidence_aliases != expected_evidence
+        ):
             raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_EVIDENCE_TRAVERSAL_INCOMPLETE")
         for alias, selection in selected.items():
             context = findings[alias]
@@ -324,6 +456,64 @@ def _is_exact_next_tool(context: _InvocationContext, tool_name: str) -> bool:
     return completed < len(required) and required[completed] == tool_name
 
 
+def _adaptive_available_tools(context: _InvocationContext) -> tuple[str, ...]:
+    """Return the currently useful tools without prescribing one fixed path."""
+
+    if context.pending_tool is not None or len(context.tool_calls) >= REVIEW_BRIEF_MAX_TURNS - 1:
+        return ()
+    if not context.tool_calls:
+        return ("review_brief_get_scope",)
+    if context.tool_calls == ["review_brief_get_scope"]:
+        return ("review_brief_list_findings",)
+    if context.tool_calls[:2] != ["review_brief_get_scope", "review_brief_list_findings"]:
+        return ()
+    discovered_findings = context.seen_finding_aliases
+    missing_findings = discovered_findings - context.inspected_finding_aliases
+    available: list[str] = []
+    if missing_findings:
+        available.append("review_brief_get_findings")
+    # Preserve the final model turn. Once a branch has exposed aliases, detail is
+    # the only useful read when one retrieval slot remains. Adaptive execution is
+    # intentionally not required to enumerate the other branches.
+    if len(context.tool_calls) >= REVIEW_BRIEF_MAX_TURNS - 2 and missing_findings:
+        return tuple(available)
+    for name in (
+        "review_brief_list_option_constraints",
+        "review_brief_list_model_fitness_gaps",
+        "review_brief_get_reference_status",
+        "review_brief_get_authorization_status",
+    ):
+        if name not in context.tool_calls:
+            available.append(name)
+    discovered_evidence = context.seen_evidence_aliases
+    if discovered_evidence - context.resolved_evidence_aliases:
+        available.append("review_brief_resolve_evidence_aliases")
+    return tuple(available)
+
+
+def _is_tool_enabled(context: _InvocationContext, tool_name: str) -> bool:
+    if context.traversal_mode == "FORCED_EXHAUSTIVE":
+        return _is_exact_next_tool(context, tool_name)
+    return tool_name in _adaptive_available_tools(context)
+
+
+def _with_traversal_state(
+    *, context: _InvocationContext, payload: dict[str, Any]
+) -> dict[str, Any]:
+    if context.traversal_mode == "FORCED_EXHAUSTIVE":
+        return _with_next_required_tool(
+            snapshot=context.snapshot,
+            completed_tool_count=len(context.tool_calls),
+            payload=payload,
+        )
+    selection_ready = bool(context.inspected_finding_aliases)
+    return {
+        **payload,
+        "available_next_tools": list(_adaptive_available_tools(context)),
+        "selection_ready": selection_ready,
+    }
+
+
 def _branch_payload(item: Any) -> dict[str, Any]:
     return {
         "finding_alias": item.finding_alias,
@@ -339,6 +529,8 @@ def _branch_payload(item: Any) -> dict[str, Any]:
 
 _OPTION_BRANCH_TOPICS = frozenset(
     {
+        ReviewBriefTopic.REQUIRED_RULE,
+        ReviewBriefTopic.SAFEGUARD_REVIEW,
         ReviewBriefTopic.SURVEY_OR_FIELD_DATA,
         ReviewBriefTopic.CURRENT_REDISTRIBUTION_MASK,
         ReviewBriefTopic.GENERAL_FEASIBILITY,
@@ -362,22 +554,13 @@ _MODEL_BRANCH_TOPICS = frozenset(
 
 
 def _scope_payload(snapshot: ReviewBriefAuthorizedSnapshot) -> dict[str, Any]:
-    required = required_review_brief_tools(snapshot)
     return {
         "source_mode": snapshot.source_mode.value,
         "disposition": snapshot.disposition,
         "finding_count": len(snapshot.findings),
-        "required_branch_tools": [
-            name
-            for name in required
-            if name
-            not in {
-                "review_brief_get_scope",
-                "review_brief_list_findings",
-                "review_brief_get_findings",
-                "review_brief_resolve_evidence_aliases",
-            }
-        ],
+        # Keep discovery neutral: it reports only the bounded universe size, not
+        # which branches contain findings or which aliases are expected answers.
+        "branch_catalog_kind": "FIXED_READ_ONLY",
     }
 
 
@@ -494,7 +677,7 @@ def _build_tools(context: _InvocationContext) -> list[Any]:
 
     def decorate(name: str, description: str) -> Any:
         def is_enabled(wrapper: RunContextWrapper[_InvocationContext], _agent: Any) -> bool:
-            return _is_exact_next_tool(wrapper.context, name)
+            return _is_tool_enabled(wrapper.context, name)
 
         return function_tool(
             name_override=name,
@@ -517,15 +700,14 @@ def _build_tools(context: _InvocationContext) -> list[Any]:
     ) -> dict[str, Any]:
         if request_token != _AUTHORIZED_READ_TOKEN:
             raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_ARGUMENTS_INVALID")
-        return _with_next_required_tool(
-            snapshot=wrapper.context.snapshot,
-            completed_tool_count=len(wrapper.context.tool_calls),
+        return wrapper.context.complete_tool(
+            tool_name="review_brief_get_scope",
             payload=_scope_payload(wrapper.context.snapshot),
         )
 
     @decorate(
         "review_brief_list_findings",
-        "List authorized finding aliases and priorities without branch or evidence detail.",
+        "Report the bounded finding-universe size without aliases, priorities, or answer hints.",
     )
     async def list_findings(
         wrapper: RunContextWrapper[_InvocationContext],
@@ -533,14 +715,11 @@ def _build_tools(context: _InvocationContext) -> list[Any]:
     ) -> dict[str, Any]:
         if request_token != _AUTHORIZED_READ_TOKEN:
             raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_ARGUMENTS_INVALID")
-        return _with_next_required_tool(
-            snapshot=wrapper.context.snapshot,
-            completed_tool_count=len(wrapper.context.tool_calls),
+        return wrapper.context.complete_tool(
+            tool_name="review_brief_list_findings",
             payload={
-                "findings": [
-                    {"finding_alias": item.finding_alias, "priority": item.priority.value}
-                    for item in wrapper.context.snapshot.findings
-                ]
+                "finding_count": len(wrapper.context.snapshot.findings),
+                "listing_kind": "NEUTRAL_COUNT_ONLY",
             },
         )
 
@@ -552,9 +731,8 @@ def _build_tools(context: _InvocationContext) -> list[Any]:
         wrapper: RunContextWrapper[_InvocationContext], finding_aliases: list[str]
     ) -> dict[str, Any]:
         query = _FindingQuery(finding_aliases=finding_aliases)
-        return _with_next_required_tool(
-            snapshot=wrapper.context.snapshot,
-            completed_tool_count=len(wrapper.context.tool_calls),
+        return wrapper.context.complete_tool(
+            tool_name="review_brief_get_findings",
             payload=_findings_payload(wrapper.context.snapshot, query.finding_aliases),
         )
 
@@ -568,9 +746,8 @@ def _build_tools(context: _InvocationContext) -> list[Any]:
     ) -> dict[str, Any]:
         if request_token != _AUTHORIZED_READ_TOKEN:
             raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_ARGUMENTS_INVALID")
-        return _with_next_required_tool(
-            snapshot=wrapper.context.snapshot,
-            completed_tool_count=len(wrapper.context.tool_calls),
+        return wrapper.context.complete_tool(
+            tool_name="review_brief_list_option_constraints",
             payload=_topic_branch_payload(wrapper.context.snapshot, _OPTION_BRANCH_TOPICS),
         )
 
@@ -584,9 +761,8 @@ def _build_tools(context: _InvocationContext) -> list[Any]:
     ) -> dict[str, Any]:
         if request_token != _AUTHORIZED_READ_TOKEN:
             raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_ARGUMENTS_INVALID")
-        return _with_next_required_tool(
-            snapshot=wrapper.context.snapshot,
-            completed_tool_count=len(wrapper.context.tool_calls),
+        return wrapper.context.complete_tool(
+            tool_name="review_brief_list_model_fitness_gaps",
             payload=_topic_branch_payload(wrapper.context.snapshot, _MODEL_BRANCH_TOPICS),
         )
 
@@ -601,9 +777,8 @@ def _build_tools(context: _InvocationContext) -> list[Any]:
         permitted = set(wrapper.context.child.binding.permitted_evidence_aliases)
         if not set(query.evidence_aliases).issubset(permitted):
             raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_EVIDENCE_ALIAS_NOT_FOUND")
-        return _with_next_required_tool(
-            snapshot=wrapper.context.snapshot,
-            completed_tool_count=len(wrapper.context.tool_calls),
+        return wrapper.context.complete_tool(
+            tool_name="review_brief_resolve_evidence_aliases",
             payload=_evidence_payload(wrapper.context.snapshot, query.evidence_aliases),
         )
 
@@ -617,9 +792,8 @@ def _build_tools(context: _InvocationContext) -> list[Any]:
     ) -> dict[str, Any]:
         if request_token != _AUTHORIZED_READ_TOKEN:
             raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_ARGUMENTS_INVALID")
-        return _with_next_required_tool(
-            snapshot=wrapper.context.snapshot,
-            completed_tool_count=len(wrapper.context.tool_calls),
+        return wrapper.context.complete_tool(
+            tool_name="review_brief_get_reference_status",
             payload=_reference_payload(wrapper.context.snapshot),
         )
 
@@ -633,9 +807,8 @@ def _build_tools(context: _InvocationContext) -> list[Any]:
     ) -> dict[str, Any]:
         if request_token != _AUTHORIZED_READ_TOKEN:
             raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_ARGUMENTS_INVALID")
-        return _with_next_required_tool(
-            snapshot=wrapper.context.snapshot,
-            completed_tool_count=len(wrapper.context.tool_calls),
+        return wrapper.context.complete_tool(
+            tool_name="review_brief_get_authorization_status",
             payload=_authorization_payload(wrapper.context.snapshot),
         )
 
@@ -702,6 +875,23 @@ class _ReceiptWeaveTracingProcessor:
                 self.context.child.trace.wandb_run_lifecycle.encode("utf-8")
             ).hexdigest(),
             "tool_calls_sha256": canonical_sha256(list(self.context.tool_calls)),
+            "traversal_mode_sha256": hashlib.sha256(
+                self.context.traversal_mode.encode("utf-8")
+            ).hexdigest(),
+            "retrieval_observations_sha256": canonical_sha256(
+                [item.model_dump(mode="json") for item in self.context.retrieval_observations]
+            ),
+            "initial_model_context_sha256": self.context.initial_context_sha256,
+            "actual_tool_output_hashes_sha256": canonical_sha256(
+                [item.output_sha256 for item in self.context.retrieval_observations]
+            ),
+            "context_budget_sha256": canonical_sha256(
+                {
+                    "initial_context_bytes": self.context.initial_context_bytes,
+                    "cumulative_context_bytes": self.context.cumulative_context_bytes,
+                    "limit_bytes": REVIEW_BRIEF_MAX_CONTEXT_BYTES,
+                }
+            ),
             "traversal_sha256": canonical_sha256(
                 {
                     "inspected_finding_count": len(self.context.inspected_finding_aliases),
@@ -862,6 +1052,21 @@ def _readback_trace(
             context.child.trace.wandb_run_lifecycle.encode("utf-8")
         ).hexdigest(),
         "tool_calls_sha256": canonical_sha256(context.tool_calls),
+        "traversal_mode_sha256": hashlib.sha256(context.traversal_mode.encode("utf-8")).hexdigest(),
+        "retrieval_observations_sha256": canonical_sha256(
+            [item.model_dump(mode="json") for item in context.retrieval_observations]
+        ),
+        "initial_model_context_sha256": context.initial_context_sha256,
+        "actual_tool_output_hashes_sha256": canonical_sha256(
+            [item.output_sha256 for item in context.retrieval_observations]
+        ),
+        "context_budget_sha256": canonical_sha256(
+            {
+                "initial_context_bytes": context.initial_context_bytes,
+                "cumulative_context_bytes": context.cumulative_context_bytes,
+                "limit_bytes": REVIEW_BRIEF_MAX_CONTEXT_BYTES,
+            }
+        ),
         "traversal_sha256": canonical_sha256(
             {
                 "inspected_finding_count": len(context.inspected_finding_aliases),
@@ -1067,33 +1272,49 @@ def _usage(
     )
 
 
-def _instructions_for_snapshot(snapshot: ReviewBriefAuthorizedSnapshot) -> str:
-    required = " then ".join(required_review_brief_tools(snapshot))
-    return (
+def _instructions_for_snapshot(
+    snapshot: ReviewBriefAuthorizedSnapshot,
+    *,
+    traversal_mode: Literal["ADAPTIVE", "FORCED_EXHAUSTIVE"] = "ADAPTIVE",
+) -> str:
+    shared = (
         "You are a read-only ecological review-brief finding selector. You cannot choose, "
-        "approve, rank, attest, design, or modify a portfolio. Call exactly once, in this "
-        f"order: {required}. Batch every finding returned by review_brief_list_findings in "
-        "review_brief_get_findings and every "
-        "listed evidence alias in review_brief_resolve_evidence_aliases. Do not call any other "
-        "tool. Inspect the closed reason_facets, evidence_classes, scenario_breadth, and branch "
-        "counts. Each finding detail contains its complete, locally validated permitted_actions "
-        "and permitted_disciplines. For that finding, set action_kind to the first "
-        "permitted_actions value and set reviewer_disciplines to the complete "
-        "permitted_disciplines list in the same order. Never infer, substitute, omit, reorder, "
-        "or add an enum value. Only the exact next authorized tool is exposed at each "
-        "intermediate turn, and every tool response includes next_required_tool. Call that exact "
-        "tool next; do not return the structured output until it equals "
-        "RETURN_STRUCTURED_OUTPUT. The local validator independently rechecks every selection. "
-        "Return "
-        "every listed "
-        "finding alias exactly once. Return no prose, scientific value, unit, location, "
-        "recommendation, raw evidence ID, or name. Set snapshot_sha256 exactly to "
-        f"{snapshot.snapshot_sha256}."
+        "approve, rank, attest, design, or modify a portfolio. Inspect closed reason facets, "
+        "evidence classes, scenario breadth, and branch counts only through registered tools. "
+        "Each full finding detail contains locally validated permitted_actions and "
+        "permitted_disciplines. For each selected finding, choose only an action_kind and one "
+        "or more reviewer_disciplines present in that finding's closed permitted lists. Never "
+        "invent or add an enum value. Return no prose, "
+        "scientific value, unit, location, recommendation, raw evidence ID, or name. The local "
+        "validator independently rechecks traversal and selection. Set snapshot_sha256 exactly "
+        f"to {snapshot.snapshot_sha256}. "
+    )
+    if traversal_mode == "FORCED_EXHAUSTIVE":
+        required = " then ".join(required_review_brief_tools(snapshot))
+        return (
+            shared
+            + "This is the forced-exhaustive ablation. Call exactly once, in this order: "
+            + required
+            + ". Batch every listed finding and evidence alias. Only the exact next tool is "
+            "exposed, and every response names next_required_tool. Return structured output only "
+            "after it equals RETURN_STRUCTURED_OUTPUT. Return every finding alias exactly once."
+        )
+    return (
+        shared
+        + "First call review_brief_get_scope, then review_brief_list_findings. After discovery, "
+        "choose which coarse review branches are useful and batch only aliases exposed by those "
+        "branches. Retrieve full detail for each finding you select. You may stop without opening "
+        "other branches or returning every authorized finding. A response reports the currently "
+        "available tools and selection_ready; this means at least one inspected finding may be "
+        "returned, not that every branch was traversed. Do not repeat a retrieval without need."
     )
 
 
 def _instructions(context: _InvocationContext) -> str:
-    return _instructions_for_snapshot(context.snapshot)
+    return _instructions_for_snapshot(
+        context.snapshot,
+        traversal_mode=context.traversal_mode,
+    )
 
 
 def _tool_stage_instructions(
@@ -1101,7 +1322,10 @@ def _tool_stage_instructions(
     *,
     tool_name: str,
 ) -> str:
-    manifest = review_brief_model_visible_context(snapshot)
+    manifest = review_brief_model_visible_context(
+        snapshot,
+        traversal_mode="FORCED_EXHAUSTIVE",
+    )
     exchange = next(
         (item for item in manifest["ordered_tool_exchanges"] if item["tool_name"] == tool_name),
         None,
@@ -1119,7 +1343,10 @@ def _tool_stage_instructions(
 
 
 def _final_selection_instructions(snapshot: ReviewBriefAuthorizedSnapshot) -> str:
-    manifest = review_brief_model_visible_context(snapshot)
+    manifest = review_brief_model_visible_context(
+        snapshot,
+        traversal_mode="FORCED_EXHAUSTIVE",
+    )
     traversal = json.dumps(
         {
             "snapshot_sha256": snapshot.snapshot_sha256,
@@ -1133,25 +1360,76 @@ def _final_selection_instructions(snapshot: ReviewBriefAuthorizedSnapshot) -> st
         "You are a read-only ecological review-brief finding selector. The orchestrator has "
         "completed every required guarded tool step shown in the authorized traversal below. "
         "You cannot choose, approve, rank, attest, design, or modify a portfolio. Return every "
-        "listed finding_alias exactly once. For each finding, set action_kind to the first "
-        "permitted_actions value and reviewer_disciplines to the complete "
-        "permitted_disciplines list in the same order. Never infer, substitute, omit, reorder, "
-        "or add an enum value. Return no prose, scientific value, unit, location, recommendation, "
+        "listed finding_alias exactly once. For each finding, choose only an action_kind and one "
+        "or more reviewer_disciplines present in its closed permitted lists. Never invent or add "
+        "an enum value. Return no prose, scientific value, unit, location, recommendation, "
         "raw evidence ID, or name. Set snapshot_sha256 exactly to the supplied value. The local "
         "validator independently rechecks the traversal and every selection. Authorized "
         f"traversal: {traversal}"
     )
 
 
+def review_brief_initial_model_visible_context(
+    snapshot: ReviewBriefAuthorizedSnapshot,
+    *,
+    traversal_mode: Literal["ADAPTIVE", "FORCED_EXHAUSTIVE"] = "ADAPTIVE",
+) -> dict[str, Any]:
+    """Canonical fixed input visible before any read-only tool executes.
+
+    Adaptive preflight must not count hypothetical tool branches as if the
+    model had already received them.  Each actual output is charged separately
+    by :class:`_InvocationContext`.  The forced-exhaustive manifest below still
+    materializes its complete deterministic upper bound before execution.
+    """
+
+    content = {
+        "schema_version": REVIEW_BRIEF_MODEL_VISIBLE_CONTEXT_VERSION,
+        "traversal_mode": traversal_mode,
+        "fixed_input": _SAFE_MODEL_INPUT,
+        "instructions": _instructions_for_snapshot(
+            snapshot,
+            traversal_mode=traversal_mode,
+        ),
+        "tool_exchange_mode": "ACTUAL_INCREMENTAL",
+    }
+    return {**content, "context_sha256": canonical_sha256(content)}
+
+
+def review_brief_initial_model_visible_context_bytes(
+    snapshot: ReviewBriefAuthorizedSnapshot,
+    *,
+    traversal_mode: Literal["ADAPTIVE", "FORCED_EXHAUSTIVE"] = "ADAPTIVE",
+) -> bytes:
+    return json.dumps(
+        review_brief_initial_model_visible_context(
+            snapshot,
+            traversal_mode=traversal_mode,
+        ),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+
+
 def review_brief_model_visible_context(
     snapshot: ReviewBriefAuthorizedSnapshot,
+    *,
+    traversal_mode: Literal["ADAPTIVE", "FORCED_EXHAUSTIVE"] = "ADAPTIVE",
 ) -> dict[str, Any]:
-    """Canonical dynamic content authored by this app and visible to the model.
+    """Return the pre-execution context manifest for one traversal mode.
 
     Static SDK tool schemas are deliberately outside this manifest. The fixed input,
-    exact instructions, ordered tool arguments, and deterministic tool outputs are
-    produced by the same helpers used by the live agent tools.
+    exact instructions, ordered tool arguments, and deterministic forced-ablation
+    outputs are produced by the same helpers used by the live agent tools. Adaptive
+    mode returns only its fixed initial context; its actual output hashes and byte
+    counts are retained incrementally in retrieval receipts and the Weave trace gate.
     """
+
+    if traversal_mode == "ADAPTIVE":
+        return review_brief_initial_model_visible_context(
+            snapshot,
+            traversal_mode=traversal_mode,
+        )
 
     finding_aliases = [item.finding_alias for item in snapshot.findings]
     evidence_aliases = list(
@@ -1168,10 +1446,8 @@ def review_brief_model_visible_context(
         elif tool_name == "review_brief_list_findings":
             arguments = _authorized_read_arguments()
             output = {
-                "findings": [
-                    {"finding_alias": item.finding_alias, "priority": item.priority.value}
-                    for item in snapshot.findings
-                ]
+                "finding_count": len(snapshot.findings),
+                "listing_kind": "NEUTRAL_COUNT_ONLY",
             }
         elif tool_name == "review_brief_get_findings":
             arguments = {"finding_aliases": finding_aliases}
@@ -1213,8 +1489,13 @@ def review_brief_model_visible_context(
         )
     content = {
         "schema_version": REVIEW_BRIEF_MODEL_VISIBLE_CONTEXT_VERSION,
+        "traversal_mode": traversal_mode,
         "fixed_input": _SAFE_MODEL_INPUT,
-        "instructions": _instructions_for_snapshot(snapshot),
+        "instructions": _instructions_for_snapshot(
+            snapshot,
+            traversal_mode=traversal_mode,
+        ),
+        "tool_exchange_mode": "FORCED_EXHAUSTIVE_MANIFEST",
         "ordered_tool_exchanges": exchanges,
     }
     return {**content, "context_sha256": canonical_sha256(content)}
@@ -1222,9 +1503,11 @@ def review_brief_model_visible_context(
 
 def review_brief_model_visible_context_bytes(
     snapshot: ReviewBriefAuthorizedSnapshot,
+    *,
+    traversal_mode: Literal["ADAPTIVE", "FORCED_EXHAUSTIVE"] = "ADAPTIVE",
 ) -> bytes:
     return json.dumps(
-        review_brief_model_visible_context(snapshot),
+        review_brief_model_visible_context(snapshot, traversal_mode=traversal_mode),
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,
@@ -1507,6 +1790,37 @@ async def _execute_agent(
                 )
                 return results
 
+            if context.traversal_mode == "ADAPTIVE":
+                adaptive_agent = Agent[_InvocationContext](
+                    name="EcoCorridor Review Brief Agent · adaptive evidence traversal",
+                    instructions=_instructions(context),
+                    model=model,
+                    model_settings=ModelSettings(
+                        temperature=0,
+                        parallel_tool_calls=False,
+                        include_usage=True,
+                        store=False,
+                    ),
+                    tools=tools,
+                    output_type=_AgentSelectionOutput,
+                    input_guardrails=[fixed_input_guard],
+                    output_guardrails=[closed_output_guard],
+                    reset_tool_choice=True,
+                )
+                results.append(
+                    await Runner.run(
+                        adaptive_agent,
+                        _SAFE_MODEL_INPUT,
+                        context=context,
+                        max_turns=REVIEW_BRIEF_MAX_TURNS,
+                        session=None,
+                        previous_response_id=None,
+                        conversation_id=None,
+                        run_config=run_config,
+                    )
+                )
+                return results
+
             required_tools = list(required_review_brief_tools(context.snapshot))
             if len(required_tools) + 1 > REVIEW_BRIEF_MAX_TURNS:
                 raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_MODEL_TURN_LIMIT_EXCEEDED")
@@ -1637,6 +1951,13 @@ async def _execute_agent(
         provider_call_identity_kind=provider_call_identity_kind,
         provider_model=child.provider.model,
         tool_calls=list(context.tool_calls),
+        traversal_mode=context.traversal_mode,
+        stop_reason=(
+            "SELECTION_READY"
+            if context.traversal_mode == "ADAPTIVE"
+            else "FORCED_EXHAUSTIVE_COMPLETE"
+        ),
+        retrieval_observations=list(context.retrieval_observations),
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         elapsed_ms=elapsed_ms,
@@ -1653,11 +1974,16 @@ async def _execute_agent(
 
 async def _execute(child: ReviewBriefAgentChildRequest) -> ReviewBriefAgentChildResponse:
     request = ReviewBriefRunnerRequest.model_validate(child.runner_request)
-    # Reject a snapshot whose mandatory one-call batches cannot fit before the
-    # provider, tracing client, or owned W&B run receives any request.
-    if len(review_brief_model_visible_context_bytes(request.snapshot)) > (
-        REVIEW_BRIEF_MAX_CONTEXT_BYTES
-    ):
+    # Adaptive preflight contains only fixed instructions/input. Actual tool
+    # outputs are charged in ``complete_tool`` before they reach the model.
+    # Forced exhaustive traversal is still rejected here from its complete
+    # deterministic manifest before any provider or W&B call.
+    if len(
+        review_brief_model_visible_context_bytes(
+            request.snapshot,
+            traversal_mode=request.traversal_mode,
+        )
+    ) > (REVIEW_BRIEF_MAX_CONTEXT_BYTES):
         raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_CONTEXT_TOO_LARGE")
     child.binding.assert_authorization_lease_active()
     _configure_environment(child)
@@ -1690,6 +2016,8 @@ if __name__ == "__main__":  # pragma: no cover - exercised through subprocess sm
 __all__ = [
     "REVIEW_BRIEF_MODEL_VISIBLE_CONTEXT_VERSION",
     "main",
+    "review_brief_initial_model_visible_context",
+    "review_brief_initial_model_visible_context_bytes",
     "review_brief_model_visible_context",
     "review_brief_model_visible_context_bytes",
 ]

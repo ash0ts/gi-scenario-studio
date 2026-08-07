@@ -138,6 +138,15 @@
           "title": "Scenario Ids",
           "type": "array"
         },
+        "selection_source": {
+          "default": "AGENT_SELECTED",
+          "enum": [
+            "AGENT_SELECTED",
+            "DETERMINISTIC_COMPLETION"
+          ],
+          "title": "Selection Source",
+          "type": "string"
+        },
         "state": {
           "const": "OPEN",
           "default": "OPEN",

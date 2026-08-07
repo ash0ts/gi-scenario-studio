@@ -1,0 +1,306 @@
+name: EcoCorridor protected usefulness protocol publication
+
+on:
+  workflow_dispatch:
+    inputs:
+      historical_evaluation_run_id:
+        description: Successful main-branch Review Brief evaluation workflow run ID
+        required: true
+        type: string
+      historical_evaluation_source_commit:
+        description: Exact 40-character source commit for that workflow run
+        required: true
+        type: string
+      historical_campaign_file_sha256:
+        description: SHA-256 of the exact downloaded campaign JSON bytes
+        required: true
+        type: string
+      historical_campaign_sha256:
+        description: Internally verified Review Brief campaign SHA-256
+        required: true
+        type: string
+      frontier_model:
+        description: Owner-approved distinct tool-capable frontier gateway model ID
+        required: true
+        type: string
+      efficient_model:
+        description: Owner-approved distinct tool-capable efficient gateway model ID
+        required: true
+        type: string
+      cost_basis_reference:
+        description: Immutable provider pricing reference and vintage
+        required: true
+        type: string
+      continuity_input_rate:
+        description: Continuity model USD per million input tokens
+        required: true
+        type: string
+      continuity_output_rate:
+        description: Continuity model USD per million output tokens
+        required: true
+        type: string
+      frontier_input_rate:
+        description: Frontier model USD per million input tokens
+        required: true
+        type: string
+      frontier_output_rate:
+        description: Frontier model USD per million output tokens
+        required: true
+        type: string
+      efficient_input_rate:
+        description: Efficient model USD per million input tokens
+        required: true
+        type: string
+      efficient_output_rate:
+        description: Efficient model USD per million output tokens
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: ecocorridor-usefulness-protocol-publication
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: "3.12"
+  WANDB_CONSOLE: "off"
+  WANDB_DISABLE_CODE: "true"
+  WANDB_DISABLE_GIT: "true"
+  WANDB_ERROR_REPORTING: "false"
+  WANDB_SHOW_RUN: "false"
+
+jobs:
+  freeze-and-append:
+    name: Freeze protocol and append planned evidence status
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment:
+      name: ecocorridor-observability-integration
+    steps:
+      - name: Require exact protected main source
+        shell: bash
+        run: |
+          test "${GITHUB_REF}" = "refs/heads/main" || {
+            echo "::error::Usefulness protocol publication may run only from main."
+            exit 1
+          }
+          test "${GITHUB_WORKFLOW_SHA}" = "${GITHUB_SHA}" || {
+            echo "::error::Workflow source differs from the publication commit."
+            exit 1
+          }
+
+      - name: Check out source without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python and uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install locked protocol and Report dependencies
+        run: >-
+          uv sync --locked --extra ecocorridor --extra observability
+          --extra ecocorridor-report --extra dev
+
+      - name: Run network-free publisher checks
+        run: >-
+          uv run --no-sync pytest -q
+          tests/python/test_ecocorridor_usefulness_study.py
+          tests/python/test_ecocorridor_usefulness_landscapes.py
+          tests/python/test_ecocorridor_usefulness_safety.py
+          tests/python/test_ecocorridor_usefulness_reporting.py
+          tests/python/test_ecocorridor_usefulness_report.py
+
+      - name: Resolve the exact successful historical campaign artifact
+        id: resolve_historical_campaign
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HISTORICAL_RUN_ID: ${{ inputs.historical_evaluation_run_id }}
+          HISTORICAL_SOURCE_COMMIT: ${{ inputs.historical_evaluation_source_commit }}
+          HISTORICAL_CAMPAIGN_FILE_SHA256: ${{ inputs.historical_campaign_file_sha256 }}
+          HISTORICAL_CAMPAIGN_SHA256: ${{ inputs.historical_campaign_sha256 }}
+        run: |
+          [[ "${HISTORICAL_RUN_ID}" =~ ^[1-9][0-9]*$ ]] || {
+            echo "::error::Historical workflow run ID must be a positive integer."
+            exit 1
+          }
+          [[ "${HISTORICAL_SOURCE_COMMIT}" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error::Historical source commit must be a full lowercase SHA-1."
+            exit 1
+          }
+          for digest in \
+            "${HISTORICAL_CAMPAIGN_FILE_SHA256}" \
+            "${HISTORICAL_CAMPAIGN_SHA256}"; do
+            [[ "${digest}" =~ ^[0-9a-f]{64}$ ]] || {
+              echo "::error::Historical campaign identities must be lowercase SHA-256 values."
+              exit 1
+            }
+          done
+          historical_root="${RUNNER_TEMP}/historical-review-brief"
+          mkdir -p "${historical_root}"
+          gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/repos/${GITHUB_REPOSITORY}/actions/runs/${HISTORICAL_RUN_ID}" \
+            > "${historical_root}/source-run-api.json"
+          gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/repos/${GITHUB_REPOSITORY}/actions/runs/${HISTORICAL_RUN_ID}/artifacts?name=ecocorridor-review-brief-evaluation" \
+            > "${historical_root}/source-artifacts-api.json"
+          uv run --no-sync python scripts/resolve_github_actions_provenance.py \
+            --run-json "${historical_root}/source-run-api.json" \
+            --artifacts-json "${historical_root}/source-artifacts-api.json" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --expected-run-id "${HISTORICAL_RUN_ID}" \
+            --expected-sha "${HISTORICAL_SOURCE_COMMIT}" \
+            --expected-workflow-path \
+              .github/workflows/ecocorridor-review-brief-evaluation.yml \
+            --expected-artifact-name ecocorridor-review-brief-evaluation \
+            --output "${historical_root}/github-actions-provenance.json" \
+            --github-output "${GITHUB_OUTPUT}"
+
+      - name: Download the exact digest-verified historical campaign artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ steps.resolve_historical_campaign.outputs.artifact_id }}
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.historical_evaluation_run_id }}
+          path: ${{ runner.temp }}/historical-review-brief
+          digest-mismatch: error
+
+      - name: Validate protected destination and frozen model slate
+        shell: bash
+        env:
+          WANDB_API_KEY: ${{ secrets.WANDB_SERVICE_ACCOUNT_API_KEY }}
+          WANDB_ENTITY: ${{ secrets.WANDB_SERVICE_ACCOUNT_ENTITY }}
+          WANDB_PROJECT: ${{ vars.WANDB_INTEGRATION_PROJECT }}
+          WANDB_BASE_URL: ${{ vars.WANDB_BASE_URL }}
+          WANDB_WEB_BASE_URL: ${{ vars.WANDB_WEB_BASE_URL }}
+          WANDB_REPORT_URL: ${{ vars.ECOCORRIDOR_REVIEW_BRIEF_REPORT_URL }}
+          FRONTIER_MODEL: ${{ inputs.frontier_model }}
+          EFFICIENT_MODEL: ${{ inputs.efficient_model }}
+        run: |
+          for name in \
+            WANDB_API_KEY WANDB_ENTITY WANDB_PROJECT WANDB_BASE_URL \
+            WANDB_WEB_BASE_URL WANDB_REPORT_URL FRONTIER_MODEL EFFICIENT_MODEL; do
+            test -n "${!name:-}" || {
+              echo "::error::Missing protected usefulness configuration: ${name}."
+              exit 1
+            }
+          done
+          test "${FRONTIER_MODEL}" != "${EFFICIENT_MODEL}" || {
+            echo "::error::Frontier and efficient model IDs must be distinct."
+            exit 1
+          }
+          test "${FRONTIER_MODEL}" != "openai/gpt-oss-120b" || {
+            echo "::error::Frontier model must differ from the continuity slot."
+            exit 1
+          }
+          test "${EFFICIENT_MODEL}" != "openai/gpt-oss-120b" || {
+            echo "::error::Efficient model must differ from the continuity slot."
+            exit 1
+          }
+          case "${WANDB_REPORT_URL}" in
+            https://*) ;;
+            *)
+              echo "::error::Existing Report URL must be HTTPS."
+              exit 1
+              ;;
+          esac
+
+      - name: Freeze the source-bound protocol without running experiments
+        shell: bash
+        env:
+          FRONTIER_MODEL: ${{ inputs.frontier_model }}
+          EFFICIENT_MODEL: ${{ inputs.efficient_model }}
+          COST_BASIS_REFERENCE: ${{ inputs.cost_basis_reference }}
+          CONTINUITY_INPUT_RATE: ${{ inputs.continuity_input_rate }}
+          CONTINUITY_OUTPUT_RATE: ${{ inputs.continuity_output_rate }}
+          FRONTIER_INPUT_RATE: ${{ inputs.frontier_input_rate }}
+          FRONTIER_OUTPUT_RATE: ${{ inputs.frontier_output_rate }}
+          EFFICIENT_INPUT_RATE: ${{ inputs.efficient_input_rate }}
+          EFFICIENT_OUTPUT_RATE: ${{ inputs.efficient_output_rate }}
+          HISTORICAL_SOURCE_COMMIT: ${{ inputs.historical_evaluation_source_commit }}
+          HISTORICAL_CAMPAIGN_FILE_SHA256: ${{ inputs.historical_campaign_file_sha256 }}
+          HISTORICAL_CAMPAIGN_SHA256: ${{ inputs.historical_campaign_sha256 }}
+        run: |
+          frozen_at="$(date -u +%Y-%m-%dT%H:%M:%S%z)"
+          uv run --no-sync python scripts/prepare_ecocorridor_usefulness_program.py \
+            --source-repository "${GITHUB_REPOSITORY}" \
+            --source-commit "${GITHUB_SHA}" \
+            --frontier-model "${FRONTIER_MODEL}" \
+            --efficient-model "${EFFICIENT_MODEL}" \
+            --cost-basis-reference "${COST_BASIS_REFERENCE}" \
+            --continuity-input-rate "${CONTINUITY_INPUT_RATE}" \
+            --continuity-output-rate "${CONTINUITY_OUTPUT_RATE}" \
+            --frontier-input-rate "${FRONTIER_INPUT_RATE}" \
+            --frontier-output-rate "${FRONTIER_OUTPUT_RATE}" \
+            --efficient-input-rate "${EFFICIENT_INPUT_RATE}" \
+            --efficient-output-rate "${EFFICIENT_OUTPUT_RATE}" \
+            --preregistered-at "${frozen_at}" \
+            --frozen-at "${frozen_at}" \
+            --generated-at "${frozen_at}" \
+            --historical-campaign \
+              "${RUNNER_TEMP}/historical-review-brief/ecocorridor-review-brief-campaign.json" \
+            --historical-campaign-file-sha256 \
+              "${HISTORICAL_CAMPAIGN_FILE_SHA256}" \
+            --historical-campaign-sha256 "${HISTORICAL_CAMPAIGN_SHA256}" \
+            --historical-campaign-source-commit "${HISTORICAL_SOURCE_COMMIT}" \
+            --historical-github-actions-provenance \
+              "${RUNNER_TEMP}/historical-review-brief/github-actions-provenance.json" \
+            --historical-wandb-readback-receipt \
+              "${RUNNER_TEMP}/historical-review-brief/ecocorridor-review-brief-publication-receipt.json" \
+            --historical-verification-receipt \
+              "${RUNNER_TEMP}/historical-review-brief/input-verification-receipt.json" \
+            --require-historical-campaign \
+            --require-verified-historical \
+            --output "${RUNNER_TEMP}/ecocorridor-usefulness-plan.json"
+
+      - name: Log exact protocol bytes and append only the bounded Report section
+        shell: bash
+        env:
+          WANDB_API_KEY: ${{ secrets.WANDB_SERVICE_ACCOUNT_API_KEY }}
+          WANDB_ENTITY: ${{ secrets.WANDB_SERVICE_ACCOUNT_ENTITY }}
+          WANDB_PROJECT: ${{ vars.WANDB_INTEGRATION_PROJECT }}
+          WANDB_BASE_URL: ${{ vars.WANDB_BASE_URL }}
+          WANDB_WEB_BASE_URL: ${{ vars.WANDB_WEB_BASE_URL }}
+          WANDB_REPORT_URL: ${{ vars.ECOCORRIDOR_REVIEW_BRIEF_REPORT_URL }}
+          WANDB_DIR: ${{ runner.temp }}/usefulness/wandb/run
+          WANDB_CACHE_DIR: ${{ runner.temp }}/usefulness/wandb/cache
+          WANDB_ARTIFACT_DIR: ${{ runner.temp }}/usefulness/wandb/artifacts
+          WANDB_DATA_DIR: ${{ runner.temp }}/usefulness/wandb/data
+        run: |
+          mkdir -p \
+            "${WANDB_DIR}" "${WANDB_CACHE_DIR}" \
+            "${WANDB_ARTIFACT_DIR}" "${WANDB_DATA_DIR}"
+          uv run --no-sync python scripts/publish_ecocorridor_usefulness_report.py \
+            --plan "${RUNNER_TEMP}/ecocorridor-usefulness-plan.json" \
+            --entity "${WANDB_ENTITY}" \
+            --project "${WANDB_PROJECT}" \
+            --wandb-api-base-url "${WANDB_BASE_URL}" \
+            --wandb-web-base-url "${WANDB_WEB_BASE_URL}" \
+            --report-url "${WANDB_REPORT_URL}" \
+            --authorize-synthetic-public-upload \
+            --output "${RUNNER_TEMP}/ecocorridor-usefulness-publication-receipt.json"
+
+      - name: Preserve the frozen plan and exact readback receipt
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: ecocorridor-usefulness-protocol
+          path: |
+            ${{ runner.temp }}/ecocorridor-usefulness-plan.json
+            ${{ runner.temp }}/ecocorridor-usefulness-publication-receipt.json
+            ${{ runner.temp }}/historical-review-brief/github-actions-provenance.json
+            ${{ runner.temp }}/historical-review-brief/input-verification-receipt.json
+          if-no-files-found: error
+          retention-days: 30

@@ -60,6 +60,7 @@ def test_only_report_publishing_workflows_install_the_report_publisher_extra() -
         "ecocorridor-ci.yml",
         "ecocorridor-release.yml",
         "ecocorridor-review-brief-evaluation.yml",
+        "ecocorridor-usefulness-protocol.yml",
     }
 
 

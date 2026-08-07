@@ -1392,3 +1392,9 @@ def test_signed_installer_gate_launches_actual_native_host_twice_before_resource
     )
     collection = workflow.split("- name: Collect uniquely named target artifacts", 1)[1]
     assert collection.count("--installed-health-receipt") == 2
+    assert "Generate exact packaged-engine conformance receipt" in workflow
+    assert "create_ecocorridor_engine_provenance.py" in workflow
+    assert "--engine-provenance-receipt" in collection
+    assert collection.index("--engine-provenance-receipt") < collection.index(
+        "Attest target release assets"
+    )

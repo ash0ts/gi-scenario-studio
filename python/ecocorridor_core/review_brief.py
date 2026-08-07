@@ -326,6 +326,9 @@ class ReviewBriefItem(ContractModel):
     direct_run_ids: list[str] = Field(default_factory=list)
     scenario_ids: list[str] = Field(default_factory=list)
     rendered_text: str = Field(min_length=1)
+    selection_source: Literal["AGENT_SELECTED", "DETERMINISTIC_COMPLETION"] = (
+        "AGENT_SELECTED"
+    )
     state: Literal["OPEN"] = "OPEN"
 
     @model_validator(mode="after")
@@ -702,6 +705,61 @@ class ReviewBriefRunnerRequest(ContractModel):
     call_alias: Literal["CALL1"] = "CALL1"
     operation: Literal["REVIEW_BRIEF_PREPARE"] = "REVIEW_BRIEF_PREPARE"
     snapshot: ReviewBriefAuthorizedSnapshot
+    traversal_mode: Literal["ADAPTIVE", "FORCED_EXHAUSTIVE"] = "ADAPTIVE"
+
+
+class ReviewBriefRetrievalObservation(ContractModel):
+    """One locally revalidated, alias-only read made by the bounded agent.
+
+    Relevance is deliberately not encoded here: evaluation ground truth owns
+    that classification.  These receipts retain exactly what was requested and
+    returned so a scorer can distinguish useful retrieval, duplicate retrieval,
+    and irrelevant retrieval without exposing local evidence identities.
+    """
+
+    sequence: int = Field(ge=1, le=REVIEW_BRIEF_MAX_REQUIRED_TOOL_CALLS)
+    tool_name: ReviewBriefToolName
+    requested_finding_aliases: list[str] = Field(default_factory=list)
+    requested_evidence_aliases: list[str] = Field(default_factory=list)
+    returned_finding_aliases: list[str] = Field(default_factory=list)
+    returned_evidence_aliases: list[str] = Field(default_factory=list)
+    new_finding_aliases: list[str] = Field(default_factory=list)
+    new_evidence_aliases: list[str] = Field(default_factory=list)
+    duplicate_finding_alias_count: int = Field(default=0, ge=0)
+    duplicate_evidence_alias_count: int = Field(default=0, ge=0)
+    output_bytes: int = Field(ge=2, le=64 * 1024)
+    output_sha256: str = Field(pattern=_DIGEST)
+    cumulative_context_bytes: int = Field(ge=2, le=64 * 1024)
+
+    @model_validator(mode="after")
+    def validate_alias_accounting(self) -> ReviewBriefRetrievalObservation:
+        for values, prefix, label in (
+            (self.requested_finding_aliases, "F", "requested finding"),
+            (self.requested_evidence_aliases, "E", "requested evidence"),
+            (self.returned_finding_aliases, "F", "returned finding"),
+            (self.returned_evidence_aliases, "E", "returned evidence"),
+            (self.new_finding_aliases, "F", "new finding"),
+            (self.new_evidence_aliases, "E", "new evidence"),
+        ):
+            if len(values) != len(set(values)) or any(
+                not re.fullmatch(rf"{prefix}[1-9][0-9]{{0,3}}", value) for value in values
+            ):
+                raise ValueError(f"review retrieval {label} aliases must be unique and opaque")
+        if not set(self.new_finding_aliases).issubset(self.returned_finding_aliases):
+            raise ValueError("new finding aliases must be returned by the same tool call")
+        if not set(self.new_evidence_aliases).issubset(self.returned_evidence_aliases):
+            raise ValueError("new evidence aliases must be returned by the same tool call")
+        if self.duplicate_finding_alias_count != (
+            len(self.returned_finding_aliases) - len(self.new_finding_aliases)
+        ):
+            raise ValueError("finding retrieval duplicate count is inconsistent")
+        if self.duplicate_evidence_alias_count != (
+            len(self.returned_evidence_aliases) - len(self.new_evidence_aliases)
+        ):
+            raise ValueError("evidence retrieval duplicate count is inconsistent")
+        if self.cumulative_context_bytes < self.output_bytes:
+            raise ValueError("retrieval context cannot be smaller than its tool output")
+        return self
 
 
 class ReviewBriefFindingSelection(ContractModel):
@@ -728,6 +786,11 @@ class ReviewBriefRunnerResult(ContractModel):
     tool_calls: list[ReviewBriefToolName] = Field(
         min_length=1, max_length=REVIEW_BRIEF_MAX_REQUIRED_TOOL_CALLS
     )
+    traversal_mode: Literal["ADAPTIVE", "FORCED_EXHAUSTIVE"] = "FORCED_EXHAUSTIVE"
+    stop_reason: Literal["SELECTION_READY", "FORCED_EXHAUSTIVE_COMPLETE"] = (
+        "FORCED_EXHAUSTIVE_COMPLETE"
+    )
+    retrieval_observations: list[ReviewBriefRetrievalObservation] = Field(default_factory=list)
     input_tokens: int | None = Field(default=None, ge=0)
     output_tokens: int | None = Field(default=None, ge=0)
     elapsed_ms: int | None = Field(default=None, ge=0)
@@ -745,6 +808,32 @@ class ReviewBriefRunnerResult(ContractModel):
         aliases = [item.finding_alias for item in self.selections]
         if len(aliases) != len(set(aliases)):
             raise ValueError("review runner finding selections must be unique")
+        if self.traversal_mode == "ADAPTIVE" and self.stop_reason != "SELECTION_READY":
+            raise ValueError("adaptive review traversal must stop only when selection is ready")
+        if (
+            self.traversal_mode == "FORCED_EXHAUSTIVE"
+            and self.stop_reason != "FORCED_EXHAUSTIVE_COMPLETE"
+        ):
+            raise ValueError("forced review traversal must report exhaustive completion")
+        if self.retrieval_observations:
+            if [item.sequence for item in self.retrieval_observations] != list(
+                range(1, len(self.retrieval_observations) + 1)
+            ):
+                raise ValueError("review retrieval observations must use contiguous sequence IDs")
+            if [item.tool_name for item in self.retrieval_observations] != self.tool_calls:
+                raise ValueError("review retrieval observations differ from tool-call order")
+            for previous, current in zip(
+                self.retrieval_observations,
+                self.retrieval_observations[1:],
+                strict=False,
+            ):
+                if (
+                    current.cumulative_context_bytes - previous.cumulative_context_bytes
+                    != current.output_bytes
+                ):
+                    raise ValueError("review retrieval cumulative context accounting is invalid")
+        elif self.traversal_mode == "ADAPTIVE":
+            raise ValueError("adaptive review traversal requires retrieval observations")
         return self
 
 
@@ -2189,11 +2278,66 @@ def validate_runner_result(
 ) -> None:
     if result.snapshot_sha256 != snapshot.snapshot_sha256:
         raise ReviewBriefSafetyError("REVIEW_BRIEF_RUNNER_SNAPSHOT_MISMATCH")
-    if tuple(result.tool_calls) != required_review_brief_tools(snapshot):
-        raise ReviewBriefSafetyError("REVIEW_BRIEF_RUNNER_REQUIRED_TRAVERSAL_MISSING")
+    permitted_tools = set(REVIEW_BRIEF_AGENT_TOOLS)
+    if result.traversal_mode == "FORCED_EXHAUSTIVE":
+        if tuple(result.tool_calls) != required_review_brief_tools(snapshot):
+            raise ReviewBriefSafetyError("REVIEW_BRIEF_RUNNER_REQUIRED_TRAVERSAL_MISSING")
+    else:
+        if (
+            len(result.tool_calls) < 3
+            or result.tool_calls[:2] != ["review_brief_get_scope", "review_brief_list_findings"]
+            or "review_brief_get_findings" not in result.tool_calls
+            or not set(result.tool_calls).issubset(permitted_tools)
+        ):
+            raise ReviewBriefSafetyError("REVIEW_BRIEF_RUNNER_ADAPTIVE_TRAVERSAL_INVALID")
+        singleton_tools = permitted_tools - {
+            "review_brief_get_findings",
+            "review_brief_resolve_evidence_aliases",
+        }
+        if any(result.tool_calls.count(name) > 1 for name in singleton_tools):
+            raise ReviewBriefSafetyError("REVIEW_BRIEF_RUNNER_ADAPTIVE_TRAVERSAL_INVALID")
+        observations = result.retrieval_observations
+        if len(observations) != len(result.tool_calls):
+            raise ReviewBriefSafetyError("REVIEW_BRIEF_RUNNER_RETRIEVAL_RECEIPT_MISSING")
+        permitted_findings = {item.finding_alias for item in snapshot.findings}
+        permitted_evidence = {
+            alias for item in snapshot.findings for alias in item.evidence_aliases
+        }
+        returned_findings = {
+            alias for item in observations for alias in item.returned_finding_aliases
+        }
+        requested_findings = {
+            alias for item in observations for alias in item.requested_finding_aliases
+        }
+        returned_evidence = {
+            alias for item in observations for alias in item.returned_evidence_aliases
+        }
+        requested_evidence = {
+            alias for item in observations for alias in item.requested_evidence_aliases
+        }
+        if (
+            not returned_findings.issubset(permitted_findings)
+            or not requested_findings.issubset(permitted_findings)
+            or not returned_evidence.issubset(permitted_evidence)
+            or not requested_evidence.issubset(permitted_evidence)
+        ):
+            raise ReviewBriefSafetyError("REVIEW_BRIEF_RUNNER_RETRIEVAL_SCOPE_INVALID")
+        detailed_findings = {
+            alias
+            for item in observations
+            if item.tool_name == "review_brief_get_findings"
+            for alias in item.returned_finding_aliases
+        }
+        selected_findings = {item.finding_alias for item in result.selections}
+        if not selected_findings.issubset(detailed_findings):
+            raise ReviewBriefSafetyError("REVIEW_BRIEF_RUNNER_SELECTED_FINDING_NOT_INSPECTED")
     context_by_alias = {item.finding_alias: item for item in snapshot.findings}
     selection_by_alias = {item.finding_alias: item for item in result.selections}
-    if set(context_by_alias) != set(selection_by_alias):
+    if not set(selection_by_alias).issubset(context_by_alias):
+        raise ReviewBriefSafetyError("REVIEW_BRIEF_RUNNER_FINDING_COVERAGE_INVALID")
+    if result.traversal_mode == "FORCED_EXHAUSTIVE" and set(context_by_alias) != set(
+        selection_by_alias
+    ):
         raise ReviewBriefSafetyError("REVIEW_BRIEF_RUNNER_FINDING_COVERAGE_INVALID")
     for alias, selection in selection_by_alias.items():
         context = context_by_alias[alias]
@@ -2207,13 +2351,35 @@ def _render_items(
     result: ReviewBriefRunnerResult,
 ) -> list[ReviewBriefItem]:
     validate_runner_result(result, snapshot)
+    context_by_alias = {item.finding_alias: item for item in snapshot.findings}
     local_by_alias = {
         context.finding_alias: finding
         for context, finding in zip(snapshot.findings, source.findings, strict=True)
     }
+    selected_by_alias = {item.finding_alias: item for item in result.selections}
     items: list[ReviewBriefItem] = []
-    for selection in result.selections:
-        finding = local_by_alias[selection.finding_alias]
+    for alias, finding in local_by_alias.items():
+        selection = selected_by_alias.get(alias)
+        selection_source: Literal["AGENT_SELECTED", "DETERMINISTIC_COMPLETION"]
+        if selection is None:
+            context = context_by_alias[alias]
+            topic = context.review_topic
+            assert topic is not None
+            primary = [
+                discipline
+                for discipline in context.permitted_disciplines
+                if discipline in primary_disciplines_for_topic(topic)
+            ]
+            if not primary:
+                raise ReviewBriefSafetyError("REVIEW_BRIEF_PRIMARY_DISCIPLINE_REQUIRED")
+            selection = ReviewBriefFindingSelection(
+                finding_alias=alias,
+                action_kind=context.permitted_actions[0],
+                reviewer_disciplines=primary,
+            )
+            selection_source = "DETERMINISTIC_COMPLETION"
+        else:
+            selection_source = "AGENT_SELECTED"
         item_id = (
             "review_item_"
             + canonical_sha256(
@@ -2221,6 +2387,7 @@ def _render_items(
                     "finding_id": finding.finding_id,
                     "action_kind": selection.action_kind.value,
                     "reviewer_disciplines": [item.value for item in selection.reviewer_disciplines],
+                    "selection_source": selection_source,
                 }
             )[:24]
         )
@@ -2239,6 +2406,7 @@ def _render_items(
                     finding.review_topic,
                     finding.reason_facets,
                 ),
+                selection_source=selection_source,
                 state="OPEN",
             )
         )
@@ -2388,6 +2556,7 @@ __all__ = [
     "ReviewBriefRejectedRunnerReceipt",
     "ReviewBriefRejectionAudit",
     "ReviewBriefRequest",
+    "ReviewBriefRetrievalObservation",
     "ReviewBriefRunner",
     "ReviewBriefRunnerRequest",
     "ReviewBriefRunnerResult",

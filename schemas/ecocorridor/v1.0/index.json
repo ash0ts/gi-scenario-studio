@@ -171,6 +171,94 @@
     {
       "file": "ReviewBriefAttestation.schema.json",
       "name": "ReviewBriefAttestation"
+    },
+    {
+      "file": "UsefulnessStudyProtocol.schema.json",
+      "name": "UsefulnessStudyProtocol"
+    },
+    {
+      "file": "StudyCaseManifest.schema.json",
+      "name": "StudyCaseManifest"
+    },
+    {
+      "file": "StudyMethodArm.schema.json",
+      "name": "StudyMethodArm"
+    },
+    {
+      "file": "AgentRetrievalObservation.schema.json",
+      "name": "AgentRetrievalObservation"
+    },
+    {
+      "file": "PractitionerSession.schema.json",
+      "name": "PractitionerSession"
+    },
+    {
+      "file": "ConventionalPackEquivalenceReceipt.schema.json",
+      "name": "ConventionalPackEquivalenceReceipt"
+    },
+    {
+      "file": "RetainedReadbackBlob.schema.json",
+      "name": "RetainedReadbackBlob"
+    },
+    {
+      "file": "ReadbackVerifierProvenance.schema.json",
+      "name": "ReadbackVerifierProvenance"
+    },
+    {
+      "file": "WandbCampaignReadback.schema.json",
+      "name": "WandbCampaignReadback"
+    },
+    {
+      "file": "WeaveTraceReadback.schema.json",
+      "name": "WeaveTraceReadback"
+    },
+    {
+      "file": "PreregistrationPublicationReceipt.schema.json",
+      "name": "PreregistrationPublicationReceipt"
+    },
+    {
+      "file": "CampaignEvidenceArtifact.schema.json",
+      "name": "CampaignEvidenceArtifact"
+    },
+    {
+      "file": "CampaignArtifactReceipt.schema.json",
+      "name": "CampaignArtifactReceipt"
+    },
+    {
+      "file": "VerifiedCampaignEvidence.schema.json",
+      "name": "VerifiedCampaignEvidence"
+    },
+    {
+      "file": "ReviewerHandoffRecord.schema.json",
+      "name": "ReviewerHandoffRecord"
+    },
+    {
+      "file": "PractitionerPublicProjection.schema.json",
+      "name": "PractitionerPublicProjection"
+    },
+    {
+      "file": "ReviewerHandoffPublicProjection.schema.json",
+      "name": "ReviewerHandoffPublicProjection"
+    },
+    {
+      "file": "ShadowProjectPublicProjection.schema.json",
+      "name": "ShadowProjectPublicProjection"
+    },
+    {
+      "file": "AdjudicatedOutcome.schema.json",
+      "name": "AdjudicatedOutcome"
+    },
+    {
+      "file": "PairedEffectEstimate.schema.json",
+      "name": "PairedEffectEstimate"
+    },
+    {
+      "file": "ShadowProjectRecord.schema.json",
+      "name": "ShadowProjectRecord"
+    },
+    {
+      "file": "ExperimentClaimLedger.schema.json",
+      "name": "ExperimentClaimLedger"
     }
   ],
   "schema_version": "1.0"

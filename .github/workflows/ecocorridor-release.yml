@@ -916,6 +916,38 @@ jobs:
             --expected-target "${ECO_TARGET}" \
             | tee "${RUNNER_TEMP}/ecocorridor-offline-smoke.txt"
 
+      - name: Generate exact packaged-engine conformance receipt
+        shell: bash
+        env:
+          ECO_TARGET: ${{ matrix.target }}
+          EXECUTABLE_SUFFIX: ${{ matrix.executable_suffix }}
+          RELEASE_VERSION: ${{ inputs.release_tag }}
+        run: |
+          circuitscape_root="$(julia --project=julia/EcoCorridorEngine \
+            --startup-file=no --history-file=no \
+            -e 'using Circuitscape; print(dirname(dirname(pathof(Circuitscape))))')"
+          fixture_root="${circuitscape_root}/test/input/raster/pairwise/4"
+          expected_matrix="${circuitscape_root}/test/output_verify/sgVerify4_resistances_3columns.out"
+          test -d "${fixture_root}" -a -f "${expected_matrix}" || {
+            echo "::error::Pinned Circuitscape official fixture is unavailable."
+            exit 1
+          }
+          uv run --no-sync python scripts/create_ecocorridor_engine_provenance.py \
+            --engine "apps/ecocorridor-desktop/src-tauri/release-generated/engine/bin/ecocorridor-engine${EXECUTABLE_SUFFIX}" \
+            --engine-manifest apps/ecocorridor-desktop/src-tauri/release-generated/engine-manifest.json \
+            --release-manifest apps/ecocorridor-desktop/src-tauri/release-generated/release-manifest.json \
+            --release-signature apps/ecocorridor-desktop/src-tauri/release-generated/release-manifest.sig \
+            --release-public-key "${RUNNER_TEMP}/ecocorridor-resource-public-key.hex" \
+            --official-fixture-root "${fixture_root}" \
+            --official-expected "${expected_matrix}" \
+            --source-commit "${GITHUB_SHA}" \
+            --producer-run-id "${GITHUB_RUN_ID}" \
+            --producer-run-attempt "${GITHUB_RUN_ATTEMPT}" \
+            --producer-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --release-version "${RELEASE_VERSION}" \
+            --target "${ECO_TARGET}" \
+            --output "${RUNNER_TEMP}/ecocorridor-engine-provenance.json"
+
       - name: Capture Apple default keychain
         id: capture_apple_default_keychain
         if: startsWith(matrix.target, 'macos')
@@ -1339,6 +1371,7 @@ jobs:
           --release-root apps/ecocorridor-desktop/src-tauri/release-generated
           --public-resource-key "${RUNNER_TEMP}/ecocorridor-resource-public-key.hex"
           --smoke-report "${RUNNER_TEMP}/ecocorridor-installed-offline-smoke.txt"
+          --engine-provenance-receipt "${RUNNER_TEMP}/ecocorridor-engine-provenance.json"
           --installed-health-receipt "${RUNNER_TEMP}/ecocorridor-installed-health-1.json"
           --installed-health-receipt "${RUNNER_TEMP}/ecocorridor-installed-health-2.json"
           --output "${RUNNER_TEMP}/release-assets"

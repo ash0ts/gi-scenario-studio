@@ -1,0 +1,175 @@
+{
+  "$defs": {
+    "ClaimEvidenceArtifactType": {
+      "enum": [
+        "trace-integrity-summary",
+        "synthetic-task-summary",
+        "agent-complexity-summary",
+        "safety-campaign-summary",
+        "practitioner-confirmatory-summary",
+        "partner-shadow-summary"
+      ],
+      "title": "ClaimEvidenceArtifactType",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.ecocorridor.local/1.0/CampaignArtifactReceipt.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Receipt emitted only after raw bytes are deterministically re-evaluated.",
+  "properties": {
+    "artifact_name": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Artifact Name",
+      "type": "string"
+    },
+    "artifact_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Artifact Sha256",
+      "type": "string"
+    },
+    "artifact_type": {
+      "$ref": "#/$defs/ClaimEvidenceArtifactType"
+    },
+    "artifact_version": {
+      "maxLength": 96,
+      "minLength": 1,
+      "title": "Artifact Version",
+      "type": "string"
+    },
+    "preregistration_receipt_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Preregistration Receipt Sha256",
+      "type": "string"
+    },
+    "protocol_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Protocol Sha256",
+      "type": "string"
+    },
+    "raw_record_count": {
+      "exclusiveMinimum": 0,
+      "title": "Raw Record Count",
+      "type": "integer"
+    },
+    "raw_records_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Raw Records Sha256",
+      "type": "string"
+    },
+    "receipt_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Receipt Sha256",
+      "type": "string"
+    },
+    "retained_cloud_readback_set_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Retained Cloud Readback Set Sha256",
+      "type": "string"
+    },
+    "source_commit": {
+      "pattern": "^[0-9a-f]{40,64}$",
+      "title": "Source Commit",
+      "type": "string"
+    },
+    "source_repository": {
+      "maxLength": 240,
+      "minLength": 3,
+      "title": "Source Repository",
+      "type": "string"
+    },
+    "summary_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Summary Sha256",
+      "type": "string"
+    },
+    "verified_at": {
+      "format": "date-time",
+      "title": "Verified At",
+      "type": "string"
+    },
+    "verifier_source_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Verifier Source Sha256",
+      "type": "string"
+    },
+    "verifier_version": {
+      "const": "ecocorridor-campaign-evidence-verifier/v1.0",
+      "default": "ecocorridor-campaign-evidence-verifier/v1.0",
+      "title": "Verifier Version",
+      "type": "string"
+    },
+    "wandb_artifact_ref": {
+      "maxLength": 512,
+      "minLength": 1,
+      "title": "Wandb Artifact Ref",
+      "type": "string"
+    },
+    "wandb_readback_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Wandb Readback Sha256",
+      "type": "string"
+    },
+    "wandb_run_id": {
+      "maxLength": 256,
+      "minLength": 1,
+      "title": "Wandb Run Id",
+      "type": "string"
+    },
+    "weave_trace_count": {
+      "minimum": 0,
+      "title": "Weave Trace Count",
+      "type": "integer"
+    },
+    "weave_trace_set_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Weave Trace Set Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "artifact_type",
+    "artifact_name",
+    "artifact_version",
+    "artifact_sha256",
+    "summary_sha256",
+    "protocol_sha256",
+    "source_repository",
+    "source_commit",
+    "wandb_run_id",
+    "wandb_artifact_ref",
+    "wandb_readback_sha256",
+    "preregistration_receipt_sha256",
+    "retained_cloud_readback_set_sha256",
+    "weave_trace_set_sha256",
+    "weave_trace_count",
+    "raw_records_sha256",
+    "raw_record_count",
+    "verifier_source_sha256",
+    "verified_at",
+    "receipt_sha256"
+  ],
+  "title": "CampaignArtifactReceipt",
+  "type": "object"
+}

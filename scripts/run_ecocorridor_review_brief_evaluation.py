@@ -51,9 +51,6 @@ from ecocorridor_core.review_brief import (
     topic_permissions,
     validate_runner_result,
 )
-from ecocorridor_core.review_brief_agent_process import (
-    review_brief_model_visible_context_bytes,
-)
 from ecocorridor_core.review_brief_agent_runtime import (
     PopenReviewBriefAgentSubprocess,
     ReviewBriefAgentBinding,
@@ -78,8 +75,8 @@ from ecocorridor_core.review_brief_evaluation import (
     ReviewBriefMethodExecution,
     ReviewBriefNumericClaim,
     ReviewBriefProviderCostBasis,
+    ReviewBriefRetrievalMetrics,
     build_ridgeway_review_brief_dataset,
-    expected_review_brief_answer,
     fail_closed_review_brief_execution,
     run_review_brief_campaign,
     verify_review_brief_campaign,
@@ -286,9 +283,6 @@ class ExistingSingleShotFullContextMethod:
             ],
             "authorized_supporting_evidence_ids": list(case.authorized_supporting_evidence_ids),
             "authorized_limitations": list(case.required_limitations),
-            "authorized_answer_contract": expected_review_brief_answer(case).model_dump(
-                mode="json"
-            ),
             "safety_condition": case.injected_fault,
             "synthetic": True,
             "contains_real_locations": False,
@@ -411,6 +405,7 @@ class NativeReadOnlyAgentMethod:
         self.subprocess_client = PopenReviewBriefAgentSubprocess(scratch_root=scratch_root)
         self.cost_basis = cost_basis
         self.persistence_probe = persistence_probe or ReviewBriefEvaluationDraftProbe()
+        self.retrieval_metrics_by_snapshot: dict[str, ReviewBriefRetrievalMetrics] = {}
         self.declaration = ReviewBriefMethodDeclaration(
             method_id="native_read_only_agent",
             provider=provider_name,
@@ -583,6 +578,8 @@ class NativeReadOnlyAgentMethod:
     def _execution_evidence(
         self, result: ReviewBriefRunnerResult, request: ReviewBriefRunnerRequest
     ) -> tuple[ProviderExecutionEvidence, ReviewBriefExecutionObservation]:
+        retrieval_metrics = ReviewBriefRetrievalMetrics.from_runner_result(result)
+        self.retrieval_metrics_by_snapshot[result.snapshot_sha256] = retrieval_metrics
         weave_call_id = str(getattr(result.trace, "weave_call_id", "") or "")
         if not weave_call_id:
             raise RuntimeError("REVIEW_BRIEF_NATIVE_WEAVE_CALL_ID_MISSING")
@@ -603,7 +600,7 @@ class NativeReadOnlyAgentMethod:
             latency_ms=float(result.elapsed_ms) if result.elapsed_ms is not None else None,
         )
         observation = ReviewBriefExecutionObservation(
-            context_bytes=len(review_brief_model_visible_context_bytes(request.snapshot)),
+            context_bytes=retrieval_metrics.cumulative_context_bytes,
             prompt_tokens=result.input_tokens,
             completion_tokens=result.output_tokens,
             latency_ms=float(result.elapsed_ms or 0),

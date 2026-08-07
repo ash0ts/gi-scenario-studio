@@ -360,6 +360,15 @@
     },
     "snapshot": {
       "$ref": "#/$defs/ReviewBriefAuthorizedSnapshot"
+    },
+    "traversal_mode": {
+      "default": "ADAPTIVE",
+      "enum": [
+        "ADAPTIVE",
+        "FORCED_EXHAUSTIVE"
+      ],
+      "title": "Traversal Mode",
+      "type": "string"
     }
   },
   "required": [

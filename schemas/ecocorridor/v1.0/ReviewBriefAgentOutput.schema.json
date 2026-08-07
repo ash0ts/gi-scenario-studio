@@ -41,6 +41,112 @@
       "title": "ReviewBriefFindingSelection",
       "type": "object"
     },
+    "ReviewBriefRetrievalObservation": {
+      "additionalProperties": false,
+      "description": "One locally revalidated, alias-only read made by the bounded agent.\n\nRelevance is deliberately not encoded here: evaluation ground truth owns\nthat classification.  These receipts retain exactly what was requested and\nreturned so a scorer can distinguish useful retrieval, duplicate retrieval,\nand irrelevant retrieval without exposing local evidence identities.",
+      "properties": {
+        "cumulative_context_bytes": {
+          "maximum": 65536,
+          "minimum": 2,
+          "title": "Cumulative Context Bytes",
+          "type": "integer"
+        },
+        "duplicate_evidence_alias_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Duplicate Evidence Alias Count",
+          "type": "integer"
+        },
+        "duplicate_finding_alias_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Duplicate Finding Alias Count",
+          "type": "integer"
+        },
+        "new_evidence_aliases": {
+          "items": {
+            "type": "string"
+          },
+          "title": "New Evidence Aliases",
+          "type": "array"
+        },
+        "new_finding_aliases": {
+          "items": {
+            "type": "string"
+          },
+          "title": "New Finding Aliases",
+          "type": "array"
+        },
+        "output_bytes": {
+          "maximum": 65536,
+          "minimum": 2,
+          "title": "Output Bytes",
+          "type": "integer"
+        },
+        "output_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Output Sha256",
+          "type": "string"
+        },
+        "requested_evidence_aliases": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Requested Evidence Aliases",
+          "type": "array"
+        },
+        "requested_finding_aliases": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Requested Finding Aliases",
+          "type": "array"
+        },
+        "returned_evidence_aliases": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Returned Evidence Aliases",
+          "type": "array"
+        },
+        "returned_finding_aliases": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Returned Finding Aliases",
+          "type": "array"
+        },
+        "sequence": {
+          "maximum": 8,
+          "minimum": 1,
+          "title": "Sequence",
+          "type": "integer"
+        },
+        "tool_name": {
+          "enum": [
+            "review_brief_get_scope",
+            "review_brief_list_findings",
+            "review_brief_get_findings",
+            "review_brief_list_option_constraints",
+            "review_brief_list_model_fitness_gaps",
+            "review_brief_resolve_evidence_aliases",
+            "review_brief_get_reference_status",
+            "review_brief_get_authorization_status"
+          ],
+          "title": "Tool Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sequence",
+        "tool_name",
+        "output_bytes",
+        "output_sha256",
+        "cumulative_context_bytes"
+      ],
+      "title": "ReviewBriefRetrievalObservation",
+      "type": "object"
+    },
     "ReviewBriefTrace": {
       "additionalProperties": false,
       "properties": {
@@ -174,6 +280,13 @@
       "title": "Provider Model",
       "type": "string"
     },
+    "retrieval_observations": {
+      "items": {
+        "$ref": "#/$defs/ReviewBriefRetrievalObservation"
+      },
+      "title": "Retrieval Observations",
+      "type": "array"
+    },
     "runner_kind": {
       "const": "OPENAI_AGENTS_SDK",
       "default": "OPENAI_AGENTS_SDK",
@@ -191,6 +304,15 @@
     "snapshot_sha256": {
       "pattern": "^[0-9a-f]{64}$",
       "title": "Snapshot Sha256",
+      "type": "string"
+    },
+    "stop_reason": {
+      "default": "FORCED_EXHAUSTIVE_COMPLETE",
+      "enum": [
+        "SELECTION_READY",
+        "FORCED_EXHAUSTIVE_COMPLETE"
+      ],
+      "title": "Stop Reason",
       "type": "string"
     },
     "tool_calls": {
@@ -214,6 +336,15 @@
     },
     "trace": {
       "$ref": "#/$defs/ReviewBriefTrace"
+    },
+    "traversal_mode": {
+      "default": "FORCED_EXHAUSTIVE",
+      "enum": [
+        "ADAPTIVE",
+        "FORCED_EXHAUSTIVE"
+      ],
+      "title": "Traversal Mode",
+      "type": "string"
     }
   },
   "required": [

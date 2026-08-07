@@ -1,0 +1,32 @@
+{
+  "$id": "https://schemas.ecocorridor.local/1.0/ReadbackVerifierProvenance.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Version and source identity of the code that performed cloud readback.",
+  "properties": {
+    "verified_at": {
+      "format": "date-time",
+      "title": "Verified At",
+      "type": "string"
+    },
+    "verifier_source_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Verifier Source Sha256",
+      "type": "string"
+    },
+    "verifier_version": {
+      "const": "ecocorridor-campaign-readback-verifier/v1.0",
+      "default": "ecocorridor-campaign-readback-verifier/v1.0",
+      "title": "Verifier Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "verifier_source_sha256",
+    "verified_at"
+  ],
+  "title": "ReadbackVerifierProvenance",
+  "type": "object"
+}

@@ -1186,6 +1186,8 @@ def test_release_asset_collection_is_target_specific_and_hash_inventoried(
         "EcoCorridor staged worker and direct Circuitscape engine smoke passed.\n",
         encoding="utf-8",
     )
+    engine_provenance = tmp_path / "engine-provenance.json"
+    engine_provenance.write_text('{"attested":"pending"}\n', encoding="utf-8")
     health_receipts = []
     for index in range(2):
         receipt = tmp_path / f"installed-health-{index}.json"
@@ -1204,6 +1206,8 @@ def test_release_asset_collection_is_target_specific_and_hash_inventoried(
             str(public_key),
             "--smoke-report",
             str(smoke),
+            "--engine-provenance-receipt",
+            str(engine_provenance),
             "--installed-health-receipt",
             str(health_receipts[0]),
             "--installed-health-receipt",
@@ -1223,6 +1227,7 @@ def test_release_asset_collection_is_target_specific_and_hash_inventoried(
     assert payload["version"] == "v0.1.0"
     assert all(item["bytes"] > 0 and len(item["sha256"]) == 64 for item in payload["assets"])
     assert any(item["role"] == "target-dependency-inventory" for item in payload["assets"])
+    assert any(item["role"] == "attested-engine-provenance" for item in payload["assets"])
     assert sum(item["role"] == "installed-host-health" for item in payload["assets"]) == 2
 
 

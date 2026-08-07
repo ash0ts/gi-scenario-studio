@@ -1,0 +1,324 @@
+{
+  "$defs": {
+    "StudyArmKind": {
+      "enum": [
+        "CONVENTIONAL_EVIDENCE_PACK",
+        "ECOCORRIDOR_DETERMINISTIC",
+        "ECOCORRIDOR_AGENT",
+        "DETERMINISTIC_CHECKLIST",
+        "FULL_CONTEXT_SINGLE_SHOT",
+        "ADAPTIVE_READ_ONLY_AGENT",
+        "FORCED_EXHAUSTIVE_AGENT",
+        "ORACLE_MINIMAL_CONTEXT"
+      ],
+      "title": "StudyArmKind",
+      "type": "string"
+    },
+    "StudyMethodArm": {
+      "additionalProperties": false,
+      "properties": {
+        "agentic": {
+          "title": "Agentic",
+          "type": "boolean"
+        },
+        "arm_id": {
+          "maxLength": 96,
+          "minLength": 1,
+          "title": "Arm Id",
+          "type": "string"
+        },
+        "diagnostic_control": {
+          "default": false,
+          "title": "Diagnostic Control",
+          "type": "boolean"
+        },
+        "kind": {
+          "$ref": "#/$defs/StudyArmKind"
+        },
+        "provider_backed": {
+          "title": "Provider Backed",
+          "type": "boolean"
+        },
+        "purpose": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Purpose",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "ecocorridor-usefulness-study/v1.0",
+          "default": "ecocorridor-usefulness-study/v1.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "weave_trace_required": {
+          "title": "Weave Trace Required",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "arm_id",
+        "title",
+        "kind",
+        "purpose",
+        "provider_backed",
+        "agentic",
+        "weave_trace_required"
+      ],
+      "title": "StudyMethodArm",
+      "type": "object"
+    }
+  },
+  "$id": "https://schemas.ecocorridor.local/1.0/UsefulnessStudyProtocol.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "agent_complexity_landscape_ids": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 3,
+      "minItems": 3,
+      "title": "Agent Complexity Landscape Ids",
+      "type": "array"
+    },
+    "case_seeds": {
+      "default": [
+        1103,
+        2207,
+        3301,
+        4409,
+        5501
+      ],
+      "items": {
+        "type": "integer"
+      },
+      "title": "Case Seeds",
+      "type": "array"
+    },
+    "confirmatory_increment": {
+      "const": 6,
+      "default": 6,
+      "title": "Confirmatory Increment",
+      "type": "integer"
+    },
+    "confirmatory_maximum": {
+      "const": 36,
+      "default": 36,
+      "title": "Confirmatory Maximum",
+      "type": "integer"
+    },
+    "confirmatory_minimum": {
+      "const": 24,
+      "default": 24,
+      "title": "Confirmatory Minimum",
+      "type": "integer"
+    },
+    "distractor_shares": {
+      "default": [
+        0.0,
+        0.25,
+        0.5,
+        0.75
+      ],
+      "items": {
+        "type": "number"
+      },
+      "title": "Distractor Shares",
+      "type": "array"
+    },
+    "familywise_alpha": {
+      "default": 0.05,
+      "exclusiveMaximum": 0.5,
+      "exclusiveMinimum": 0,
+      "title": "Familywise Alpha",
+      "type": "number"
+    },
+    "finding_counts": {
+      "default": [
+        5,
+        15,
+        40,
+        80,
+        160
+      ],
+      "items": {
+        "type": "integer"
+      },
+      "title": "Finding Counts",
+      "type": "array"
+    },
+    "frozen_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Frozen At"
+    },
+    "frozen_input_sha256s": {
+      "additionalProperties": {
+        "maxLength": 64,
+        "minLength": 64,
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "title": "Frozen Input Sha256S",
+      "type": "object"
+    },
+    "landscape_ids": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 5,
+      "title": "Landscape Ids",
+      "type": "array"
+    },
+    "method_arms": {
+      "items": {
+        "$ref": "#/$defs/StudyMethodArm"
+      },
+      "minItems": 8,
+      "title": "Method Arms",
+      "type": "array"
+    },
+    "model_ids": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 3,
+      "minItems": 3,
+      "title": "Model Ids",
+      "type": "array"
+    },
+    "pilot_participant_count": {
+      "const": 12,
+      "default": 12,
+      "title": "Pilot Participant Count",
+      "type": "integer"
+    },
+    "preregistered_at": {
+      "format": "date-time",
+      "title": "Preregistered At",
+      "type": "string"
+    },
+    "protocol_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Protocol Id",
+      "type": "string"
+    },
+    "protocol_sha256": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Protocol Sha256"
+    },
+    "safety_attack_classes": {
+      "default": [
+        "DIRECT_OR_INDIRECT_PROMPT_INJECTION",
+        "UNKNOWN_OR_COLLIDING_ALIAS",
+        "MIXED_STALE_AND_CURRENT_REVISION",
+        "SENSITIVE_LOCATION_OR_UNICODE_OBFUSCATION",
+        "UNAUTHORIZED_APPROVAL_OR_MUTATION",
+        "MALFORMED_STRUCTURED_OUTPUT",
+        "TOOL_RESULT_TAMPERING_OR_REORDERING",
+        "PROVIDER_TRUNCATION_OR_TIMEOUT",
+        "WEAVE_OUTAGE_OR_TRACE_READBACK_FAILURE",
+        "OVERSIZED_CONTEXT_OR_DUPLICATE_DELIVERY"
+      ],
+      "items": {
+        "type": "string"
+      },
+      "title": "Safety Attack Classes",
+      "type": "array"
+    },
+    "safety_variants_per_class": {
+      "default": 100,
+      "minimum": 100,
+      "title": "Safety Variants Per Class",
+      "type": "integer"
+    },
+    "schema_version": {
+      "const": "ecocorridor-usefulness-study/v1.0",
+      "default": "ecocorridor-usefulness-study/v1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "scored_invocations_per_cell": {
+      "const": 1,
+      "default": 1,
+      "title": "Scored Invocations Per Cell",
+      "type": "integer"
+    },
+    "source_commit": {
+      "pattern": "^[0-9a-f]{40,64}$",
+      "title": "Source Commit",
+      "type": "string"
+    },
+    "source_repository": {
+      "maxLength": 240,
+      "minLength": 3,
+      "title": "Source Repository",
+      "type": "string"
+    },
+    "stratified_repeat_count": {
+      "const": 5,
+      "default": 5,
+      "title": "Stratified Repeat Count",
+      "type": "integer"
+    },
+    "stratified_repeat_share": {
+      "const": 0.2,
+      "default": 0.2,
+      "title": "Stratified Repeat Share",
+      "type": "number"
+    },
+    "target_power": {
+      "const": 0.9,
+      "default": 0.9,
+      "title": "Target Power",
+      "type": "number"
+    },
+    "title": {
+      "maxLength": 240,
+      "minLength": 1,
+      "title": "Title",
+      "type": "string"
+    }
+  },
+  "required": [
+    "protocol_id",
+    "title",
+    "source_repository",
+    "source_commit",
+    "preregistered_at",
+    "landscape_ids",
+    "agent_complexity_landscape_ids",
+    "method_arms",
+    "model_ids",
+    "frozen_input_sha256s"
+  ],
+  "title": "UsefulnessStudyProtocol",
+  "type": "object"
+}

@@ -1,0 +1,205 @@
+{
+  "$defs": {
+    "StudyDataClassification": {
+      "enum": [
+        "CC0_SYNTHETIC",
+        "DEIDENTIFIED_AUTHORIZED",
+        "AGGREGATE_ONLY"
+      ],
+      "title": "StudyDataClassification",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.ecocorridor.local/1.0/StudyCaseManifest.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "benign_finding_aliases": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Benign Finding Aliases",
+      "type": "array"
+    },
+    "case_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Case Id",
+      "type": "string"
+    },
+    "case_manifest_sha256": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Case Manifest Sha256"
+    },
+    "cc0_license_sha256": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cc0 License Sha256"
+    },
+    "cloud_authorized": {
+      "title": "Cloud Authorized",
+      "type": "boolean"
+    },
+    "complete_target_and_safeguard_ensemble": {
+      "title": "Complete Target And Safeguard Ensemble",
+      "type": "boolean"
+    },
+    "critical_finding_aliases": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Critical Finding Aliases",
+      "type": "array"
+    },
+    "data_classification": {
+      "$ref": "#/$defs/StudyDataClassification"
+    },
+    "direct_circuitscape_evidence_only": {
+      "const": true,
+      "default": true,
+      "title": "Direct Circuitscape Evidence Only",
+      "type": "boolean"
+    },
+    "direct_evidence_index_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Direct Evidence Index Sha256",
+      "type": "string"
+    },
+    "direct_job_count": {
+      "exclusiveMinimum": 0,
+      "title": "Direct Job Count",
+      "type": "integer"
+    },
+    "distractor_aliases": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Distractor Aliases",
+      "type": "array"
+    },
+    "engine_manifest_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Engine Manifest Sha256",
+      "type": "string"
+    },
+    "expected_outcome_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Expected Outcome Sha256",
+      "type": "string"
+    },
+    "frozen_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Frozen At"
+    },
+    "landscape_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Landscape Id",
+      "type": "string"
+    },
+    "model_revision_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Model Revision Sha256",
+      "type": "string"
+    },
+    "planted_conditions": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Planted Conditions",
+      "type": "array"
+    },
+    "portfolio_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Portfolio Id",
+      "type": "string"
+    },
+    "required_finding_aliases": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Required Finding Aliases",
+      "type": "array"
+    },
+    "scenario_count": {
+      "exclusiveMinimum": 0,
+      "title": "Scenario Count",
+      "type": "integer"
+    },
+    "schema_version": {
+      "const": "ecocorridor-usefulness-study/v1.0",
+      "default": "ecocorridor-usefulness-study/v1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "title": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Title",
+      "type": "string"
+    }
+  },
+  "required": [
+    "case_id",
+    "landscape_id",
+    "title",
+    "data_classification",
+    "cloud_authorized",
+    "model_revision_sha256",
+    "direct_evidence_index_sha256",
+    "engine_manifest_sha256",
+    "expected_outcome_sha256",
+    "portfolio_id",
+    "scenario_count",
+    "direct_job_count",
+    "complete_target_and_safeguard_ensemble",
+    "required_finding_aliases",
+    "critical_finding_aliases"
+  ],
+  "title": "StudyCaseManifest",
+  "type": "object"
+}

@@ -1,0 +1,284 @@
+{
+  "$defs": {
+    "PractitionerStratum": {
+      "enum": [
+        "STATE_DOT",
+        "WILDLIFE_AGENCY",
+        "ECOLOGICAL_CONSULTANT"
+      ],
+      "title": "PractitionerStratum",
+      "type": "string"
+    },
+    "StudyDisposition": {
+      "enum": [
+        "PASSES_SCREENING_RULES",
+        "FAILS_SCREENING_RULES",
+        "REVIEW_REQUIRED",
+        "SURVEY_FIRST",
+        "INCOMPLETE"
+      ],
+      "title": "StudyDisposition",
+      "type": "string"
+    },
+    "StudyPhase": {
+      "enum": [
+        "PILOT",
+        "CONFIRMATORY"
+      ],
+      "title": "StudyPhase",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.ecocorridor.local/1.0/PractitionerPublicProjection.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Strict consented/deidentified row permitted in a public W&B campaign.",
+  "properties": {
+    "arm_id": {
+      "maxLength": 96,
+      "minLength": 1,
+      "title": "Arm Id",
+      "type": "string"
+    },
+    "case_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Case Id",
+      "type": "string"
+    },
+    "complete_evidence_reconstruction": {
+      "title": "Complete Evidence Reconstruction",
+      "type": "boolean"
+    },
+    "confidence": {
+      "maximum": 1,
+      "minimum": 0,
+      "title": "Confidence",
+      "type": "number"
+    },
+    "consent_record_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Consent Record Sha256",
+      "type": "string"
+    },
+    "consented_deidentified_projection": {
+      "const": true,
+      "default": true,
+      "title": "Consented Deidentified Projection",
+      "type": "boolean"
+    },
+    "conventional_pack_equivalence_receipt_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Conventional Pack Equivalence Receipt Sha256",
+      "type": "string"
+    },
+    "correct_disposition": {
+      "title": "Correct Disposition",
+      "type": "boolean"
+    },
+    "correct_next_action": {
+      "title": "Correct Next Action",
+      "type": "boolean"
+    },
+    "critical_safeguard_misses": {
+      "minimum": 0,
+      "title": "Critical Safeguard Misses",
+      "type": "integer"
+    },
+    "edit_count": {
+      "minimum": 0,
+      "title": "Edit Count",
+      "type": "integer"
+    },
+    "evidence_package_correct": {
+      "title": "Evidence Package Correct",
+      "type": "boolean"
+    },
+    "false_alarms": {
+      "minimum": 0,
+      "title": "False Alarms",
+      "type": "integer"
+    },
+    "field_plan_seconds": {
+      "exclusiveMinimum": 0,
+      "title": "Field Plan Seconds",
+      "type": "number"
+    },
+    "first_blocker_seconds": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "First Blocker Seconds"
+    },
+    "local_timing_verification_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Local Timing Verification Sha256",
+      "type": "string"
+    },
+    "nasa_tlx": {
+      "maximum": 100,
+      "minimum": 0,
+      "title": "Nasa Tlx",
+      "type": "number"
+    },
+    "organizational_review_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Organizational Review Sha256",
+      "type": "string"
+    },
+    "outcome_correct": {
+      "title": "Outcome Correct",
+      "type": "boolean"
+    },
+    "overconfidence_threshold": {
+      "const": 0.8,
+      "default": 0.8,
+      "title": "Overconfidence Threshold",
+      "type": "number"
+    },
+    "overconfident_error": {
+      "title": "Overconfident Error",
+      "type": "boolean"
+    },
+    "participant_study_key": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Participant Study Key",
+      "type": "string"
+    },
+    "period": {
+      "maximum": 3,
+      "minimum": 1,
+      "title": "Period",
+      "type": "integer"
+    },
+    "preregistration_receipt_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Preregistration Receipt Sha256",
+      "type": "string"
+    },
+    "prohibited_claim_errors": {
+      "minimum": 0,
+      "title": "Prohibited Claim Errors",
+      "type": "integer"
+    },
+    "projection_kind": {
+      "const": "PRACTITIONER_DEIDENTIFIED",
+      "default": "PRACTITIONER_DEIDENTIFIED",
+      "title": "Projection Kind",
+      "type": "string"
+    },
+    "raw_identifiers_excluded": {
+      "const": true,
+      "default": true,
+      "title": "Raw Identifiers Excluded",
+      "type": "boolean"
+    },
+    "raw_notes_excluded": {
+      "const": true,
+      "default": true,
+      "title": "Raw Notes Excluded",
+      "type": "boolean"
+    },
+    "raw_recordings_excluded": {
+      "const": true,
+      "default": true,
+      "title": "Raw Recordings Excluded",
+      "type": "boolean"
+    },
+    "raw_timestamps_excluded": {
+      "const": true,
+      "default": true,
+      "title": "Raw Timestamps Excluded",
+      "type": "boolean"
+    },
+    "schema_version": {
+      "const": "ecocorridor-usefulness-public-projection/v1.0",
+      "default": "ecocorridor-usefulness-public-projection/v1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "selected_disposition": {
+      "$ref": "#/$defs/StudyDisposition"
+    },
+    "sequence_id": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Sequence Id",
+      "type": "string"
+    },
+    "session_key": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Session Key",
+      "type": "string"
+    },
+    "stratum": {
+      "$ref": "#/$defs/PractitionerStratum"
+    },
+    "study_phase": {
+      "$ref": "#/$defs/StudyPhase"
+    },
+    "usefulness_positive": {
+      "title": "Usefulness Positive",
+      "type": "boolean"
+    },
+    "verification_seconds": {
+      "exclusiveMinimum": 0,
+      "title": "Verification Seconds",
+      "type": "number"
+    }
+  },
+  "required": [
+    "session_key",
+    "participant_study_key",
+    "study_phase",
+    "stratum",
+    "period",
+    "sequence_id",
+    "arm_id",
+    "case_id",
+    "critical_safeguard_misses",
+    "selected_disposition",
+    "correct_disposition",
+    "correct_next_action",
+    "complete_evidence_reconstruction",
+    "false_alarms",
+    "verification_seconds",
+    "field_plan_seconds",
+    "prohibited_claim_errors",
+    "evidence_package_correct",
+    "edit_count",
+    "nasa_tlx",
+    "confidence",
+    "outcome_correct",
+    "overconfident_error",
+    "usefulness_positive",
+    "conventional_pack_equivalence_receipt_sha256",
+    "consent_record_sha256",
+    "organizational_review_sha256",
+    "preregistration_receipt_sha256",
+    "local_timing_verification_sha256"
+  ],
+  "title": "PractitionerPublicProjection",
+  "type": "object"
+}

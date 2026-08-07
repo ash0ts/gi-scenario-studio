@@ -840,14 +840,18 @@ class ReviewBriefSubprocessRunner:
         snapshot_payload = runner_payload.get("snapshot")
         if not isinstance(snapshot_payload, dict):
             raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_SNAPSHOT_MISSING")
-        context = _json_bytes(snapshot_payload)
-        if len(context) > REVIEW_BRIEF_MAX_CONTEXT_BYTES:
-            raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_CONTEXT_TOO_LARGE")
-        # The provider sees the cumulative fixed instructions plus every
-        # deterministic tool exchange, not just the compact input snapshot.
+        # The alias-only snapshot crosses the isolated IPC boundary, whose
+        # independent 512 KiB frame limit is enforced when the child request is
+        # serialized.  It is not itself provider context.  Charge adaptive runs
+        # only for fixed instructions/input now and for actual tool outputs in
+        # the child; forced-exhaustive runs retain their full deterministic
+        # upper-bound manifest here.
         from .review_brief_agent_process import review_brief_model_visible_context_bytes
 
-        expanded_context = review_brief_model_visible_context_bytes(request.snapshot)
+        expanded_context = review_brief_model_visible_context_bytes(
+            request.snapshot,
+            traversal_mode=request.traversal_mode,
+        )
         if len(expanded_context) > REVIEW_BRIEF_MAX_CONTEXT_BYTES:
             raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_CONTEXT_TOO_LARGE")
         self.binding.assert_authorization_lease_active()
@@ -936,6 +940,7 @@ class ReviewBriefSubprocessRunner:
                 or response.capability is not None
                 or result.get("snapshot_sha256") != snapshot_sha256
                 or result.get("provider_model") != self.provider.model
+                or result.get("traversal_mode") != request.traversal_mode
                 or not isinstance(trace, dict)
                 or trace.get("trace_id") != child.trace.trace_id
                 or trace.get("association_id") != child.trace.association_id

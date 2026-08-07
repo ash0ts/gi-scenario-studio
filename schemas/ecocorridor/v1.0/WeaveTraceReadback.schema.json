@@ -1,0 +1,154 @@
+{
+  "$defs": {
+    "ReadbackVerifierProvenance": {
+      "additionalProperties": false,
+      "description": "Version and source identity of the code that performed cloud readback.",
+      "properties": {
+        "verified_at": {
+          "format": "date-time",
+          "title": "Verified At",
+          "type": "string"
+        },
+        "verifier_source_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Verifier Source Sha256",
+          "type": "string"
+        },
+        "verifier_version": {
+          "const": "ecocorridor-campaign-readback-verifier/v1.0",
+          "default": "ecocorridor-campaign-readback-verifier/v1.0",
+          "title": "Verifier Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "verifier_source_sha256",
+        "verified_at"
+      ],
+      "title": "ReadbackVerifierProvenance",
+      "type": "object"
+    },
+    "RetainedReadbackBlob": {
+      "additionalProperties": false,
+      "description": "Exact downloaded JSON bytes retained for offline evidence verification.",
+      "properties": {
+        "byte_count": {
+          "exclusiveMinimum": 0,
+          "maximum": 16777216,
+          "title": "Byte Count",
+          "type": "integer"
+        },
+        "content_base64": {
+          "minLength": 4,
+          "title": "Content Base64",
+          "type": "string"
+        },
+        "content_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Content Sha256",
+          "type": "string"
+        },
+        "media_type": {
+          "const": "application/json",
+          "default": "application/json",
+          "title": "Media Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content_base64",
+        "byte_count",
+        "content_sha256"
+      ],
+      "title": "RetainedReadbackBlob",
+      "type": "object"
+    }
+  },
+  "$id": "https://schemas.ecocorridor.local/1.0/WeaveTraceReadback.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Exact finished trace content retained for offline claim verification.",
+  "properties": {
+    "completed_at": {
+      "format": "date-time",
+      "title": "Completed At",
+      "type": "string"
+    },
+    "provider_request_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Provider Request Sha256",
+      "type": "string"
+    },
+    "provider_response_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Provider Response Sha256",
+      "type": "string"
+    },
+    "readback_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Readback Sha256",
+      "type": "string"
+    },
+    "retained_trace_response": {
+      "$ref": "#/$defs/RetainedReadbackBlob"
+    },
+    "root_call_id": {
+      "maxLength": 256,
+      "minLength": 1,
+      "title": "Root Call Id",
+      "type": "string"
+    },
+    "status": {
+      "const": "FINISHED",
+      "default": "FINISHED",
+      "title": "Status",
+      "type": "string"
+    },
+    "trace_content_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Trace Content Sha256",
+      "type": "string"
+    },
+    "trace_id": {
+      "maxLength": 256,
+      "minLength": 1,
+      "title": "Trace Id",
+      "type": "string"
+    },
+    "verifier": {
+      "$ref": "#/$defs/ReadbackVerifierProvenance"
+    },
+    "wandb_run_id": {
+      "maxLength": 256,
+      "minLength": 1,
+      "title": "Wandb Run Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "trace_id",
+    "root_call_id",
+    "wandb_run_id",
+    "completed_at",
+    "provider_request_sha256",
+    "provider_response_sha256",
+    "trace_content_sha256",
+    "retained_trace_response",
+    "verifier",
+    "readback_sha256"
+  ],
+  "title": "WeaveTraceReadback",
+  "type": "object"
+}

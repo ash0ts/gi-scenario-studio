@@ -25,6 +25,7 @@ from ecocorridor_core.native_agents_runtime import (
 from ecocorridor_core.review_brief import (
     ReviewBriefFindingKind,
     ReviewBriefFindingSelection,
+    ReviewBriefRetrievalObservation,
     ReviewBriefRunnerResult,
     ReviewBriefTopic,
     ReviewBriefTrace,
@@ -57,6 +58,7 @@ from ecocorridor_core.review_brief_evaluation import (
     METHOD_IDS,
     NATIVE_AGENT_TOOL_NAMES,
     PRE_PROVIDER_BLOCK_CASES,
+    USEFULNESS_METHOD_IDS,
     DeterministicExhaustiveReviewBriefMethod,
     ProviderExecutionEvidence,
     ReviewBriefAnswer,
@@ -69,6 +71,7 @@ from ecocorridor_core.review_brief_evaluation import (
     ReviewBriefMethodDeclaration,
     ReviewBriefMethodExecution,
     ReviewBriefProviderCostBasis,
+    ReviewBriefRetrievalMetrics,
     build_review_brief_animation_story,
     build_review_brief_campaign,
     build_review_brief_publication_plan,
@@ -166,6 +169,107 @@ def _provider_runtime() -> tuple[ReviewBriefAgentProvider, ReviewBriefWeaveTarge
             external_project_id_sha256=hashlib.sha256(external_project_id.encode()).hexdigest(),
         ),
     )
+
+
+def test_usefulness_method_ids_do_not_rewrite_historical_campaign_vocabulary() -> None:
+    assert METHOD_IDS == (
+        "deterministic_exhaustive",
+        "existing_single_shot_full_context",
+        "native_read_only_agent",
+    )
+    assert USEFULNESS_METHOD_IDS == (
+        "deterministic_exhaustive",
+        "fair_full_context",
+        "adaptive_read_only_agent",
+        "forced_exhaustive_agent",
+        "oracle_minimal_context",
+    )
+
+
+def _adaptive_receipts(snapshot: Any) -> list[ReviewBriefRetrievalObservation]:
+    findings = [item.finding_alias for item in snapshot.findings]
+    evidence = list(
+        dict.fromkeys(alias for item in snapshot.findings for alias in item.evidence_aliases)
+    )
+    return [
+        ReviewBriefRetrievalObservation(
+            sequence=1,
+            tool_name="review_brief_get_scope",
+            output_bytes=2,
+            output_sha256=hashlib.sha256(b"scope-output").hexdigest(),
+            cumulative_context_bytes=102,
+        ),
+        ReviewBriefRetrievalObservation(
+            sequence=2,
+            tool_name="review_brief_list_findings",
+            returned_finding_aliases=findings,
+            new_finding_aliases=findings,
+            output_bytes=2,
+            output_sha256=hashlib.sha256(b"finding-list-output").hexdigest(),
+            cumulative_context_bytes=104,
+        ),
+        ReviewBriefRetrievalObservation(
+            sequence=3,
+            tool_name="review_brief_get_findings",
+            requested_finding_aliases=findings,
+            returned_finding_aliases=findings,
+            returned_evidence_aliases=evidence,
+            new_evidence_aliases=evidence,
+            duplicate_finding_alias_count=len(findings),
+            output_bytes=2,
+            output_sha256=hashlib.sha256(b"finding-detail-output").hexdigest(),
+            cumulative_context_bytes=106,
+        ),
+    ]
+
+
+def test_retrieval_metrics_are_recomputed_from_alias_only_receipts(
+    ridgeway_resource: GuidedEvidenceResource,
+) -> None:
+    source = ridgeway_review_source(
+        project_id="metrics-project",
+        model_revision_id="metrics-revision",
+        projection=ridgeway_resource.projection,
+        portfolio_id=str(
+            ridgeway_resource.manifest["teaching_selection"]["carry_forward_portfolio_id"]
+        ),
+        evidence_manifest_sha256=ridgeway_resource.manifest_sha256,
+    )
+    snapshot = build_authorized_snapshot(source)
+    observations = _adaptive_receipts(snapshot)
+    result = ReviewBriefRunnerResult(
+        snapshot_sha256=snapshot.snapshot_sha256,
+        selections=[
+            ReviewBriefFindingSelection(
+                finding_alias=item.finding_alias,
+                action_kind=item.permitted_actions[0],
+                reviewer_disciplines=[item.permitted_disciplines[0]],
+            )
+            for item in snapshot.findings
+        ],
+        provider_call_id_sha256="a" * 64,
+        provider_call_identity_kind="PROVIDER_RESPONSE_ID",
+        provider_model="model-1",
+        tool_calls=[item.tool_name for item in observations],
+        traversal_mode="ADAPTIVE",
+        stop_reason="SELECTION_READY",
+        retrieval_observations=observations,
+        trace=ReviewBriefTrace(
+            trace_id=f"trace_{'1' * 32}",
+            weave_call_id="call-retrieval-metrics",
+            association_id="association-retrieval-metrics",
+            wandb_run_id="run-retrieval-metrics",
+            trace_url="https://wandb.ai/entity/project/weave/traces/call-retrieval-metrics",
+        ),
+    )
+
+    metrics = ReviewBriefRetrievalMetrics.from_runner_result(result)
+
+    assert metrics.traversal_mode == "ADAPTIVE"
+    assert metrics.tool_call_count == 3
+    assert metrics.tool_output_bytes == 6
+    assert metrics.unique_finding_alias_count == len(snapshot.findings)
+    assert metrics.duplicate_finding_alias_count == len(snapshot.findings)
 
 
 class _CapturingSingleTurnSubprocess:
@@ -273,7 +377,14 @@ class _CapturingReviewBriefSubprocess:
             provider_call_id_sha256="b" * 64,
             provider_call_identity_kind="PROVIDER_RESPONSE_ID",
             provider_model=request.provider.model,
-            tool_calls=list(required_review_brief_tools(runner_request.snapshot)),
+            tool_calls=[
+                "review_brief_get_scope",
+                "review_brief_list_findings",
+                "review_brief_get_findings",
+            ],
+            traversal_mode=runner_request.traversal_mode,
+            stop_reason="SELECTION_READY",
+            retrieval_observations=_adaptive_receipts(runner_request.snapshot),
             input_tokens=17,
             output_tokens=9,
             elapsed_ms=19,
@@ -1200,6 +1311,9 @@ def test_producer_uses_real_agents_subprocess_paths_without_expected_answer_inje
     sent = subprocess_client.requests[0].payload.context
     assert "authorized_renderer_contract" not in sent
     assert "authorized_findings" not in sent
+    assert "authorized_answer_contract" not in sent
+    assert "expected_role" not in sent
+    assert "required_findings" not in sent
     assert "authorized_numeric_evidence" in sent
     assert "authorized_limitations" in sent
 

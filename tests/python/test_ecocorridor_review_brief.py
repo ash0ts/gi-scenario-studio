@@ -32,6 +32,7 @@ from ecocorridor_core.review_brief import (
     ReviewBriefReasonFacet,
     ReviewBriefRejectedRunnerReceipt,
     ReviewBriefRejectionAudit,
+    ReviewBriefRetrievalObservation,
     ReviewBriefRunnerResult,
     ReviewBriefSafetyError,
     ReviewBriefSource,
@@ -224,6 +225,96 @@ def test_runner_can_only_select_closed_authorized_values() -> None:
                 "reviewer_disciplines": ["ECOLOGY"],
             }
         )
+
+
+def test_selective_agent_output_is_completed_locally_before_draft_save() -> None:
+    source = _source()
+    snapshot = build_authorized_snapshot(source)
+    selected = snapshot.findings[0]
+    result = ReviewBriefRunnerResult(
+        snapshot_sha256=snapshot.snapshot_sha256,
+        selections=[
+            ReviewBriefFindingSelection(
+                finding_alias=selected.finding_alias,
+                action_kind=selected.permitted_actions[0],
+                reviewer_disciplines=[selected.permitted_disciplines[0]],
+            )
+        ],
+        provider_call_id_sha256="d" * 64,
+        provider_call_identity_kind="PROVIDER_RESPONSE_ID",
+        provider_model="gpt-review-test",
+        tool_calls=[
+            "review_brief_get_scope",
+            "review_brief_list_findings",
+            "review_brief_list_option_constraints",
+            "review_brief_get_findings",
+        ],
+        traversal_mode="ADAPTIVE",
+        stop_reason="SELECTION_READY",
+        retrieval_observations=[
+            ReviewBriefRetrievalObservation(
+                sequence=1,
+                tool_name="review_brief_get_scope",
+                output_bytes=2,
+                output_sha256="1" * 64,
+                cumulative_context_bytes=102,
+            ),
+            ReviewBriefRetrievalObservation(
+                sequence=2,
+                tool_name="review_brief_list_findings",
+                output_bytes=2,
+                output_sha256="2" * 64,
+                cumulative_context_bytes=104,
+            ),
+            ReviewBriefRetrievalObservation(
+                sequence=3,
+                tool_name="review_brief_list_option_constraints",
+                returned_finding_aliases=[selected.finding_alias],
+                new_finding_aliases=[selected.finding_alias],
+                output_bytes=2,
+                output_sha256="3" * 64,
+                cumulative_context_bytes=106,
+            ),
+            ReviewBriefRetrievalObservation(
+                sequence=4,
+                tool_name="review_brief_get_findings",
+                requested_finding_aliases=[selected.finding_alias],
+                returned_finding_aliases=[selected.finding_alias],
+                returned_evidence_aliases=selected.evidence_aliases,
+                new_evidence_aliases=selected.evidence_aliases,
+                duplicate_finding_alias_count=1,
+                output_bytes=2,
+                output_sha256="4" * 64,
+                cumulative_context_bytes=108,
+            ),
+        ],
+        trace=ReviewBriefTrace(
+            trace_id="trace_selective",
+            weave_call_id="weave_call_selective",
+            association_id="association_selective",
+            wandb_run_id="run_selective",
+            flushed=True,
+            readback_verified=True,
+        ),
+    )
+
+    draft = render_review_brief(
+        call_id="call-selective",
+        source=source,
+        result=result,
+        created_at=CREATED_AT,
+        supersedes_draft_id=None,
+    )
+
+    assert len(result.selections) == 1
+    assert len(draft.items) == len(source.findings)
+    assert [item.selection_source for item in draft.items].count("AGENT_SELECTED") == 1
+    assert [item.selection_source for item in draft.items].count(
+        "DETERMINISTIC_COMPLETION"
+    ) == len(source.findings) - 1
+    assert {claim for item in draft.items for claim in item.evidence_claim_ids} == set(
+        source.evidence_claim_ids
+    )
 
 
 def test_ridgeway_source_groups_only_actionable_review_topics() -> None:

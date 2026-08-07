@@ -1,0 +1,995 @@
+{
+  "$defs": {
+    "AgentComplexityCampaignSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "campaign_kind": {
+          "const": "AGENT_COMPLEXITY",
+          "default": "AGENT_COMPLEXITY",
+          "title": "Campaign Kind",
+          "type": "string"
+        },
+        "fair_input_receipt_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Fair Input Receipt Sha256",
+          "type": "string"
+        },
+        "forced_exhaustive_ablation_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Forced Exhaustive Ablation Sha256",
+          "type": "string"
+        },
+        "min_input_token_reduction_percent": {
+          "title": "Min Input Token Reduction Percent",
+          "type": "number"
+        },
+        "min_irrelevant_evidence_reduction_percent": {
+          "title": "Min Irrelevant Evidence Reduction Percent",
+          "type": "number"
+        },
+        "min_irrelevant_reduction_ci_low_percent": {
+          "title": "Min Irrelevant Reduction Ci Low Percent",
+          "type": "number"
+        },
+        "model_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "title": "Model Ids",
+          "type": "array"
+        },
+        "more_efficient_than_exhaustive_every_model": {
+          "title": "More Efficient Than Exhaustive Every Model",
+          "type": "boolean"
+        },
+        "passing_model_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Passing Model Ids",
+          "type": "array"
+        },
+        "provider_invocation_count": {
+          "exclusiveMinimum": 0,
+          "title": "Provider Invocation Count",
+          "type": "integer"
+        },
+        "recall_noninferior_every_model": {
+          "title": "Recall Noninferior Every Model",
+          "type": "boolean"
+        },
+        "summary_sha256": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "minLength": 64,
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Summary Sha256"
+        }
+      },
+      "required": [
+        "model_ids",
+        "passing_model_ids",
+        "provider_invocation_count",
+        "min_input_token_reduction_percent",
+        "min_irrelevant_evidence_reduction_percent",
+        "min_irrelevant_reduction_ci_low_percent",
+        "recall_noninferior_every_model",
+        "more_efficient_than_exhaustive_every_model",
+        "fair_input_receipt_sha256",
+        "forced_exhaustive_ablation_sha256"
+      ],
+      "title": "AgentComplexityCampaignSummary",
+      "type": "object"
+    },
+    "CampaignArtifactReceipt": {
+      "additionalProperties": false,
+      "description": "Receipt emitted only after raw bytes are deterministically re-evaluated.",
+      "properties": {
+        "artifact_name": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Artifact Name",
+          "type": "string"
+        },
+        "artifact_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Artifact Sha256",
+          "type": "string"
+        },
+        "artifact_type": {
+          "$ref": "#/$defs/ClaimEvidenceArtifactType"
+        },
+        "artifact_version": {
+          "maxLength": 96,
+          "minLength": 1,
+          "title": "Artifact Version",
+          "type": "string"
+        },
+        "preregistration_receipt_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Preregistration Receipt Sha256",
+          "type": "string"
+        },
+        "protocol_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Protocol Sha256",
+          "type": "string"
+        },
+        "raw_record_count": {
+          "exclusiveMinimum": 0,
+          "title": "Raw Record Count",
+          "type": "integer"
+        },
+        "raw_records_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Raw Records Sha256",
+          "type": "string"
+        },
+        "receipt_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Receipt Sha256",
+          "type": "string"
+        },
+        "retained_cloud_readback_set_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Retained Cloud Readback Set Sha256",
+          "type": "string"
+        },
+        "source_commit": {
+          "pattern": "^[0-9a-f]{40,64}$",
+          "title": "Source Commit",
+          "type": "string"
+        },
+        "source_repository": {
+          "maxLength": 240,
+          "minLength": 3,
+          "title": "Source Repository",
+          "type": "string"
+        },
+        "summary_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Summary Sha256",
+          "type": "string"
+        },
+        "verified_at": {
+          "format": "date-time",
+          "title": "Verified At",
+          "type": "string"
+        },
+        "verifier_source_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Verifier Source Sha256",
+          "type": "string"
+        },
+        "verifier_version": {
+          "const": "ecocorridor-campaign-evidence-verifier/v1.0",
+          "default": "ecocorridor-campaign-evidence-verifier/v1.0",
+          "title": "Verifier Version",
+          "type": "string"
+        },
+        "wandb_artifact_ref": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Wandb Artifact Ref",
+          "type": "string"
+        },
+        "wandb_readback_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Wandb Readback Sha256",
+          "type": "string"
+        },
+        "wandb_run_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Wandb Run Id",
+          "type": "string"
+        },
+        "weave_trace_count": {
+          "minimum": 0,
+          "title": "Weave Trace Count",
+          "type": "integer"
+        },
+        "weave_trace_set_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Weave Trace Set Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_type",
+        "artifact_name",
+        "artifact_version",
+        "artifact_sha256",
+        "summary_sha256",
+        "protocol_sha256",
+        "source_repository",
+        "source_commit",
+        "wandb_run_id",
+        "wandb_artifact_ref",
+        "wandb_readback_sha256",
+        "preregistration_receipt_sha256",
+        "retained_cloud_readback_set_sha256",
+        "weave_trace_set_sha256",
+        "weave_trace_count",
+        "raw_records_sha256",
+        "raw_record_count",
+        "verifier_source_sha256",
+        "verified_at",
+        "receipt_sha256"
+      ],
+      "title": "CampaignArtifactReceipt",
+      "type": "object"
+    },
+    "ClaimEvidenceArtifactType": {
+      "enum": [
+        "trace-integrity-summary",
+        "synthetic-task-summary",
+        "agent-complexity-summary",
+        "safety-campaign-summary",
+        "practitioner-confirmatory-summary",
+        "partner-shadow-summary"
+      ],
+      "title": "ClaimEvidenceArtifactType",
+      "type": "string"
+    },
+    "ConventionalPackEquivalenceReceipt": {
+      "additionalProperties": false,
+      "description": "Hash-bound proof that every scientific component is shared across arms.",
+      "properties": {
+        "case_component_sha256s": {
+          "additionalProperties": {
+            "additionalProperties": {
+              "maxLength": 64,
+              "minLength": 64,
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "minProperties": 1,
+          "title": "Case Component Sha256S",
+          "type": "object"
+        },
+        "conventional_pack_manifest_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Conventional Pack Manifest Sha256",
+          "type": "string"
+        },
+        "ecocorridor_evidence_manifest_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Ecocorridor Evidence Manifest Sha256",
+          "type": "string"
+        },
+        "exact_component_equivalence": {
+          "const": true,
+          "default": true,
+          "title": "Exact Component Equivalence",
+          "type": "boolean"
+        },
+        "independent_verifier_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Independent Verifier Sha256",
+          "type": "string"
+        },
+        "protocol_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Protocol Sha256",
+          "type": "string"
+        },
+        "receipt_sha256": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "minLength": 64,
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Receipt Sha256"
+        },
+        "schema_version": {
+          "const": "ecocorridor-conventional-pack-equivalence/v1",
+          "default": "ecocorridor-conventional-pack-equivalence/v1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "source_commit": {
+          "pattern": "^[0-9a-f]{40,64}$",
+          "title": "Source Commit",
+          "type": "string"
+        },
+        "verified_at": {
+          "format": "date-time",
+          "title": "Verified At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "protocol_sha256",
+        "source_commit",
+        "case_component_sha256s",
+        "conventional_pack_manifest_sha256",
+        "ecocorridor_evidence_manifest_sha256",
+        "independent_verifier_sha256",
+        "verified_at"
+      ],
+      "title": "ConventionalPackEquivalenceReceipt",
+      "type": "object"
+    },
+    "EffectConclusion": {
+      "enum": [
+        "IMPROVED",
+        "NONINFERIOR",
+        "WORSE",
+        "INCONCLUSIVE"
+      ],
+      "title": "EffectConclusion",
+      "type": "string"
+    },
+    "EffectDirection": {
+      "enum": [
+        "LOWER_IS_BETTER",
+        "HIGHER_IS_BETTER"
+      ],
+      "title": "EffectDirection",
+      "type": "string"
+    },
+    "PairedEffectEstimate": {
+      "additionalProperties": false,
+      "properties": {
+        "bootstrap_resamples": {
+          "minimum": 100,
+          "title": "Bootstrap Resamples",
+          "type": "integer"
+        },
+        "bootstrap_seed": {
+          "title": "Bootstrap Seed",
+          "type": "integer"
+        },
+        "comparison_arm_id": {
+          "maxLength": 96,
+          "minLength": 1,
+          "title": "Comparison Arm Id",
+          "type": "string"
+        },
+        "conclusion": {
+          "$ref": "#/$defs/EffectConclusion"
+        },
+        "confidence_interval_high": {
+          "title": "Confidence Interval High",
+          "type": "number"
+        },
+        "confidence_interval_low": {
+          "title": "Confidence Interval Low",
+          "type": "number"
+        },
+        "confidence_level": {
+          "default": 0.95,
+          "exclusiveMaximum": 1,
+          "exclusiveMinimum": 0.5,
+          "title": "Confidence Level",
+          "type": "number"
+        },
+        "direction": {
+          "$ref": "#/$defs/EffectDirection"
+        },
+        "effect_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Effect Id",
+          "type": "string"
+        },
+        "estimand": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Estimand",
+          "type": "string"
+        },
+        "estimate": {
+          "title": "Estimate",
+          "type": "number"
+        },
+        "noninferiority_margin": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Noninferiority Margin"
+        },
+        "outcome_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Outcome Id",
+          "type": "string"
+        },
+        "pair_count": {
+          "minimum": 2,
+          "title": "Pair Count",
+          "type": "integer"
+        },
+        "reference_arm_id": {
+          "maxLength": 96,
+          "minLength": 1,
+          "title": "Reference Arm Id",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "ecocorridor-usefulness-study/v1.0",
+          "default": "ecocorridor-usefulness-study/v1.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "unit": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Unit",
+          "type": "string"
+        }
+      },
+      "required": [
+        "effect_id",
+        "outcome_id",
+        "reference_arm_id",
+        "comparison_arm_id",
+        "estimand",
+        "unit",
+        "direction",
+        "pair_count",
+        "estimate",
+        "confidence_interval_low",
+        "confidence_interval_high",
+        "bootstrap_seed",
+        "bootstrap_resamples",
+        "conclusion"
+      ],
+      "title": "PairedEffectEstimate",
+      "type": "object"
+    },
+    "PartnerShadowCampaignSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "all_discrepancies_adjudicated": {
+          "title": "All Discrepancies Adjudicated",
+          "type": "boolean"
+        },
+        "approved_aggregate_index_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Approved Aggregate Index Sha256",
+          "type": "string"
+        },
+        "authorized_project_count": {
+          "minimum": 0,
+          "title": "Authorized Project Count",
+          "type": "integer"
+        },
+        "campaign_kind": {
+          "const": "PARTNER_SHADOW",
+          "default": "PARTNER_SHADOW",
+          "title": "Campaign Kind",
+          "type": "string"
+        },
+        "descriptive_utility_observed": {
+          "title": "Descriptive Utility Observed",
+          "type": "boolean"
+        },
+        "shadow_record_sha256s": {
+          "items": {
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Shadow Record Sha256S",
+          "type": "array"
+        },
+        "summary_sha256": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "minLength": 64,
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Summary Sha256"
+        }
+      },
+      "required": [
+        "shadow_record_sha256s",
+        "authorized_project_count",
+        "descriptive_utility_observed",
+        "all_discrepancies_adjudicated",
+        "approved_aggregate_index_sha256"
+      ],
+      "title": "PartnerShadowCampaignSummary",
+      "type": "object"
+    },
+    "PractitionerConfirmatoryCampaignSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "campaign_kind": {
+          "const": "PRACTITIONER_CONFIRMATORY",
+          "default": "PRACTITIONER_CONFIRMATORY",
+          "title": "Campaign Kind",
+          "type": "string"
+        },
+        "confirmatory_participant_count": {
+          "maximum": 36,
+          "minimum": 24,
+          "multipleOf": 6,
+          "title": "Confirmatory Participant Count",
+          "type": "integer"
+        },
+        "confirmatory_power_adequate": {
+          "title": "Confirmatory Power Adequate",
+          "type": "boolean"
+        },
+        "conventional_pack_equivalence": {
+          "$ref": "#/$defs/ConventionalPackEquivalenceReceipt"
+        },
+        "effects": {
+          "items": {
+            "$ref": "#/$defs/PairedEffectEstimate"
+          },
+          "minItems": 4,
+          "title": "Effects",
+          "type": "array"
+        },
+        "pilot_participant_count_excluded": {
+          "const": 12,
+          "default": 12,
+          "title": "Pilot Participant Count Excluded",
+          "type": "integer"
+        },
+        "pilot_session_count_in_analysis": {
+          "const": 0,
+          "default": 0,
+          "title": "Pilot Session Count In Analysis",
+          "type": "integer"
+        },
+        "profession_counts": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "propertyNames": {
+            "$ref": "#/$defs/PractitionerStratum"
+          },
+          "title": "Profession Counts",
+          "type": "object"
+        },
+        "session_manifest_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Session Manifest Sha256",
+          "type": "string"
+        },
+        "study_phase": {
+          "const": "CONFIRMATORY",
+          "default": "CONFIRMATORY",
+          "title": "Study Phase",
+          "type": "string"
+        },
+        "summary_sha256": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "minLength": 64,
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Summary Sha256"
+        }
+      },
+      "required": [
+        "confirmatory_participant_count",
+        "profession_counts",
+        "confirmatory_power_adequate",
+        "session_manifest_sha256",
+        "conventional_pack_equivalence",
+        "effects"
+      ],
+      "title": "PractitionerConfirmatoryCampaignSummary",
+      "type": "object"
+    },
+    "PractitionerStratum": {
+      "enum": [
+        "STATE_DOT",
+        "WILDLIFE_AGENCY",
+        "ECOLOGICAL_CONSULTANT"
+      ],
+      "title": "PractitionerStratum",
+      "type": "string"
+    },
+    "SafetyCampaignClaimSummary": {
+      "additionalProperties": false,
+      "description": "Deterministic projection of all frozen model/method safety campaigns.",
+      "properties": {
+        "attack_classes": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Attack Classes",
+          "type": "array"
+        },
+        "campaign_kind": {
+          "const": "SAFETY_CAMPAIGN",
+          "default": "SAFETY_CAMPAIGN",
+          "title": "Campaign Kind",
+          "type": "string"
+        },
+        "incorrectly_released_count": {
+          "minimum": 0,
+          "title": "Incorrectly Released Count",
+          "type": "integer"
+        },
+        "method_arm_ids": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Method Arm Ids",
+          "type": "array"
+        },
+        "model_ids": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 3,
+          "title": "Model Ids",
+          "type": "array"
+        },
+        "passing_model_method_pairs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Passing Model Method Pairs",
+          "type": "array"
+        },
+        "pre_provider_guard_trial_count": {
+          "minimum": 0,
+          "title": "Pre Provider Guard Trial Count",
+          "type": "integer"
+        },
+        "prohibited_claim_count": {
+          "minimum": 0,
+          "title": "Prohibited Claim Count",
+          "type": "integer"
+        },
+        "provider_backed_trial_count": {
+          "minimum": 0,
+          "title": "Provider Backed Trial Count",
+          "type": "integer"
+        },
+        "raw_safety_index_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Raw Safety Index Sha256",
+          "type": "string"
+        },
+        "sensitive_location_leak_count": {
+          "minimum": 0,
+          "title": "Sensitive Location Leak Count",
+          "type": "integer"
+        },
+        "summary_sha256": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "minLength": 64,
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Summary Sha256"
+        },
+        "total_trials": {
+          "exclusiveMinimum": 0,
+          "title": "Total Trials",
+          "type": "integer"
+        },
+        "trace_failure_count": {
+          "minimum": 0,
+          "title": "Trace Failure Count",
+          "type": "integer"
+        },
+        "unauthorized_action_execution_count": {
+          "minimum": 0,
+          "title": "Unauthorized Action Execution Count",
+          "type": "integer"
+        },
+        "unsafe_draft_count": {
+          "minimum": 0,
+          "title": "Unsafe Draft Count",
+          "type": "integer"
+        },
+        "variants_per_class": {
+          "minimum": 100,
+          "title": "Variants Per Class",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "model_ids",
+        "method_arm_ids",
+        "passing_model_method_pairs",
+        "attack_classes",
+        "variants_per_class",
+        "total_trials",
+        "provider_backed_trial_count",
+        "pre_provider_guard_trial_count",
+        "incorrectly_released_count",
+        "prohibited_claim_count",
+        "sensitive_location_leak_count",
+        "unauthorized_action_execution_count",
+        "unsafe_draft_count",
+        "trace_failure_count",
+        "raw_safety_index_sha256"
+      ],
+      "title": "SafetyCampaignClaimSummary",
+      "type": "object"
+    },
+    "SyntheticTaskCampaignSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "adjudicated_truth_index_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Adjudicated Truth Index Sha256",
+          "type": "string"
+        },
+        "campaign_kind": {
+          "const": "SYNTHETIC_TASK",
+          "default": "SYNTHETIC_TASK",
+          "title": "Campaign Kind",
+          "type": "string"
+        },
+        "critical_required_finding_recall": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Critical Required Finding Recall",
+          "type": "number"
+        },
+        "direct_landscape_sha256s": {
+          "items": {
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Direct Landscape Sha256S",
+          "type": "array"
+        },
+        "evidence_precision": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Evidence Precision",
+          "type": "number"
+        },
+        "prohibited_claim_count": {
+          "minimum": 0,
+          "title": "Prohibited Claim Count",
+          "type": "integer"
+        },
+        "summary_sha256": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "minLength": 64,
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Summary Sha256"
+        },
+        "unsafe_draft_count": {
+          "minimum": 0,
+          "title": "Unsafe Draft Count",
+          "type": "integer"
+        },
+        "unsupported_finding_count": {
+          "minimum": 0,
+          "title": "Unsupported Finding Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "direct_landscape_sha256s",
+        "critical_required_finding_recall",
+        "evidence_precision",
+        "unsupported_finding_count",
+        "prohibited_claim_count",
+        "unsafe_draft_count",
+        "adjudicated_truth_index_sha256"
+      ],
+      "title": "SyntheticTaskCampaignSummary",
+      "type": "object"
+    },
+    "TraceIntegrityCampaignSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "campaign_kind": {
+          "const": "TRACE_INTEGRITY",
+          "default": "TRACE_INTEGRITY",
+          "title": "Campaign Kind",
+          "type": "string"
+        },
+        "exact_trace_readback_count": {
+          "minimum": 0,
+          "title": "Exact Trace Readback Count",
+          "type": "integer"
+        },
+        "provider_invocations": {
+          "exclusiveMinimum": 0,
+          "title": "Provider Invocations",
+          "type": "integer"
+        },
+        "released_without_trace_count": {
+          "minimum": 0,
+          "title": "Released Without Trace Count",
+          "type": "integer"
+        },
+        "summary_sha256": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "minLength": 64,
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Summary Sha256"
+        },
+        "trace_index_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Trace Index Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider_invocations",
+        "exact_trace_readback_count",
+        "released_without_trace_count",
+        "trace_index_sha256"
+      ],
+      "title": "TraceIntegrityCampaignSummary",
+      "type": "object"
+    }
+  },
+  "$id": "https://schemas.ecocorridor.local/1.0/VerifiedCampaignEvidence.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "artifact_receipt": {
+      "$ref": "#/$defs/CampaignArtifactReceipt"
+    },
+    "raw_artifact_json": {
+      "minLength": 2,
+      "title": "Raw Artifact Json",
+      "type": "string"
+    },
+    "summary": {
+      "discriminator": {
+        "mapping": {
+          "AGENT_COMPLEXITY": "#/$defs/AgentComplexityCampaignSummary",
+          "PARTNER_SHADOW": "#/$defs/PartnerShadowCampaignSummary",
+          "PRACTITIONER_CONFIRMATORY": "#/$defs/PractitionerConfirmatoryCampaignSummary",
+          "SAFETY_CAMPAIGN": "#/$defs/SafetyCampaignClaimSummary",
+          "SYNTHETIC_TASK": "#/$defs/SyntheticTaskCampaignSummary",
+          "TRACE_INTEGRITY": "#/$defs/TraceIntegrityCampaignSummary"
+        },
+        "propertyName": "campaign_kind"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/TraceIntegrityCampaignSummary"
+        },
+        {
+          "$ref": "#/$defs/SyntheticTaskCampaignSummary"
+        },
+        {
+          "$ref": "#/$defs/AgentComplexityCampaignSummary"
+        },
+        {
+          "$ref": "#/$defs/SafetyCampaignClaimSummary"
+        },
+        {
+          "$ref": "#/$defs/PractitionerConfirmatoryCampaignSummary"
+        },
+        {
+          "$ref": "#/$defs/PartnerShadowCampaignSummary"
+        }
+      ],
+      "title": "Summary"
+    }
+  },
+  "required": [
+    "raw_artifact_json",
+    "summary",
+    "artifact_receipt"
+  ],
+  "title": "VerifiedCampaignEvidence",
+  "type": "object"
+}

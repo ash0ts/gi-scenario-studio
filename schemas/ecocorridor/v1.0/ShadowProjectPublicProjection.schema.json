@@ -1,0 +1,166 @@
+{
+  "$id": "https://schemas.ecocorridor.local/1.0/ShadowProjectPublicProjection.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Approved aggregate-only partner row for the public synthetic project.",
+  "properties": {
+    "aggregate_only": {
+      "const": true,
+      "default": true,
+      "title": "Aggregate Only",
+      "type": "boolean"
+    },
+    "all_discrepancies_adjudicated": {
+      "title": "All Discrepancies Adjudicated",
+      "type": "boolean"
+    },
+    "approved_aggregate_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Approved Aggregate Sha256",
+      "type": "string"
+    },
+    "authorization_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Authorization Sha256",
+      "type": "string"
+    },
+    "consent_record_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Consent Record Sha256",
+      "type": "string"
+    },
+    "consented_deidentified_projection": {
+      "const": true,
+      "default": true,
+      "title": "Consented Deidentified Projection",
+      "type": "boolean"
+    },
+    "discrepancies": {
+      "minimum": 0,
+      "title": "Discrepancies",
+      "type": "integer"
+    },
+    "disposition_agreement": {
+      "title": "Disposition Agreement",
+      "type": "boolean"
+    },
+    "independent_panel_record_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Independent Panel Record Sha256",
+      "type": "string"
+    },
+    "organizational_review_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Organizational Review Sha256",
+      "type": "string"
+    },
+    "partner_study_key": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Partner Study Key",
+      "type": "string"
+    },
+    "person_hours": {
+      "minimum": 0,
+      "title": "Person Hours",
+      "type": "number"
+    },
+    "preregistration_receipt_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Preregistration Receipt Sha256",
+      "type": "string"
+    },
+    "project_study_key": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Project Study Key",
+      "type": "string"
+    },
+    "projection_kind": {
+      "const": "SHADOW_PROJECT_AGGREGATE",
+      "default": "SHADOW_PROJECT_AGGREGATE",
+      "title": "Projection Kind",
+      "type": "string"
+    },
+    "raw_identifiers_excluded": {
+      "const": true,
+      "default": true,
+      "title": "Raw Identifiers Excluded",
+      "type": "boolean"
+    },
+    "raw_notes_excluded": {
+      "const": true,
+      "default": true,
+      "title": "Raw Notes Excluded",
+      "type": "boolean"
+    },
+    "raw_professional_data_excluded": {
+      "const": true,
+      "default": true,
+      "title": "Raw Professional Data Excluded",
+      "type": "boolean"
+    },
+    "raw_timestamps_excluded": {
+      "const": true,
+      "default": true,
+      "title": "Raw Timestamps Excluded",
+      "type": "boolean"
+    },
+    "review_cycles": {
+      "minimum": 0,
+      "title": "Review Cycles",
+      "type": "integer"
+    },
+    "schema_version": {
+      "const": "ecocorridor-usefulness-public-projection/v1.0",
+      "default": "ecocorridor-usefulness-public-projection/v1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "shadow_record_key": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Shadow Record Key",
+      "type": "string"
+    },
+    "surfaced_assumptions": {
+      "minimum": 0,
+      "title": "Surfaced Assumptions",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "shadow_record_key",
+    "partner_study_key",
+    "project_study_key",
+    "authorization_sha256",
+    "consent_record_sha256",
+    "organizational_review_sha256",
+    "independent_panel_record_sha256",
+    "approved_aggregate_sha256",
+    "person_hours",
+    "review_cycles",
+    "discrepancies",
+    "surfaced_assumptions",
+    "disposition_agreement",
+    "all_discrepancies_adjudicated",
+    "preregistration_receipt_sha256"
+  ],
+  "title": "ShadowProjectPublicProjection",
+  "type": "object"
+}

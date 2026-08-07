@@ -1,0 +1,143 @@
+{
+  "$defs": {
+    "StudyDisposition": {
+      "enum": [
+        "PASSES_SCREENING_RULES",
+        "FAILS_SCREENING_RULES",
+        "REVIEW_REQUIRED",
+        "SURVEY_FIRST",
+        "INCOMPLETE"
+      ],
+      "title": "StudyDisposition",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.ecocorridor.local/1.0/AdjudicatedOutcome.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "acceptable_next_action_kinds": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Acceptable Next Action Kinds",
+      "type": "array"
+    },
+    "case_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Case Id",
+      "type": "string"
+    },
+    "case_manifest_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Case Manifest Sha256",
+      "type": "string"
+    },
+    "critical_finding_aliases": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Critical Finding Aliases",
+      "type": "array"
+    },
+    "direct_evidence_index_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Direct Evidence Index Sha256",
+      "type": "string"
+    },
+    "disposition": {
+      "$ref": "#/$defs/StudyDisposition"
+    },
+    "ecological_adjudicator_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Ecological Adjudicator Sha256",
+      "type": "string"
+    },
+    "frozen_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Frozen At"
+    },
+    "outcome_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Outcome Id",
+      "type": "string"
+    },
+    "outcome_sha256": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Outcome Sha256"
+    },
+    "required_finding_aliases": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Required Finding Aliases",
+      "type": "array"
+    },
+    "rubric_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Rubric Sha256",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "ecocorridor-usefulness-study/v1.0",
+      "default": "ecocorridor-usefulness-study/v1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "transportation_adjudicator_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Transportation Adjudicator Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "outcome_id",
+    "case_id",
+    "case_manifest_sha256",
+    "direct_evidence_index_sha256",
+    "disposition",
+    "required_finding_aliases",
+    "critical_finding_aliases",
+    "acceptable_next_action_kinds",
+    "ecological_adjudicator_sha256",
+    "transportation_adjudicator_sha256",
+    "rubric_sha256"
+  ],
+  "title": "AdjudicatedOutcome",
+  "type": "object"
+}

@@ -15,6 +15,32 @@ stale evidence, unknown aliases, prompt injection, sensitive locations,
 unsupported structured output, trace-readback failure, and unauthorized action.
 Every method-by-case record is scored by the same deterministic scorer set.
 
+## Historical campaign interpretation
+
+The already-published 42-record campaign is retained byte-for-byte as
+historical trace-integrity evidence, not usefulness evidence. Its native path
+used a forced tool order, and its single-shot context included the deterministic
+expected-answer contract. The observed 2.37% provider-input-token reduction
+also missed the preregistered 25% operational gate. Those facts make the result
+a useful negative control: it verified fail-closed plumbing and exact Weave
+readback, but it cannot show selective discovery, fair comparative quality, or
+practitioner benefit.
+
+Current source removes the expected-answer contract from the single-shot
+context. It also separates `ADAPTIVE` traversal—which sees only a neutral
+finding-universe count, chooses coarse branches, inspects selected aliases, and
+may stop without opening or returning every finding—from the labelled
+`FORCED_EXHAUSTIVE` all-branch/all-finding ablation. Discovery does not reveal
+priorities, expected aliases, required tools, or a deterministic action recipe. Every tool
+read now produces an alias-only retrieval receipt recording requested, returned,
+new, and duplicate aliases plus the exact output hash, output bytes, and cumulative
+model-context bytes. Adaptive preflight budgets only fixed instructions/input and
+then enforces the unchanged 64 KiB ceiling after every actual read; the forced
+ablation still preflights its complete deterministic traversal. These changes do
+not rewrite or relabel the historical artifact. A new usefulness campaign must use its own
+versioned schema and the method IDs `fair_full_context`,
+`adaptive_read_only_agent`, and `forced_exhaustive_agent`.
+
 ## Conversations and pre-provider blocks
 
 A 42-record matrix is not described as 42 model calls. The deterministic
@@ -46,9 +72,9 @@ call identity. It records `persistence_backend=ECO_PROJECT_STORE`,
 any application Review Brief draft exists. None of the evaluation refusal
 envelopes is saved as an application draft.
 
-The single-shot provider receives authorized numeric evidence, semantic source
+The corrected single-shot provider receives authorized numeric evidence, semantic source
 facts, required safety limitations, and the case question. It does not receive
-the expected answer or scorer-only required findings. The native method uses
+the expected answer or scorer-only required findings. The corrected native method uses
 the complete production `ridgeway_review_source` snapshot and its actual agent
 selections; it does not rebuild the provider snapshot from scorer ground truth.
 Selected actions, reviewer disciplines, production finding IDs, finding text,
@@ -139,7 +165,7 @@ run; it does not invent a second evaluation run.
 It does not publish an artifact, edit a Report, render a graphic, or render a
 video.
 
-## Default-method decision
+## Historical default-method decision
 
 `deterministic_exhaustive` remains the production default unless every fixed
 promotion gate passes. `native_read_only_agent` is promoted only when:
@@ -169,8 +195,8 @@ The native production snapshot retains a closed `review_topic` facet, and local
 validation requires the chosen action and reviewer disciplines—including a
 primary discipline—to be appropriate for that topic.
 
-The campaign records `PROMOTE_NATIVE` or `KEEP_DETERMINISTIC`; it does not
-silently change desktop behavior. Until a real campaign passes every fixed gate,
+The historical campaign records `PROMOTE_NATIVE` or `KEEP_DETERMINISTIC`; it does not
+silently change desktop behavior. Until a new fair usefulness campaign passes every gate,
 `native_read_only_agent` remains `EXPERIMENTAL` and
 `deterministic_exhaustive` remains the production default. The producer emits
 no campaign artifact when the 42-record matrix is incomplete or any required

@@ -58,6 +58,7 @@ def main() -> int:
     parser.add_argument("--release-root", type=Path, required=True)
     parser.add_argument("--public-resource-key", type=Path, required=True)
     parser.add_argument("--smoke-report", type=Path, required=True)
+    parser.add_argument("--engine-provenance-receipt", type=Path, required=True)
     parser.add_argument("--installed-health-receipt", action="append", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(
@@ -127,6 +128,7 @@ def main() -> int:
     if (
         arguments.public_resource_key.is_symlink()
         or arguments.smoke_report.is_symlink()
+        or arguments.engine_provenance_receipt.is_symlink()
         or len(arguments.installed_health_receipt) != 2
         or any(path.is_symlink() for path in arguments.installed_health_receipt)
     ):
@@ -148,6 +150,11 @@ def main() -> int:
         smoke_report,
         f"{prefix}.offline-smoke.txt",
         "offline-smoke",
+    )
+    collect(
+        arguments.engine_provenance_receipt.resolve(strict=True),
+        f"{prefix}.engine-provenance.json",
+        "attested-engine-provenance",
     )
     for index, receipt in enumerate(arguments.installed_health_receipt, start=1):
         collect(
