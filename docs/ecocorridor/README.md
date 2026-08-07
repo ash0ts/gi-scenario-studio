@@ -75,6 +75,7 @@ whole-tree exit.
 - [Native Weave Review Brief Agent](review-brief-agent.md)
 - [Review Brief agent evaluation and Report append](review-brief-agent-evaluation.md)
 - [Usefulness evidence program](usefulness-evidence-program.md)
+- [W&B usefulness narrative checkpoint](usefulness-narrative-checkpoint.md)
 - [Fair agent-complexity campaign](agent-complexity-campaign.md)
 - [Usefulness study audit contracts](usefulness-study-audit-contract.md)
 - [Usefulness protocol publication in W&B](usefulness-wandb-publication.md)
