@@ -1001,9 +1001,19 @@ def build_review_brief_animation_validation_receipt(
             raise ValueError("Canvas JPEG encoding-input schedule differs from the film spec")
     if abs(parsed_video.duration_seconds - spec.duration_seconds) > 1 / spec.fps:
         raise ValueError("Canvas validator duration differs from the film spec")
+    normalized = ReviewBriefAnimationValidationReceipt.model_construct(
+        **{
+            **payload,
+            "encoding_input_frames": encoding_inputs,
+            "runtime_tools": runtime_tools,
+            "video": parsed_video,
+        },
+        validation_receipt_sha256="0" * 64,
+    )
+    normalized_payload = normalized.model_dump(mode="json", exclude={"validation_receipt_sha256"})
     return ReviewBriefAnimationValidationReceipt(
-        **payload,
-        validation_receipt_sha256=canonical_sha256(payload),
+        **normalized_payload,
+        validation_receipt_sha256=canonical_sha256(normalized_payload),
     )
 
 
