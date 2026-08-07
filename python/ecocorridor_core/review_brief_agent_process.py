@@ -70,8 +70,9 @@ _SAFE_MODEL_INPUT = (
     "Prepare the bounded review-finding selection. Use only the registered "
     "read-only tools and return only the required structured output."
 )
-REVIEW_BRIEF_MODEL_VISIBLE_CONTEXT_VERSION = "review-brief-model-visible-context/v3"
+REVIEW_BRIEF_MODEL_VISIBLE_CONTEXT_VERSION = "review-brief-model-visible-context/v4"
 REVIEW_BRIEF_MAX_TOOL_OUTPUT_BYTES = 48 * 1024
+_RETURN_STRUCTURED_OUTPUT = "RETURN_STRUCTURED_OUTPUT"
 
 
 class _FindingQuery(ContractModel):
@@ -143,6 +144,7 @@ _CLOSED_TOOL_VALUE_TOKENS = frozenset(
         *(item.value for item in ReviewBriefActionKind),
         *(item.value for item in ReviewerDiscipline),
         *REVIEW_BRIEF_AGENT_TOOLS,
+        _RETURN_STRUCTURED_OUTPUT,
         "PASSES",
         "FAILS",
         "SURVEY_FIRST",
@@ -287,6 +289,25 @@ def _finding_payload(item: Any) -> dict[str, Any]:
         "permitted_actions": [value.value for value in item.permitted_actions],
         "permitted_disciplines": [value.value for value in item.permitted_disciplines],
     }
+
+
+def _with_next_required_tool(
+    *,
+    snapshot: ReviewBriefAuthorizedSnapshot,
+    completed_tool_count: int,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Bind every closed tool result to its exact next protocol step."""
+
+    required = required_review_brief_tools(snapshot)
+    if not 0 <= completed_tool_count <= len(required):
+        raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_SEQUENCE_INVALID")
+    next_required_tool = (
+        required[completed_tool_count]
+        if completed_tool_count < len(required)
+        else _RETURN_STRUCTURED_OUTPUT
+    )
+    return {**payload, "next_required_tool": next_required_tool}
 
 
 def _branch_payload(item: Any) -> dict[str, Any]:
@@ -473,19 +494,27 @@ def _build_tools(context: _InvocationContext) -> list[Any]:
         "Return only bounded task scope and available review branches.",
     )
     async def get_scope(wrapper: RunContextWrapper[_InvocationContext]) -> dict[str, Any]:
-        return _scope_payload(wrapper.context.snapshot)
+        return _with_next_required_tool(
+            snapshot=wrapper.context.snapshot,
+            completed_tool_count=len(wrapper.context.tool_calls),
+            payload=_scope_payload(wrapper.context.snapshot),
+        )
 
     @decorate(
         "review_brief_list_findings",
         "List authorized finding aliases and priorities without branch or evidence detail.",
     )
     async def list_findings(wrapper: RunContextWrapper[_InvocationContext]) -> dict[str, Any]:
-        return {
-            "findings": [
-                {"finding_alias": item.finding_alias, "priority": item.priority.value}
-                for item in wrapper.context.snapshot.findings
-            ]
-        }
+        return _with_next_required_tool(
+            snapshot=wrapper.context.snapshot,
+            completed_tool_count=len(wrapper.context.tool_calls),
+            payload={
+                "findings": [
+                    {"finding_alias": item.finding_alias, "priority": item.priority.value}
+                    for item in wrapper.context.snapshot.findings
+                ]
+            },
+        )
 
     @decorate(
         "review_brief_get_findings",
@@ -495,7 +524,11 @@ def _build_tools(context: _InvocationContext) -> list[Any]:
         wrapper: RunContextWrapper[_InvocationContext], finding_aliases: list[str]
     ) -> dict[str, Any]:
         query = _FindingQuery(finding_aliases=finding_aliases)
-        return _findings_payload(wrapper.context.snapshot, query.finding_aliases)
+        return _with_next_required_tool(
+            snapshot=wrapper.context.snapshot,
+            completed_tool_count=len(wrapper.context.tool_calls),
+            payload=_findings_payload(wrapper.context.snapshot, query.finding_aliases),
+        )
 
     @decorate(
         "review_brief_list_option_constraints",
@@ -504,7 +537,11 @@ def _build_tools(context: _InvocationContext) -> list[Any]:
     async def list_option_constraints(
         wrapper: RunContextWrapper[_InvocationContext],
     ) -> dict[str, Any]:
-        return _topic_branch_payload(wrapper.context.snapshot, _OPTION_BRANCH_TOPICS)
+        return _with_next_required_tool(
+            snapshot=wrapper.context.snapshot,
+            completed_tool_count=len(wrapper.context.tool_calls),
+            payload=_topic_branch_payload(wrapper.context.snapshot, _OPTION_BRANCH_TOPICS),
+        )
 
     @decorate(
         "review_brief_list_model_fitness_gaps",
@@ -513,7 +550,11 @@ def _build_tools(context: _InvocationContext) -> list[Any]:
     async def list_model_fitness_gaps(
         wrapper: RunContextWrapper[_InvocationContext],
     ) -> dict[str, Any]:
-        return _topic_branch_payload(wrapper.context.snapshot, _MODEL_BRANCH_TOPICS)
+        return _with_next_required_tool(
+            snapshot=wrapper.context.snapshot,
+            completed_tool_count=len(wrapper.context.tool_calls),
+            payload=_topic_branch_payload(wrapper.context.snapshot, _MODEL_BRANCH_TOPICS),
+        )
 
     @decorate(
         "review_brief_resolve_evidence_aliases",
@@ -526,7 +567,11 @@ def _build_tools(context: _InvocationContext) -> list[Any]:
         permitted = set(wrapper.context.child.binding.permitted_evidence_aliases)
         if not set(query.evidence_aliases).issubset(permitted):
             raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_EVIDENCE_ALIAS_NOT_FOUND")
-        return _evidence_payload(wrapper.context.snapshot, query.evidence_aliases)
+        return _with_next_required_tool(
+            snapshot=wrapper.context.snapshot,
+            completed_tool_count=len(wrapper.context.tool_calls),
+            payload=_evidence_payload(wrapper.context.snapshot, query.evidence_aliases),
+        )
 
     @decorate(
         "review_brief_get_reference_status",
@@ -535,7 +580,11 @@ def _build_tools(context: _InvocationContext) -> list[Any]:
     async def get_reference_status(
         wrapper: RunContextWrapper[_InvocationContext],
     ) -> dict[str, Any]:
-        return _reference_payload(wrapper.context.snapshot)
+        return _with_next_required_tool(
+            snapshot=wrapper.context.snapshot,
+            completed_tool_count=len(wrapper.context.tool_calls),
+            payload=_reference_payload(wrapper.context.snapshot),
+        )
 
     @decorate(
         "review_brief_get_authorization_status",
@@ -544,7 +593,11 @@ def _build_tools(context: _InvocationContext) -> list[Any]:
     async def get_authorization_status(
         wrapper: RunContextWrapper[_InvocationContext],
     ) -> dict[str, Any]:
-        return _authorization_payload(wrapper.context.snapshot)
+        return _with_next_required_tool(
+            snapshot=wrapper.context.snapshot,
+            completed_tool_count=len(wrapper.context.tool_calls),
+            payload=_authorization_payload(wrapper.context.snapshot),
+        )
 
     return [
         get_scope,
@@ -987,7 +1040,10 @@ def _instructions_for_snapshot(snapshot: ReviewBriefAuthorizedSnapshot) -> str:
         "and permitted_disciplines. For that finding, set action_kind to the first "
         "permitted_actions value and set reviewer_disciplines to the complete "
         "permitted_disciplines list in the same order. Never infer, substitute, omit, reorder, "
-        "or add an enum value. The local validator independently rechecks every selection. Return "
+        "or add an enum value. Every tool response includes next_required_tool. Call that exact "
+        "tool next; do not return the structured output until it equals "
+        "RETURN_STRUCTURED_OUTPUT. The local validator independently rechecks every selection. "
+        "Return "
         "every listed "
         "finding alias exactly once. Return no prose, scientific value, unit, location, "
         "recommendation, raw evidence ID, or name. Set snapshot_sha256 exactly to "
@@ -1014,7 +1070,8 @@ def review_brief_model_visible_context(
         dict.fromkeys(alias for item in snapshot.findings for alias in item.evidence_aliases)
     )
     exchanges: list[dict[str, Any]] = []
-    for tool_name in required_review_brief_tools(snapshot):
+    required_tools = required_review_brief_tools(snapshot)
+    for completed_tool_count, tool_name in enumerate(required_tools, start=1):
         arguments: dict[str, Any]
         output: dict[str, Any]
         if tool_name == "review_brief_get_scope":
@@ -1048,6 +1105,11 @@ def review_brief_model_visible_context(
             output = _evidence_payload(snapshot, evidence_aliases)
         else:  # pragma: no cover - required traversal is a closed local contract
             raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_NOT_ALLOWED")
+        output = _with_next_required_tool(
+            snapshot=snapshot,
+            completed_tool_count=completed_tool_count,
+            payload=output,
+        )
         output_bytes = json.dumps(
             output, sort_keys=True, separators=(",", ":"), ensure_ascii=False
         ).encode("utf-8")
