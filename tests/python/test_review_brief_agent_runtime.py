@@ -87,6 +87,10 @@ def _sha(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def _authorized_read_arguments_json() -> str:
+    return json.dumps({"request_token": "READ_AUTHORIZED_SNAPSHOT"})
+
+
 @pytest.mark.parametrize(
     ("exception_name", "expected"),
     [
@@ -110,6 +114,46 @@ def test_safe_child_error_code_classifies_provider_failures_without_message(
 
     assert observed == expected
     assert "credential" not in observed.casefold()
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        (
+            "Invalid JSON input for tool review_brief_get_scope: secret payload",
+            "REVIEW_BRIEF_PROVIDER_TOOL_CALL_INVALID",
+        ),
+        (
+            "Invalid JSON while validating final output: secret payload",
+            "REVIEW_BRIEF_PROVIDER_STRUCTURED_OUTPUT_INVALID",
+        ),
+        (
+            "ChatCompletion response has no choices: secret payload",
+            "REVIEW_BRIEF_PROVIDER_EMPTY_RESPONSE",
+        ),
+    ],
+)
+def test_safe_child_error_code_refines_model_behavior_without_leaking_message(
+    message: str, expected: str
+) -> None:
+    error_type = type("ModelBehaviorError", (Exception,), {})
+
+    observed = safe_child_error_code(error_type(message))
+
+    assert observed == expected
+    assert "secret" not in observed.casefold()
+
+
+def test_safe_child_error_code_preserves_bounded_local_cause_through_sdk_wrapper() -> None:
+    local = ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_ARGUMENTS_INVALID")
+    wrapper_type = type("UserError", (Exception,), {})
+    wrapper = wrapper_type("provider content must not escape")
+    wrapper.__cause__ = local
+
+    observed = safe_child_error_code(wrapper)
+
+    assert observed == "REVIEW_BRIEF_AGENT_TOOL_ARGUMENTS_INVALID"
+    assert "provider" not in observed.casefold()
 
 
 def test_stage_failure_preserves_provider_classification_and_bounds_generic_error() -> None:
@@ -676,8 +720,12 @@ def test_per_tool_revalidation_rejects_identity_alias_and_generic_arguments() ->
     context = _InvocationContext(
         request=ReviewBriefRunnerRequest.model_validate(child.runner_request), child=child
     )
-    context.revalidate(tool_name="review_brief_get_scope", raw_arguments="{}")
-    context.revalidate(tool_name="review_brief_list_findings", raw_arguments="{}")
+    context.revalidate(
+        tool_name="review_brief_get_scope", raw_arguments=_authorized_read_arguments_json()
+    )
+    context.revalidate(
+        tool_name="review_brief_list_findings", raw_arguments=_authorized_read_arguments_json()
+    )
     with pytest.raises(ReviewBriefAgentRuntimeError, match="TOOL_ALIAS_NOT_AUTHORIZED"):
         context.revalidate(
             tool_name="review_brief_get_findings",
@@ -689,11 +737,19 @@ def test_per_tool_revalidation_rejects_identity_alias_and_generic_arguments() ->
     generic_context = _InvocationContext(
         request=ReviewBriefRunnerRequest.model_validate(child.runner_request), child=child
     )
-    with pytest.raises(ReviewBriefAgentRuntimeError, match="TOOL_ARGUMENTS_INVALID"):
-        generic_context.revalidate(
-            tool_name="review_brief_get_scope",
-            raw_arguments=json.dumps({"project_id": "project-1"}),
-        )
+    invalid_arguments = [
+        {},
+        {"": ""},
+        {"request_token": "WRONG"},
+        {"request_token": "READ_AUTHORIZED_SNAPSHOT", "extra": True},
+        {"project_id": "project-1"},
+    ]
+    for arguments in invalid_arguments:
+        with pytest.raises(ReviewBriefAgentRuntimeError, match="TOOL_ARGUMENTS_INVALID"):
+            generic_context.revalidate(
+                tool_name="review_brief_get_scope",
+                raw_arguments=json.dumps(arguments),
+            )
     assert generic_context.tool_calls == []
 
     changed_context = _InvocationContext(
@@ -701,7 +757,10 @@ def test_per_tool_revalidation_rejects_identity_alias_and_generic_arguments() ->
     )
     object.__setattr__(child.binding, "authorization_sha256", _sha("changed"))
     with pytest.raises(ReviewBriefAgentRuntimeError, match="AUTHORIZATION_LEASE_CHANGED"):
-        changed_context.revalidate(tool_name="review_brief_get_scope", raw_arguments="{}")
+        changed_context.revalidate(
+            tool_name="review_brief_get_scope",
+            raw_arguments=_authorized_read_arguments_json(),
+        )
 
 
 def test_evidence_resolver_deduplicates_repeated_authorized_aliases_and_stays_complete() -> None:
@@ -715,13 +774,20 @@ def test_evidence_resolver_deduplicates_repeated_authorized_aliases_and_stays_co
     context = _InvocationContext(
         request=ReviewBriefRunnerRequest.model_validate(child.runner_request), child=child
     )
-    context.revalidate(tool_name="review_brief_get_scope", raw_arguments="{}")
-    context.revalidate(tool_name="review_brief_list_findings", raw_arguments="{}")
+    context.revalidate(
+        tool_name="review_brief_get_scope", raw_arguments=_authorized_read_arguments_json()
+    )
+    context.revalidate(
+        tool_name="review_brief_list_findings", raw_arguments=_authorized_read_arguments_json()
+    )
     context.revalidate(
         tool_name="review_brief_get_findings",
         raw_arguments=json.dumps({"finding_aliases": ["F1"]}),
     )
-    context.revalidate(tool_name="review_brief_list_model_fitness_gaps", raw_arguments="{}")
+    context.revalidate(
+        tool_name="review_brief_list_model_fitness_gaps",
+        raw_arguments=_authorized_read_arguments_json(),
+    )
     context.revalidate(
         tool_name="review_brief_resolve_evidence_aliases",
         raw_arguments=json.dumps({"evidence_aliases": ["E2", "E1", "E2", "E1"]}),
@@ -758,13 +824,20 @@ def test_evidence_resolver_repeats_do_not_weaken_bounds_format_or_authorization(
     context = _InvocationContext(
         request=ReviewBriefRunnerRequest.model_validate(child.runner_request), child=child
     )
-    context.revalidate(tool_name="review_brief_get_scope", raw_arguments="{}")
-    context.revalidate(tool_name="review_brief_list_findings", raw_arguments="{}")
+    context.revalidate(
+        tool_name="review_brief_get_scope", raw_arguments=_authorized_read_arguments_json()
+    )
+    context.revalidate(
+        tool_name="review_brief_list_findings", raw_arguments=_authorized_read_arguments_json()
+    )
     context.revalidate(
         tool_name="review_brief_get_findings",
         raw_arguments=json.dumps({"finding_aliases": ["F1"]}),
     )
-    context.revalidate(tool_name="review_brief_list_model_fitness_gaps", raw_arguments="{}")
+    context.revalidate(
+        tool_name="review_brief_list_model_fitness_gaps",
+        raw_arguments=_authorized_read_arguments_json(),
+    )
     with pytest.raises(ReviewBriefAgentRuntimeError, match="TOOL_ALIAS_NOT_AUTHORIZED"):
         context.revalidate(
             tool_name="review_brief_resolve_evidence_aliases",
@@ -800,7 +873,10 @@ def test_every_tool_call_rejects_an_expired_authorization_lease() -> None:
         request=ReviewBriefRunnerRequest.model_validate(child.runner_request), child=child
     )
     with pytest.raises(ReviewBriefAgentRuntimeError, match="AUTHORIZATION_LEASE_EXPIRED"):
-        context.revalidate(tool_name="review_brief_get_scope", raw_arguments="{}")
+        context.revalidate(
+            tool_name="review_brief_get_scope",
+            raw_arguments=_authorized_read_arguments_json(),
+        )
 
 
 def test_tool_order_and_model_turn_limits_leave_the_final_turn_for_output() -> None:
@@ -971,7 +1047,7 @@ def test_model_visible_context_is_incremental_closed_and_canonically_accounted()
     }
 
     manifest = review_brief_model_visible_context(snapshot)
-    assert manifest["schema_version"] == "review-brief-model-visible-context/v5"
+    assert manifest["schema_version"] == "review-brief-model-visible-context/v6"
     assert "set action_kind to the first permitted_actions value" in manifest["instructions"]
     assert (
         "reviewer_disciplines to the complete permitted_disciplines list in the same order"
@@ -1306,13 +1382,22 @@ class _ScriptedAgentsModel(Model):
         )
 
         calls = [
-            ("review_brief_get_scope", {}),
-            ("review_brief_list_findings", {}),
+            (
+                "review_brief_get_scope",
+                {"request_token": "READ_AUTHORIZED_SNAPSHOT"},
+            ),
+            (
+                "review_brief_list_findings",
+                {"request_token": "READ_AUTHORIZED_SNAPSHOT"},
+            ),
             (
                 "review_brief_get_findings",
                 {"finding_aliases": ["F1"]},
             ),
-            ("review_brief_list_model_fitness_gaps", {}),
+            (
+                "review_brief_list_model_fitness_gaps",
+                {"request_token": "READ_AUTHORIZED_SNAPSHOT"},
+            ),
             (
                 "review_brief_resolve_evidence_aliases",
                 {"evidence_aliases": ["E1"]},

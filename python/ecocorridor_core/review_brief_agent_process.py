@@ -20,6 +20,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Literal, NoReturn
 from urllib.parse import urlsplit
 
@@ -70,9 +71,14 @@ _SAFE_MODEL_INPUT = (
     "Prepare the bounded review-finding selection. Use only the registered "
     "read-only tools and return only the required structured output."
 )
-REVIEW_BRIEF_MODEL_VISIBLE_CONTEXT_VERSION = "review-brief-model-visible-context/v5"
+REVIEW_BRIEF_MODEL_VISIBLE_CONTEXT_VERSION = "review-brief-model-visible-context/v6"
 REVIEW_BRIEF_MAX_TOOL_OUTPUT_BYTES = 48 * 1024
 _RETURN_STRUCTURED_OUTPUT = "RETURN_STRUCTURED_OUTPUT"
+_AUTHORIZED_READ_TOKEN = "READ_AUTHORIZED_SNAPSHOT"
+
+
+def _authorized_read_arguments() -> dict[str, str]:
+    return {"request_token": _AUTHORIZED_READ_TOKEN}
 
 
 class _FindingQuery(ContractModel):
@@ -232,7 +238,7 @@ class _InvocationContext:
                 raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_ARGUMENTS_INVALID")
             query = _EvidenceQuery.model_validate(arguments)
             resolved_evidence.update(query.evidence_aliases)
-        elif arguments:
+        elif arguments != _authorized_read_arguments():
             raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_ARGUMENTS_INVALID")
         argument_aliases = {
             value for value in _extract_strings(arguments) if _ALIAS.fullmatch(value)
@@ -505,7 +511,12 @@ def _build_tools(context: _InvocationContext) -> list[Any]:
         "review_brief_get_scope",
         "Return only bounded task scope and available review branches.",
     )
-    async def get_scope(wrapper: RunContextWrapper[_InvocationContext]) -> dict[str, Any]:
+    async def get_scope(
+        wrapper: RunContextWrapper[_InvocationContext],
+        request_token: Literal["READ_AUTHORIZED_SNAPSHOT"],
+    ) -> dict[str, Any]:
+        if request_token != _AUTHORIZED_READ_TOKEN:
+            raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_ARGUMENTS_INVALID")
         return _with_next_required_tool(
             snapshot=wrapper.context.snapshot,
             completed_tool_count=len(wrapper.context.tool_calls),
@@ -516,7 +527,12 @@ def _build_tools(context: _InvocationContext) -> list[Any]:
         "review_brief_list_findings",
         "List authorized finding aliases and priorities without branch or evidence detail.",
     )
-    async def list_findings(wrapper: RunContextWrapper[_InvocationContext]) -> dict[str, Any]:
+    async def list_findings(
+        wrapper: RunContextWrapper[_InvocationContext],
+        request_token: Literal["READ_AUTHORIZED_SNAPSHOT"],
+    ) -> dict[str, Any]:
+        if request_token != _AUTHORIZED_READ_TOKEN:
+            raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_ARGUMENTS_INVALID")
         return _with_next_required_tool(
             snapshot=wrapper.context.snapshot,
             completed_tool_count=len(wrapper.context.tool_calls),
@@ -548,7 +564,10 @@ def _build_tools(context: _InvocationContext) -> list[Any]:
     )
     async def list_option_constraints(
         wrapper: RunContextWrapper[_InvocationContext],
+        request_token: Literal["READ_AUTHORIZED_SNAPSHOT"],
     ) -> dict[str, Any]:
+        if request_token != _AUTHORIZED_READ_TOKEN:
+            raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_ARGUMENTS_INVALID")
         return _with_next_required_tool(
             snapshot=wrapper.context.snapshot,
             completed_tool_count=len(wrapper.context.tool_calls),
@@ -561,7 +580,10 @@ def _build_tools(context: _InvocationContext) -> list[Any]:
     )
     async def list_model_fitness_gaps(
         wrapper: RunContextWrapper[_InvocationContext],
+        request_token: Literal["READ_AUTHORIZED_SNAPSHOT"],
     ) -> dict[str, Any]:
+        if request_token != _AUTHORIZED_READ_TOKEN:
+            raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_ARGUMENTS_INVALID")
         return _with_next_required_tool(
             snapshot=wrapper.context.snapshot,
             completed_tool_count=len(wrapper.context.tool_calls),
@@ -591,7 +613,10 @@ def _build_tools(context: _InvocationContext) -> list[Any]:
     )
     async def get_reference_status(
         wrapper: RunContextWrapper[_InvocationContext],
+        request_token: Literal["READ_AUTHORIZED_SNAPSHOT"],
     ) -> dict[str, Any]:
+        if request_token != _AUTHORIZED_READ_TOKEN:
+            raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_ARGUMENTS_INVALID")
         return _with_next_required_tool(
             snapshot=wrapper.context.snapshot,
             completed_tool_count=len(wrapper.context.tool_calls),
@@ -604,7 +629,10 @@ def _build_tools(context: _InvocationContext) -> list[Any]:
     )
     async def get_authorization_status(
         wrapper: RunContextWrapper[_InvocationContext],
+        request_token: Literal["READ_AUTHORIZED_SNAPSHOT"],
     ) -> dict[str, Any]:
+        if request_token != _AUTHORIZED_READ_TOKEN:
+            raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_ARGUMENTS_INVALID")
         return _with_next_required_tool(
             snapshot=wrapper.context.snapshot,
             completed_tool_count=len(wrapper.context.tool_calls),
@@ -1068,6 +1096,53 @@ def _instructions(context: _InvocationContext) -> str:
     return _instructions_for_snapshot(context.snapshot)
 
 
+def _tool_stage_instructions(
+    snapshot: ReviewBriefAuthorizedSnapshot,
+    *,
+    tool_name: str,
+) -> str:
+    manifest = review_brief_model_visible_context(snapshot)
+    exchange = next(
+        (item for item in manifest["ordered_tool_exchanges"] if item["tool_name"] == tool_name),
+        None,
+    )
+    if not isinstance(exchange, dict):
+        raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_NOT_ALLOWED")
+    arguments = json.dumps(
+        exchange["arguments"], sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    )
+    return (
+        "Execute one bounded read-only evidence traversal step. Call the only exposed "
+        f"function, {tool_name}, exactly once with this exact JSON argument object: "
+        f"{arguments}. Do not answer the review question, return prose, or call another tool."
+    )
+
+
+def _final_selection_instructions(snapshot: ReviewBriefAuthorizedSnapshot) -> str:
+    manifest = review_brief_model_visible_context(snapshot)
+    traversal = json.dumps(
+        {
+            "snapshot_sha256": snapshot.snapshot_sha256,
+            "ordered_tool_exchanges": manifest["ordered_tool_exchanges"],
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    return (
+        "You are a read-only ecological review-brief finding selector. The orchestrator has "
+        "completed every required guarded tool step shown in the authorized traversal below. "
+        "You cannot choose, approve, rank, attest, design, or modify a portfolio. Return every "
+        "listed finding_alias exactly once. For each finding, set action_kind to the first "
+        "permitted_actions value and reviewer_disciplines to the complete "
+        "permitted_disciplines list in the same order. Never infer, substitute, omit, reorder, "
+        "or add an enum value. Return no prose, scientific value, unit, location, recommendation, "
+        "raw evidence ID, or name. Set snapshot_sha256 exactly to the supplied value. The local "
+        "validator independently rechecks the traversal and every selection. Authorized "
+        f"traversal: {traversal}"
+    )
+
+
 def review_brief_model_visible_context(
     snapshot: ReviewBriefAuthorizedSnapshot,
 ) -> dict[str, Any]:
@@ -1088,10 +1163,10 @@ def review_brief_model_visible_context(
         arguments: dict[str, Any]
         output: dict[str, Any]
         if tool_name == "review_brief_get_scope":
-            arguments = {}
+            arguments = _authorized_read_arguments()
             output = _scope_payload(snapshot)
         elif tool_name == "review_brief_list_findings":
-            arguments = {}
+            arguments = _authorized_read_arguments()
             output = {
                 "findings": [
                     {"finding_alias": item.finding_alias, "priority": item.priority.value}
@@ -1102,16 +1177,16 @@ def review_brief_model_visible_context(
             arguments = {"finding_aliases": finding_aliases}
             output = _findings_payload(snapshot, finding_aliases)
         elif tool_name == "review_brief_list_option_constraints":
-            arguments = {}
+            arguments = _authorized_read_arguments()
             output = _topic_branch_payload(snapshot, _OPTION_BRANCH_TOPICS)
         elif tool_name == "review_brief_list_model_fitness_gaps":
-            arguments = {}
+            arguments = _authorized_read_arguments()
             output = _topic_branch_payload(snapshot, _MODEL_BRANCH_TOPICS)
         elif tool_name == "review_brief_get_reference_status":
-            arguments = {}
+            arguments = _authorized_read_arguments()
             output = _reference_payload(snapshot)
         elif tool_name == "review_brief_get_authorization_status":
-            arguments = {}
+            arguments = _authorized_read_arguments()
             output = _authorization_payload(snapshot)
         elif tool_name == "review_brief_resolve_evidence_aliases":
             arguments = {"evidence_aliases": evidence_aliases}
@@ -1247,6 +1322,7 @@ async def _execute_agent(
         input_guardrail,
         output_guardrail,
         set_trace_processors,
+        trace,
     )
 
     context = _InvocationContext(request=request, child=child)
@@ -1328,71 +1404,194 @@ async def _execute_agent(
 
     try:
         tools = _build_tools(context)
+        model = _model(child)
     except Exception as exc:  # noqa: BLE001 - stage boundary emits only a finite code
         _raise_stage_failure(exc, fallback_code="REVIEW_BRIEF_AGENT_TOOL_SETUP_FAILED")
-    if child.action == "PREFLIGHT":
-        tools = [tool for tool in tools if tool.name == "review_brief_get_scope"]
-        output_type: type[ContractModel] = _CapabilityOutput
-        instructions = (
-            "Call review_brief_get_scope exactly once, then return the strict structured "
-            "capability output with both fields true. Return no prose."
-        )
-    else:
-        output_type = _AgentSelectionOutput
-        instructions = _instructions(context)
-    try:
-        agent = Agent[_InvocationContext](
-            name="EcoCorridor Review Brief Agent",
-            instructions=instructions,
-            model=_model(child),
-            model_settings=ModelSettings(
-                temperature=0,
-                parallel_tool_calls=False,
-                include_usage=True,
-                store=False,
-            ),
-            tools=tools,
-            output_type=output_type,
-            input_guardrails=[fixed_input_guard],
-            output_guardrails=[closed_output_guard],
-            reset_tool_choice=True,
-        )
-    except Exception as exc:  # noqa: BLE001 - stage boundary emits only a finite code
-        _raise_stage_failure(exc, fallback_code="REVIEW_BRIEF_AGENT_CONFIGURATION_FAILED")
+    run_config = RunConfig(
+        trace_include_sensitive_data=False,
+        workflow_name="EcoCorridor Review Brief Agent",
+        tool_execution=ToolExecutionConfig(
+            max_function_tool_concurrency=1,
+            pre_approval_tool_input_guardrails=True,
+        ),
+        tool_not_found_behavior="raise_error",
+    )
+    trace_metadata = {
+        "snapshot_sha256": context.snapshot.snapshot_sha256,
+        "project_id_sha256": child.binding.project_id_sha256,
+        "analysis_id_sha256": child.binding.analysis_id_sha256,
+        "portfolio_id_sha256": child.binding.portfolio_id_sha256,
+        "association_id_sha256": child.trace.association_id_sha256,
+    }
+
+    async def run_workflow() -> list[Any]:
+        results: list[Any] = []
+        with trace(
+            workflow_name="EcoCorridor Review Brief Agent",
+            trace_id=child.trace.trace_id,
+            group_id=child.trace.wandb_run_id_sha256,
+            metadata=trace_metadata,
+        ):
+            if child.action == "PREFLIGHT":
+                scope_tools = [tool for tool in tools if tool.name == "review_brief_get_scope"]
+                if len(scope_tools) != 1:
+                    raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_SETUP_FAILED")
+                scope_agent = Agent[_InvocationContext](
+                    name="EcoCorridor Review Brief Agent · capability tool preflight",
+                    instructions=(
+                        "Test one bounded read-only function call. Call the only exposed "
+                        "function, review_brief_get_scope, exactly once with this exact JSON "
+                        "argument object: "
+                        '{"request_token":"READ_AUTHORIZED_SNAPSHOT"}. Do not return prose '
+                        "or call another function."
+                    ),
+                    model=model,
+                    model_settings=ModelSettings(
+                        temperature=0,
+                        parallel_tool_calls=False,
+                        include_usage=True,
+                        store=False,
+                    ),
+                    tools=scope_tools,
+                    output_type=None,
+                    tool_use_behavior="stop_on_first_tool",
+                    input_guardrails=[fixed_input_guard],
+                    reset_tool_choice=True,
+                )
+                scope_result = await Runner.run(
+                    scope_agent,
+                    _SAFE_MODEL_INPUT,
+                    context=context,
+                    max_turns=1,
+                    session=None,
+                    previous_response_id=None,
+                    conversation_id=None,
+                    run_config=run_config,
+                )
+                results.append(scope_result)
+                if context.tool_calls != ["review_brief_get_scope"]:
+                    raise ReviewBriefAgentRuntimeError(
+                        "REVIEW_BRIEF_AGENT_REQUIRED_TRAVERSAL_MISSING"
+                    )
+                capability_agent = Agent[_InvocationContext](
+                    name="EcoCorridor Review Brief Agent · capability confirmation",
+                    instructions=(
+                        "Return the strict structured capability output with "
+                        "scope_tool_used=true and structured_output_supported=true. "
+                        "No tools are available. Return no prose."
+                    ),
+                    model=model,
+                    model_settings=ModelSettings(
+                        temperature=0,
+                        parallel_tool_calls=False,
+                        include_usage=True,
+                        store=False,
+                    ),
+                    tools=[],
+                    output_type=_CapabilityOutput,
+                    input_guardrails=[fixed_input_guard],
+                    output_guardrails=[closed_output_guard],
+                    reset_tool_choice=True,
+                )
+                results.append(
+                    await Runner.run(
+                        capability_agent,
+                        _SAFE_MODEL_INPUT,
+                        context=context,
+                        max_turns=1,
+                        session=None,
+                        previous_response_id=None,
+                        conversation_id=None,
+                        run_config=run_config,
+                    )
+                )
+                return results
+
+            required_tools = list(required_review_brief_tools(context.snapshot))
+            if len(required_tools) + 1 > REVIEW_BRIEF_MAX_TURNS:
+                raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_MODEL_TURN_LIMIT_EXCEEDED")
+            tools_by_name = {tool.name: tool for tool in tools}
+            for index, tool_name in enumerate(required_tools, start=1):
+                stage_tool = tools_by_name.get(tool_name)
+                if stage_tool is None:
+                    raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_NOT_ALLOWED")
+                stage_agent = Agent[_InvocationContext](
+                    name=f"EcoCorridor Review Brief Agent · {tool_name}",
+                    instructions=_tool_stage_instructions(
+                        context.snapshot,
+                        tool_name=tool_name,
+                    ),
+                    model=model,
+                    model_settings=ModelSettings(
+                        temperature=0,
+                        parallel_tool_calls=False,
+                        include_usage=True,
+                        store=False,
+                    ),
+                    tools=[stage_tool],
+                    output_type=None,
+                    tool_use_behavior="stop_on_first_tool",
+                    input_guardrails=[fixed_input_guard],
+                    reset_tool_choice=True,
+                )
+                results.append(
+                    await Runner.run(
+                        stage_agent,
+                        _SAFE_MODEL_INPUT,
+                        context=context,
+                        max_turns=1,
+                        session=None,
+                        previous_response_id=None,
+                        conversation_id=None,
+                        run_config=run_config,
+                    )
+                )
+                if context.tool_calls != required_tools[:index]:
+                    raise ReviewBriefAgentRuntimeError(
+                        "REVIEW_BRIEF_AGENT_REQUIRED_TRAVERSAL_MISSING"
+                    )
+
+            final_agent = Agent[_InvocationContext](
+                name="EcoCorridor Review Brief Agent · validated selection",
+                instructions=_final_selection_instructions(context.snapshot),
+                model=model,
+                model_settings=ModelSettings(
+                    temperature=0,
+                    parallel_tool_calls=False,
+                    include_usage=True,
+                    store=False,
+                ),
+                tools=[],
+                output_type=_AgentSelectionOutput,
+                input_guardrails=[fixed_input_guard],
+                output_guardrails=[closed_output_guard],
+                reset_tool_choice=True,
+            )
+            results.append(
+                await Runner.run(
+                    final_agent,
+                    _SAFE_MODEL_INPUT,
+                    context=context,
+                    max_turns=1,
+                    session=None,
+                    previous_response_id=None,
+                    conversation_id=None,
+                    run_config=run_config,
+                )
+            )
+        return results
+
     started = time.monotonic()
     try:
-        result = await asyncio.wait_for(
-            Runner.run(
-                agent,
-                _SAFE_MODEL_INPUT,
-                context=context,
-                max_turns=REVIEW_BRIEF_MAX_TURNS,
-                session=None,
-                previous_response_id=None,
-                conversation_id=None,
-                run_config=RunConfig(
-                    trace_include_sensitive_data=False,
-                    workflow_name="EcoCorridor Review Brief Agent",
-                    trace_id=child.trace.trace_id,
-                    group_id=child.trace.wandb_run_id_sha256,
-                    trace_metadata={
-                        "snapshot_sha256": context.snapshot.snapshot_sha256,
-                        "project_id_sha256": child.binding.project_id_sha256,
-                        "analysis_id_sha256": child.binding.analysis_id_sha256,
-                        "portfolio_id_sha256": child.binding.portfolio_id_sha256,
-                        "association_id_sha256": child.trace.association_id_sha256,
-                    },
-                    tool_execution=ToolExecutionConfig(
-                        max_function_tool_concurrency=1,
-                        pre_approval_tool_input_guardrails=True,
-                    ),
-                    tool_not_found_behavior="raise_error",
-                ),
-            ),
+        results = await asyncio.wait_for(
+            run_workflow(),
             timeout=child.provider.timeout_seconds,
         )
     except Exception as exc:  # noqa: BLE001 - stage boundary emits only a finite code
         _raise_stage_failure(exc, fallback_code="REVIEW_BRIEF_AGENT_EXECUTION_FAILED")
+    if not results:
+        raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_OUTPUT_INVALID")
+    result = results[-1]
     elapsed_ms = round((time.monotonic() - started) * 1000)
     try:
         trace_id, weave_call_id, trace_url, generation_call_ids = _readback_trace(
@@ -1405,8 +1604,13 @@ async def _execute_agent(
     except Exception as exc:  # noqa: BLE001 - stage boundary emits only a finite code
         _raise_stage_failure(exc, fallback_code="REVIEW_BRIEF_AGENT_TRACE_READBACK_FAILED")
     try:
+        usage_result = SimpleNamespace(
+            raw_responses=[
+                response for stage_result in results for response in stage_result.raw_responses
+            ]
+        )
         input_tokens, output_tokens, provider_call_id, provider_call_identity_kind = _usage(
-            result,
+            usage_result,
             verified_generation_call_ids=generation_call_ids,
         )
     except ReviewBriefAgentRuntimeError:

@@ -255,9 +255,7 @@ def _configure_weave_pii_redaction(runtime: Path) -> None:
         for result in sorted(results, key=lambda item: (int(item.start), int(item.end))):
             start, end = int(result.start), int(result.end)
             if start < 0 or end > len(value) or start >= end:
-                raise ReviewBriefAgentRuntimeError(
-                    "REVIEW_BRIEF_AGENT_PII_REDACTION_UNAVAILABLE"
-                )
+                raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_PII_REDACTION_UNAVAILABLE")
             if spans and start <= spans[-1][1]:
                 spans[-1] = (spans[-1][0], max(spans[-1][1], end))
             else:
@@ -1047,15 +1045,43 @@ def review_brief_runner_from_sessions(
 def safe_child_error_code(exc: BaseException) -> str:
     """Map every child exception to a credential-safe, finite code."""
 
-    if isinstance(exc, ReviewBriefAgentRuntimeError) and _SAFE_ERROR.fullmatch(str(exc)):
-        return str(exc)
-    name = type(exc).__name__.upper().replace("_", "")
-    if "TIMEOUT" in name:
-        return "REVIEW_BRIEF_AGENT_DEADLINE_EXCEEDED"
-    if "GUARDRAIL" in name or "MAXTURNS" in name:
-        return "REVIEW_BRIEF_AGENT_BOUNDARY_REJECTED"
+    chain: list[BaseException] = []
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and len(chain) < 8 and id(current) not in seen:
+        seen.add(id(current))
+        chain.append(current)
+        current = current.__cause__
+    for item in chain:
+        if isinstance(item, ReviewBriefAgentRuntimeError) and _SAFE_ERROR.fullmatch(str(item)):
+            return str(item)
+    for item in chain:
+        name = type(item).__name__.upper().replace("_", "")
+        if "TIMEOUT" in name:
+            return "REVIEW_BRIEF_AGENT_DEADLINE_EXCEEDED"
+        if "GUARDRAIL" in name or "MAXTURNS" in name:
+            return "REVIEW_BRIEF_AGENT_BOUNDARY_REJECTED"
+        if name == "MODELBEHAVIORERROR":
+            message = str(item).casefold()
+            if (
+                "invalid json input for tool" in message
+                or "tool call" in message
+                or "not found in agent" in message
+            ):
+                return "REVIEW_BRIEF_PROVIDER_TOOL_CALL_INVALID"
+            if (
+                "invalid json" in message
+                or "final output" in message
+                or "expected a dict" in message
+                or "could not find key" in message
+            ):
+                return "REVIEW_BRIEF_PROVIDER_STRUCTURED_OUTPUT_INVALID"
+            if "no choices" in message:
+                return "REVIEW_BRIEF_PROVIDER_EMPTY_RESPONSE"
+            return "REVIEW_BRIEF_PROVIDER_OUTPUT_INVALID"
     provider_errors = {
         "BADREQUESTERROR": "REVIEW_BRIEF_PROVIDER_REQUEST_REJECTED",
+        "UNPROCESSABLEENTITYERROR": "REVIEW_BRIEF_PROVIDER_REQUEST_REJECTED",
         "AUTHENTICATIONERROR": "REVIEW_BRIEF_PROVIDER_AUTHENTICATION_FAILED",
         "PERMISSIONDENIEDERROR": "REVIEW_BRIEF_PROVIDER_ACCESS_DENIED",
         "NOTFOUNDERROR": "REVIEW_BRIEF_PROVIDER_MODEL_NOT_FOUND",
@@ -1063,10 +1089,11 @@ def safe_child_error_code(exc: BaseException) -> str:
         "APICONNECTIONERROR": "REVIEW_BRIEF_PROVIDER_UNAVAILABLE",
         "INTERNALSERVERERROR": "REVIEW_BRIEF_PROVIDER_FAILED",
         "APISTATUSERROR": "REVIEW_BRIEF_PROVIDER_FAILED",
-        "MODELBEHAVIORERROR": "REVIEW_BRIEF_PROVIDER_OUTPUT_INVALID",
     }
-    if name in provider_errors:
-        return provider_errors[name]
+    for item in chain:
+        name = type(item).__name__.upper().replace("_", "")
+        if name in provider_errors:
+            return provider_errors[name]
     return "REVIEW_BRIEF_AGENT_INVOCATION_FAILED"
 
 
