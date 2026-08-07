@@ -201,7 +201,7 @@ def test_article_leads_with_a_plain_decision_story_and_keeps_hashes_last() -> No
     assert "This is not observed animal movement" in plan.article.summary
     assert "2.37%" in plan.article.summary
     assert "25% target" in plan.article.summary
-    assert "simpler checklist remains the default" in plan.article.summary
+    assert "simpler rule-based checklist remains the default" in plan.article.summary
     assert "All 12 synthetic scenarios completed" in copy
     assert "no required connectivity check failed" in copy
     assert (

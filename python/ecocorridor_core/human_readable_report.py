@@ -336,7 +336,7 @@ def build_human_readable_article(
                 "| Connectivity safeguard | Modeled difficulty connecting habitat areas "
                 f"(effective resistance) improved "
                 f"{abs(fixture.resistance_change_percent):.2f}% in the least favorable case | "
-                "The check designed to avoid worsening the safeguard guild passed under the "
+                "The check designed to avoid worsening the safeguard group passed under the "
                 "stated assumptions |\n"
                 f"| Road-area warning | {ridgeway.safeguard_mask_min_percent:.2f}% to "
                 f"{ridgeway.safeguard_mask_max_percent:.2f}% change in the model signal near the "
@@ -344,7 +344,7 @@ def build_human_readable_article(
                 f"the authored {ridgeway.review_trigger_percent:.0f}% trigger, so field review "
                 "is required; this does not predict crossing use |\n\n"
                 "**Outcome: carry forward for field and feasibility review—not approval.** The "
-                "road-mask finding is exactly the kind of caveat that a headline score can hide."
+                "road-area warning is exactly the kind of caveat that a headline score can hide."
             ),
         ),
         HumanReadableSection(
@@ -352,13 +352,13 @@ def build_human_readable_article(
             heading="What the software is useful for today",
             markdown=(
                 "The implemented workflow is useful as an **audit and screening discipline**:\n\n"
-                "- it withholds a portfolio from comparison until every required target and "
+                "- it withholds an option from comparison until every required target and "
                 "safeguard scenario finishes;\n"
                 "- it keeps scenario-specific resistance results separate instead of blending "
                 "incompatible ecological hypotheses;\n"
-                "- it resolves a displayed claim back to the direct run, scenario, raster change, "
+                "- it resolves a displayed claim back to the direct run, scenario, map change, "
                 "source files, model settings, quality checks, and assumptions; and\n"
-                "- it can say `SURVEY_FIRST` when evidence, authorization, or feasibility is "
+                "- it can stop at **survey first** when evidence, authorization, or feasibility is "
                 "incomplete.\n\n"
                 "Those are product capabilities. Whether they make real practitioners faster or "
                 "less likely to miss a safeguard still requires a controlled study."
@@ -372,20 +372,20 @@ def build_human_readable_article(
                 f"W&B Weave recorded **{HISTORICAL_PROVIDER_CONVERSATION_COUNT} real model "
                 f"conversations**, while **{HISTORICAL_PRE_PROVIDER_BLOCK_COUNT} unsafe or "
                 "invalid requests were stopped before any model call**.\n\n"
-                "| Method | Provider input tokens |\n"
+                "| Method | Model input (tokens) |\n"
                 "|---|---:|\n"
                 f"| Full-context comparator | {HISTORICAL_BASELINE_INPUT_TOKENS:,} |\n"
                 f"| Read-only agent workflow | {HISTORICAL_NATIVE_INPUT_TOKENS:,} |\n"
                 f"| Difference | {token_difference:,} fewer tokens "
                 f"({HISTORICAL_CONTEXT_REDUCTION_PERCENT:.2f}%) |\n\n"
                 "The promotion target was 25%, so the recorded decision was to keep the simpler, "
-                "deterministic checklist as the default. "
+                "rule-based checklist as the default. "
                 "That is a useful negative result. It prevented an agent from being promoted on "
                 "novelty alone.\n\n"
-                "The experiment did **not** prove adaptive agent usefulness. The agent followed a "
-                "fixed sequence, and the comparison method was given an answer guide. "
-                "A corrected experiment must give each method the same evidence and allow the "
-                "agent to choose when to retrieve and stop."
+                "The experiment did **not** show that an agent can select the right evidence on "
+                "its own. The agent followed a fixed sequence, and the comparison method was "
+                "given an answer guide. A corrected experiment must give each method the same "
+                "evidence and allow the agent to choose what to inspect and when to stop."
             ),
         ),
         HumanReadableSection(
@@ -411,15 +411,16 @@ def build_human_readable_article(
             markdown=(
                 "The next program is designed to answer the unanswered questions rather than "
                 "decorate the current result:\n\n"
-                "1. Generate direct evidence on five different synthetic landscape structures.\n"
-                "2. Compare deterministic review, fair full-context review, selective agent "
-                "retrieval, forced exhaustive retrieval, and an oracle diagnostic control.\n"
-                "3. Stress the safety boundary with prompt injection, stale evidence, sensitive "
-                "locations, malformed output, tool tampering, and trace outages.\n"
-                "4. Run a randomized practitioner crossover only after the synthetic truth and "
-                "rubric are independently adjudicated.\n"
-                "5. Report partner shadow studies as descriptive workflow evidence—not as proof "
-                "of ecological outcomes."
+                "1. Generate direct evidence on five different synthetic landscape layouts.\n"
+                "2. Compare a rule-based checklist, a model reading the full packet, an agent "
+                "choosing what to inspect, an agent forced to inspect everything, and a "
+                "best-case minimal-evidence benchmark.\n"
+                "3. Try to break the safety boundary with malicious instructions, stale evidence, "
+                "sensitive locations, malformed output, altered tool results, and trace outages.\n"
+                "4. Ask practitioners to compare the workflows only after independent reviewers "
+                "freeze the correct answers and scoring guide.\n"
+                "5. Study retrospective partner projects as workflow evidence—not as proof of "
+                "ecological outcomes."
             ),
         ),
         HumanReadableSection(
@@ -451,7 +452,7 @@ def build_human_readable_article(
             "analogy—well above the 15% investigation trigger. This is not observed animal "
             "movement. The right next step is field review, not approval. The agent then failed "
             "its own usefulness test: it cut model input by only 2.37%, far short of the 25% "
-            "target, so the simpler checklist remains the default."
+            "target, so the simpler rule-based checklist remains the default."
         ),
         sections=sections,
     )

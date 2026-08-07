@@ -18,7 +18,7 @@ Ridgeway is a synthetic audit drill. For its carry-forward candidate:
 - screening cost is USD 400,000 under a USD 500,000 cap;
 - modeled difficulty connecting habitat areas improved 1.60% in the least
   favorable safeguard case, so the check designed to avoid worsening the
-  safeguard guild passed; and
+  safeguard group passed; and
 - the model's road-area warning changed by 47.35% to 65.65%, above the authored
   15% review trigger.
 
@@ -31,9 +31,9 @@ status is “carry forward for field and feasibility review,” not approval.
 The article also reports the first agent experiment without overselling it. The
 agent workflow used 10,542 provider input tokens versus 10,798 for the
 full-context comparator—a 2.37% reduction, below the 25% promotion gate. The
-deterministic checklist therefore remains the default. The old experiment also
-used fixed traversal and an answer-oriented comparator, so it cannot establish
-adaptive-agent usefulness.
+rule-based checklist therefore remains the default. The old experiment also
+used a fixed sequence and gave the comparison method an answer guide, so it
+cannot show that an agent can select the right evidence on its own.
 
 ## Reader-first safety boundary
 
