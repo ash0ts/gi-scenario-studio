@@ -970,7 +970,13 @@ def test_model_visible_context_is_incremental_closed_and_canonically_accounted()
     }
 
     manifest = review_brief_model_visible_context(snapshot)
-    assert manifest["schema_version"] == "review-brief-model-visible-context/v2"
+    assert manifest["schema_version"] == "review-brief-model-visible-context/v3"
+    assert "set action_kind to the first permitted_actions value" in manifest["instructions"]
+    assert (
+        "reviewer_disciplines to the complete permitted_disciplines list in the same order"
+        in manifest["instructions"]
+    )
+    assert "independently rechecks every selection" in manifest["instructions"]
     assert [item["tool_name"] for item in manifest["ordered_tool_exchanges"]] == list(
         required_review_brief_tools(snapshot)
     )

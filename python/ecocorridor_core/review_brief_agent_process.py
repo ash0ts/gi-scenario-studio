@@ -70,7 +70,7 @@ _SAFE_MODEL_INPUT = (
     "Prepare the bounded review-finding selection. Use only the registered "
     "read-only tools and return only the required structured output."
 )
-REVIEW_BRIEF_MODEL_VISIBLE_CONTEXT_VERSION = "review-brief-model-visible-context/v2"
+REVIEW_BRIEF_MODEL_VISIBLE_CONTEXT_VERSION = "review-brief-model-visible-context/v3"
 REVIEW_BRIEF_MAX_TOOL_OUTPUT_BYTES = 48 * 1024
 
 
@@ -983,8 +983,11 @@ def _instructions_for_snapshot(snapshot: ReviewBriefAuthorizedSnapshot) -> str:
         "review_brief_get_findings and every "
         "listed evidence alias in review_brief_resolve_evidence_aliases. Do not call any other "
         "tool. Inspect the closed reason_facets, evidence_classes, scenario_breadth, and branch "
-        "counts. The closed review_topic and reason facets determine which action and reviewer "
-        "disciplines are appropriate; choose only the permitted values that match them. Return "
+        "counts. Each finding detail contains its complete, locally validated permitted_actions "
+        "and permitted_disciplines. For that finding, set action_kind to the first "
+        "permitted_actions value and set reviewer_disciplines to the complete "
+        "permitted_disciplines list in the same order. Never infer, substitute, omit, reorder, "
+        "or add an enum value. The local validator independently rechecks every selection. Return "
         "every listed "
         "finding alias exactly once. Return no prose, scientific value, unit, location, "
         "recommendation, raw evidence ID, or name. Set snapshot_sha256 exactly to "
