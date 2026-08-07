@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import importlib.util
 import sys
@@ -195,6 +196,149 @@ def test_report_section_labels_media_as_presentation_copy_and_marks_all_digests(
     assert REPORT_MEDIA_AUTHORITY_COPY in article_text
     assert "presentation copies" in article_text
     assert "byte authority" in article_text
+
+
+def test_report_semantic_hash_survives_documented_wandb_roundtrip_normalization() -> None:
+    panel_grid_type = type("PanelGrid", (), {})
+    expected = panel_grid_type()
+    expected._spec = {
+        "panels": [
+            {
+                "metric": "review_brief/native_read_only_agent/passed_case_count",
+                "table_name": "review_brief_method_results",
+                "layout": {"w": 24, "h": 16, "x": 0, "y": 0},
+            }
+        ],
+        "runsets": [
+            {
+                "filters": (
+                    "ID = 'campaign-run-1' and Config('campaign_sha256') = '" + "a" * 64 + "'"
+                ),
+                "order": [{"ascending": False, "name": "CreatedTimestamp"}],
+            }
+        ],
+    }
+    observed = panel_grid_type()
+    observed._spec = {
+        "panels": [
+            {
+                "metric": {"name": "review_brief/native_read_only_agent/passed_case_count"},
+                "table_name": "review_brief_method_results",
+                "layout": {"w": 8, "h": 6, "x": 16, "y": 6},
+            }
+        ],
+        "runsets": [
+            {
+                "filters": (
+                    "Metric(\"ID\") == 'campaign-run-1' and "
+                    'Config("campaign_sha256") == \'' + "a" * 64 + "'"
+                ),
+                "order": [{"ascending": False, "name": {"name": "CreatedTimestamp"}}],
+            }
+        ],
+    }
+
+    expected_raw_digest = publisher._report_section_body_sha256([expected])
+    assert publisher._report_section_body_sha256([observed]) != expected_raw_digest
+    expected_semantic_digest = publisher._report_section_semantic_sha256([expected])
+    assert publisher._report_section_semantic_sha256([observed]) == expected_semantic_digest
+
+    observed._spec["panels"][0]["metric"]["name"] = "review_brief/other_metric"
+    assert publisher._report_section_semantic_sha256([observed]) != expected_semantic_digest
+
+
+def test_report_semantic_projection_is_scoped_to_panelgrid_service_paths() -> None:
+    unrelated_type = type("OtherBlock", (), {})
+    first = unrelated_type()
+    first._spec = {"layout": {"w": 24}, "payload": {"name": "first"}}
+    second = unrelated_type()
+    second._spec = {"layout": {"w": 8}, "payload": {"name": "first"}}
+    assert publisher._report_section_semantic_sha256(
+        [first]
+    ) != publisher._report_section_semantic_sha256([second])
+
+    third = unrelated_type()
+    third._spec = {"layout": {"w": 24}, "payload": "first"}
+    assert publisher._report_section_semantic_sha256(
+        [first]
+    ) != publisher._report_section_semantic_sha256([third])
+
+
+def test_existing_semantically_equivalent_panelgrid_section_reuses_raw_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _plan(video_rendered=True)
+    panel_grid_type = type("PanelGrid", (), {})
+    authored = panel_grid_type()
+    authored._spec = {
+        "panels": [
+            {
+                "metric": "review_brief/native_read_only_agent/passed_case_count",
+                "layout": {"w": 24, "h": 16, "x": 0, "y": 0},
+            }
+        ],
+        "runsets": [
+            {
+                "filters": "ID = 'campaign-run-1' and Config('campaign_sha256') = '"
+                + "a" * 64
+                + "'",
+                "order": [{"ascending": False, "name": "CreatedTimestamp"}],
+            }
+        ],
+    }
+    readback = panel_grid_type()
+    readback._spec = copy.deepcopy(authored._spec)
+    readback._spec["panels"][0]["metric"] = {
+        "name": "review_brief/native_read_only_agent/passed_case_count"
+    }
+    readback._spec["panels"][0]["layout"] = {"w": 8, "h": 6, "x": 16, "y": 6}
+    readback._spec["runsets"][0]["filters"] = (
+        'Metric("ID") == \'campaign-run-1\' and Config("campaign_sha256") == \'' + "a" * 64 + "'"
+    )
+    readback._spec["runsets"][0]["order"][0]["name"] = {"name": "CreatedTimestamp"}
+    marker = publisher._report_section_marker(
+        plan,
+        body_sha256=publisher._report_section_body_sha256([authored]),
+    )
+    authored_section = [
+        SimpleNamespace(text=marker),
+        authored,
+        SimpleNamespace(text=publisher.SECTION_END),
+    ]
+    existing_section = [
+        SimpleNamespace(text=marker),
+        readback,
+        SimpleNamespace(text=publisher.SECTION_END),
+    ]
+    monkeypatch.setattr(
+        publisher,
+        "build_report_section_blocks",
+        lambda *args, **kwargs: authored_section,
+    )
+    state: dict[str, Any] = {"blocks": existing_section}
+    adapter = _adapter_with_report_state(state)
+
+    adapter.upsert_owned_report_section(
+        report_url="https://wandb.example/entity/project/reports/existing--id",
+        plan=plan,
+        receipt=_receipt(plan),
+    )
+
+    assert publisher._owned_section_markers(state["blocks"]) == [marker]
+
+
+def test_report_filter_semantics_fail_closed_on_changed_or_unsupported_clause() -> None:
+    expected = publisher._normalize_report_filter(
+        "ID = 'campaign-run-1' and Config('campaign_sha256') = '" + "a" * 64 + "'"
+    )
+    assert expected == publisher._normalize_report_filter(
+        'Metric("ID") == \'campaign-run-1\' and Config("campaign_sha256") == \'' + "a" * 64 + "'"
+    )
+    assert expected != publisher._normalize_report_filter(
+        'Metric("ID") == \'another-run\' and Config("campaign_sha256") == \'' + "a" * 64 + "'"
+    )
+    with pytest.raises(ValueError, match="unsupported semantics"):
+        publisher._normalize_report_filter("ID = 'campaign-run-1' or true")
 
 
 class _StoredReport:

@@ -295,6 +295,41 @@ def _report_value(value: Any) -> Any:
     raise TypeError("W&B Report block contains unsupported state")
 
 
+def _normalize_report_filter(value: str) -> list[dict[str, str]]:
+    """Normalize the two public SDK spellings of the owned Runset filter.
+
+    W&B serializes ``ID =`` as ``Metric(\"ID\") ==`` and normalizes quote
+    style after a Report save.  Those changes preserve the selected run, while
+    any changed or additional clause must still fail exact semantic readback.
+    """
+
+    clauses: list[dict[str, str]] = []
+    for raw_clause in re.split(r"\s+and\s+", value.strip()):
+        metric = re.fullmatch(
+            r"(?:ID|Metric\((?:\"ID\"|'ID')\))\s*(?:=|==)\s*'([^']+)'",
+            raw_clause,
+        )
+        if metric is not None:
+            clauses.append({"field": "ID", "value": metric.group(1)})
+            continue
+        config = re.fullmatch(
+            r"Config\((?:\"([^\"]+)\"|'([^']+)')\)\s*(?:=|==)\s*'([^']+)'",
+            raw_clause,
+        )
+        if config is None:
+            raise ValueError("W&B Report Runset filter has unsupported semantics")
+        clauses.append(
+            {
+                "field": "Config",
+                "key": str(config.group(1) or config.group(2)),
+                "value": config.group(3),
+            }
+        )
+    if not clauses:
+        raise ValueError("W&B Report Runset filter is empty")
+    return sorted(clauses, key=lambda item: (item["field"], item.get("key", ""), item["value"]))
+
+
 def _report_block_representation(block: Any) -> dict[str, Any]:
     spec = getattr(block, "_spec", None)
     if isinstance(spec, Mapping):
@@ -304,8 +339,71 @@ def _report_block_representation(block: Any) -> dict[str, Any]:
     return {"block_type": type(block).__name__, "value": value}
 
 
+def _selector_name(value: Any) -> Any:
+    if isinstance(value, Mapping) and set(value) == {"name"} and isinstance(value.get("name"), str):
+        return str(value["name"])
+    return value
+
+
+def _normalize_panel_grid_roundtrip(value: Any) -> Any:
+    """Normalize only service rewrites observed at exact PanelGrid paths."""
+
+    if not isinstance(value, Mapping):
+        raise TypeError("W&B PanelGrid state is not an object")
+    normalized = copy.deepcopy(dict(value))
+    panels = normalized.get("panels")
+    if not isinstance(panels, list):
+        raise TypeError("W&B PanelGrid panels are not a list")
+    for panel in panels:
+        if not isinstance(panel, dict):
+            raise TypeError("W&B PanelGrid panel is not an object")
+        panel.pop("layout", None)
+        for selector in ("metric", "x"):
+            if selector in panel:
+                panel[selector] = _selector_name(panel[selector])
+        if "y" in panel:
+            if not isinstance(panel["y"], list):
+                raise TypeError("W&B PanelGrid y selector is not a list")
+            panel["y"] = [_selector_name(item) for item in panel["y"]]
+    runsets = normalized.get("runsets")
+    if not isinstance(runsets, list):
+        raise TypeError("W&B PanelGrid runsets are not a list")
+    for runset in runsets:
+        if not isinstance(runset, dict):
+            raise TypeError("W&B PanelGrid runset is not an object")
+        if "filters" in runset:
+            if not isinstance(runset["filters"], str):
+                raise TypeError("W&B PanelGrid Runset filter is not text")
+            runset["filters"] = _normalize_report_filter(runset["filters"])
+        order = runset.get("order")
+        if not isinstance(order, list):
+            raise TypeError("W&B PanelGrid Runset order is not a list")
+        for order_item in order:
+            if not isinstance(order_item, dict):
+                raise TypeError("W&B PanelGrid Runset order item is not an object")
+            if "name" in order_item:
+                order_item["name"] = _selector_name(order_item["name"])
+    return normalized
+
+
+def _report_semantic_block_representation(block: Any) -> dict[str, Any]:
+    representation = _report_block_representation(block)
+    if representation["block_type"] == "PanelGrid":
+        representation["value"] = _normalize_panel_grid_roundtrip(representation["value"])
+    return representation
+
+
 def _report_section_body_sha256(body: Sequence[Any]) -> str:
     return canonical_sha256([_report_block_representation(block) for block in body])
+
+
+def _report_section_semantic_sha256(body: Sequence[Any]) -> str:
+    return canonical_sha256(
+        {
+            "canonicalizer": "wandb-reports-panelgrid-roundtrip/v1",
+            "blocks": [_report_semantic_block_representation(block) for block in body],
+        }
+    )
 
 
 def _report_media_manifest_sha256(plan: Mapping[str, Any]) -> str:
@@ -530,7 +628,7 @@ def _readback_exact_owned_report_section(
     entity: str,
     project: str,
     expected_marker: str,
-    expected_body_sha256: str,
+    expected_semantic_sha256: str,
 ) -> Any:
     """Read until one exact bounded section is visible or the finite deadline expires."""
 
@@ -548,7 +646,7 @@ def _readback_exact_owned_report_section(
             matches = [body for marker, body in sections if marker == expected_marker]
             verified = bool(
                 len(matches) == 1
-                and _report_section_body_sha256(matches[0]) == expected_body_sha256
+                and _report_section_semantic_sha256(matches[0]) == expected_semantic_sha256
             )
         except PermissionError:
             raise
@@ -874,7 +972,7 @@ class WandbSdkReviewBriefAdapter:
             if len(owned_sections) != 1:
                 raise RuntimeError("publisher did not build one bounded Report section")
             expected_marker, expected_body = owned_sections[0]
-            expected_body_sha256 = _report_section_body_sha256(expected_body)
+            expected_semantic_sha256 = _report_section_semantic_sha256(expected_body)
             report.blocks = append_owned_report_section(list(report.blocks), owned)
             report.save()
             updated_url = _require_web_origin(
@@ -892,7 +990,7 @@ class WandbSdkReviewBriefAdapter:
                 entity=self.entity,
                 project=self.project,
                 expected_marker=expected_marker,
-                expected_body_sha256=expected_body_sha256,
+                expected_semantic_sha256=expected_semantic_sha256,
             )
         return updated_url
 
