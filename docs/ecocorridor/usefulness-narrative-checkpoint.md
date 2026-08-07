@@ -1,7 +1,8 @@
 # W&B usefulness narrative checkpoint
 
-The append-only narrative publisher updates the existing EcoCorridor W&B
-Report without creating a W&B Run, Artifact, experiment result, or media item.
+The narrative command now verifies the exact checkpoint already published in
+the existing EcoCorridor W&B Report. It never calls `Report.save()` and creates
+no W&B Run, Artifact, experiment result, Report, or media item.
 It exists to make the article tell the current story honestly:
 
 1. the historical 42-record campaign demonstrated trace integrity and
@@ -21,7 +22,8 @@ release-engine provenance required by the direct-evidence boundary.
 
 ## Mutation boundary
 
-`scripts/append_ecocorridor_usefulness_narrative.py` fails closed unless:
+The legacy-named `scripts/append_ecocorridor_usefulness_narrative.py` is now a
+verifier and fails closed unless:
 
 - the active branch is `codex/ecocorridor-scenario-studio`;
 - `HEAD` is clean and `git ls-remote` confirms that it exactly matches the
@@ -34,19 +36,19 @@ release-engine provenance required by the direct-evidence boundary.
   non-promotion status;
 - the destination Report has the exact entity, project, ID, title, and retained
   historical marker fields and semantic body hash; and
-- the user explicitly authorizes both the update and an operator-held exclusive
-  editing window.
+- the user explicitly authorizes the remote verification operation.
 
-The W&B Reports SDK does not expose a compare-and-swap save. The publisher
-therefore requires the exclusive window, checks the server `updated_at`
-revision immediately before saving, appends one content-hashed owned section,
-and reads the Report back. It verifies that the complete historical prefix is
-unchanged and that exactly one matching section body exists. A retry is
-idempotent. Conflicting v1 content is never rewritten.
+The W&B Reports SDK does not expose a compare-and-swap save. Consequently, this
+path no longer attempts an in-place append: exactly one checkpoint must already
+exist, its publisher commit and body hash must reconstruct the visible section,
+and the complete source prefix must survive readback. An absent, duplicated, or
+different checkpoint fails closed for a separately reviewed immutable-version
+workflow. Concurrent append-only edits are preserved because this verifier has
+no save path. A retry is read-only and idempotent.
 
 The local receipt records zero corrected-campaign results and `false` for new
-result media. It must be written outside the repository so a successful update
-does not dirty the source tree.
+result media. It must be written outside the repository so a successful
+verification does not dirty the source tree.
 
 ```bash
 set -a
@@ -57,8 +59,7 @@ python scripts/append_ecocorridor_usefulness_narrative.py \
   --entity wandb \
   --project ecocorridor-scenario-studio \
   --report-url 'https://wandb.ai/wandb/ecocorridor-scenario-studio/reports/…' \
-  --authorize-report-update \
-  --authorize-exclusive-report-update \
+  --authorize-report-verification \
   --output /private/tmp/ecocorridor-usefulness-narrative-receipt.json
 ```
 

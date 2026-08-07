@@ -53,9 +53,9 @@ class _Report:
         self.saved = 0
         self.updated_at = "2026-08-07T12:00:00+00:00"
         self.model_reads = 0
+        self.report_reads = 0
         self.concurrent_on_second_model_read = False
-        self.mutate_prefix_on_save = False
-        self.mutate_body_on_save = False
+        self.concurrent_append_on_second_report_read = False
         type(self).reports[url] = self
 
     @classmethod
@@ -67,20 +67,14 @@ class _Report:
                 report.updated_at = "2026-08-07T12:00:01+00:00"
                 report.blocks.append(_Node(text="concurrent editor block"))
             return SimpleNamespace(updated_at=report.updated_at)
+        report.report_reads += 1
+        if report.concurrent_append_on_second_report_read and report.report_reads == 2:
+            report.blocks.append(_Node(text="concurrent editor block"))
         return report
 
     def save(self) -> _Report:
         self.saved += 1
-        self.updated_at = "2026-08-07T12:00:02+00:00"
-        if self.mutate_prefix_on_save:
-            self.blocks[0] = _Node(text="mutated historical prefix")
-        if self.mutate_body_on_save:
-            for block in self.blocks:
-                if getattr(block, "text", "") == "What is now implemented":
-                    block.text = "mutated body"
-                    block._spec["text"] = "mutated body"
-                    break
-        return self
+        raise AssertionError("verification-only narrative path must never save a W&B Report")
 
 
 class _Reports(SimpleNamespace):
@@ -134,9 +128,7 @@ class _Api:
                 "source_commit": narrative.HISTORICAL_SOURCE_COMMIT,
                 "campaign_wandb_run_id": narrative.HISTORICAL_RUN_ID,
                 "artifact_manifest_sha256": narrative.HISTORICAL_ARTIFACT_MANIFEST_SHA256,
-                "provider_cost_basis_sha256": (
-                    narrative.HISTORICAL_PROVIDER_COST_BASIS_SHA256
-                ),
+                "provider_cost_basis_sha256": (narrative.HISTORICAL_PROVIDER_COST_BASIS_SHA256),
                 "provider_backed": True,
                 "video_rendered": True,
                 "video_logged": True,
@@ -186,23 +178,36 @@ def _historical_blocks() -> list[Any]:
     ]
 
 
+def _published_blocks(reports: _Reports) -> list[Any]:
+    return [
+        *_historical_blocks(),
+        *narrative.build_checkpoint_section(
+            reports,
+            source_commit=narrative.PUBLISHED_CHECKPOINT_SOURCE_COMMIT,
+            ridgeway=_ridgeway(),
+        ),
+    ]
+
+
 def _publisher(
     wandb: _Wandb,
     reports: _Reports,
     *,
     authorized: bool = True,
-) -> narrative.WandbUsefulnessNarrativePublisher:
-    return narrative.WandbUsefulnessNarrativePublisher(
+) -> narrative.WandbUsefulnessNarrativeVerifier:
+    return narrative.WandbUsefulnessNarrativeVerifier(
         entity="wandb",
         project="ecocorridor-scenario-studio",
         api_base_url="https://api.wandb.ai",
         web_base_url="https://wandb.ai",
-        authorize_report_update=authorized,
-        authorize_exclusive_report_update=authorized,
+        authorize_report_verification=authorized,
         wandb_module=wandb,
         reports_module=reports,
         artifact_download_verifier=lambda _path: narrative.HistoricalCampaignReadback(
-            provider_trace_receipts_sha256="d" * 64
+            provider_trace_receipts_sha256="d" * 64,
+            artifact_manifest_sha256=narrative.HISTORICAL_ARTIFACT_MANIFEST_SHA256,
+            downloaded_file_manifest_sha256=(narrative.HISTORICAL_DOWNLOADED_FILE_MANIFEST_SHA256),
+            downloaded_total_bytes=narrative.HISTORICAL_DOWNLOADED_TOTAL_BYTES,
         ),
         historical_section_verifier=lambda _blocks: None,
     )
@@ -243,23 +248,23 @@ def test_narrative_is_explicitly_no_result_and_preserves_bounded_story() -> None
         narrative.build_checkpoint_body(reports, source_commit="main", ridgeway=_ridgeway())
 
 
-def test_first_append_preserves_history_and_exact_retry_is_idempotent() -> None:
+def test_existing_exact_checkpoint_is_verification_only_and_idempotent() -> None:
     reports = _Reports()
     wandb = _Wandb()
-    historical = _historical_blocks()
-    report = _Report(url=REPORT_URL, blocks=list(historical))
-    publisher = _publisher(wandb, reports)
+    published = _published_blocks(reports)
+    report = _Report(url=REPORT_URL, blocks=list(published))
+    verifier = _publisher(wandb, reports)
 
-    first = publisher.append(
+    first = verifier.verify(
         report_url=REPORT_URL, source_commit=SOURCE_COMMIT, ridgeway=_ridgeway()
     )
     first_count = len(report.blocks)
-    second = publisher.append(
+    second = verifier.verify(
         report_url=REPORT_URL, source_commit=SOURCE_COMMIT, ridgeway=_ridgeway()
     )
 
-    assert report.blocks[: len(historical)] == historical
-    assert report.saved == 1
+    assert report.blocks == published
+    assert report.saved == 0
     assert first_count == len(report.blocks)
     assert first.section_marker == second.section_marker
     assert first.section_body_sha256 == second.section_body_sha256
@@ -268,6 +273,10 @@ def test_first_append_preserves_history_and_exact_retry_is_idempotent() -> None:
     assert first.new_wandb_run_created is False
     assert first.new_artifact_created is False
     assert first.new_result_media_logged is False
+    assert (
+        first.historical_downloaded_file_manifest_sha256
+        == narrative.HISTORICAL_DOWNLOADED_FILE_MANIFEST_SHA256
+    )
     assert len(narrative._checkpoint_sections(report.blocks)) == 1
     assert wandb.api.paths == [narrative.HISTORICAL_RUN_PATH] * 2
 
@@ -276,10 +285,10 @@ def test_historical_metric_mismatch_blocks_before_report_save() -> None:
     reports = _Reports()
     wandb = _Wandb()
     wandb.run.summary["review_brief/record_count"] = 41
-    report = _Report(url=REPORT_URL, blocks=_historical_blocks())
+    report = _Report(url=REPORT_URL, blocks=_published_blocks(reports))
 
     with pytest.raises(RuntimeError, match="records"):
-        _publisher(wandb, reports).append(
+        _publisher(wandb, reports).verify(
             report_url=REPORT_URL, source_commit=SOURCE_COMMIT, ridgeway=_ridgeway()
         )
 
@@ -313,40 +322,35 @@ def test_historical_section_requires_exact_marker_and_body(
             ]
         )
     with pytest.raises(PermissionError, match="unmatched historical end marker"):
-        narrative._require_historical_report_section(
-            [_Node(text=narrative.HISTORICAL_SECTION_END)]
-        )
+        narrative._require_historical_report_section([_Node(text=narrative.HISTORICAL_SECTION_END)])
 
 
-@pytest.mark.parametrize("mutation", ["prefix", "body"])
-def test_readback_mutation_fails_closed(monkeypatch: pytest.MonkeyPatch, mutation: str) -> None:
-    monkeypatch.setattr(narrative, "REPORT_READBACK_TIMEOUT_SECONDS", 0.0)
+def test_missing_checkpoint_fails_without_report_save() -> None:
     reports = _Reports()
     wandb = _Wandb()
     report = _Report(url=REPORT_URL, blocks=_historical_blocks())
-    if mutation == "prefix":
-        report.mutate_prefix_on_save = True
-    else:
-        report.mutate_body_on_save = True
 
-    with pytest.raises(RuntimeError, match="append-only narrative readback"):
-        _publisher(wandb, reports).append(
-            report_url=REPORT_URL, source_commit=SOURCE_COMMIT, ridgeway=_ridgeway()
-        )
-
-
-def test_concurrent_report_revision_blocks_before_save() -> None:
-    reports = _Reports()
-    wandb = _Wandb()
-    report = _Report(url=REPORT_URL, blocks=_historical_blocks())
-    report.concurrent_on_second_model_read = True
-
-    with pytest.raises(RuntimeError, match="changed during the exclusive update window"):
-        _publisher(wandb, reports).append(
+    with pytest.raises(RuntimeError, match="in-place publication is disabled"):
+        _publisher(wandb, reports).verify(
             report_url=REPORT_URL, source_commit=SOURCE_COMMIT, ridgeway=_ridgeway()
         )
 
     assert report.saved == 0
+
+
+def test_concurrent_write_after_final_fetch_is_preserved_without_save() -> None:
+    reports = _Reports()
+    wandb = _Wandb()
+    report = _Report(url=REPORT_URL, blocks=_published_blocks(reports))
+    report.concurrent_append_on_second_report_read = True
+
+    receipt = _publisher(wandb, reports).verify(
+        report_url=REPORT_URL, source_commit=SOURCE_COMMIT, ridgeway=_ridgeway()
+    )
+
+    assert report.saved == 0
+    assert getattr(report.blocks[-1], "text", "") == "concurrent editor block"
+    assert receipt.final_block_count == receipt.original_block_count + 1
 
 
 def test_conflicting_v1_checkpoint_fails_without_rewrite() -> None:
@@ -359,8 +363,23 @@ def test_conflicting_v1_checkpoint_fails_without_rewrite() -> None:
     ]
     report = _Report(url=REPORT_URL, blocks=[*_historical_blocks(), *conflicting])
 
-    with pytest.raises(RuntimeError, match="different v1"):
-        _publisher(wandb, reports).append(
+    with pytest.raises(RuntimeError, match="published v1 checkpoint marker is malformed"):
+        _publisher(wandb, reports).verify(
+            report_url=REPORT_URL, source_commit=SOURCE_COMMIT, ridgeway=_ridgeway()
+        )
+
+    assert report.saved == 0
+
+
+def test_existing_checkpoint_body_drift_fails_without_report_save() -> None:
+    reports = _Reports()
+    wandb = _Wandb()
+    blocks = _published_blocks(reports)
+    blocks[-2] = _Node(text="mutated published conclusion")
+    report = _Report(url=REPORT_URL, blocks=blocks)
+
+    with pytest.raises(RuntimeError, match="immutable source"):
+        _publisher(wandb, reports).verify(
             report_url=REPORT_URL, source_commit=SOURCE_COMMIT, ridgeway=_ridgeway()
         )
 
@@ -372,33 +391,21 @@ def test_wrong_destination_and_missing_authorization_are_rejected() -> None:
     wandb = _Wandb()
     with pytest.raises(PermissionError, match="explicit authorization"):
         _publisher(wandb, reports, authorized=False)
-    with pytest.raises(PermissionError, match="exclusive window"):
-        narrative.WandbUsefulnessNarrativePublisher(
-            entity="wandb",
-            project="ecocorridor-scenario-studio",
-            api_base_url="https://api.wandb.ai",
-            web_base_url="https://wandb.ai",
-            authorize_report_update=True,
-            authorize_exclusive_report_update=False,
-            wandb_module=wandb,
-            reports_module=reports,
-        )
 
-    report = _Report(url=REPORT_URL, blocks=_historical_blocks())
+    report = _Report(url=REPORT_URL, blocks=_published_blocks(reports))
     report.project = "different-project"
     with pytest.raises(PermissionError, match="Report identity"):
-        _publisher(wandb, reports).append(
+        _publisher(wandb, reports).verify(
             report_url=REPORT_URL, source_commit=SOURCE_COMMIT, ridgeway=_ridgeway()
         )
 
     with pytest.raises(PermissionError, match="existing article project"):
-        narrative.WandbUsefulnessNarrativePublisher(
+        narrative.WandbUsefulnessNarrativeVerifier(
             entity="wandb",
             project="different-project",
             api_base_url="https://api.wandb.ai",
             web_base_url="https://wandb.ai",
-            authorize_report_update=True,
-            authorize_exclusive_report_update=True,
+            authorize_report_verification=True,
             wandb_module=wandb,
             reports_module=reports,
         )
@@ -407,8 +414,8 @@ def test_wrong_destination_and_missing_authorization_are_rejected() -> None:
 def test_receipt_exact_local_readback(tmp_path: Path) -> None:
     reports = _Reports()
     wandb = _Wandb()
-    _Report(url=REPORT_URL, blocks=_historical_blocks())
-    receipt = _publisher(wandb, reports).append(
+    _Report(url=REPORT_URL, blocks=_published_blocks(reports))
+    receipt = _publisher(wandb, reports).verify(
         report_url=REPORT_URL,
         source_commit=SOURCE_COMMIT,
         ridgeway=_ridgeway(),
@@ -513,17 +520,22 @@ def test_historical_artifact_requires_all_verified_trace_receipts(
 
     campaign = _Campaign()
     campaign_bytes = (
-        json.dumps(campaign.model_dump(mode="json"), indent=2, sort_keys=True).encode()
-        + b"\n"
+        json.dumps(campaign.model_dump(mode="json"), indent=2, sort_keys=True).encode() + b"\n"
     )
     dataset_bytes = (
         json.dumps(campaign.dataset.model_dump(mode="json"), indent=2, sort_keys=True).encode()
         + b"\n"
     )
-    for name in narrative.HISTORICAL_ARTIFACT_FILES:
-        path = tmp_path / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(b"")
+    monkeypatch.setattr(
+        narrative,
+        "_verify_downloaded_file_manifest",
+        lambda _directory: (
+            narrative.HISTORICAL_DOWNLOADED_FILE_MANIFEST_SHA256,
+            narrative.HISTORICAL_DOWNLOADED_TOTAL_BYTES,
+            narrative.HISTORICAL_ARTIFACT_MANIFEST_SHA256,
+        ),
+    )
+    tmp_path.mkdir(parents=True, exist_ok=True)
     (tmp_path / "review-brief-campaign.json").write_bytes(campaign_bytes)
     (tmp_path / "review-brief-dataset.json").write_bytes(dataset_bytes)
     monkeypatch.setattr(
@@ -547,16 +559,115 @@ def test_historical_artifact_requires_all_verified_trace_receipts(
         narrative.verify_downloaded_historical_artifact(tmp_path)
 
 
+def _write_synthetic_historical_file_manifest(
+    root: Path,
+) -> tuple[list[tuple[str, str, int]], str, int, str]:
+    identities: list[tuple[str, str, int]] = []
+    rows: list[dict[str, str | int]] = []
+    for index, (logical_name, _sha256, _byte_count) in enumerate(
+        narrative.HISTORICAL_ARTIFACT_FILE_IDENTITIES
+    ):
+        payload = f"retained-file-{index}:{logical_name}\n".encode()
+        path = root / logical_name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(payload)
+        sha256 = hashlib.sha256(payload).hexdigest()
+        identities.append((logical_name, sha256, len(payload)))
+        rows.append({"logical_name": logical_name, "sha256": sha256, "bytes": len(payload)})
+    downloaded_manifest_sha256 = narrative.canonical_sha256(rows)
+    artifact_manifest_sha256 = narrative.canonical_sha256(
+        [
+            {
+                **row,
+                "media_type": narrative._historical_artifact_media_type(str(row["logical_name"])),
+            }
+            for row in rows
+        ]
+    )
+    return (
+        identities,
+        downloaded_manifest_sha256,
+        sum(int(row["bytes"]) for row in rows),
+        artifact_manifest_sha256,
+    )
+
+
+def test_pinned_historical_download_manifest_is_complete_and_self_consistent() -> None:
+    rows = [
+        {"logical_name": logical_name, "sha256": sha256, "bytes": byte_count}
+        for logical_name, sha256, byte_count in (narrative.HISTORICAL_ARTIFACT_FILE_IDENTITIES)
+    ]
+
+    assert len(rows) == 19
+    assert {str(row["logical_name"]) for row in rows} == narrative.HISTORICAL_ARTIFACT_FILES
+    assert all(int(row["bytes"]) > 0 for row in rows)
+    assert narrative.canonical_sha256(rows) == narrative.HISTORICAL_DOWNLOADED_FILE_MANIFEST_SHA256
+    assert sum(int(row["bytes"]) for row in rows) == (narrative.HISTORICAL_DOWNLOADED_TOTAL_BYTES)
+    assert (
+        narrative.canonical_sha256(
+            [
+                {
+                    **row,
+                    "media_type": narrative._historical_artifact_media_type(
+                        str(row["logical_name"])
+                    ),
+                }
+                for row in rows
+            ]
+        )
+        == narrative.HISTORICAL_ARTIFACT_MANIFEST_SHA256
+    )
+
+
+@pytest.mark.parametrize("replacement", [b"corrupted retained bytes", b""])
+def test_corrupted_or_empty_non_campaign_retained_file_fails_closed(
+    tmp_path: Path,
+    replacement: bytes,
+) -> None:
+    (
+        identities,
+        manifest_sha256,
+        total_bytes,
+        artifact_manifest_sha256,
+    ) = _write_synthetic_historical_file_manifest(tmp_path)
+    assert narrative._verify_downloaded_file_manifest(
+        tmp_path,
+        expected_file_identities=identities,
+        expected_manifest_sha256=manifest_sha256,
+        expected_total_bytes=total_bytes,
+        expected_artifact_manifest_sha256=artifact_manifest_sha256,
+    ) == (manifest_sha256, total_bytes, artifact_manifest_sha256)
+
+    target_name = "animation/01-question.png"
+    assert target_name not in {"review-brief-campaign.json", "review-brief-dataset.json"}
+    (tmp_path / target_name).write_bytes(replacement)
+
+    with pytest.raises(ValueError, match=rf"retained file bytes differ: {target_name}"):
+        narrative._verify_downloaded_file_manifest(
+            tmp_path,
+            expected_file_identities=identities,
+            expected_manifest_sha256=manifest_sha256,
+            expected_total_bytes=total_bytes,
+            expected_artifact_manifest_sha256=artifact_manifest_sha256,
+        )
+
+
 class _SourceVerifier:
-    def __init__(self, *, error: Exception | None = None) -> None:
+    def __init__(self, *, error: Exception | None = None, receipt: Any | None = None) -> None:
         self.error = error
+        self.receipt = receipt
         self.calls: list[dict[str, Any]] = []
 
     def verify(self, **kwargs: Any) -> Any:
         self.calls.append(kwargs)
         if self.error is not None:
             raise self.error
-        return SimpleNamespace(source_commit=kwargs["source_commit"])
+        return self.receipt or cli.PushedSourceReceipt.create(
+            source_repository=kwargs["source_repository"],
+            source_commit=kwargs["source_commit"],
+            upstream_ref=cli.EXPECTED_UPSTREAM_REF,
+            upstream_commit=kwargs["source_commit"],
+        )
 
 
 def test_source_gate_requires_authoritative_remote_and_checkpoint(
@@ -578,6 +689,83 @@ def test_source_gate_requires_authoritative_remote_and_checkpoint(
     assert verifier.calls[0]["source_repository"] == cli.SOURCE_REPOSITORY_URL
 
 
+@pytest.mark.parametrize(
+    ("receipt", "message"),
+    (
+        (
+            cli.PushedSourceReceipt.create(
+                source_repository="https://github.com/another/repository",
+                source_commit=SOURCE_COMMIT,
+                upstream_ref=cli.EXPECTED_UPSTREAM_REF,
+                upstream_commit=SOURCE_COMMIT,
+            ),
+            "another repository",
+        ),
+        (
+            cli.PushedSourceReceipt.create(
+                source_repository=cli.SOURCE_REPOSITORY_URL,
+                source_commit="b" * 40,
+                upstream_ref=cli.EXPECTED_UPSTREAM_REF,
+                upstream_commit="b" * 40,
+            ),
+            "another commit",
+        ),
+        (
+            cli.PushedSourceReceipt.create(
+                source_repository=cli.SOURCE_REPOSITORY_URL,
+                source_commit=SOURCE_COMMIT,
+                upstream_ref="refs/heads/codex/wrong-upstream",
+                upstream_commit=SOURCE_COMMIT,
+            ),
+            "wrong Eco upstream branch",
+        ),
+    ),
+)
+def test_source_gate_rejects_wrong_pushed_receipt_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    receipt: Any,
+    message: str,
+) -> None:
+    values = {
+        ("rev-parse", "HEAD"): SOURCE_COMMIT,
+        ("branch", "--show-current"): cli.EXPECTED_BRANCH,
+    }
+    monkeypatch.setattr(cli, "_git", lambda _root, *arguments: values[arguments])
+    with pytest.raises(PermissionError, match=message):
+        cli.require_publishable_source(
+            ROOT,
+            source_verifier=_SourceVerifier(receipt=receipt),
+        )
+
+
+def test_source_gate_rejects_invalid_verifier_receipt_and_branch_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    valid = cli.PushedSourceReceipt.create(
+        source_repository=cli.SOURCE_REPOSITORY_URL,
+        source_commit=SOURCE_COMMIT,
+        upstream_ref=cli.EXPECTED_UPSTREAM_REF,
+        upstream_commit=SOURCE_COMMIT,
+    ).model_dump(mode="json")
+    valid["verifier"] = "LOCAL_ONLY"
+    values = {
+        ("rev-parse", "HEAD"): SOURCE_COMMIT,
+        ("branch", "--show-current"): cli.EXPECTED_BRANCH,
+    }
+    monkeypatch.setattr(cli, "_git", lambda _root, *arguments: values[arguments])
+    with pytest.raises(PermissionError, match="invalid receipt"):
+        cli.require_publishable_source(
+            ROOT,
+            source_verifier=_SourceVerifier(receipt=valid),
+        )
+    with pytest.raises(PermissionError, match="cannot be overridden"):
+        cli.require_publishable_source(
+            ROOT,
+            branch="codex/other",
+            source_verifier=_SourceVerifier(),
+        )
+
+
 def test_source_gate_rejects_remote_drift(monkeypatch: pytest.MonkeyPatch) -> None:
     values = {
         ("rev-parse", "HEAD"): SOURCE_COMMIT,
@@ -589,6 +777,8 @@ def test_source_gate_rejects_remote_drift(monkeypatch: pytest.MonkeyPatch) -> No
         cli.require_publishable_source(
             ROOT,
             source_verifier=_SourceVerifier(
-                error=PermissionError("package source commit is not the current pushed upstream HEAD")
+                error=PermissionError(
+                    "package source commit is not the current pushed upstream HEAD"
+                )
             ),
         )
