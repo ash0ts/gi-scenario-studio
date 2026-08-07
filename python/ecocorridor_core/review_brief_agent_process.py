@@ -91,10 +91,14 @@ class _EvidenceQuery(ContractModel):
 
     @model_validator(mode="after")
     def validate_aliases(self) -> _EvidenceQuery:
-        if len(self.evidence_aliases) != len(set(self.evidence_aliases)) or any(
-            not re.fullmatch(r"E[1-9][0-9]{0,3}", value) for value in self.evidence_aliases
-        ):
-            raise ValueError("evidence query must contain unique opaque aliases")
+        if any(not re.fullmatch(r"E[1-9][0-9]{0,3}", value) for value in self.evidence_aliases):
+            raise ValueError("evidence query must contain opaque aliases")
+        # A finding can share evidence with another discovered branch. Models may
+        # therefore repeat an already-authorized alias when assembling this one
+        # bounded resolver call. Keep the raw Pydantic max-length gate above, then
+        # collapse repeats in first-seen order so the closed payload contains each
+        # authorized evidence node exactly once.
+        object.__setattr__(self, "evidence_aliases", list(dict.fromkeys(self.evidence_aliases)))
         return self
 
 
@@ -627,9 +631,7 @@ class _ReceiptWeaveTracingProcessor:
             call = self._delegate._span_calls.get(span.span_id)
             call_id = str(getattr(call, "id", "") or "") if call is not None else ""
             if not call_id:
-                raise ReviewBriefAgentRuntimeError(
-                    "REVIEW_BRIEF_AGENT_WEAVE_GENERATION_MISSING"
-                )
+                raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_WEAVE_GENERATION_MISSING")
             self.generation_calls.append((str(span.span_id), call_id))
 
     def on_span_end(self, span: Any) -> None:
@@ -820,9 +822,7 @@ def _readback_generation_calls(
         or len(call_ids) != len(set(call_ids))
         or len(span_ids) != len(set(span_ids))
     ):
-        raise ReviewBriefAgentRuntimeError(
-            "REVIEW_BRIEF_AGENT_WEAVE_GENERATION_COUNT_INVALID"
-        )
+        raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_WEAVE_GENERATION_COUNT_INVALID")
     if not calls:
         return ()
     root_trace_id = str(_value(root_record, "trace_id", "") or "")
@@ -847,9 +847,7 @@ def _readback_generation_calls(
             or _value(record, "exception") not in (None, "")
             or _value(output, "error") not in (None, "")
         ):
-            raise ReviewBriefAgentRuntimeError(
-                "REVIEW_BRIEF_AGENT_WEAVE_GENERATION_INVALID"
-            )
+            raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_WEAVE_GENERATION_INVALID")
     return tuple(call_ids)
 
 
@@ -952,18 +950,14 @@ def _usage(
         and provider_data.get("response_id")
     }
     if len(provider_data_ids) > 1:
-        raise ReviewBriefAgentRuntimeError(
-            "REVIEW_BRIEF_AGENT_PROVIDER_RESPONSE_ID_CONFLICT"
-        )
+        raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_PROVIDER_RESPONSE_ID_CONFLICT")
     provider_data_response_id = next(iter(provider_data_ids), "")
     if (
         direct_response_id
         and provider_data_response_id
         and direct_response_id != provider_data_response_id
     ):
-        raise ReviewBriefAgentRuntimeError(
-            "REVIEW_BRIEF_AGENT_PROVIDER_RESPONSE_ID_CONFLICT"
-        )
+        raise ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_PROVIDER_RESPONSE_ID_CONFLICT")
     response_id = direct_response_id or provider_data_response_id
     if response_id:
         return input_tokens, output_tokens, response_id, "PROVIDER_RESPONSE_ID"

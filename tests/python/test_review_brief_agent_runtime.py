@@ -39,6 +39,7 @@ from ecocorridor_core.review_brief_agent_process import (
     _associated_wandb_run,
     _build_tools,
     _evidence_payload,
+    _EvidenceQuery,
     _execute,
     _finding_payload,
     _get_trace_call_with_retry,
@@ -702,6 +703,81 @@ def test_per_tool_revalidation_rejects_identity_alias_and_generic_arguments() ->
         changed_context.revalidate(tool_name="review_brief_get_scope", raw_arguments="{}")
 
 
+def test_evidence_resolver_deduplicates_repeated_authorized_aliases_and_stays_complete() -> None:
+    snapshot = _snapshot(evidence_aliases=["E1", "E2"])
+    child = _child().model_copy(
+        update={
+            "binding": _binding(snapshot),
+            "runner_request": ReviewBriefRunnerRequest(snapshot=snapshot).model_dump(mode="json"),
+        }
+    )
+    context = _InvocationContext(
+        request=ReviewBriefRunnerRequest.model_validate(child.runner_request), child=child
+    )
+    context.revalidate(tool_name="review_brief_get_scope", raw_arguments="{}")
+    context.revalidate(tool_name="review_brief_list_findings", raw_arguments="{}")
+    context.revalidate(
+        tool_name="review_brief_get_findings",
+        raw_arguments=json.dumps({"finding_aliases": ["F1"]}),
+    )
+    context.revalidate(tool_name="review_brief_list_model_fitness_gaps", raw_arguments="{}")
+    context.revalidate(
+        tool_name="review_brief_resolve_evidence_aliases",
+        raw_arguments=json.dumps({"evidence_aliases": ["E2", "E1", "E2", "E1"]}),
+    )
+
+    query = _EvidenceQuery(evidence_aliases=["E2", "E1", "E2", "E1"])
+    assert query.evidence_aliases == ["E2", "E1"]
+    assert [
+        item["evidence_alias"]
+        for item in _evidence_payload(snapshot, query.evidence_aliases)["evidence"]
+    ] == ["E2", "E1"]
+    assert context.resolved_evidence_aliases == {"E1", "E2"}
+    context.validate_selection(
+        _AgentSelectionOutput(
+            snapshot_sha256=snapshot.snapshot_sha256,
+            selections=[
+                ReviewBriefFindingSelection(
+                    finding_alias="F1",
+                    action_kind="INSPECT_EVIDENCE",
+                    reviewer_disciplines=["ECOLOGY"],
+                )
+            ],
+        )
+    )
+
+
+def test_evidence_resolver_repeats_do_not_weaken_bounds_format_or_authorization() -> None:
+    with pytest.raises(ValueError, match="at most 64"):
+        _EvidenceQuery(evidence_aliases=["E1"] * 65)
+    with pytest.raises(ValueError, match="opaque aliases"):
+        _EvidenceQuery(evidence_aliases=["E1", "project-1", "E1"])
+
+    child = _child()
+    context = _InvocationContext(
+        request=ReviewBriefRunnerRequest.model_validate(child.runner_request), child=child
+    )
+    context.revalidate(tool_name="review_brief_get_scope", raw_arguments="{}")
+    context.revalidate(tool_name="review_brief_list_findings", raw_arguments="{}")
+    context.revalidate(
+        tool_name="review_brief_get_findings",
+        raw_arguments=json.dumps({"finding_aliases": ["F1"]}),
+    )
+    context.revalidate(tool_name="review_brief_list_model_fitness_gaps", raw_arguments="{}")
+    with pytest.raises(ReviewBriefAgentRuntimeError, match="TOOL_ALIAS_NOT_AUTHORIZED"):
+        context.revalidate(
+            tool_name="review_brief_resolve_evidence_aliases",
+            raw_arguments=json.dumps({"evidence_aliases": ["E1", "E9", "E1"]}),
+        )
+    assert context.resolved_evidence_aliases == set()
+    assert context.tool_calls == [
+        "review_brief_get_scope",
+        "review_brief_list_findings",
+        "review_brief_get_findings",
+        "review_brief_list_model_fitness_gaps",
+    ]
+
+
 def test_every_tool_call_rejects_an_expired_authorization_lease() -> None:
     child = _child()
     object.__setattr__(
@@ -1129,8 +1205,7 @@ def test_generation_identity_requires_exact_read_back_span() -> None:
             "type": "generation",
         },
         op_name=(
-            "weave:///wandb/ecocorridor-scenario-studio/op/"
-            "openai_agent_generation:" + "b" * 64
+            "weave:///wandb/ecocorridor-scenario-studio/op/openai_agent_generation:" + "b" * 64
         ),
         ended_at="done",
         exception=None,

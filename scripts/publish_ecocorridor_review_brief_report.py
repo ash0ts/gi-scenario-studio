@@ -18,6 +18,7 @@ import os
 import re
 import subprocess
 import tempfile
+import time
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
@@ -46,6 +47,9 @@ from ecocorridor_core.review_brief_evaluation import (
 SECTION_START_PREFIX = f"<!-- ecocorridor-owned-section:{REPORT_SECTION_ID}:start"
 SECTION_END = f"<!-- ecocorridor-owned-section:{REPORT_SECTION_ID}:end -->"
 MAX_CAMPAIGN_BYTES = 32 * 1024 * 1024
+NO_MEDIA_MANIFEST_SHA256 = canonical_sha256({"media_manifest": "NOT_RENDERED"})
+REPORT_READBACK_TIMEOUT_SECONDS = 8.0
+REPORT_READBACK_INTERVAL_SECONDS = 0.4
 
 
 def _safe_https_url(value: object, *, label: str) -> str:
@@ -232,12 +236,13 @@ def _block_text(block: Any) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def _owned_section_markers(blocks: Sequence[Any]) -> list[str]:
-    """Validate marker balance and return every complete owned-section marker."""
+def _owned_report_sections(blocks: Sequence[Any]) -> list[tuple[str, list[Any]]]:
+    """Return balanced owned markers and their exact bounded block bodies."""
 
-    markers: list[str] = []
+    sections: list[tuple[str, list[Any]]] = []
     inside = False
     current = ""
+    body: list[Any] = []
     for block in blocks:
         text = _block_text(block)
         if text is not None and text.startswith(SECTION_START_PREFIX):
@@ -245,16 +250,83 @@ def _owned_section_markers(blocks: Sequence[Any]) -> list[str]:
                 raise ValueError("W&B Report has nested Review Brief section markers")
             inside = True
             current = text
+            body = []
             continue
         if text == SECTION_END:
             if not inside:
                 raise ValueError("W&B Report has an unmatched Review Brief end marker")
             inside = False
-            markers.append(current)
+            sections.append((current, body))
             current = ""
+            body = []
+            continue
+        if inside:
+            body.append(block)
     if inside:
         raise ValueError("W&B Report has an unterminated Review Brief section")
-    return markers
+    return sections
+
+
+def _owned_section_markers(blocks: Sequence[Any]) -> list[str]:
+    """Validate marker balance and return every complete owned-section marker."""
+
+    return [marker for marker, _body in _owned_report_sections(blocks)]
+
+
+def _report_value(value: Any) -> Any:
+    """Normalize public Reports SDK state into a stable JSON-compatible value."""
+
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, Mapping):
+        return {str(key): _report_value(nested) for key, nested in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_report_value(nested) for nested in value]
+    spec = getattr(value, "_spec", None)
+    if isinstance(spec, Mapping):
+        return _report_value(spec)
+    public = getattr(value, "__dict__", None)
+    if isinstance(public, Mapping):
+        return {
+            str(key): _report_value(nested)
+            for key, nested in public.items()
+            if not str(key).startswith("_")
+        }
+    raise TypeError("W&B Report block contains unsupported state")
+
+
+def _report_block_representation(block: Any) -> dict[str, Any]:
+    spec = getattr(block, "_spec", None)
+    if isinstance(spec, Mapping):
+        value = _report_value(spec)
+    else:
+        value = _report_value(block)
+    return {"block_type": type(block).__name__, "value": value}
+
+
+def _report_section_body_sha256(body: Sequence[Any]) -> str:
+    return canonical_sha256([_report_block_representation(block) for block in body])
+
+
+def _report_media_manifest_sha256(plan: Mapping[str, Any]) -> str:
+    if not bool(plan["video_rendered"]):
+        return NO_MEDIA_MANIFEST_SHA256
+    digest = str(plan["validated_media"]["media_manifest_sha256"])
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise ValueError("review-brief Report media manifest digest is invalid")
+    return digest
+
+
+def _report_section_marker(plan: Mapping[str, Any], *, body_sha256: str) -> str:
+    """Return the exact append-only marker bound to all publication bytes."""
+
+    if not re.fullmatch(r"[0-9a-f]{64}", body_sha256):
+        raise ValueError("review-brief Report body digest is invalid")
+    return (
+        f"{SECTION_START_PREFIX} campaign={plan['campaign_sha256']} "
+        f"plan={plan['plan_sha256']} media={_report_media_manifest_sha256(plan)} "
+        f"body={body_sha256} -->"
+    )
 
 
 def append_owned_report_section(existing: Sequence[Any], owned: Sequence[Any]) -> list[Any]:
@@ -285,9 +357,6 @@ def build_report_section_blocks(
     entity: str,
     project: str,
 ) -> list[Any]:
-    marker = (
-        f"{SECTION_START_PREFIX} campaign={plan['campaign_sha256']} plan={plan['plan_sha256']} -->"
-    )
     runset = reports.Runset(
         entity=entity,
         project=project,
@@ -314,7 +383,11 @@ def build_report_section_blocks(
                     "accessible transcript passed deterministic frame, responsive layout, "
                     "reduced-motion, H.264 High/yuv420p/TV-range, exact frame-count, and "
                     "no-audio validation. Every media byte is bound to this campaign, story, "
-                    f"and claim ledger by manifest `{plan['validated_media']['media_manifest_sha256']}`."
+                    f"and claim ledger by manifest `{plan['validated_media']['media_manifest_sha256']}`. "
+                    "The exact FFmpeg quality-92 JPEG input sequence is hashed and independently "
+                    "reproduced; MP4 validation is decode-integrity only; the runtime hash covers "
+                    "executable files only, not dynamic dependency closure. "
+                    f"{plan['report_copy']['media_authority']}"
                 )
             ),
             reports.PanelGrid(
@@ -343,12 +416,11 @@ def build_report_section_blocks(
                     "The artifact contains a claim-ledger-bound silent-first animation story "
                     "contract and transcript. **No video was rendered or logged.** Rendering "
                     "remains a separate gate so motion cannot imply results absent from this "
-                    "campaign."
+                    f"campaign. {plan['report_copy']['media_authority']}"
                 )
             )
         ]
-    return [
-        reports.MarkdownBlock(text=marker),
+    body = [
         reports.H1("Review Brief agent evaluation"),
         reports.CalloutBlock(text=plan["report_copy"]["boundary"]),
         reports.H2("What was tested"),
@@ -399,7 +471,7 @@ def build_report_section_blocks(
                 reports.LinePlot(
                     title="Cases passed by fixed method order",
                     x="review_brief/method_index",
-                    y="review_brief/cases_passed",
+                    y=["review_brief/cases_passed"],
                     title_x="0 deterministic · 1 single-shot · 2 native agent",
                     title_y="Deterministic cases passed",
                 ),
@@ -437,11 +509,58 @@ def build_report_section_blocks(
             text=(
                 f"[Open the exact W&B run]({receipt.run_url}) · immutable campaign artifact "
                 f"`{receipt.artifact_ref}` · artifact manifest "
-                f"`{receipt.artifact_manifest_sha256}`\n\n{plan['report_copy']['limitations']}"
+                f"`{receipt.artifact_manifest_sha256}`\n\n"
+                f"{plan['report_copy']['media_authority']}\n\n"
+                f"{plan['report_copy']['limitations']}"
             )
         ),
+    ]
+    marker = _report_section_marker(plan, body_sha256=_report_section_body_sha256(body))
+    return [
+        reports.MarkdownBlock(text=marker),
+        *body,
         reports.MarkdownBlock(text=SECTION_END),
     ]
+
+
+def _readback_exact_owned_report_section(
+    *,
+    reports: Any,
+    report_url: str,
+    entity: str,
+    project: str,
+    expected_marker: str,
+    expected_body_sha256: str,
+) -> Any:
+    """Read until one exact bounded section is visible or the finite deadline expires."""
+
+    deadline = time.monotonic() + REPORT_READBACK_TIMEOUT_SECONDS
+    while True:
+        verified = False
+        try:
+            report = reports.Report.from_url(report_url)
+            if (
+                str(getattr(report, "entity", "")) != entity
+                or str(getattr(report, "project", "")) != project
+            ):
+                raise PermissionError("read-back W&B Report belongs to another entity or project")
+            sections = _owned_report_sections(list(report.blocks))
+            matches = [body for marker, body in sections if marker == expected_marker]
+            verified = bool(
+                len(matches) == 1
+                and _report_section_body_sha256(matches[0]) == expected_body_sha256
+            )
+        except PermissionError:
+            raise
+        except Exception:  # noqa: BLE001 - finite retry hides remote response content
+            # Reports can be briefly stale after save. Do not surface remote
+            # response content, and never turn timeout into a successful receipt.
+            verified = False
+        if verified:
+            return report
+        if time.monotonic() >= deadline:
+            raise RuntimeError("W&B Report failed exact bounded-section readback")
+        time.sleep(REPORT_READBACK_INTERVAL_SECONDS)
 
 
 class WandbSdkReviewBriefAdapter:
@@ -751,13 +870,31 @@ class WandbSdkReviewBriefAdapter:
                 entity=self.entity,
                 project=self.project,
             )
+            owned_sections = _owned_report_sections(owned)
+            if len(owned_sections) != 1:
+                raise RuntimeError("publisher did not build one bounded Report section")
+            expected_marker, expected_body = owned_sections[0]
+            expected_body_sha256 = _report_section_body_sha256(expected_body)
             report.blocks = append_owned_report_section(list(report.blocks), owned)
             report.save()
-        return _require_web_origin(
-            getattr(report, "url", ""),
-            web_base_url=self.web_base_url,
-            label="updated W&B Report URL",
-        )
+            updated_url = _require_web_origin(
+                getattr(report, "url", ""),
+                web_base_url=self.web_base_url,
+                label="updated W&B Report URL",
+            )
+            # A successful save is not evidence that the article contains the
+            # intended section. Re-fetch through the Reports API with a bounded
+            # eventual-consistency retry and fail closed unless one exact marker
+            # and the complete bounded block body survive the round trip.
+            _readback_exact_owned_report_section(
+                reports=self.reports,
+                report_url=updated_url,
+                entity=self.entity,
+                project=self.project,
+                expected_marker=expected_marker,
+                expected_body_sha256=expected_body_sha256,
+            )
+        return updated_url
 
 
 def _write_json(path: Path, value: Mapping[str, Any]) -> None:

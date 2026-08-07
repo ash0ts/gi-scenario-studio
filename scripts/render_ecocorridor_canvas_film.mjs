@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url';
 
 const htmlPath = resolve(process.argv[2] ?? 'film.html');
 const outputDir = resolve(process.argv[3] ?? dirname(htmlPath));
+const stillsOnly = process.env.ECOCORRIDOR_STILLS_ONLY === '1';
 
 function onPath(name) {
   const result = spawnSync('/usr/bin/which', [name], { encoding: 'utf8' });
@@ -217,22 +218,26 @@ try {
   await makeContactSheet(spec);
   process.stdout.write('created contact-sheet.png\n');
 
-  const totalFrames = Math.round(spec.duration * spec.fps);
-  for (let frame = 0; frame < totalFrames; frame += 1) {
-    const target = join(frameDir, `frame-${String(frame).padStart(6, '0')}.jpg`);
-    await capture(devtools, spec, frame / spec.fps, target, 'jpeg');
-    if ((frame + 1) % Math.max(spec.fps * 5, 1) === 0 || frame + 1 === totalFrames) {
-      process.stdout.write(`rendered ${frame + 1}/${totalFrames} frames\n`);
+  if (stillsOnly) {
+    process.stdout.write('stills-only mode: video frames delegated to the contracted auditor\n');
+  } else {
+    const totalFrames = Math.round(spec.duration * spec.fps);
+    for (let frame = 0; frame < totalFrames; frame += 1) {
+      const target = join(frameDir, `frame-${String(frame).padStart(6, '0')}.jpg`);
+      await capture(devtools, spec, frame / spec.fps, target, 'jpeg');
+      if ((frame + 1) % Math.max(spec.fps * 5, 1) === 0 || frame + 1 === totalFrames) {
+        process.stdout.write(`rendered ${frame + 1}/${totalFrames} frames\n`);
+      }
     }
+    await run(FFMPEG, [
+      '-y', '-framerate', String(spec.fps), '-i', join(frameDir, 'frame-%06d.jpg'),
+      '-vf', 'scale=in_range=pc:out_range=tv,format=yuv420p',
+      '-c:v', 'libx264', '-profile:v', 'high', '-preset', 'medium', '-crf', '18',
+      '-pix_fmt', 'yuv420p', '-color_range', 'tv', '-an', '-movflags', '+faststart',
+      join(outputDir, `${spec.slug}.mp4`)
+    ]);
+    process.stdout.write(`encoded ${spec.slug}.mp4\n`);
   }
-  await run(FFMPEG, [
-    '-y', '-framerate', String(spec.fps), '-i', join(frameDir, 'frame-%06d.jpg'),
-    '-vf', 'scale=in_range=pc:out_range=tv,format=yuv420p',
-    '-c:v', 'libx264', '-profile:v', 'high', '-preset', 'medium', '-crf', '18',
-    '-pix_fmt', 'yuv420p', '-color_range', 'tv', '-an', '-movflags', '+faststart',
-    join(outputDir, `${spec.slug}.mp4`)
-  ]);
-  process.stdout.write(`encoded ${spec.slug}.mp4\n`);
 } finally {
   devtools?.close();
   if (chrome.exitCode === null) {

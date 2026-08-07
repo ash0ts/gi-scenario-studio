@@ -46,6 +46,11 @@ CAMPAIGN_SCHEMA = "ecocorridor-review-brief-campaign/v1"
 STORY_SCHEMA = "ecocorridor-review-brief-animation-story/v1"
 PUBLICATION_SCHEMA = "ecocorridor-review-brief-publication/v1"
 REPORT_SECTION_ID = "review-brief-agent-evaluation/v1"
+REPORT_MEDIA_AUTHORITY_COPY = (
+    "W&B video and image panels are presentation copies for reviewing the result. "
+    "The immutable versioned evidence artifact, its file manifest, and their SHA-256 "
+    "digests remain the byte authority."
+)
 
 METHOD_IDS = (
     "deterministic_exhaustive",
@@ -555,6 +560,16 @@ class ProviderExecutionEvidence(ContractModel):
                 or parsed.fragment
             ):
                 raise ValueError("provider trace URL must be credential-free HTTPS")
+            parts = [part for part in parsed.path.split("/") if part]
+            terminal = parts[-1] if parts else ""
+            call_permalink = len(parts) >= 4 and parts[-4:-1] == ["weave", "r", "call"]
+            trace_view = len(parts) >= 3 and parts[-3:-1] == ["weave", "traces"]
+            if call_permalink and terminal != self.weave_call_id:
+                raise ValueError("provider trace URL differs from its exact Weave root call")
+            if trace_view and terminal not in {self.weave_call_id, self.weave_trace_id}:
+                raise ValueError(
+                    "provider trace URL differs from its exact Weave root call or trace ID"
+                )
         return self
 
 
@@ -2154,6 +2169,24 @@ def run_review_brief_campaign(
     )
 
 
+def _validate_provider_trace_identity_uniqueness(
+    records: Sequence[ReviewBriefCaseRecord],
+) -> None:
+    """Reject campaigns that reuse one cloud trace as evidence for multiple rows."""
+
+    providers = [
+        record.execution.provider_execution
+        for record in records
+        if record.execution.provider_execution is not None
+    ]
+    root_call_ids = [str(provider.weave_call_id or "") for provider in providers]
+    trace_ids = [str(provider.weave_trace_id or "") for provider in providers]
+    if any(not value for value in root_call_ids) or len(root_call_ids) != len(set(root_call_ids)):
+        raise ValueError("review-brief campaign reuses a provider Weave root call")
+    if any(not value for value in trace_ids) or len(trace_ids) != len(set(trace_ids)):
+        raise ValueError("review-brief campaign reuses a provider Weave trace")
+
+
 def verify_review_brief_campaign(
     campaign: ReviewBriefCampaignArtifact | Mapping[str, Any],
 ) -> ReviewBriefCampaignArtifact:
@@ -2168,6 +2201,7 @@ def verify_review_brief_campaign(
     observed_keys = {(item.method_id, item.case_id) for item in parsed.records}
     if observed_keys != expected_keys or len(parsed.records) != len(expected_keys):
         raise ValueError("review-brief campaign record matrix is incomplete")
+    _validate_provider_trace_identity_uniqueness(parsed.records)
     cases = {item.case_id: item for item in parsed.dataset.cases}
     declarations = {item.method_id: item for item in parsed.methods}
     for record in parsed.records:
@@ -2968,6 +3002,7 @@ def build_review_brief_publication_plan(
                 "Ridgeway decision lessons, cite exact evidence, and refuse unsafe or untraceable "
                 "requests before such an assistant is used around professional project data."
             ),
+            "media_authority": (REPORT_MEDIA_AUTHORITY_COPY),
             "limitations": (
                 "One synthetic campaign is not a model ranking or practitioner acceptance result. "
                 "It establishes no animal movement, crossing use, collision reduction, population "
@@ -2993,6 +3028,12 @@ def validate_review_brief_publication_plan(plan: Mapping[str, Any]) -> None:
         raise ValueError("review-brief publication cannot target another report section")
     if plan.get("provider_backed") is not True:
         raise PermissionError("review-brief publication requires provider-backed evidence")
+    report_copy = plan.get("report_copy")
+    if (
+        not isinstance(report_copy, Mapping)
+        or report_copy.get("media_authority") != REPORT_MEDIA_AUTHORITY_COPY
+    ):
+        raise ValueError("review-brief publication must preserve the media byte-authority notice")
     ReviewBriefProviderCostBasis.model_validate(plan.get("provider_cost_basis"))
     video_rendered = plan.get("video_rendered")
     if not isinstance(video_rendered, bool) or plan.get("video_logged") is not False:

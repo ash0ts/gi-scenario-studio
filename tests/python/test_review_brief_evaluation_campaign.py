@@ -7,6 +7,7 @@ import json
 import struct
 import sys
 import zlib
+from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -191,7 +192,7 @@ class _CapturingSingleTurnSubprocess:
                 weave_call_id="call-baseline",
                 association_id=request.trace.association_id,
                 wandb_run_id=request.trace.wandb_run_id,
-                trace_url=("https://wandb.ai/entity/project/weave/traces/trace-baseline"),
+                trace_url=("https://wandb.ai/entity/project/weave/traces/call-baseline"),
             ),
         )
         return NativeSingleTurnChildResponse(ok=True, result=result)
@@ -224,7 +225,9 @@ class _DatasetSingleTurnSubprocess:
                 weave_call_id=f"call-baseline-{case.case_id}",
                 association_id=request.trace.association_id,
                 wandb_run_id=request.trace.wandb_run_id,
-                trace_url=(f"https://wandb.ai/entity/project/weave/traces/baseline-{case.case_id}"),
+                trace_url=(
+                    f"https://wandb.ai/entity/project/weave/traces/call-baseline-{case.case_id}"
+                ),
             ),
         )
         return NativeSingleTurnChildResponse(ok=True, result=result)
@@ -319,7 +322,7 @@ def _perfect_campaign(
                         weave_trace_id=f"trace:{method_id}:{case.case_id}",
                         weave_trace_url=(
                             "https://wandb.ai/entity/project/weave/traces/"
-                            f"{method_id}-{case.case_id}"
+                            f"trace:{method_id}:{case.case_id}"
                         ),
                         trace_status="VERIFIED",
                         trace_readback_verified=True,
@@ -380,7 +383,8 @@ def _perfect_campaign(
                     weave_call_id=f"call:{method_id}:{case.case_id}",
                     weave_trace_id=f"trace:{method_id}:{case.case_id}",
                     weave_trace_url=(
-                        f"https://wandb.ai/entity/project/weave/traces/{method_id}-{case.case_id}"
+                        "https://wandb.ai/entity/project/weave/traces/"
+                        f"trace:{method_id}:{case.case_id}"
                     ),
                     trace_status="VERIFIED",
                     trace_readback_verified=True,
@@ -540,6 +544,16 @@ def _write_animation_bundle(
         b"\x00\x00\x00\x18ftypisom\x00\x00\x02\x00isomiso2avc1mp41"
     )
     spec = contract.film_spec
+    encoding_input_frames = [
+        {
+            "frame_index": index,
+            "time_seconds": round(index / spec.fps, 9),
+            "logical_name": f"frame-{index:06d}.jpg",
+            "bytes": 1000 + index,
+            "jpeg_sha256": canonical_sha256({"frame_index": index, "format": "jpeg"}),
+        }
+        for index in range(round(spec.duration_seconds * spec.fps))
+    ]
     validation = build_review_brief_animation_validation_receipt(
         contract=contract,
         html_sha256=hashlib.sha256(html).hexdigest(),
@@ -560,6 +574,20 @@ def _write_animation_bundle(
                 ],
             },
             "deterministicSha256": "e" * 64,
+            "encodingInputFormat": "jpeg",
+            "encodingInputJpegQuality": 92,
+            "encodingInputFrames": encoding_input_frames,
+            "secondPassEncodingInputFrames": deepcopy(encoding_input_frames),
+            "frameAuditorSha256": contract.frame_auditor_sha256,
+            "runtimeTools": [
+                {
+                    "name": name,
+                    "version": f"{name} test-runtime-v1",
+                    "executable_sha256": canonical_sha256({"runtime": name}),
+                }
+                for name in ("chrome", "ffmpeg", "ffprobe", "node")
+            ],
+            "mp4ValidationMode": "DECODE_INTEGRITY_ONLY_NO_PIXEL_EQUIVALENCE",
             "responsive": [640, 360],
             "reducedMotion": {
                 "time": spec.reduced_motion_time_seconds,
@@ -670,7 +698,7 @@ def test_independent_role_ledger_matches_actual_production_finding_granularity(
                 weave_call_id=f"call-{case.case_id}",
                 association_id=f"association-{case.case_id}",
                 wandb_run_id="campaign-run-1",
-                trace_url=(f"https://wandb.ai/entity/project/weave/traces/{case.case_id}"),
+                trace_url=(f"https://wandb.ai/entity/project/weave/traces/call-{case.case_id}"),
             ),
         )
         draft = render_review_brief(
@@ -718,7 +746,9 @@ def test_independent_role_ledger_matches_actual_production_finding_granularity(
                 provider_response_sha256="b" * 64,
                 weave_call_id=f"call:{case.case_id}",
                 weave_trace_id=f"trace:{case.case_id}",
-                weave_trace_url=(f"https://wandb.ai/entity/project/weave/traces/{case.case_id}"),
+                weave_trace_url=(
+                    f"https://wandb.ai/entity/project/weave/traces/trace:{case.case_id}"
+                ),
                 trace_status="VERIFIED",
                 trace_readback_verified=True,
                 prompt_tokens=10,
@@ -1128,7 +1158,7 @@ def test_producer_uses_real_agents_subprocess_paths_without_expected_answer_inje
         capability_receipt=ReviewBriefAgentCapabilityReceipt(
             provider_mode="CHAT_COMPLETIONS",
             trace_id=f"trace_{'1' * 32}",
-            trace_url="https://wandb.ai/entity/project/weave/traces/preflight",
+            trace_url=f"https://wandb.ai/entity/project/weave/traces/trace_{'1' * 32}",
         ),
         weave_target=target,
         wandb_external_project_id="external-project-1",

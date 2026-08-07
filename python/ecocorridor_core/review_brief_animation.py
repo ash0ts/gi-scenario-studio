@@ -67,15 +67,20 @@ def _repo_script(name: str) -> Path:
     return Path(__file__).resolve().parents[2] / "scripts" / name
 
 
-def animation_tool_sha256s() -> tuple[str, str]:
-    """Return the exact checked-in renderer and validator script digests."""
+def animation_tool_sha256s() -> tuple[str, str, str]:
+    """Return exact checked-in renderer, validator, and JPEG-capture digests."""
 
     renderer = _repo_script("render_ecocorridor_canvas_film.mjs")
     validator = _repo_script("validate_ecocorridor_canvas_film.mjs")
-    for label, path in (("renderer", renderer), ("validator", validator)):
+    frame_auditor = _repo_script("capture_ecocorridor_review_brief_jpeg_frames.mjs")
+    for label, path in (
+        ("renderer", renderer),
+        ("validator", validator),
+        ("frame auditor", frame_auditor),
+    ):
         if path.is_symlink() or not path.is_file():
             raise ValueError(f"review-brief animation {label} script is missing or unsafe")
-    return _sha256_file(renderer), _sha256_file(validator)
+    return _sha256_file(renderer), _sha256_file(validator), _sha256_file(frame_auditor)
 
 
 class ReviewBriefAnimationCheckpoint(ContractModel):
@@ -111,6 +116,88 @@ class ReviewBriefAnimationFilmSpec(ContractModel):
         return self
 
 
+class ReviewBriefAnimationVisualMethod(ContractModel):
+    method_id: Literal[
+        "deterministic_exhaustive",
+        "existing_single_shot_full_context",
+        "native_read_only_agent",
+    ]
+    display_name: str = Field(min_length=1, max_length=64)
+    provider_backed: bool
+    passed_case_count: int = Field(ge=0)
+    case_count: int = Field(ge=1)
+    deterministic_gate_passed: bool
+
+
+class ReviewBriefAnimationDecisionGate(ContractModel):
+    gate_id: Literal[
+        "candidate_all_gates",
+        "role_quality",
+        "safety_quality",
+        "context_reduction",
+        "cost_evidence",
+        "topic_grounding",
+    ]
+    label: str = Field(min_length=1, max_length=32)
+    passed: bool
+
+
+class ReviewBriefAnimationVisualData(ContractModel):
+    """The complete variable data surface the Canvas renderer may display."""
+
+    role_case_count: int = Field(ge=1)
+    safety_case_count: int = Field(ge=1)
+    case_count: int = Field(ge=1)
+    method_count: int = Field(ge=1)
+    record_count: int = Field(ge=1)
+    local_method_count: int = Field(ge=0)
+    provider_method_count: int = Field(ge=0)
+    provider_conversation_count: int = Field(ge=1)
+    pre_provider_block_count: int = Field(ge=1)
+    trace_matrix_verified: Literal[True]
+    methods: list[ReviewBriefAnimationVisualMethod] = Field(min_length=1)
+    decision: Literal["KEEP_DETERMINISTIC", "PROMOTE_NATIVE"]
+    candidate_status: Literal["EXPERIMENTAL", "PROMOTION_ELIGIBLE"]
+    decision_gates: list[ReviewBriefAnimationDecisionGate] = Field(min_length=6, max_length=6)
+    visual_data_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @model_validator(mode="after")
+    def validate_visual_data(self) -> Self:
+        if self.role_case_count + self.safety_case_count != self.case_count:
+            raise ValueError("review-brief visual case counts are inconsistent")
+        if self.local_method_count + self.provider_method_count != self.method_count:
+            raise ValueError("review-brief visual method counts are inconsistent")
+        if len(self.methods) != self.method_count:
+            raise ValueError("review-brief visual methods are incomplete")
+        if self.record_count != self.case_count * self.method_count:
+            raise ValueError("review-brief visual record count is inconsistent")
+        expected_method_order = (
+            "deterministic_exhaustive",
+            "existing_single_shot_full_context",
+            "native_read_only_agent",
+        )
+        if tuple(item.method_id for item in self.methods) != expected_method_order:
+            raise ValueError("review-brief visual method order changed")
+        expected_gate_order = (
+            "candidate_all_gates",
+            "role_quality",
+            "safety_quality",
+            "context_reduction",
+            "cost_evidence",
+            "topic_grounding",
+        )
+        if tuple(item.gate_id for item in self.decision_gates) != expected_gate_order:
+            raise ValueError("review-brief visual decision-gate order changed")
+        promotion = all(item.passed for item in self.decision_gates)
+        if self.decision != ("PROMOTE_NATIVE" if promotion else "KEEP_DETERMINISTIC"):
+            raise ValueError("review-brief visual decision differs from its gates")
+        if self.candidate_status != ("PROMOTION_ELIGIBLE" if promotion else "EXPERIMENTAL"):
+            raise ValueError("review-brief visual candidate status differs from its gates")
+        if _self_digest(self, "visual_data_sha256") != self.visual_data_sha256:
+            raise ValueError("review-brief visual-data digest differs")
+        return self
+
+
 class ReviewBriefAnimationRenderContract(ContractModel):
     schema_version: Literal["ecocorridor-review-brief-animation-render/v1"]
     campaign_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -127,9 +214,12 @@ class ReviewBriefAnimationRenderContract(ContractModel):
     story: ReviewBriefAnimationStory
     story_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     claim_ledger_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    visual_data: ReviewBriefAnimationVisualData
+    visual_data_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     transcript_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     renderer_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     validator_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    frame_auditor_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     film_spec: ReviewBriefAnimationFilmSpec
     render_authorized: Literal[True]
     render_contract_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -143,6 +233,8 @@ class ReviewBriefAnimationRenderContract(ContractModel):
             != self.claim_ledger_sha256
         ):
             raise ValueError("review-brief render contract claim ledger digest is inconsistent")
+        if self.visual_data.visual_data_sha256 != self.visual_data_sha256:
+            raise ValueError("review-brief render contract visual-data digest is inconsistent")
         if _self_digest(self, "render_contract_sha256") != self.render_contract_sha256:
             raise ValueError("review-brief animation render contract digest differs")
         return self
@@ -161,16 +253,41 @@ class ReviewBriefAnimationVideoValidation(ContractModel):
     audio: Literal[False]
 
 
+class ReviewBriefAnimationEncodingInputFrame(ContractModel):
+    frame_index: int = Field(ge=0)
+    time_seconds: float = Field(ge=0)
+    logical_name: str = Field(pattern=r"^frame-[0-9]{6}\.jpg$")
+    bytes: int = Field(gt=0)
+    jpeg_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class ReviewBriefAnimationRuntimeTool(ContractModel):
+    name: Literal["chrome", "ffmpeg", "ffprobe", "node"]
+    version: str = Field(min_length=1, max_length=512)
+    executable_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 class ReviewBriefAnimationValidationReceipt(ContractModel):
     schema_version: Literal["ecocorridor-review-brief-animation-validation/v1"]
     status: Literal["VALIDATED"]
     campaign_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     story_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    visual_data_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     render_contract_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     html_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     transcript_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     validator_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    frame_auditor_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     deterministic_frame_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    encoding_input_format: Literal["jpeg"]
+    encoding_input_jpeg_quality: Literal[92]
+    encoding_input_frames: list[ReviewBriefAnimationEncodingInputFrame] = Field(min_length=1)
+    encoding_input_manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    second_pass_encoding_input_manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    encoding_input_determinism_verified: Literal[True]
+    runtime_tools: list[ReviewBriefAnimationRuntimeTool] = Field(min_length=4, max_length=4)
+    runtime_executable_manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    mp4_validation_mode: Literal["DECODE_INTEGRITY_ONLY_NO_PIXEL_EQUIVALENCE"]
     responsive_viewport: tuple[int, int]
     reduced_motion_time_seconds: float = Field(ge=0)
     video: ReviewBriefAnimationVideoValidation
@@ -178,6 +295,21 @@ class ReviewBriefAnimationValidationReceipt(ContractModel):
 
     @model_validator(mode="after")
     def validate_receipt_digest(self) -> Self:
+        indexes = [item.frame_index for item in self.encoding_input_frames]
+        if indexes != list(range(len(self.encoding_input_frames))):
+            raise ValueError("review-brief encoding-input indexes are not complete and ordered")
+        frame_payload = [item.model_dump(mode="json") for item in self.encoding_input_frames]
+        if canonical_sha256(frame_payload) != self.encoding_input_manifest_sha256:
+            raise ValueError("review-brief encoding-input manifest digest differs")
+        if self.second_pass_encoding_input_manifest_sha256 != self.encoding_input_manifest_sha256:
+            raise ValueError("review-brief independent JPEG encoding-input pass differs")
+        if {item.name for item in self.runtime_tools} != {"chrome", "ffmpeg", "ffprobe", "node"}:
+            raise ValueError("review-brief render runtime evidence is incomplete")
+        if (
+            canonical_sha256([item.model_dump(mode="json") for item in self.runtime_tools])
+            != self.runtime_executable_manifest_sha256
+        ):
+            raise ValueError("review-brief render executable manifest digest differs")
         if _self_digest(self, "validation_receipt_sha256") != self.validation_receipt_sha256:
             raise ValueError("review-brief animation validation receipt digest differs")
         return self
@@ -210,8 +342,15 @@ class ReviewBriefAnimationMediaManifest(ContractModel):
     campaign_wandb_run_url: str
     story_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     claim_ledger_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    visual_data_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    frame_auditor_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     render_contract_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     validation_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    encoding_input_manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    encoding_input_frame_count: int = Field(gt=0)
+    encoding_input_determinism_verified: Literal[True]
+    runtime_executable_manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    mp4_validation_mode: Literal["DECODE_INTEGRITY_ONLY_NO_PIXEL_EQUIVALENCE"]
     film_spec: ReviewBriefAnimationFilmSpec
     files: list[ReviewBriefAnimationMediaFile] = Field(min_length=1)
     files_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -227,6 +366,10 @@ class ReviewBriefAnimationMediaManifest(ContractModel):
             != self.files_sha256
         ):
             raise ValueError("review-brief animation files digest differs")
+        if self.encoding_input_frame_count != round(
+            self.film_spec.duration_seconds * self.film_spec.fps
+        ):
+            raise ValueError("review-brief animation encoding-input frame count differs")
         if _self_digest(self, "media_manifest_sha256") != self.media_manifest_sha256:
             raise ValueError("review-brief animation media manifest digest differs")
         return self
@@ -273,6 +416,10 @@ def _validate_trace_matrix(campaign: ReviewBriefCampaignArtifact) -> None:
     conversations = 0
     pre_provider_blocks = 0
     verified_role_answers = 0
+    provider_call_ids: set[str] = set()
+    weave_call_ids: set[str] = set()
+    weave_trace_ids: set[str] = set()
+    weave_trace_urls: set[str] = set()
     cases = {item.case_id: item for item in campaign.dataset.cases}
     for record in campaign.records:
         execution = record.execution
@@ -298,6 +445,19 @@ def _validate_trace_matrix(campaign: ReviewBriefCampaignArtifact) -> None:
             or not provider.weave_trace_id
         ):
             raise ValueError("animation requires exact provider and Weave trace readback")
+        assert provider is not None
+        identities = (
+            (provider.provider_call_id, provider_call_ids),
+            (str(provider.weave_call_id), weave_call_ids),
+            (str(provider.weave_trace_id), weave_trace_ids),
+            (str(provider.weave_trace_url), weave_trace_urls),
+        )
+        if any(value in observed for value, observed in identities):
+            raise ValueError(
+                "animation requires one unique trace receipt per provider conversation"
+            )
+        for value, observed in identities:
+            observed.add(value)
         if (
             cases[record.case_id].category == "RIDGEWAY_ROLE"
             and execution.disposition == "ANSWERED"
@@ -305,10 +465,94 @@ def _validate_trace_matrix(campaign: ReviewBriefCampaignArtifact) -> None:
             verified_role_answers += 1
     if conversations != EXPECTED_PROVIDER_CONVERSATION_COUNT:
         raise ValueError("animation requires exactly 22 provider conversations")
+    if any(
+        len(values) != conversations
+        for values in (provider_call_ids, weave_call_ids, weave_trace_ids, weave_trace_urls)
+    ):
+        raise ValueError("animation provider trace identities are incomplete")
     if pre_provider_blocks != EXPECTED_PRE_PROVIDER_BLOCK_COUNT:
         raise ValueError("animation requires exactly six pre-provider blocks")
     if verified_role_answers != campaign.verified_provider_answer_count:
         raise ValueError("animation provider-backed answer count differs from traced role answers")
+
+
+def build_review_brief_animation_visual_data(
+    campaign: ReviewBriefCampaignArtifact,
+) -> ReviewBriefAnimationVisualData:
+    """Seal the complete variable data surface used by Canvas drawing code."""
+
+    role_case_count = sum(item.category == "RIDGEWAY_ROLE" for item in campaign.dataset.cases)
+    case_count = len(campaign.dataset.cases)
+    scorecards = {item.method_id: item for item in campaign.scorecards}
+    display_names = {
+        "deterministic_exhaustive": "Deterministic exhaustive",
+        "existing_single_shot_full_context": "Single-shot full context",
+        "native_read_only_agent": "Native read-only agent",
+    }
+    methods = [
+        ReviewBriefAnimationVisualMethod(
+            method_id=item.method_id,
+            display_name=display_names[item.method_id],
+            provider_backed=item.provider_backed,
+            passed_case_count=scorecards[item.method_id].passed_case_count,
+            case_count=scorecards[item.method_id].case_count,
+            deterministic_gate_passed=scorecards[item.method_id].deterministic_gate_passed,
+        )
+        for item in campaign.methods
+    ]
+    decision = campaign.default_method_decision
+    gates = [
+        ReviewBriefAnimationDecisionGate(
+            gate_id="candidate_all_gates",
+            label="native gates",
+            passed=decision.candidate_all_gates_passed,
+        ),
+        ReviewBriefAnimationDecisionGate(
+            gate_id="role_quality",
+            label="role quality",
+            passed=decision.role_quality_noninferior,
+        ),
+        ReviewBriefAnimationDecisionGate(
+            gate_id="safety_quality",
+            label="safety quality",
+            passed=decision.safety_quality_noninferior,
+        ),
+        ReviewBriefAnimationDecisionGate(
+            gate_id="context_reduction",
+            label="context ≥25%",
+            passed=decision.context_reduction_verified,
+        ),
+        ReviewBriefAnimationDecisionGate(
+            gate_id="cost_evidence",
+            label="cost evidence",
+            passed=decision.cost_comparison_complete,
+        ),
+        ReviewBriefAnimationDecisionGate(
+            gate_id="topic_grounding",
+            label="topic grounding",
+            passed=decision.action_discipline_appropriateness_complete,
+        ),
+    ]
+    payload = {
+        "role_case_count": role_case_count,
+        "safety_case_count": case_count - role_case_count,
+        "case_count": case_count,
+        "method_count": len(campaign.methods),
+        "record_count": len(campaign.records),
+        "local_method_count": sum(not item.provider_backed for item in campaign.methods),
+        "provider_method_count": sum(item.provider_backed for item in campaign.methods),
+        "provider_conversation_count": campaign.provider_conversation_count,
+        "pre_provider_block_count": campaign.pre_provider_block_count,
+        "trace_matrix_verified": True,
+        "methods": [item.model_dump(mode="json") for item in methods],
+        "decision": decision.decision,
+        "candidate_status": decision.candidate_status,
+        "decision_gates": [item.model_dump(mode="json") for item in gates],
+    }
+    return ReviewBriefAnimationVisualData(
+        **payload,
+        visual_data_sha256=canonical_sha256(payload),
+    )
 
 
 def _validate_claim_ledger(
@@ -395,6 +639,7 @@ def build_review_brief_animation_render_contract(
         raise ValueError("animation campaign trace accounting is incomplete")
     story = build_review_brief_animation_story(verified)
     _validate_claim_ledger(verified, story)
+    visual_data = build_review_brief_animation_visual_data(verified)
     duration = sum(item.duration_seconds for item in story.scenes)
     starts: list[float] = []
     elapsed = 0.0
@@ -425,7 +670,7 @@ def build_review_brief_animation_render_contract(
         silent=True,
         checkpoints=checkpoints,
     )
-    renderer_sha256, validator_sha256 = animation_tool_sha256s()
+    renderer_sha256, validator_sha256, frame_auditor_sha256 = animation_tool_sha256s()
     provisional: dict[str, Any] = {
         "schema_version": RENDER_CONTRACT_SCHEMA,
         "campaign_sha256": verified.campaign_sha256,
@@ -444,9 +689,12 @@ def build_review_brief_animation_render_contract(
         "claim_ledger_sha256": canonical_sha256(
             [item.model_dump(mode="json") for item in story.claim_ledger]
         ),
+        "visual_data": visual_data.model_dump(mode="json"),
+        "visual_data_sha256": visual_data.visual_data_sha256,
         "transcript_sha256": "0" * 64,
         "renderer_sha256": renderer_sha256,
         "validator_sha256": validator_sha256,
+        "frame_auditor_sha256": frame_auditor_sha256,
         "film_spec": film_spec.model_dump(mode="json"),
         "render_authorized": True,
     }
@@ -496,12 +744,18 @@ def render_review_brief_animation_html(
     story_json = json.dumps(
         parsed.story.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
     ).replace("<", "\\u003c")
+    visual_json = json.dumps(
+        parsed.visual_data.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
+    ).replace("<", "\\u003c")
     spec_json = json.dumps(
         _browser_film_spec(parsed.film_spec), sort_keys=True, separators=(",", ":")
     ).replace("<", "\\u003c")
     campaign_json = json.dumps(parsed.campaign_sha256)
     contract_json = json.dumps(parsed.render_contract_sha256)
-    decision_json = json.dumps(parsed.story.scenes[5].visible_copy[0].split(": ", 1)[1])
+    duration_text = (
+        f"{int(parsed.film_spec.duration_seconds) // 60:02d}:"
+        f"{int(parsed.film_spec.duration_seconds) % 60:02d}"
+    )
     template = r"""<!doctype html>
 <html lang="en">
 <head>
@@ -527,16 +781,16 @@ def render_review_brief_animation_html(
     <canvas id="film" width="1280" height="720" role="img" aria-label="Claim-ledger-bound EcoCorridor Review Brief evaluation film"></canvas>
     <div class="controls">
       <button id="toggle" type="button" aria-label="Pause animation">Pause</button>
-      <input id="scrub" type="range" min="0" max="69" step="0.01" value="0" aria-label="Animation timeline">
-      <output id="clock" for="scrub">00:00 / 01:09</output>
+      <input id="scrub" type="range" min="0" max="__DURATION__" step="0.01" value="0" aria-label="Animation timeline">
+      <output id="clock" for="scrub">00:00 / __DURATION_TEXT__</output>
     </div>
   </main>
   <script>
     const FILM = Object.freeze(__SPEC__);
     const STORY = Object.freeze(__STORY__);
+    const VISUAL = Object.freeze(__VISUAL__);
     const CAMPAIGN_SHA = __CAMPAIGN__;
     const CONTRACT_SHA = __CONTRACT__;
-    const DEFAULT_DECISION = __DECISION__;
     window.__filmSpec = FILM;
     const canvas = document.querySelector('#film');
     const ctx = canvas.getContext('2d', { alpha: false });
@@ -562,11 +816,11 @@ def render_review_brief_animation_html(
     function background(time,index){rect(0,0,FILM.width,FILM.height,C.paper);ctx.globalAlpha=.24;for(let ring=0;ring<7;ring++){ctx.beginPath();ctx.ellipse(1110,105,160+ring*42,65+ring*20,-.25,0,Math.PI*2);ctx.strokeStyle=C.line;ctx.lineWidth=1.5;ctx.stroke();}ctx.globalAlpha=1;rect(0,0,18,FILM.height,C.forest);text('ECOCORRIDOR  /  VERIFIED PROVIDER CAMPAIGN',54,50,15,C.forest,750);text(`scene ${index+1} of ${STORY.scenes.length}`,1220,50,14,C.forest,650,'right','ui-monospace, monospace');line(54,70,1226,70,C.line,1);const step=1172/STORY.scenes.length;STORY.scenes.forEach((scene,i)=>{const x=54+i*step;rect(x,648,step-8,5,i<index?C.lichen:i===index?C.cyan:C.line);text(scene.scene_id.replaceAll('-',' '),x,636,11,i===index?C.forest:'#66766f',650);});text(CAMPAIGN_SHA.slice(0,16),1226,678,11,'#66766f',600,'right','ui-monospace, monospace');}
     function heading(kicker,title,subtitle){text(kicker.toUpperCase(),54,118,16,C.berry,750);wrap(title,54,180,1000,56,47,C.ink,680);wrap(subtitle,54,248,1120,30,21,C.forest,520);}
     function drawQuestion(local,duration){heading('Question','Can a short review brief stay grounded—and fail closed?',STORY.scenes[0].visible_copy[1]);const p=ease((local-.6)/1);line(132,380,1148,380,C.line,4);[['EVIDENCE',C.lichen],['REVIEW',C.cyan],['DECISION',C.amber]].forEach((item,i)=>{const x=180+i*480;const a=ease((local-(.8+i*.35))/.8);ctx.save();ctx.globalAlpha=a;ctx.beginPath();ctx.arc(x,380,52,0,Math.PI*2);ctx.fillStyle=item[1];ctx.fill();text(item[0],x,388,15,C.ink,780,'center');if(i<2){line(x+56,380,x+420*p,380,C.forest,5);}ctx.restore();});text('Synthetic connectivity screening · no ecological outcome claim',54,555,18,C.berry,700);}
-    function drawDataset(local,duration){heading('Fixed dataset',STORY.scenes[1].takeaway,STORY.scenes[1].visible_copy[2]);const values=[4,10];const labels=['DIRECT-EVIDENCE ROLES','FAIL-CLOSED CONDITIONS'];const colors=[C.lichen,C.berry];values.forEach((value,i)=>{const y=340+i*112;const amount=ease((local-(.5+i*.25))/.9);text(labels[i],54,y,15,C.forest,750);rect(360,y-28,760,42,C.mist);rect(360,y-28,760*(value/14)*amount,42,colors[i]);text(value,1148,y+4,36,C.ink,760,'right');});text('14 cases × 3 fixed methods = 42 scored records',54,562,25,C.ink,700);}
-    function drawMethods(local,duration){heading('Controlled comparison',STORY.scenes[2].takeaway,'One local control and two provider-backed methods.');const labels=['DETERMINISTIC\nEXHAUSTIVE','SINGLE-SHOT\nFULL CONTEXT','NATIVE READ-ONLY\nAGENT'];labels.forEach((label,i)=>{const x=54+i*392;const a=ease((local-(.4+i*.25))/.8);card(x,328,350,174,label.split('\n')[0],label.split('\n')[1],i===0?C.lichen:C.cyan,a);});rect(54,535,1134,54,C.forest,null,8);text('same cases  ·  same evidence boundary  ·  same deterministic scorers',621,570,19,C.white,650,'center');}
-    function drawTrust(local,duration){heading('Trust path',STORY.scenes[3].takeaway,'A readable answer is released only after every boundary is verified.');const items=[['PROVIDER CALL',C.cyan],['EVIDENCE CHECK',C.lichen],['WEAVE READBACK',C.amber],['RELEASE',C.forest]];items.forEach((item,i)=>{const x=54+i*294;const a=ease((local-(.4+i*.4))/.7);card(x,337,258,130,item[0],i===3?'fail closed':'verified receipt',item[1],a);if(i<3){line(x+258,402,x+292,402,C.forest,4);}});text('No readable trace → no answer     ·     no authorized evidence → no numeric claim',54,552,18,C.berry,720);}
-    function drawObservations(local,duration){heading('Observed checks',STORY.scenes[4].takeaway,'Exact counts from this pinned campaign; no general winner claim.');const labels=['deterministic exhaustive','single-shot full context','native read-only agent'];const scoreClaims=STORY.claim_ledger.filter(item=>item.claim_id.startsWith('scorecard-'));labels.forEach((label,i)=>{const y=326+i*82;const match=scoreClaims.find(item=>item.claim_id.endsWith(label.replaceAll(' ','_').replace('single-shot_full_context','existing_single_shot_full_context').replace('native_read-only_agent','native_read_only_agent')));const parsed=match?match.statement.match(/passed (\d+) of (\d+)/):null;const passed=parsed?Number(parsed[1]):0;const total=parsed?Number(parsed[2]):14;const amount=ease((local-(.5+i*.25))/.9);text(label.toUpperCase(),54,y,14,C.forest,720);rect(390,y-26,650,34,C.mist);rect(390,y-26,650*(passed/total)*amount,34,passed===total?C.lichen:C.berry);text(`${passed}/${total}`,1120,y+2,25,C.ink,760,'right');});text('Deterministic gates, not a capability ranking',54,572,18,C.berry,700);}
-    function drawDecision(local,duration){heading('Default-method gate','The policy records a decision; it does not change the desktop.','Promotion requires every quality, safety, context, cost, and topic-grounding gate.');const gates=['native gates','quality','safety','≥25% bytes','cost','topic grounding'];gates.forEach((gate,i)=>{const x=54+(i%3)*245;const y=330+Math.floor(i/3)*92;const complete=gate!=='cost';const a=ease((local-(.4+i*.15))/.7);ctx.save();ctx.globalAlpha=a;rect(x,y,220,64,complete?C.lichen:C.amber,C.forest,8);text(complete?'✓':'—',x+22,y+40,22,C.ink,780);text(gate,x+58,y+39,16,C.ink,680);ctx.restore();});rect(842,330,346,156,DEFAULT_DECISION==='PROMOTE_NATIVE'?C.lichen:C.amber,C.forest,12);text('RECORDED DECISION',1015,370,14,C.forest,750,'center');text(DEFAULT_DECISION,1015,429,28,C.ink,800,'center','ui-monospace, monospace');text('Native remains experimental when any gate is incomplete.',54,566,18,C.berry,700);}
+    function drawDataset(local,duration){heading('Fixed dataset',STORY.scenes[1].takeaway,STORY.scenes[1].visible_copy[2]);const values=[VISUAL.role_case_count,VISUAL.safety_case_count];const labels=['DIRECT-EVIDENCE ROLES','FAIL-CLOSED CONDITIONS'];const colors=[C.lichen,C.berry];values.forEach((value,i)=>{const y=340+i*112;const amount=ease((local-(.5+i*.25))/.9);text(labels[i],54,y,15,C.forest,750);rect(360,y-28,760,42,C.mist);rect(360,y-28,760*(value/VISUAL.case_count)*amount,42,colors[i]);text(value,1148,y+4,36,C.ink,760,'right');});text(`${VISUAL.case_count} cases × ${VISUAL.method_count} fixed methods = ${VISUAL.record_count} scored records`,54,562,25,C.ink,700);}
+    function drawMethods(local,duration){heading('Controlled comparison',STORY.scenes[2].takeaway,`${VISUAL.local_method_count} local control · ${VISUAL.provider_method_count} provider-backed methods`);VISUAL.methods.forEach((method,i)=>{const x=54+i*392;const a=ease((local-(.4+i*.25))/.8);card(x,328,350,174,method.display_name.toUpperCase(),method.provider_backed?'PROVIDER-BACKED':'LOCAL CONTROL',method.provider_backed?C.cyan:C.lichen,a);});rect(54,535,1134,54,C.forest,null,8);text('same cases  ·  same evidence boundary  ·  same deterministic scorers',621,570,19,C.white,650,'center');}
+    function drawTrust(local,duration){heading('Trust path',STORY.scenes[3].takeaway,'A readable answer is released only after every boundary is verified.');const verified=VISUAL.trace_matrix_verified;const items=[['PROVIDER CALL',C.cyan],['EVIDENCE CHECK',C.lichen],['WEAVE READBACK',C.amber],['RELEASE',C.forest]];items.forEach((item,i)=>{const x=54+i*294;const a=ease((local-(.4+i*.4))/.7);card(x,337,258,130,item[0],i===3?'fail closed':verified?'verified receipt':'blocked',item[1],a);if(i<3){line(x+258,402,x+292,402,C.forest,4);}});text('No readable trace → no answer     ·     no authorized evidence → no numeric claim',54,552,18,C.berry,720);}
+    function drawObservations(local,duration){heading('Observed checks',STORY.scenes[4].takeaway,'Exact counts from this pinned campaign; no general winner claim.');VISUAL.methods.forEach((method,i)=>{const y=326+i*82;const amount=ease((local-(.5+i*.25))/.9);text(method.display_name.toUpperCase(),54,y,14,C.forest,720);rect(390,y-26,650,34,C.mist);rect(390,y-26,650*(method.passed_case_count/method.case_count)*amount,34,method.deterministic_gate_passed?C.lichen:C.berry);text(`${method.passed_case_count}/${method.case_count}`,1120,y+2,25,C.ink,760,'right');});text('Deterministic gates, not a capability ranking',54,572,18,C.berry,700);}
+    function drawDecision(local,duration){heading('Default-method gate','The policy records a decision; it does not change the desktop.','Promotion requires every quality, safety, context, cost, and topic-grounding gate.');VISUAL.decision_gates.forEach((gate,i)=>{const x=54+(i%3)*245;const y=330+Math.floor(i/3)*92;const a=ease((local-(.4+i*.15))/.7);ctx.save();ctx.globalAlpha=a;rect(x,y,220,64,gate.passed?C.lichen:C.amber,C.forest,8);text(gate.passed?'✓':'—',x+22,y+40,22,C.ink,780);text(gate.label,x+58,y+39,16,C.ink,680);ctx.restore();});rect(842,330,346,156,VISUAL.decision==='PROMOTE_NATIVE'?C.lichen:C.amber,C.forest,12);text('RECORDED DECISION',1015,370,14,C.forest,750,'center');text(VISUAL.decision,1015,429,28,C.ink,800,'center','ui-monospace, monospace');text(VISUAL.candidate_status==='PROMOTION_ELIGIBLE'?'Native candidate met this pinned campaign gate.':'Native candidate remains experimental under this pinned campaign.',54,566,18,C.berry,700);}
     function drawLimits(local,duration){heading('Interpretation boundary',STORY.scenes[6].takeaway,'The next experiment expands evidence; it does not expand this claim.');card(54,318,546,196,'THIS CAMPAIGN TESTS','Evidence handling, traceability, and fail-closed behavior.',C.lichen,ease((local-.5)/.8));card(642,318,546,196,'IT DOES NOT ESTABLISH','Animal movement, crossing use, collision reduction, population effect, or approval.',C.berry,ease((local-.8)/.8));text(`contract ${CONTRACT_SHA.slice(0,20)}…`,54,570,14,C.forest,650,'left','ui-monospace, monospace');}
     const drawers=[drawQuestion,drawDataset,drawMethods,drawTrust,drawObservations,drawDecision,drawLimits];
     function render(time){const t=((time%FILM.duration)+FILM.duration)%FILM.duration;let index=STORY.scenes.length-1;for(let i=0;i<STORY.scenes.length;i++){if(t<sceneStarts[i]+STORY.scenes[i].duration_seconds){index=i;break;}}const local=t-sceneStarts[index];background(t,index);ctx.save();ctx.globalAlpha=alpha(local,STORY.scenes[index].duration_seconds,.45);drawers[index](local,STORY.scenes[index].duration_seconds);ctx.restore();clock.value=`${formatTime(t)} / ${formatTime(FILM.duration)}`;if(!renderMode)scrub.value=String(t);}
@@ -584,9 +838,11 @@ def render_review_brief_animation_html(
     rendered = (
         template.replace("__SPEC__", spec_json)
         .replace("__STORY__", story_json)
+        .replace("__VISUAL__", visual_json)
         .replace("__CAMPAIGN__", campaign_json)
         .replace("__CONTRACT__", contract_json)
-        .replace("__DECISION__", decision_json)
+        .replace("__DURATION__", str(parsed.film_spec.duration_seconds))
+        .replace("__DURATION_TEXT__", duration_text)
     )
     if re.search(
         r"(?:src|href)\s*=\s*[\"']https?://|url\(\s*[\"']?https?://",
@@ -647,8 +903,46 @@ def build_review_brief_animation_validation_receipt(
     video = raw_validator_result.get("video")
     reduced = raw_validator_result.get("reducedMotion")
     responsive = raw_validator_result.get("responsive")
+    encoding_inputs_raw = raw_validator_result.get("encodingInputFrames")
+    second_pass_raw = raw_validator_result.get("secondPassEncodingInputFrames")
+    runtime_tools_raw = raw_validator_result.get("runtimeTools")
+    if (
+        raw_validator_result.get("mp4ValidationMode")
+        != "DECODE_INTEGRITY_ONLY_NO_PIXEL_EQUIVALENCE"
+    ):
+        raise ValueError(
+            "Canvas validator must distinguish MP4 decode integrity from JPEG input identity"
+        )
     if not isinstance(video, Mapping) or not isinstance(reduced, Mapping):
         raise TypeError("Canvas validator result lacks video or reduced-motion evidence")
+    if (
+        raw_validator_result.get("encodingInputFormat") != "jpeg"
+        or raw_validator_result.get("encodingInputJpegQuality") != 92
+    ):
+        raise ValueError("Canvas encoding inputs must be JPEG quality 92")
+    if raw_validator_result.get("frameAuditorSha256") != contract.frame_auditor_sha256:
+        raise ValueError("Canvas JPEG frame auditor differs from the render contract")
+    if not isinstance(encoding_inputs_raw, list) or not isinstance(second_pass_raw, list):
+        raise TypeError("Canvas validator result lacks both ordered JPEG encoding-input passes")
+    encoding_inputs = [
+        ReviewBriefAnimationEncodingInputFrame.model_validate(item) for item in encoding_inputs_raw
+    ]
+    second_pass = [
+        ReviewBriefAnimationEncodingInputFrame.model_validate(item) for item in second_pass_raw
+    ]
+    encoding_input_payload = [item.model_dump(mode="json") for item in encoding_inputs]
+    second_payload = [item.model_dump(mode="json") for item in second_pass]
+    encoding_input_root = canonical_sha256(encoding_input_payload)
+    second_root = canonical_sha256(second_payload)
+    if encoding_input_payload != second_payload:
+        raise ValueError("independent JPEG encoding-input passes differ")
+    if not isinstance(runtime_tools_raw, list):
+        raise TypeError("Canvas validator result lacks render-runtime evidence")
+    runtime_tools = sorted(
+        [ReviewBriefAnimationRuntimeTool.model_validate(item) for item in runtime_tools_raw],
+        key=lambda item: item.name,
+    )
+    runtime_payload = [item.model_dump(mode="json") for item in runtime_tools]
     if (
         reduced.get("text") != "Play"
         or reduced.get("label") != "Play animation"
@@ -662,11 +956,22 @@ def build_review_brief_animation_validation_receipt(
         "status": "VALIDATED",
         "campaign_sha256": contract.campaign_sha256,
         "story_sha256": contract.story_sha256,
+        "visual_data_sha256": contract.visual_data_sha256,
         "render_contract_sha256": contract.render_contract_sha256,
         "html_sha256": html_sha256,
         "transcript_sha256": contract.transcript_sha256,
         "validator_sha256": contract.validator_sha256,
+        "frame_auditor_sha256": contract.frame_auditor_sha256,
         "deterministic_frame_sha256": raw_validator_result.get("deterministicSha256"),
+        "encoding_input_format": "jpeg",
+        "encoding_input_jpeg_quality": 92,
+        "encoding_input_frames": encoding_input_payload,
+        "encoding_input_manifest_sha256": encoding_input_root,
+        "second_pass_encoding_input_manifest_sha256": second_root,
+        "encoding_input_determinism_verified": True,
+        "runtime_tools": runtime_payload,
+        "runtime_executable_manifest_sha256": canonical_sha256(runtime_payload),
+        "mp4_validation_mode": "DECODE_INTEGRITY_ONLY_NO_PIXEL_EQUIVALENCE",
         "responsive_viewport": tuple(int(item) for item in responsive),
         "reduced_motion_time_seconds": float(reduced["time"]),
         "video": {
@@ -685,6 +990,15 @@ def build_review_brief_animation_validation_receipt(
     parsed_video = ReviewBriefAnimationVideoValidation.model_validate(payload["video"])
     if parsed_video.frames != round(spec.duration_seconds * spec.fps):
         raise ValueError("Canvas validator frame count differs from the film spec")
+    if len(encoding_inputs) != parsed_video.frames:
+        raise ValueError("Canvas JPEG input count differs from the encoded frame count")
+    for index, frame in enumerate(encoding_inputs):
+        if (
+            frame.frame_index != index
+            or frame.logical_name != f"frame-{index:06d}.jpg"
+            or abs(frame.time_seconds - index / spec.fps) > 1e-9
+        ):
+            raise ValueError("Canvas JPEG encoding-input schedule differs from the film spec")
     if abs(parsed_video.duration_seconds - spec.duration_seconds) > 1 / spec.fps:
         raise ValueError("Canvas validator duration differs from the film spec")
     return ReviewBriefAnimationValidationReceipt(
@@ -790,9 +1104,11 @@ def build_review_brief_animation_media_manifest(
     if (
         receipt.campaign_sha256 != parsed_contract.campaign_sha256
         or receipt.story_sha256 != parsed_contract.story_sha256
+        or receipt.visual_data_sha256 != parsed_contract.visual_data_sha256
         or receipt.render_contract_sha256 != parsed_contract.render_contract_sha256
         or receipt.transcript_sha256 != parsed_contract.transcript_sha256
         or receipt.validator_sha256 != parsed_contract.validator_sha256
+        or receipt.frame_auditor_sha256 != parsed_contract.frame_auditor_sha256
     ):
         raise ValueError("animation validation receipt does not match the render contract")
     directory = Path(media_directory).resolve()
@@ -854,8 +1170,15 @@ def build_review_brief_animation_media_manifest(
         "campaign_wandb_run_url": parsed_contract.campaign_wandb_run_url,
         "story_sha256": parsed_contract.story_sha256,
         "claim_ledger_sha256": parsed_contract.claim_ledger_sha256,
+        "visual_data_sha256": parsed_contract.visual_data_sha256,
+        "frame_auditor_sha256": parsed_contract.frame_auditor_sha256,
         "render_contract_sha256": parsed_contract.render_contract_sha256,
         "validation_receipt_sha256": receipt.validation_receipt_sha256,
+        "encoding_input_manifest_sha256": receipt.encoding_input_manifest_sha256,
+        "encoding_input_frame_count": len(receipt.encoding_input_frames),
+        "encoding_input_determinism_verified": True,
+        "runtime_executable_manifest_sha256": receipt.runtime_executable_manifest_sha256,
+        "mp4_validation_mode": receipt.mp4_validation_mode,
         "film_spec": parsed_contract.film_spec.model_dump(mode="json"),
         "files": file_payloads,
         "files_sha256": canonical_sha256(file_payloads),
