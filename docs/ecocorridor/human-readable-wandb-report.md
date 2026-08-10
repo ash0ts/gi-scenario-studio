@@ -1,17 +1,19 @@
-# Human-readable W&B article
+# “A Green Model Result Is Not a Green Light” W&B article
 
 The historical W&B Report is an experiment record. It is deliberately left
-unchanged. A separate article tells the result in plain language:
+unchanged. A separate long-form article now tells the result like a human story:
 
-> Passing the model is not the same as being ready to build.
+> A fictional wildlife crossing looks promising, a road-area warning raises its
+> hand, and an AI agent gets a clipboard instead of the keys.
 
-The article begins with the decision and the Ridgeway example. Technical hashes
-and provenance links appear at the end, where they can support the explanation
-instead of replacing it.
+The tone is candid, lightly mischievous, and deliberately honest about the
+negative agent result. The practitioner—not the model, software, or agent—is the
+decision-maker. Technical hashes and provenance links appear at the end, where
+they can support the explanation instead of replacing it.
 
 ## What the article says
 
-Ridgeway is a synthetic audit drill. For its carry-forward candidate:
+Ridgeway is a synthetic audit drill. The article explains that:
 
 - all 12 synthetic scenarios completed and no required connectivity check
   failed;
@@ -19,21 +21,30 @@ Ridgeway is a synthetic audit drill. For its carry-forward candidate:
 - modeled difficulty connecting habitat areas improved 1.60% in the least
   favorable safeguard case, so the check designed to avoid worsening the
   safeguard group passed; and
-- the model's road-area warning changed by 47.35% to 65.65%, above the authored
-  15% review trigger.
+- compared with the no-action baseline, total modeled electrical current—the
+  sum of current values inside a predefined road-review area—changed by 47.35%
+  to 65.65%;
+- the authored 15% trigger was a synthetic investigation threshold, not a
+  biological threshold; and
+- maintenance ownership at site 06 remains a project-level assumption, although
+  the selected option uses no action at that site.
 
 Circuitscape uses an electrical-circuit analogy to show where modeled
-connectivity may concentrate. The road-area number describes a shift in that
-analogy. It does not predict animal movement or crossing use. It identifies a
-place where the model and site assumptions need field review. The resulting
-status is “carry forward for field and feasibility review,” not approval.
+connectivity may concentrate. The road-area number describes a baseline-relative
+change in the total modeled current summed across that fixed area. It does not
+predict animal movement or crossing use. It identifies a place where the model
+and site assumptions need field review. The resulting status is “carry forward
+for field and feasibility review,” not approval.
 
-The article also reports the first agent experiment without overselling it. The
-agent workflow used 10,542 provider input tokens versus 10,798 for the
-full-context comparator—a 2.37% reduction, below the 25% promotion gate. The
-rule-based checklist therefore remains the default. The old experiment also
-used a fixed sequence and gave the comparison method an answer guide, so it
-cannot show that an agent can select the right evidence on its own.
+The article also reports the first agent experiment without attempting to make
+256 saved tokens look heroic. The agent workflow used 10,542 provider input
+tokens versus 10,798 for the full-context comparison—a 2.37% reduction, below
+the 25% promotion gate. The rule-based checklist therefore remains the default.
+The old experiment also forced the would-be agent through a fixed tool sequence,
+while the full-context method received a deterministic expected-answer contract
+describing the findings a valid answer should contain. One side followed a
+script and the other received hints. That campaign tested the plumbing, not
+adaptive evidence selection.
 
 ## Reader-first safety boundary
 

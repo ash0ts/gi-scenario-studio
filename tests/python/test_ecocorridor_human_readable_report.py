@@ -193,28 +193,47 @@ def test_article_leads_with_a_plain_decision_story_and_keeps_hashes_last() -> No
     source_blocks = [MarkdownBlock("historical")]
     plan = _plan(source_blocks)
     copy = "\n".join(section.markdown for section in plan.article.sections)
+    normalized = " ".join(copy.split())
+    rendered = "\n".join(
+        [
+            plan.article.title,
+            plan.article.summary,
+            *(f"{section.heading}\n{section.markdown}" for section in plan.article.sections),
+        ]
+    )
 
-    assert plan.article.title == "Passing the model is not the same as being ready to build"
+    assert plan.article.title == "A Green Model Result Is Not a Green Light"
     assert "$400,000" in plan.article.summary
     assert "$500,000" in plan.article.summary
     assert "47–66%" in plan.article.summary
-    assert "This is not observed animal movement" in plan.article.summary
-    assert "2.37%" in plan.article.summary
-    assert "25% target" in plan.article.summary
-    assert "simpler rule-based checklist remains the default" in plan.article.summary
+    assert "relative to the no-action baseline" in plan.article.summary
+    assert "not observed animal movement" in plan.article.summary
+    assert "the model raised" not in plan.article.summary.lower()
+    assert "bring a reviewer" in plan.article.summary
+    assert "256 tokens" in plan.article.summary
+    assert "25% promotion gate" in plan.article.summary
+    assert "stayed on the bench" in plan.article.summary
+    assert "Welcome to Ridgeway, a landscape we made up" in rendered
     assert "All 12 synthetic scenarios completed" in copy
     assert "no required connectivity check failed" in copy
-    assert (
-        "Modeled difficulty connecting habitat areas (effective resistance) improved 1.60%"
-        in copy
-    )
-    assert "47.35% to 65.65%" in copy
-    assert "authored 15% trigger" in copy
-    assert "carry forward for field and feasibility review—not approval" in copy
+    assert "Modeled resistance improved 1.6031%" in copy
+    assert "47.35%–65.65%" in copy
+    assert "Total modeled current inside the predefined road-review area" in copy
+    assert "above the authored 15% trigger" in copy
+    assert "still lacks a confirmed maintenance owner" in copy
+    assert "this candidate proposes no work at that site" in copy
+    assert "maintenance ownership at `site 06`" in plan.article.sections[-1].markdown
+    assert "Candidate to carry forward for ecological, field, and engineering feasibility" in copy
+    assert "The agent gets a clipboard, not the keys" in copy
+    assert "No parade was scheduled" in copy
+    assert "This still needs a human at the road" in copy
+    assert "not cut the ribbon" in copy
     assert "12/12" not in copy
     assert "rules passed" not in copy
     assert "safe enough" not in copy
-    assert "does not predict crossing use" in copy
+    assert "does not show observed animal movement" in copy
+    assert "did not establish that the agent reduced review burden" in normalized
+    assert "not a practitioner release" in copy
     assert plan.article.sections[-1].section_id == "audit-trail"
     assert plan.source.historical_report_blocks_sha256 in plan.article.sections[-1].markdown
 
@@ -263,6 +282,42 @@ def test_new_report_is_created_without_saving_the_historical_report(
     destinations = [item for item in api.items if item.title == article.REPORT_TITLE]
     assert len(destinations) == 1
     assert destinations[0].saved == 1
+
+
+def test_new_long_form_article_coexists_with_previous_reader_report(
+    fake_cloud: tuple[Any, _FakeApi],
+) -> None:
+    reports, api = fake_cloud
+    source_blocks = [MarkdownBlock("historical")]
+    source_report = _source_report(source_blocks)
+    previous_reader = _FakeReport.retained(
+        title="Passing the model is not the same as being ready to build",
+        description="verified v1 reader snapshot",
+        blocks=[MarkdownBlock("previous concise article")],
+        report_id="reader-v1",
+        url=(
+            "https://wandb.ai/wandb/ecocorridor-scenario-studio/reports/"
+            "reader--reader-v1"
+        ),
+    )
+    plan = _plan(source_blocks)
+    publisher = article.VerifiedHumanReadableReportPublisher(
+        entity="wandb",
+        project="ecocorridor-scenario-studio",
+        web_base_url="https://wandb.ai",
+        authorize_new_report=True,
+        api=api,
+        reports_module=reports,
+        source_reader=lambda: (_receipt(source_blocks), _ridgeway()),
+    )
+
+    receipt = publisher.publish(plan)
+
+    assert receipt.status == "CREATED"
+    assert receipt.report_title == "A Green Model Result Is Not a Green Light"
+    assert source_report.saved == 0
+    assert previous_reader.saved == 0
+    assert previous_reader.blocks[0].text == "previous concise article"
 
 
 def test_exact_existing_derivative_is_reused_without_any_save(

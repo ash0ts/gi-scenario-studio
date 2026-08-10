@@ -1,9 +1,9 @@
 """Hash-verified, reader-first W&B Report publication for EcoCorridor.
 
-The historical Report is evidence, not an editable document surface.  This
+The historical Report is evidence, not an editable document surface. This
 module first verifies that Report, its retained campaign artifact, and the
-committed Ridgeway fixture.  It can then create a separate, plain-language
-Report in the same W&B project.  It never edits the source Report and never
+committed Ridgeway fixture. It can then create a separate, human long-form
+Report in the same W&B project. It never edits the source Report and never
 creates a W&B Run or Artifact.
 """
 
@@ -13,6 +13,7 @@ import json
 import re
 import time
 from collections.abc import Callable, Sequence
+from textwrap import dedent
 from typing import Any, Literal, Self
 
 from pydantic import Field, model_validator
@@ -37,9 +38,9 @@ from .usefulness_narrative import (
     _require_web_origin,
 )
 
-REPORT_SCHEMA_VERSION = "ecocorridor-human-readable-report/v1"
-RECEIPT_SCHEMA_VERSION = "ecocorridor-human-readable-report-receipt/v1"
-REPORT_TITLE = "Passing the model is not the same as being ready to build"
+REPORT_SCHEMA_VERSION = "ecocorridor-human-readable-report/v2"
+RECEIPT_SCHEMA_VERSION = "ecocorridor-human-readable-report-receipt/v2"
+REPORT_TITLE = "A Green Model Result Is Not a Green Light"
 REPORT_MARKER_PREFIX = "<!-- ecocorridor-human-readable-report:"
 REPORT_READBACK_TIMEOUT_SECONDS = 20.0
 REPORT_READBACK_INTERVAL_SECONDS = 0.5
@@ -95,10 +96,10 @@ class RidgewayArticleEvidence(ContractModel):
 class HumanReadableArticle(ContractModel):
     """Provider-neutral, hashable article content."""
 
-    schema_version: Literal["ecocorridor-human-readable-article/v1"] = (
-        "ecocorridor-human-readable-article/v1"
+    schema_version: Literal["ecocorridor-human-readable-article/v2"] = (
+        "ecocorridor-human-readable-article/v2"
     )
-    title: Literal["Passing the model is not the same as being ready to build"] = REPORT_TITLE
+    title: Literal["A Green Model Result Is Not a Green Light"] = REPORT_TITLE
     summary: str = Field(min_length=20, max_length=1_500)
     sections: tuple[HumanReadableSection, ...]
     article_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -122,7 +123,7 @@ class HumanReadableArticle(ContractModel):
         sections: Sequence[HumanReadableSection],
     ) -> HumanReadableArticle:
         payload = {
-            "schema_version": "ecocorridor-human-readable-article/v1",
+            "schema_version": "ecocorridor-human-readable-article/v2",
             "title": REPORT_TITLE,
             "summary": summary,
             "sections": [section.model_dump(mode="json") for section in sections],
@@ -205,7 +206,7 @@ class HumanReadableSourceSnapshot(ContractModel):
 class HumanReadableReportPlan(ContractModel):
     """Frozen read-only source snapshot plus exact article to create."""
 
-    schema_version: Literal["ecocorridor-human-readable-report/v1"] = REPORT_SCHEMA_VERSION
+    schema_version: Literal["ecocorridor-human-readable-report/v2"] = REPORT_SCHEMA_VERSION
     entity: Literal["wandb"] = "wandb"
     project: Literal["ecocorridor-scenario-studio"] = "ecocorridor-scenario-studio"
     source: HumanReadableSourceSnapshot
@@ -253,7 +254,7 @@ class HumanReadableReportPlan(ContractModel):
 class HumanReadableReportReceipt(ContractModel):
     """Receipt written only after destination and untouched source readback."""
 
-    schema_version: Literal["ecocorridor-human-readable-report-receipt/v1"] = (
+    schema_version: Literal["ecocorridor-human-readable-report-receipt/v2"] = (
         RECEIPT_SCHEMA_VERSION
     )
     status: Literal["CREATED", "REUSED"]
@@ -264,9 +265,7 @@ class HumanReadableReportReceipt(ContractModel):
     source_report_preserved: Literal[True] = True
     report_url: str
     report_id: str = Field(min_length=1)
-    report_title: Literal[
-        "Passing the model is not the same as being ready to build"
-    ] = REPORT_TITLE
+    report_title: Literal["A Green Model Result Is Not a Green Light"] = REPORT_TITLE
     article_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     report_readback_verified: Literal[True] = True
     new_wandb_run_created: Literal[False] = False
@@ -299,160 +298,397 @@ class HumanReadableReportReceipt(ContractModel):
 def build_human_readable_article(
     source: HumanReadableSourceSnapshot,
 ) -> HumanReadableArticle:
-    """Explain the verified record before exposing audit identifiers."""
+    """Tell the verified story before exposing audit identifiers."""
 
     ridgeway = source.ridgeway
     fixture = ridgeway.evidence
     token_difference = HISTORICAL_BASELINE_INPUT_TOKENS - HISTORICAL_NATIVE_INPUT_TOKENS
     sections = (
         HumanReadableSection(
-            section_id="decision-problem",
-            heading="The decision problem",
-            markdown=(
-                "A wildlife-connectivity model can produce a precise-looking map without "
-                "answering the question a review team actually faces: **which option deserves "
-                "field investigation, and what could still make it fail?**\n\n"
-                "EcoCorridor organizes direct Circuitscape results, costs, safeguards, "
-                "assumptions, and source files around that decision. It does not turn a model "
-                "result into an ecological approval."
-            ),
+            section_id="green-light",
+            heading="Every model has a moment when it tries to become a decision",
+            markdown=dedent(
+                """
+                _The story of a fictional wildlife crossing, a very real review problem, and an
+                AI agent that got a clipboard instead of the keys._
+
+                It happens somewhere between the dashboard and the meeting. A number that meant
+                “under these assumptions, this particular check did not fail” changes clothes,
+                walks into a slide deck, and introduces itself as “we should build this.”
+
+                Very smooth. Extremely employable. Occasionally dangerous.
+
+                We built **EcoCorridor Scenario Studio** because wildlife-connectivity work
+                deserves a better handoff between model result and professional judgment. The
+                software helps a review team compare bounded crossing, fencing, and
+                habitat-restoration concepts across ecological scenarios, costs, safeguards, and
+                unresolved field questions. Every reported connectivity value must come from a
+                direct [Circuitscape](https://docs.circuitscape.org/Circuitscape.jl/latest/usage/)
+                run. Every important claim can be traced back to the scenario, source maps,
+                modeled change, assumptions, quality checks, and exact files that produced it.
+
+                That sounds like a lot of machinery. The reason for it is pleasantly simple:
+
+                > A promising model result should make the next investigation clearer. It should
+                > not impersonate an approval.
+                """
+            ).strip(),
         ),
         HumanReadableSection(
             section_id="ridgeway-example",
-            heading="A concrete example: Ridgeway Crossing",
-            markdown=(
-                "Ridgeway is a synthetic training landscape, not a real road or wildlife "
-                "population. One candidate looks promising at first glance, but the complete "
-                "record changes the next action. Circuitscape uses an electrical-circuit analogy "
-                "to show where modeled connectivity may concentrate. That signal does not show "
-                "where animals actually move.\n\n"
-                "| Check | Direct evidence | What a reviewer should conclude |\n"
-                "|---|---:|---|\n"
-                f"| Scenario evidence | All {ridgeway.complete_scenario_count} synthetic "
-                "scenarios completed and no required connectivity check failed | The selected "
-                "synthetic checks passed, but that is not an approval |\n"
-                f"| Screening cost | USD {fixture.cost_usd:,.0f} of a USD "
-                f"{fixture.budget_usd:,.0f} cap | Within the assumed screening budget |\n"
-                "| Connectivity safeguard | Modeled difficulty connecting habitat areas "
-                f"(effective resistance) improved "
-                f"{abs(fixture.resistance_change_percent):.2f}% in the least favorable case | "
-                "The check designed to avoid worsening the safeguard group passed under the "
-                "stated assumptions |\n"
-                f"| Road-area warning | {ridgeway.safeguard_mask_min_percent:.2f}% to "
-                f"{ridgeway.safeguard_mask_max_percent:.2f}% change in the model signal near the "
-                "road | Above "
-                f"the authored {ridgeway.review_trigger_percent:.0f}% trigger, so field review "
-                "is required; this does not predict crossing use |\n\n"
-                "**Outcome: carry forward for field and feasibility review—not approval.** The "
-                "road-area warning is exactly the kind of caveat that a headline score can hide."
-            ),
+            heading="Welcome to Ridgeway, a landscape we made up",
+            markdown=dedent(
+                f"""
+                Ridgeway is our fictional teaching landscape. It has four habitat areas separated
+                by one highway, two anonymous target groups, one safeguard group, four different
+                ways of describing landscape resistance, and eight possible intervention sites.
+
+                No real municipality is represented, and no threatened-species location is
+                hiding behind a cute pseudonym.
+
+                The exercise asks a practical screening question:
+
+                > Which intervention package, if any, deserves field and feasibility review?
+
+                One candidate looks quite good at first glance. Its assumed screening cost is
+                **${fixture.cost_usd:,.0f}**, below a **${fixture.budget_usd:,.0f}** cap. All
+                **{ridgeway.complete_scenario_count} synthetic scenarios** completed, and no
+                required target or safeguard connectivity check failed. Even in the least
+                favorable safeguard case, modeled difficulty connecting habitat areas improved
+                by **{abs(fixture.resistance_change_percent):.4f}%**.
+
+                This is the part of the meeting where somebody reaches for the green highlighter.
+
+                Then the road-area diagnostic speaks up. Compared with the no-action baseline,
+                the total Circuitscape modeled current—the sum of current values inside the
+                area—changed sharply in a place we had already marked for road review. The 15%
+                trigger was an
+                authored investigation threshold for this synthetic lesson, not a biological
+                threshold.
+
+                | Check | What the direct evidence says | What it supports |
+                | --- | --- | --- |
+                | Scenario completeness | All {ridgeway.complete_scenario_count} synthetic scenarios completed; no required connectivity check failed | Complete enough to compare under the authored rules |
+                | Screening cost | ${fixture.cost_usd:,.0f} against an assumed ${fixture.budget_usd:,.0f} cap | Fits the synthetic screening budget; this is not a bid or construction estimate |
+                | Safeguard connectivity | Modeled resistance improved {abs(fixture.resistance_change_percent):.4f}% in the least favorable safeguard case | The modeled safeguard connection did not worsen under the stated assumptions |
+                | Road-area diagnostic | Total modeled current inside the predefined road-review area changed {ridgeway.safeguard_mask_min_percent:.2f}%–{ridgeway.safeguard_mask_max_percent:.2f}% relative to the no-action baseline, above the authored {ridgeway.review_trigger_percent:.0f}% trigger | Investigate the road area, modeled effect, and site assumptions; this is not animal movement |
+                | Project assumption | One site in the broader project catalog still lacks a confirmed maintenance owner | Resolve the project record; this candidate proposes no work at that site |
+
+                The outcome is therefore:
+
+                > **Candidate to carry forward for ecological, field, and engineering feasibility
+                > review.**
+
+                Not “best.” Not “approved.”
+
+                Carry forward for review.
+                """
+            ).strip(),
+        ),
+        HumanReadableSection(
+            section_id="electrical-map",
+            heading="The electrical map is not a deer",
+            markdown=dedent(
+                f"""
+                [Circuitscape](https://docs.circuitscape.org/Circuitscape.jl/latest/usage/)
+                models a landscape using an electrical-circuit analogy. Habitat areas act like
+                endpoints. Each map cell receives a reviewed resistance value describing how
+                difficult movement is assumed to be through that cell. The solver calculates
+                effective resistance between habitat areas and a current pattern showing how
+                modeled connectivity may spread across the landscape.
+
+                This lets reviewers ask useful questions. Does an intervention help under several
+                plausible resistance maps or only one? Does improving a target scenario create a
+                concern for a safeguard scenario? Where does the modeled signal shift enough to
+                warrant closer inspection?
+
+                But the analogy remains an analogy.
+
+                A current map does not show observed animal movement. It does not predict whether
+                an animal will use a crossing. It does not estimate collisions avoided,
+                population survival, biodiversity gained, or regulatory compliance achieved.
+
+                Ridgeway matters because two things can be true at once:
+
+                1. No required modeled connectivity check failed.
+                2. Total modeled current inside the road-review area changed by {ridgeway.safeguard_mask_min_percent:.0f}%–{ridgeway.safeguard_mask_max_percent:.0f}% from the no-action baseline.
+
+                The first statement says the candidate met the authored connectivity rules. The
+                second says something changed in a sensitive place strongly enough that a reviewer
+                should investigate. A single score would flatten both statements into one color.
+                EcoCorridor keeps them separate and keeps the road-area result tied to its
+                baseline, scenario, map, and assumptions.
+                """
+            ).strip(),
+        ),
+        HumanReadableSection(
+            section_id="field-notebook",
+            heading="What we actually built",
+            markdown=dedent(
+                """
+                The product is not an automatic corridor designer. It is a decision workspace for
+                an ecologist, transportation environmental team, or consultant who already owns
+                the ecological judgment.
+
+                The human supplies or approves the resistance hypotheses, habitat areas,
+                intervention effects, safeguard scenarios, costs, and feasibility rules. The
+                software refuses to quietly invent them. It then handles the tedious evidence work
+                that is easy to perform inconsistently:
+
+                - run every option against every required target and safeguard scenario;
+                - withhold incomplete options from comparison;
+                - keep incompatible ecological assumptions separate;
+                - surface road-area and safeguard concerns beside favorable results;
+                - preserve assumptions and unresolved questions;
+                - stop at **survey first** when key evidence or feasibility is missing; and
+                - connect each displayed claim to its direct run and source evidence.
+
+                The important output is not a prettier connectivity map. It is a smaller,
+                inspectable decision.
+
+                Professional judgment does the important part. The software keeps its evidence
+                organized enough to inspect.
+                """
+            ).strip(),
+        ),
+        HumanReadableSection(
+            section_id="agent-clipboard",
+            heading="Then we added an agent, because apparently we enjoy supervision",
+            markdown=dedent(
+                """
+                The natural AI question was whether an agent could help prepare the field-review
+                brief. This is plausible process work: a large evidence record may contain
+                safeguard findings, model gaps, cost constraints, authorizations, and direct-run
+                references scattered across several branches.
+
+                So we designed a bounded Review Brief Agent.
+
+                The agent gets a clipboard, not the keys.
+
+                It may inspect only an authorized snapshot of the selected option and ask narrow,
+                read-only questions. It cannot change the model, run a new analysis, approve an
+                intervention, select a preferred option, accept a quality issue, alter costs,
+                browse the filesystem, search the web, or create a new ecological value.
+
+                It does not write the final story freestyle either. The model returns a structured
+                selection of known findings. Deterministic local code supplies the visible
+                numbers, units, limitations, and evidence links.
+
+                Every real model turn and tool call in the recorded campaign was retained with
+                [W&B Weave](https://docs.wandb.ai/weave/guides/tracking/tracing). If an output
+                fails its local checks, cites evidence outside its authorization, or cannot be
+                read back from the exact trace, no brief is saved.
+
+                This is deliberately less ambitious than “AI plans a wildlife corridor.” The
+                agent organizes authorized evidence; it does not acquire ecological authority.
+                """
+            ).strip(),
+        ),
+        HumanReadableSection(
+            section_id="no-parade",
+            heading=f"The agent saved {token_difference} tokens and received no parade",
+            markdown=dedent(
+                f"""
+                The question was narrow: could the read-only agent inspect less evidence than a
+                full-context method without losing the required findings?
+
+                | Method | Model input |
+                | --- | ---: |
+                | Full-context comparison | {HISTORICAL_BASELINE_INPUT_TOKENS:,} tokens |
+                | Read-only agent | {HISTORICAL_NATIVE_INPUT_TOKENS:,} tokens |
+                | Difference | {token_difference:,} fewer tokens ({HISTORICAL_CONTEXT_REDUCTION_PERCENT:.2f}%) |
+
+                That is enough to avoid one modest paragraph. It is not enough to reorganize the
+                product around an agent.
+
+                We declared a **25% reduction target** before reading the result. The agent missed
+                it by a comfortable margin, so the rule-based checklist remains the default.
+
+                No parade was scheduled.
+
+                For the audit record, the campaign contained **{HISTORICAL_RECORD_COUNT} scored
+                records**: **{HISTORICAL_PROVIDER_CONVERSATION_COUNT} real model conversations**
+                captured in Weave, **{HISTORICAL_PRE_PROVIDER_BLOCK_COUNT} unsafe or invalid
+                cases** stopped before any model call, and 14 deterministic local-control records.
+
+                The comparison was also not fair enough to answer the larger agent question. The
+                supposed agent was instructed to call the same tools in the same order, so it was
+                not choosing what evidence to inspect or when to stop. The full-context method's
+                prompt included a deterministic expected-answer contract describing the findings
+                a valid answer should contain. In plain English: one side followed a script, and
+                the other received hints about the answer.
+
+                That campaign tested the plumbing. It did not test genuinely selective agent
+                behavior.
+
+                The supported conclusion is narrower:
+
+                > This experiment established traceable, fail-closed execution under the recorded
+                > conditions. It did not establish that the agent reduced review burden enough to
+                > deserve promotion.
+
+                That is a useful negative result. It stopped “we added an agent” from quietly
+                becoming “the agent improved the product.”
+                """
+            ).strip(),
         ),
         HumanReadableSection(
             section_id="current-value",
-            heading="What the software is useful for today",
-            markdown=(
-                "The implemented workflow is useful as an **audit and screening discipline**:\n\n"
-                "- it withholds an option from comparison until every required target and "
-                "safeguard scenario finishes;\n"
-                "- it keeps scenario-specific resistance results separate instead of blending "
-                "incompatible ecological hypotheses;\n"
-                "- it resolves a displayed claim back to the direct run, scenario, map change, "
-                "source files, model settings, quality checks, and assumptions; and\n"
-                "- it can stop at **survey first** when evidence, authorization, or feasibility is "
-                "incomplete.\n\n"
-                "Those are product capabilities. Whether they make real practitioners faster or "
-                "less likely to miss a safeguard still requires a controlled study."
-            ),
+            heading="What is useful today",
+            markdown=dedent(
+                """
+                EcoCorridor’s present value is not that it knows ecology better than an ecologist.
+                It is that it makes several ordinary review failures harder:
+
+                - treating an incomplete scenario set as a comparable result;
+                - forgetting a safeguard while admiring a target improvement;
+                - blending incompatible model assumptions into one reassuring average;
+                - losing the link between a claim and the direct run that produced it;
+                - allowing a cost-feasible option to outrun unresolved field evidence;
+                - describing a modeled electrical pattern as observed animal behavior; and
+                - converting “worth investigating” into “ready to build.”
+
+                A conventional Ridgeway summary could stop at “under budget, no failed
+                connectivity checks.” EcoCorridor keeps the road-area warning beside that good
+                news and turns the warning into a next action.
+
+                The result is a smaller, inspectable handoff: what looks promising, what remains
+                unresolved, where every number came from, and what a qualified reviewer should
+                investigate next.
+                """
+            ).strip(),
         ),
         HumanReadableSection(
-            section_id="agent-result",
-            heading="What the first agent experiment taught us",
-            markdown=(
-                f"The historical test contained **{HISTORICAL_RECORD_COUNT} scored records**. "
-                f"W&B Weave recorded **{HISTORICAL_PROVIDER_CONVERSATION_COUNT} real model "
-                f"conversations**, while **{HISTORICAL_PRE_PROVIDER_BLOCK_COUNT} unsafe or "
-                "invalid requests were stopped before any model call**.\n\n"
-                "| Method | Model input (tokens) |\n"
-                "|---|---:|\n"
-                f"| Full-context comparator | {HISTORICAL_BASELINE_INPUT_TOKENS:,} |\n"
-                f"| Read-only agent workflow | {HISTORICAL_NATIVE_INPUT_TOKENS:,} |\n"
-                f"| Difference | {token_difference:,} fewer tokens "
-                f"({HISTORICAL_CONTEXT_REDUCTION_PERCENT:.2f}%) |\n\n"
-                "The promotion target was 25%, so the recorded decision was to keep the simpler, "
-                "rule-based checklist as the default. "
-                "That is a useful negative result. It prevented an agent from being promoted on "
-                "novelty alone.\n\n"
-                "The experiment did **not** show that an agent can select the right evidence on "
-                "its own. The agent followed a fixed sequence, and the comparison method was "
-                "given an answer guide. A corrected experiment must give each method the same "
-                "evidence and allow the agent to choose what to inspect and when to stop."
-            ),
+            section_id="evidence-to-earn",
+            heading="What we still have to earn",
+            markdown=dedent(
+                """
+                Ridgeway is synthetic. It demonstrates software behavior against authored
+                assumptions. It does not validate a real resistance map, habitat-area choice,
+                intervention effect, or crossing design.
+
+                The historical agent campaign shows that provider calls were traced, unsafe cases
+                could be blocked, and outputs could be checked before release under those recorded
+                conditions. It does not show autonomous ecological reasoning, a useful adaptive
+                agent, or lower review burden.
+
+                We have not yet shown that real practitioners using EcoCorridor miss fewer
+                safeguards, reach correct screening dispositions faster, or reconstruct evidence
+                more accurately than they do with a fair conventional evidence package. Those are
+                empirical questions, not adjectives.
+
+                We plan to test several structurally different synthetic landscapes, not endless
+                costume changes of Ridgeway. We will compare a rule-based checklist, a model that
+                receives the whole evidence packet, an agent allowed to choose what it reads, an
+                agent required to read everything, and a best-case comparison given only the
+                evidence it needs. We will also try to break the safety boundary with stale
+                evidence, malicious instructions, sensitive-location leakage, altered tool
+                results, malformed output, and trace outages.
+
+                Only after those technical studies are frozen should practitioners compare the
+                workflows in a controlled study. Authorized partner projects should be
+                retrospective and de-identified. They should test workflow utility and handoff
+                quality without influencing a live decision.
+
+                No part of this work establishes observed animal movement, crossing use,
+                collision reduction, population response, biodiversity benefit, regulatory
+                approval, or a design-ready project.
+
+                This source implementation is not a practitioner release either. The engine study
+                still needs protected independent execution, cloud authorization still needs an
+                officially supported verification path, installers still need signatures, and
+                practitioners still need to complete acceptance testing.
+
+                If the agent cannot reduce irrelevant reading without missing critical findings,
+                it stays experimental. If EcoCorridor does not improve review quality or time, we
+                say so.
+
+                Auditability does not replace expertise. It gives expertise something better to
+                inspect.
+                """
+            ).strip(),
         ),
         HumanReadableSection(
-            section_id="claim-boundary",
-            heading="What we can—and cannot—claim",
-            markdown=(
-                "| Claim | Current status |\n"
-                "|---|---|\n"
-                "| The historical calls were traced and checked before release | **Supported for "
-                "the recorded campaign** |\n"
-                "| The first agent reduced context enough to justify promotion | **No** |\n"
-                "| EcoCorridor improves practitioner decisions or review speed | **Not tested "
-                "yet** |\n"
-                "| The software predicts animal movement, crossing use, collision reduction, or "
-                "population benefit | **No—outside the model and product claim boundary** |\n"
-                "| Ridgeway identifies an approved or design-ready crossing | **No—synthetic "
-                "screening example only** |"
-            ),
-        ),
-        HumanReadableSection(
-            section_id="next-evidence",
-            heading="What evidence comes next",
-            markdown=(
-                "The next program is designed to answer the unanswered questions rather than "
-                "decorate the current result:\n\n"
-                "1. Generate direct evidence on five different synthetic landscape layouts.\n"
-                "2. Compare a rule-based checklist, a model reading the full packet, an agent "
-                "choosing what to inspect, an agent forced to inspect everything, and a "
-                "best-case minimal-evidence benchmark.\n"
-                "3. Try to break the safety boundary with malicious instructions, stale evidence, "
-                "sensitive locations, malformed output, altered tool results, and trace outages.\n"
-                "4. Ask practitioners to compare the workflows only after independent reviewers "
-                "freeze the correct answers and scoring guide.\n"
-                "5. Study retrospective partner projects as workflow evidence—not as proof of "
-                "ecological outcomes."
-            ),
+            section_id="community",
+            heading="Why the community should care",
+            markdown=dedent(
+                """
+                Environmental decisions often combine uncertain science, costly interventions,
+                fragmented evidence, and pressure to produce one clean recommendation. That is
+                exactly where a confident summary can outrun what the underlying work supports.
+
+                More AI does not solve that automatically. Neither do more plots or more decimal
+                places. What helps is a disciplined division of labor:
+
+                ```text
+                model calculates
+                  → software preserves and checks
+                  → agent may organize
+                  → practitioner judges
+                ```
+
+                The model calculates the declared scenario. The software keeps the record
+                complete, comparable, and traceable. The agent may help navigate that record if
+                it proves that it can do so selectively and safely. The practitioner decides what
+                the evidence means, what must be investigated, and whether any option deserves the
+                next dollar of real-world attention.
+
+                In Ridgeway, the most important result was not the favorable budget or
+                connectivity number. It was the moment the evidence said:
+
+                > This still needs a human at the road.
+
+                That is not the model failing to decide. That is the system remembering who
+                should.
+
+                **A green result is a reason to open the field notebook—not cut the ribbon.**
+                """
+            ).strip(),
         ),
         HumanReadableSection(
             section_id="audit-trail",
-            heading="Inspect the evidence",
-            markdown=(
-                f"- [Historical campaign run]({source.historical_run_url})\n"
-                f"- [Immutable campaign artifact]({source.historical_artifact_url})\n"
-                f"- [Original historical Report]({source.historical_report_url})\n"
-                f"- [Implementation and review history]({IMPLEMENTATION_PR_URL})\n\n"
-                "Machine-verifiable identities:\n\n"
-                f"- campaign: `{source.historical_campaign_sha256}`\n"
-                f"- campaign artifact manifest: "
-                f"`{source.historical_artifact_manifest_sha256}`\n"
-                f"- retained Weave trace receipts: "
-                f"`{source.historical_trace_receipts_sha256}`\n"
-                f"- source Report blocks: `{source.historical_report_blocks_sha256}`\n"
-                f"- Ridgeway projection: `{source.ridgeway.evidence.projection_sha256}`\n\n"
-                "The identifiers are placed here, after the explanation, so they support the "
-                "story instead of replacing it."
-            ),
+            heading="Inspect the record",
+            markdown=dedent(
+                f"""
+                - [Historical campaign run]({source.historical_run_url})
+                - [Versioned campaign artifact]({source.historical_artifact_url})
+                - [Original technical Report]({source.historical_report_url})
+                - [Implementation and review history]({IMPLEMENTATION_PR_URL})
+                - [Circuitscape documentation](https://docs.circuitscape.org/Circuitscape.jl/latest/usage/)
+                - [W&B Weave tracing](https://docs.wandb.ai/weave/guides/tracking/tracing)
+
+                The current local Ridgeway package retains 1,536 direct matrix jobs and 60 direct
+                current-map jobs. That is semantically verified local fixture evidence, not a
+                signed or protected release attestation.
+
+                The unresolved project-catalog assumption is maintenance ownership at `site 06`;
+                the selected candidate uses no action at that site.
+
+                Machine-verifiable identities:
+
+                - campaign: `{source.historical_campaign_sha256}`
+                - campaign artifact manifest: `{source.historical_artifact_manifest_sha256}`
+                - retained Weave trace receipts: `{source.historical_trace_receipts_sha256}`
+                - source Report blocks: `{source.historical_report_blocks_sha256}`
+                - Ridgeway projection: `{source.ridgeway.evidence.projection_sha256}`
+
+                The identifiers live here, behind the explanation, where they can support the
+                story instead of attempting to become one.
+                """
+            ).strip(),
         ),
     )
     return HumanReadableArticle.create(
         summary=(
-            "A $400,000 Ridgeway option fit within its $500,000 screening budget, and all 12 "
-            "synthetic scenarios completed without a failed connectivity check. But the model "
-            "also flagged a large 47–66% shift around the road in its electrical-circuit "
-            "analogy—well above the 15% investigation trigger. This is not observed animal "
-            "movement. The right next step is field review, not approval. The agent then failed "
-            "its own usefulness test: it cut model input by only 2.37%, far short of the 25% "
-            "target, so the simpler rule-based checklist remains the default."
+            "Ridgeway looked ready for a victory lap: the synthetic $400,000 option fit its "
+            "$500,000 screening budget, and no required connectivity check failed across 12 "
+            "scenarios. Then EcoCorridor's authored road-area check found that total modeled "
+            "electrical current inside a predefined review area changed 47–66% relative to the "
+            "no-action baseline. That exceeded the synthetic 15% investigation trigger; "
+            "it was not observed animal movement. The answer became ‘bring a reviewer,’ not "
+            "‘approve the project.’ The AI "
+            f"agent later saved {token_difference} tokens—2.37% against a 25% promotion gate—and "
+            "stayed on the bench."
         ),
         sections=sections,
     )
@@ -471,7 +707,7 @@ def _report_marker(plan: HumanReadableReportPlan) -> dict[str, str]:
 def report_description(plan: HumanReadableReportPlan) -> str:
     marker = json.dumps(_report_marker(plan), sort_keys=True, separators=(",", ":"))
     return (
-        "A plain-language, bounded interpretation of the verified EcoCorridor evidence. "
+        "A candid, human, and bounded interpretation of the verified EcoCorridor evidence. "
         "The original historical Report remains unchanged. No new experiment result is "
         "created by this article.\n\n"
         f"{REPORT_MARKER_PREFIX}{marker} -->"

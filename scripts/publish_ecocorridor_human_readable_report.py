@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify sources, then create a separate plain-language EcoCorridor W&B Report.
+"""Verify sources, then create a separate human EcoCorridor W&B article.
 
 The ``verify`` phase is read-only and writes a canonical plan.  The ``publish``
 phase reads every source again, requires the exact frozen plan, and creates a
