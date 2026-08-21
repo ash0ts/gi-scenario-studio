@@ -7,7 +7,7 @@ import shutil
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, ClassVar, Self
+from typing import Any, ClassVar
 
 import pytest
 from ecocorridor_core.human_readable_report import HumanReadableSourceSnapshot
@@ -34,7 +34,6 @@ from ecocorridor_core.visual_story_report import (
     expected_run_config,
     load_visual_story_assets,
     parse_report_marker,
-    raw_figure_url,
     render_report_blocks,
     report_description,
     validate_artifact_download,
@@ -71,11 +70,63 @@ class MarkdownBlock(_Block):
     pass
 
 
-class Image(_Block):
-    def __init__(self, *, url: str, caption: str) -> None:
-        super().__init__(url=url, caption=caption)
-        self.url = url
-        self.caption = caption
+class Layout:
+    def __init__(self, *, w: int, h: int) -> None:
+        self._spec = {"w": w, "h": h}
+
+
+class Runset:
+    def __init__(
+        self,
+        *,
+        entity: str,
+        project: str,
+        name: str,
+        filters: str,
+    ) -> None:
+        self._spec = {
+            "entity": entity,
+            "project": project,
+            "name": name,
+            "filters": filters,
+            "order": [],
+        }
+
+
+class MediaBrowser:
+    def __init__(
+        self,
+        *,
+        title: str,
+        num_columns: int,
+        media_keys: list[str],
+        mode: str,
+        gallery_axis: str,
+        layout: Layout,
+    ) -> None:
+        self._spec = {
+            "title": title,
+            "num_columns": num_columns,
+            "media_keys": media_keys,
+            "mode": mode,
+            "gallery_axis": gallery_axis,
+            "layout": layout._spec,
+        }
+
+
+class PanelGrid:
+    def __init__(
+        self,
+        *,
+        runsets: list[Runset],
+        hide_run_sets: bool,
+        panels: list[MediaBrowser],
+    ) -> None:
+        self._spec = {
+            "runsets": [item._spec for item in runsets],
+            "hide_run_sets": hide_run_sets,
+            "panels": [item._spec for item in panels],
+        }
 
 
 class _FakeApi:
@@ -182,7 +233,10 @@ def fake_cloud() -> tuple[Any, _FakeApi]:
         H1=H1,
         H2=H2,
         MarkdownBlock=MarkdownBlock,
-        Image=Image,
+        Layout=Layout,
+        Runset=Runset,
+        MediaBrowser=MediaBrowser,
+        PanelGrid=PanelGrid,
     )
     return reports, api
 
@@ -520,9 +574,21 @@ def test_new_report_preserves_both_sources_and_exact_retry_reuses(
             " -->", 1
         )[0]
     )
-    image_blocks = [item for item in destination.blocks if isinstance(item, Image)]
-    assert len(image_blocks) == 6
-    assert all(f"/{SOURCE_COMMIT}/docs/" in item.url for item in image_blocks)
+    media_blocks = [item for item in destination.blocks if isinstance(item, PanelGrid)]
+    assert len(media_blocks) == 6
+    assert [
+        item._spec["panels"][0]["media_keys"][0] for item in media_blocks
+    ] == [f"article/figures/{item.figure_id}" for item in plan.assets.figures]
+    assert all(item._spec["hide_run_sets"] is True for item in media_blocks)
+    for figure, item in zip(plan.assets.figures, media_blocks, strict=True):
+        runset = item._spec["runsets"][0]
+        assert runset["name"] == f"Verified article media · {figure.figure_id}"
+        assert f"ID = '{plan.run_id}'" in runset["filters"]
+        assert f"Config('plan_sha256') = '{plan.plan_sha256}'" in runset["filters"]
+        assert (
+            f"Config('article_sha256') = '{plan.assets.article_sha256}'"
+            in runset["filters"]
+        )
 
     reused_publisher = VerifiedVisualStoryReportPublisher(
         api=api,
@@ -629,11 +695,41 @@ def test_report_blocks_keep_caption_and_accessible_description(
     blocks = render_report_blocks(reports, plan, _media(plan))
     assert isinstance(blocks[0], H1)
     assert blocks[0].text == REPORT_TITLE
-    assert len([item for item in blocks if isinstance(item, Image)]) == 6
+    assert len([item for item in blocks if isinstance(item, PanelGrid)]) == 6
     prose = "\n".join(item.text for item in blocks if isinstance(item, MarkdownBlock))
     for figure in plan.assets.figures:
         assert figure.caption in prose
         assert figure.alt_text in prose
+
+
+def test_real_wandb_sdk_serializes_six_hidden_exact_media_panels(
+    fake_cloud: tuple[Any, _FakeApi],
+) -> None:
+    import wandb_workspaces.reports.v2 as real_reports
+
+    _reports, _api = fake_cloud
+    source = _FakeReport.retained(
+        title="technical",
+        blocks=[MarkdownBlock("historical")],
+        report_id="historical",
+        url=SOURCE_REPORT_URL,
+    )
+    old = _FakeReport.retained(
+        title="A Green Model Result Is Not a Green Light",
+        blocks=[MarkdownBlock("old")],
+        report_id="old",
+        url=OLD_ARTICLE_URL,
+    )
+    plan = _plan(source, old)
+    blocks = render_report_blocks(real_reports, plan, _media(plan))
+    grids = [item for item in blocks if isinstance(item, real_reports.PanelGrid)]
+    assert len(grids) == 6
+    for figure, grid in zip(plan.assets.figures, grids, strict=True):
+        assert grid.hide_run_sets is True
+        assert len(grid.runsets) == len(grid.panels) == 1
+        assert grid.panels[0].media_keys == [f"article/figures/{figure.figure_id}"]
+        assert grid.panels[0].title == figure.title
+        assert f"ID = '{plan.run_id}'" in str(grid.runsets[0].filters)
 
 
 def _media_plan(fake_cloud: tuple[Any, _FakeApi]) -> tuple[VisualStoryReportPlan, _FakeApi]:
@@ -750,43 +846,25 @@ def test_media_publisher_rejects_incomplete_cloud_readback(
         publisher.publish(plan)
 
 
-def test_commit_pinned_figure_fetch_is_byte_verified(
+def test_commit_pinned_figure_sources_are_byte_verified(
     fake_cloud: tuple[Any, _FakeApi],
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     plan, _api = _media_plan(fake_cloud)
-    payloads = {
-        raw_figure_url(plan, figure): (ROOT / figure.png_path).read_bytes()
-        for figure in plan.assets.figures
-    }
+    for figure in plan.assets.figures:
+        target = tmp_path / figure.png_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / figure.png_path, target)
+    checked: list[list[str]] = []
 
-    class _Response:
-        def __init__(self, url: str, payload: bytes) -> None:
-            self.status = 200
-            self.headers = {"Content-Type": "image/png"}
-            self.url = url
-            self.payload = payload
+    def _verify_pushed(**values: Any) -> None:
+        checked.append(list(values["repository_paths"]))
 
-        def __enter__(self) -> Self:
-            return self
+    monkeypatch.setattr(visual_story_cli, "_require_exact_pushed_assets", _verify_pushed)
+    visual_story_cli.verify_committed_figure_bytes(plan, root=tmp_path)
+    assert checked == [[item.png_path for item in plan.assets.figures]]
 
-        def __exit__(self, *_args: object) -> None:
-            return None
-
-        def geturl(self) -> str:
-            return self.url
-
-        def read(self, limit: int) -> bytes:
-            return self.payload[:limit]
-
-    def _open(request: Any, *, timeout: int) -> _Response:
-        assert timeout == 20
-        return _Response(request.full_url, payloads[request.full_url])
-
-    monkeypatch.setattr(visual_story_cli, "urlopen", _open)
-    visual_story_cli.verify_remote_figure_bytes(plan)
-
-    first_url = next(iter(payloads))
-    payloads[first_url] = b"corrupt"
+    (tmp_path / plan.assets.figures[0].png_path).write_bytes(b"corrupt")
     with pytest.raises(RuntimeError, match="bytes differ"):
-        visual_story_cli.verify_remote_figure_bytes(plan)
+        visual_story_cli.verify_committed_figure_bytes(plan, root=tmp_path)

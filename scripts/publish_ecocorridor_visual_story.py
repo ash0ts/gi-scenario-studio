@@ -20,7 +20,6 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
 
 try:
     from append_ecocorridor_usefulness_narrative import require_publishable_source
@@ -45,7 +44,6 @@ from ecocorridor_core.visual_story_report import (
     expected_artifact_metadata,
     expected_run_config,
     load_visual_story_assets,
-    raw_figure_url,
     safe_https,
     validate_artifact_download,
     validate_plan_bytes,
@@ -175,21 +173,23 @@ def _require_exact_pushed_assets(
             )
 
 
-def verify_remote_figure_bytes(plan: VisualStoryReportPlan) -> None:
-    """Prove every commit-pinned image URL returns the exact committed PNG."""
+def verify_committed_figure_bytes(
+    plan: VisualStoryReportPlan,
+    *,
+    root: Path,
+) -> None:
+    """Recheck that every native W&B media source is the exact pushed PNG."""
 
+    _require_exact_pushed_assets(
+        root=root,
+        source_commit=plan.source.source_commit,
+        repository_paths=[item.png_path for item in plan.assets.figures],
+    )
     files = {item.repository_path: item for item in plan.assets.artifact_files}
     for figure in plan.assets.figures:
         expected = files[figure.png_path]
-        url = raw_figure_url(plan, figure)
-        request = Request(url, headers={"User-Agent": "EcoCorridor-article-publisher/1"})
-        with urlopen(request, timeout=20) as response:
-            if response.status != 200 or response.geturl() != url:
-                raise RuntimeError("commit-pinned article figure was not retrieved exactly")
-            media_type = str(response.headers.get("Content-Type", "")).split(";", 1)[0]
-            if media_type != "image/png":
-                raise RuntimeError("commit-pinned article figure media type differs")
-            payload = response.read(expected.bytes + 1)
+        source = root / figure.png_path
+        payload = source.read_bytes()
         if len(payload) != expected.bytes or _sha256_bytes(payload) != expected.sha256:
             raise RuntimeError("commit-pinned article figure bytes differ")
 
@@ -637,7 +637,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         authorize_new_report=True,
         source_reader=current_plan,
         media_publisher=media.publish,
-        figure_verifier=verify_remote_figure_bytes,
+        figure_verifier=lambda plan: verify_committed_figure_bytes(plan, root=root),
     )
     receipt: VisualStoryReportReceipt = publisher.publish(frozen)
     payload = (

@@ -3,7 +3,7 @@
 The article is a separate W&B Report. It does not edit the historical technical
 Report or the previous reader article. Its figures are derived from committed
 synthetic evidence, logged as article media (not experiment results), retained
-in an immutable W&B Artifact, and also embedded from source-commit-pinned URLs.
+in an immutable W&B Artifact, and rendered through native W&B media panels.
 """
 
 from __future__ import annotations
@@ -15,13 +15,17 @@ import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, Literal, Self
-from urllib.parse import quote, urlsplit
+from urllib.parse import urlsplit
 
 from pydantic import Field, model_validator
 
 from .contracts import ContractModel, canonical_sha256
 from .human_readable_report import HumanReadableSourceSnapshot
-from .usefulness_narrative import _blocks_sha256, _require_web_origin
+from .usefulness_narrative import (
+    _blocks_sha256,
+    _require_web_origin,
+    _semantic_blocks_sha256,
+)
 
 REPORT_TITLE = "The Model Passed. We Sent a Human to the Road."
 REPORT_SCHEMA_VERSION = "ecocorridor-visual-story-report/v1"
@@ -527,20 +531,12 @@ def parse_report_marker(value: object) -> dict[str, str] | None:
     return marker
 
 
-def raw_figure_url(plan: VisualStoryReportPlan, figure: VisualStoryFigure) -> str:
-    path = quote(figure.png_path, safe="/")
-    return (
-        "https://raw.githubusercontent.com/ash0ts/gi-scenario-studio/"
-        f"{plan.source.source_commit}/{path}"
-    )
-
-
 def render_report_blocks(
     reports: Any,
     plan: VisualStoryReportPlan,
     media: VisualStoryMediaReceipt,
 ) -> list[Any]:
-    """Interleave prose and source-pinned images without trusting remote Markdown paths."""
+    """Interleave prose with byte-verified images from the article's W&B run."""
 
     markdown = plan.assets.article_markdown
     title_line = f"# {REPORT_TITLE}\n"
@@ -555,7 +551,32 @@ def render_report_blocks(
         if prose:
             blocks.append(reports.MarkdownBlock(text=prose))
         figure = figures[match.group("figure_id")]
-        blocks.append(reports.Image(url=raw_figure_url(plan, figure), caption=figure.caption))
+        runset = reports.Runset(
+            entity=plan.entity,
+            project=plan.project,
+            name=f"Verified article media · {figure.figure_id}",
+            filters=(
+                f"ID = '{media.run_id}' and "
+                f"Config('plan_sha256') = '{plan.plan_sha256}' and "
+                f"Config('article_sha256') = '{plan.assets.article_sha256}'"
+            ),
+        )
+        blocks.append(
+            reports.PanelGrid(
+                runsets=[runset],
+                hide_run_sets=True,
+                panels=[
+                    reports.MediaBrowser(
+                        title=figure.title,
+                        num_columns=1,
+                        media_keys=[f"article/figures/{figure.figure_id}"],
+                        mode="gallery",
+                        gallery_axis="index",
+                        layout=reports.Layout(w=24, h=12),
+                    )
+                ],
+            )
+        )
         blocks.append(
             reports.MarkdownBlock(
                 text=(
@@ -707,7 +728,9 @@ class VerifiedVisualStoryReportPublisher:
         if report_id in {item.report_id for item in plan.protected_reports}:
             raise RuntimeError("visual-story destination reused a protected Report ID")
         expected_blocks = render_report_blocks(self.reports, plan, media)
-        if _blocks_sha256(list(report.blocks)) != _blocks_sha256(expected_blocks):
+        if _semantic_blocks_sha256(list(report.blocks)) != _semantic_blocks_sha256(
+            expected_blocks
+        ):
             raise RuntimeError("visual-story W&B Report body differs")
         return url, report_id
 
@@ -865,7 +888,6 @@ __all__ = [
     "expected_run_config",
     "load_visual_story_assets",
     "parse_report_marker",
-    "raw_figure_url",
     "render_report_blocks",
     "report_description",
     "safe_https",
