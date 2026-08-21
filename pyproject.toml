@@ -47,6 +47,9 @@ ecocorridor-agents = [
 ecocorridor-report = [
   "wandb-workspaces==0.4.5",
 ]
+ecocorridor-visuals = [
+  "matplotlib>=3.11,<4",
+]
 release = [
   "PyNaCl==1.6.2",
   "pyinstaller==6.21.0",

@@ -1126,6 +1126,9 @@ ecocorridor-agents = [
 ecocorridor-report = [
     { name = "wandb-workspaces" },
 ]
+ecocorridor-visuals = [
+    { name = "matplotlib" },
+]
 export = [
     { name = "jinja2" },
     { name = "openpyxl" },
@@ -1176,10 +1179,11 @@ requires-dist = [
     { name = "scipy", marker = "extra == 'science'", specifier = ">=1.14" },
     { name = "swmmanywhere", marker = "extra == 'geo'", specifier = ">=0.2.2" },
     { name = "wandb", marker = "extra == 'observability'", specifier = ">=0.22.3,<1" },
+    { name = "matplotlib", marker = "extra == 'ecocorridor-visuals'", specifier = ">=3.11,<4" },
     { name = "wandb-workspaces", marker = "extra == 'ecocorridor-report'", specifier = "==0.4.5" },
     { name = "weave", marker = "extra == 'observability'", specifier = ">=0.52.17,<1" },
 ]
-provides-extras = ["science", "geo", "ecocorridor", "export", "observability", "ecocorridor-agents", "ecocorridor-report", "release", "dev"]
+provides-extras = ["science", "geo", "ecocorridor", "export", "observability", "ecocorridor-agents", "ecocorridor-report", "ecocorridor-visuals", "release", "dev"]
 
 [[package]]
 name = "googleapis-common-protos"

@@ -1,0 +1,173 @@
+{
+  "article_title": "The Model Passed. We Sent a Human to the Road.",
+  "boundary": "Synthetic evidence only. Figures do not show observed animal movement, crossing use, collision reduction, population response, biodiversity benefit, approval, or a design-ready project.",
+  "candidate_id": "portfolio_d3aa8b1e170ffd76b322",
+  "figures": [
+    {
+      "alt_text": "Four evidence cards show 12 of 12 scenarios complete, a 400,000 dollar cost inside a 500,000 dollar cap, 1.603 percent lower modeled effective resistance in the least-favorable safeguard case, and a 47 to 66 percent road-area current change above a 15 percent trigger. An arrow leads to carry forward for feasibility review.",
+      "caption": "Three favorable checks did not erase the separate road-area review flag. The supported action was further ecological, field, and engineering review\u2014not approval.",
+      "figure_id": "ridgeway-decision",
+      "forbidden_implication": "Observed animal movement, crossing use, ecological benefit, or approval.",
+      "png_path": "docs/ecocorridor/article-assets/the-model-passed/ridgeway-decision.png",
+      "png_sha256": "bab48640d2fdbad9f3766113e0b6b1cf0949bf47e1a2647007b62732bfc3137f",
+      "question": "How can every required connectivity check pass while the overall disposition remains review?",
+      "source_locations": [
+        "benchmarks/ecocorridor/ridgeway/ui_projection.json:portfolios[carry-forward]",
+        "benchmarks/ecocorridor/ridgeway/ui_projection.json:decisionBrief"
+      ],
+      "svg_path": "docs/ecocorridor/article-assets/the-model-passed/ridgeway-decision.svg",
+      "svg_sha256": "818e29490f53e186e19f10e3b5a246b1f7e2e0b41c5a91a7273d3d1460fc7463",
+      "takeaway": "A separate road-area diagnostic changed the next action from modeled pass to field review.",
+      "title": "Why the Ridgeway candidate remained a review",
+      "values": {
+        "budget_usd": 500000.0,
+        "cost_usd": 400000.0,
+        "least_favorable_safeguard_resistance_change_percent": -1.6031418683724497,
+        "review_mask_max_change_percent": 65.64856911527522,
+        "review_mask_min_change_percent": 47.34703286028441,
+        "review_trigger_percent": 15.0,
+        "scenario_pass_count": 12,
+        "scenario_required_count": 12
+      }
+    },
+    {
+      "alt_text": "Horizontal bars show road-area modeled-current changes of 47.35, 59.59, 65.65, and 64.77 percent for low-barrier, moderate, high-barrier, and future-pressure safeguard scenarios. Every bar lies beyond a dashed 15 percent review line.",
+      "caption": "The warning did not depend on only one landscape assumption. It appeared in all four safeguard scenarios. The 15% line is an authored synthetic investigation trigger, not a biological threshold.",
+      "figure_id": "road-mask-hypotheses",
+      "forbidden_implication": "Collision risk, road crossing probability, or animal-use concentration.",
+      "png_path": "docs/ecocorridor/article-assets/the-model-passed/road-mask-hypotheses.png",
+      "png_sha256": "52daa39f290a757d0c3c6d1a900fe244d3a3568f85ef83044130b071c59bf331",
+      "question": "Was the road-area flag caused by only one safeguard resistance hypothesis?",
+      "source_locations": [
+        "benchmarks/ecocorridor/ridgeway/ui_projection.json:portfolios[carry-forward].scenarioResults[safeguard]"
+      ],
+      "svg_path": "docs/ecocorridor/article-assets/the-model-passed/road-mask-hypotheses.svg",
+      "svg_sha256": "20e559d778ade9b503ba3a5cc64089d72cd9ee6a7de0e3bf4d49d72c2a18ab62",
+      "takeaway": "No. The authored 15 percent review trigger was exceeded in all four safeguard scenarios.",
+      "title": "Road-area diagnostic across safeguard hypotheses",
+      "values": {
+        "review_mask_change_percent": [
+          47.34703286028441,
+          59.59137786512184,
+          65.64856911527522,
+          64.77332439301767
+        ],
+        "review_trigger_percent": 15.0,
+        "scenario_ids": [
+          "scenario_safeguard_guild_h1_low_barrier",
+          "scenario_safeguard_guild_h2_moderate_barrier",
+          "scenario_safeguard_guild_h3_high_barrier",
+          "scenario_safeguard_guild_h4_future_pressure"
+        ]
+      }
+    },
+    {
+      "alt_text": "Two 20 by 12 synthetic Circuitscape current grids use the same scale. The no-action baseline appears beside the carry-forward candidate. The same road-review cells are outlined in amber. Their summed modeled current changes by 47.35 percent.",
+      "caption": "Same synthetic landscape, numerical scale, and fixed review area. We summed modeled electrical current inside the outlined cells. We did not observe an animal moving through them.",
+      "figure_id": "road-mask-current-maps",
+      "forbidden_implication": "Animal routes, animal-use probability, collision locations, or harm.",
+      "png_path": "docs/ecocorridor/article-assets/the-model-passed/road-mask-current-maps.png",
+      "png_sha256": "09f27b23f76803189d5b7a60dd4b4272f4b707dd97a878b0b592101566ab6e45",
+      "question": "What spatial evidence produced the low-barrier road-area warning?",
+      "source_locations": [
+        "benchmarks/ecocorridor/ridgeway/ui_projection.json:currentRasters",
+        "benchmarks/ecocorridor/ridgeway/ui_projection.json:reviewMask"
+      ],
+      "svg_path": "docs/ecocorridor/article-assets/the-model-passed/road-mask-current-maps.svg",
+      "svg_sha256": "7048d134434a43db78764c744e4de51c02a4762b3412aa2846b528dc905157a9",
+      "takeaway": "The 47.35 percent value is the baseline-relative change in a sum over the same 48 fixed cells, not an animal-use prediction.",
+      "title": "Exact baseline and candidate current maps",
+      "values": {
+        "baseline_mask_current_sum": 1.0638156991305054,
+        "baseline_portfolio_id": "portfolio_7c18e581b57ca9363bb7",
+        "baseline_raster_sha256": "552df9b3c9a889c1ebb2fd0207fa09cacd6b5e53c5b5c15b5f6ad864e8db4834",
+        "candidate_mask_current_sum": 1.5675008677706899,
+        "candidate_portfolio_id": "portfolio_d3aa8b1e170ffd76b322",
+        "candidate_raster_sha256": "18f73fce4f9a5a6ce589e964a43f292c71c72a202e22380bd79e05bc47370907",
+        "change_percent": 47.34703286028438,
+        "height": 12,
+        "review_mask_sha256": "7209f3a526bb49d859ba93a64a82e067c53d79c0b7871d8db62c16aa2286f845",
+        "scenario_id": "scenario_safeguard_guild_h1_low_barrier",
+        "shared_scale_maximum": 1.0039052475752226,
+        "shared_scale_minimum": 0.0009950922413796647,
+        "valid_mask_cell_count": 48,
+        "width": 20
+      }
+    },
+    {
+      "alt_text": "EcoCorridor Evidence Rail for the controlling safeguard result. It shows the negative 1.60 percent baseline-relative change, exact candidate and baseline matrix jobs, scenario identifier, matrix SHA-256 hash, and accepted numerical QA.",
+      "caption": "The 1.6031% value has a direct run, baseline, artifact hash, and QA disposition. That makes the calculation auditable. It does not make the ecological assumptions true.",
+      "figure_id": "evidence-rail-receipt",
+      "forbidden_implication": "Artifact identity as proof of ecological validity.",
+      "png_path": "docs/ecocorridor/article-assets/the-model-passed/evidence-rail-receipt.png",
+      "png_sha256": "7101a82c133b77119d34be3d38f3d4d85c0606ccc3ecdb315a3e720591f51cd6",
+      "question": "Can a reader reconstruct the controlling 1.6031 percent result?",
+      "source_image_sha256": "7101a82c133b77119d34be3d38f3d4d85c0606ccc3ecdb315a3e720591f51cd6",
+      "source_locations": [
+        "apps/ecocorridor-desktop/tests/__screenshots__/evidence-boundary-desktop-1440.png",
+        "benchmarks/ecocorridor/ridgeway/ui_projection.json:portfolios[carry-forward]"
+      ],
+      "takeaway": "The result resolves to a reducer, candidate and baseline direct jobs, scenario, matrix hashes, and accepted QA.",
+      "title": "The controlling value's Evidence Rail",
+      "values": {
+        "candidate_matrix_sha256_prefix": "ca751a4e",
+        "controlling_resistance_change_percent": -1.6031418683724497,
+        "qa_status": "ACCEPTED_FIXTURE"
+      }
+    },
+    {
+      "alt_text": "A six-step flow runs from reviewed inputs to direct Circuitscape runs, local evidence, an optional read-only agent, an unconfirmed draft, and a practitioner. Side branches stop incomplete or QA-rejected evidence before comparison and stop trace or validation failures before a draft. There is no approval arrow.",
+      "caption": "The agent sits after direct evidence and fixed local checks. It can organize only the approved evidence it receives. Failed evidence creates no comparison or draft, and only a practitioner chooses what to investigate next.",
+      "figure_id": "evidence-handoff",
+      "forbidden_implication": "Autonomous model changes, ecological judgment, or automatic approval.",
+      "png_path": "docs/ecocorridor/article-assets/the-model-passed/evidence-handoff.png",
+      "png_sha256": "857e11891189336d114f4becf26f734da88b88f3e4b52e3e8f7eb5bcb0d5095f",
+      "question": "Where may the agent help, and who still owns the decision?",
+      "source_locations": [
+        "python/ecocorridor_core/review_brief_agent.py",
+        "python/ecocorridor_core/review_brief_repository.py",
+        "docs/ecocorridor/review-brief-agent-evaluation.md"
+      ],
+      "svg_path": "docs/ecocorridor/article-assets/the-model-passed/evidence-handoff.svg",
+      "svg_sha256": "c95fcadfc81f95f492e76c92cf350af647599769028f94dc5847700c5333969e",
+      "takeaway": "Direct evidence and local validation precede the optional agent; a practitioner owns the next action.",
+      "title": "The evidence and authority handoff",
+      "values": {
+        "agent_tool_access": "READ_ONLY_ALIAS_SCOPED",
+        "draft_state": "UNCONFIRMED"
+      }
+    },
+    {
+      "alt_text": "Two nearly equal bars show 10,798 full-context input tokens and 10,542 agent input tokens. A second chart shows a 2.37 percent observed reduction far short of a dashed 25 percent promotion gate.",
+      "caption": "The agent saved 256 provider-input tokens\u20142.37%, not the required 25%. The deterministic checklist stayed default.",
+      "figure_id": "agent-promotion-gate",
+      "forbidden_implication": "General agent ranking, practitioner usefulness, or adaptive retrieval benefit.",
+      "png_path": "docs/ecocorridor/article-assets/the-model-passed/agent-promotion-gate.png",
+      "png_sha256": "b723bef9c42fa9da4d29fc3d2a7ed584ab71d733a95af8038f8b854c2127196f",
+      "question": "Did the historical agent reduce provider context enough to replace the deterministic default?",
+      "source_locations": [
+        "python/ecocorridor_core/usefulness_narrative.py:HISTORICAL_* constants",
+        "docs/ecocorridor/review-brief-agent-evaluation.md"
+      ],
+      "svg_path": "docs/ecocorridor/article-assets/the-model-passed/agent-promotion-gate.svg",
+      "svg_sha256": "e4803c3bc66f53b49d3202f85ef1d9d3aca8233dc32b62eef1415e46fdd69e44",
+      "takeaway": "No. It reduced input tokens by 2.37 percent against a predeclared 25 percent gate.",
+      "title": "Historical Review Brief agent promotion gate",
+      "values": {
+        "agent_input_tokens": 10542,
+        "context_reduction_percent": 2.3708094091498424,
+        "full_context_input_tokens": 10798,
+        "pre_provider_block_count": 6,
+        "promotion_gate_percent": 25.0,
+        "provider_conversation_count": 22,
+        "record_count": 42,
+        "saved_input_tokens": 256
+      }
+    }
+  ],
+  "license": "CC0-1.0",
+  "manifest_sha256": "d1fe6d1f49ec5bf16cba7a8b8a9d492a5ba32f92fe9103683b5e08f1c4e99046",
+  "schema_version": "ecocorridor-visual-story-figures/v1",
+  "source_projection_path": "benchmarks/ecocorridor/ridgeway/ui_projection.json",
+  "source_projection_sha256": "57091a4776e255d597cf9561ad245c121786a5d2562e3227021c5ba38091f08e"
+}
