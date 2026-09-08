@@ -25,6 +25,9 @@ from ecocorridor_core.visual_story_report import (
     PREVIOUS_READER_REPORT_URL,
     REPORT_TITLE,
     SOURCE_PROJECTION_RELATIVE_PATH,
+    TARGET_REPORT_ID,
+    TARGET_REPORT_URL,
+    ArticleRevisionSnapshot,
     ProtectedReportSnapshot,
     VerifiedVisualStoryReportPublisher,
     VisualStoryMediaReceipt,
@@ -34,8 +37,10 @@ from ecocorridor_core.visual_story_report import (
     expected_run_config,
     load_visual_story_assets,
     parse_report_marker,
+    publication_artifact_manifest_sha256,
     render_report_blocks,
     report_description,
+    revision_artifact_payloads,
     validate_artifact_download,
     validate_plan_bytes,
 )
@@ -46,8 +51,7 @@ visual_story_cli = importlib.import_module("scripts.publish_ecocorridor_visual_s
 WandbVisualStoryMediaPublisher = visual_story_cli.WandbVisualStoryMediaPublisher
 SOURCE_COMMIT = "a" * 40
 SOURCE_REPORT_URL = (
-    "https://wandb.ai/wandb/ecocorridor-scenario-studio/reports/"
-    "historical--VmlldzoxNzY1OTU0MQ=="
+    "https://wandb.ai/wandb/ecocorridor-scenario-studio/reports/historical--VmlldzoxNzY1OTU0MQ=="
 )
 OLD_ARTICLE_URL = PREVIOUS_READER_REPORT_URL
 
@@ -206,16 +210,14 @@ class _FakeReport:
         return report
 
     def save(self) -> None:
-        assert not self.id
-        type(self).serial += 1
+        assert self.id == TARGET_REPORT_ID
         self.saved += 1
-        self.id = f"visual-story-{type(self).serial}"
+        self.display_name = self.title
         self.url = (
             "https://wandb.ai/wandb/ecocorridor-scenario-studio/reports/"
-            f"visual-story--{self.id}"
+            f"{self.title.replace(' ', '-')}--{self.id}"
         )
         type(self).registry[self.url] = self
-        type(self).api.items.append(self)
 
     @classmethod
     def from_url(cls, url: str) -> _FakeReport:
@@ -260,16 +262,14 @@ class _FakePendingArtifact:
 
 class _FakeLoggedArtifact:
     def __init__(self, pending: _FakePendingArtifact) -> None:
-        self.qualified_name = (
-            f"wandb/ecocorridor-scenario-studio/{pending.name}:v0"
-        )
+        self.qualified_name = f"wandb/ecocorridor-scenario-studio/{pending.name}:v0"
         self.type = pending.type
         self.metadata = dict(pending.metadata)
         self.url = (
             "https://wandb.ai/wandb/ecocorridor-scenario-studio/artifacts/"
             f"{pending.type}/{pending.name}/v0"
         )
-        self.files = dict(pending.files)
+        self.files = {name: path.read_bytes() for name, path in pending.files.items()}
 
     def wait(self) -> _FakeLoggedArtifact:
         return self
@@ -279,7 +279,7 @@ class _FakeLoggedArtifact:
         for logical_name, source in self.files.items():
             target = destination / logical_name
             target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, target)
+            target.write_bytes(source)
         return str(destination)
 
 
@@ -309,9 +309,7 @@ class _FakePublicRun:
         self.state = "running"
         self.config = dict(config)
         self.summary: dict[str, Any] = {}
-        self.url = (
-            "https://wandb.ai/wandb/ecocorridor-scenario-studio/runs/" + run_id
-        )
+        self.url = "https://wandb.ai/wandb/ecocorridor-scenario-studio/runs/" + run_id
         self._history: list[dict[str, Any]] = []
         self._media: dict[str, bytes] = {}
         self._artifacts: list[_FakeLoggedArtifact] = []
@@ -342,10 +340,7 @@ class _FakePublicRun:
         return list(self._artifacts)
 
     def scan_history(self, *, keys: list[str]) -> list[dict[str, Any]]:
-        return [
-            {key: value for key, value in row.items() if key in keys}
-            for row in self._history
-        ]
+        return [{key: value for key, value in row.items() if key in keys} for row in self._history]
 
     def file(self, path: str) -> _FakeRemoteFile:
         return _FakeRemoteFile(path, self._media[path])
@@ -397,9 +392,7 @@ def _source(source_blocks: list[Any]) -> HumanReadableSourceSnapshot:
     receipt = UsefulnessNarrativeReceipt.create(
         source_commit=SOURCE_COMMIT,
         historical_artifact_manifest_sha256=HISTORICAL_ARTIFACT_MANIFEST_SHA256,
-        historical_downloaded_file_manifest_sha256=(
-            HISTORICAL_DOWNLOADED_FILE_MANIFEST_SHA256
-        ),
+        historical_downloaded_file_manifest_sha256=(HISTORICAL_DOWNLOADED_FILE_MANIFEST_SHA256),
         historical_provider_trace_receipts_sha256="b" * 64,
         historical_run_url=HISTORICAL_RUN_URL,
         report_url=SOURCE_REPORT_URL,
@@ -432,9 +425,18 @@ def _plan(source_report: _FakeReport, old_report: _FakeReport) -> VisualStoryRep
             label="old article",
         ),
     ]
+    target = _FakeReport.registry.get(TARGET_REPORT_URL) or _FakeReport.retained(
+        title="The Model Passed. We Sent a Human to the Road.",
+        blocks=[H1("Prior title"), MarkdownBlock("Previous article with manual notes.")],
+        report_id=TARGET_REPORT_ID,
+        url=TARGET_REPORT_URL,
+    )
     return VisualStoryReportPlan.create(
         source=_source(source_report.blocks),
         protected_reports=protected,
+        target_report=ArticleRevisionSnapshot.from_report(
+            target, web_base_url="https://wandb.ai", label="target"
+        ),
         assets=assets,
     )
 
@@ -443,31 +445,25 @@ def _media(plan: VisualStoryReportPlan, *, status: str = "CREATED") -> VisualSto
     return VisualStoryMediaReceipt(
         status=status,
         run_id=plan.run_id,
-        run_url=(
-            "https://wandb.ai/wandb/ecocorridor-scenario-studio/runs/" + plan.run_id
-        ),
-        artifact_ref=(
-            f"wandb/ecocorridor-scenario-studio/{plan.artifact_name}:v0"
-        ),
+        run_url=("https://wandb.ai/wandb/ecocorridor-scenario-studio/runs/" + plan.run_id),
+        artifact_ref=(f"wandb/ecocorridor-scenario-studio/{plan.artifact_name}:v0"),
         artifact_url=(
             "https://wandb.ai/wandb/ecocorridor-scenario-studio/artifacts/"
             f"article-publication/{plan.artifact_name}/v0"
         ),
-        artifact_manifest_sha256=plan.assets.artifact_manifest_sha256,
+        artifact_manifest_sha256=publication_artifact_manifest_sha256(plan),
     )
 
 
 def test_visual_story_assets_bind_article_figures_and_direct_values() -> None:
     assets = load_visual_story_assets(ROOT)
     assert [item.figure_id for item in assets.figures] == [
-        "ridgeway-decision",
-        "road-mask-hypotheses",
         "road-mask-current-maps",
         "evidence-rail-receipt",
         "evidence-handoff",
         "agent-promotion-gate",
     ]
-    assert len(assets.artifact_files) == 13
+    assert len(assets.artifact_files) == 9
     maps = next(item for item in assets.figures if item.figure_id == "road-mask-current-maps")
     assert maps.values["valid_mask_cell_count"] == 48
     assert maps.values["baseline_mask_current_sum"] == pytest.approx(1.0638156991)
@@ -481,15 +477,16 @@ def test_visual_story_assets_bind_article_figures_and_direct_values() -> None:
 
 def test_article_is_human_readable_and_keeps_claim_boundaries() -> None:
     article = load_visual_story_assets(ROOT).article_markdown
-    assert "Go look at the road." in article
-    assert "It is not a deer." in article
-    assert "We had tested plumbing and given it an agent name." in article
-    assert "none failed the connectivity checks we had defined" in article
+    assert article.startswith("# Why I Built EcoCorridor\n")
+    assert "Go look at the road." not in article
+    assert "It is not a deer." not in article
+    assert "We had tested plumbing and given it an agent name." not in article
     assert "12 rules passed" not in article
     assert "42 agent conversations" not in article
     assert "the agent proved useful" not in article.lower()
     assert "collision reduction" in article  # Explicitly named only inside the boundary list.
-    assert "does not show that AI improved ecological review" in article
+    assert "2.37%" in article
+    assert "10,798" in article and "10,542" in article
 
 
 def test_visual_asset_drift_fails_before_publication(tmp_path: Path) -> None:
@@ -535,7 +532,7 @@ def test_plan_bytes_and_run_identity_are_deterministic(fake_cloud: tuple[Any, _F
         validate_plan_bytes(canonical_plan_bytes(plan).rstrip())
 
 
-def test_new_report_preserves_both_sources_and_exact_retry_reuses(
+def test_revision_preserves_both_sources_and_exact_retry_reuses(
     fake_cloud: tuple[Any, _FakeApi],
 ) -> None:
     reports, api = fake_cloud
@@ -557,44 +554,42 @@ def test_new_report_preserves_both_sources_and_exact_retry_reuses(
         api=api,
         reports_module=reports,
         web_base_url="https://wandb.ai",
-        authorize_new_report=True,
+        authorize_report_revision=True,
         source_reader=lambda: plan,
         media_publisher=lambda _plan: media,
         figure_verifier=lambda _plan: None,
     )
 
     created = publisher.publish(plan)
-    assert created.status == "CREATED"
+    assert created.status == "UPDATED"
+    assert created.report_id == TARGET_REPORT_ID
     assert created.report_url not in {SOURCE_REPORT_URL, OLD_ARTICLE_URL}
     assert source.saved == 0
     assert old.saved == 0
     destination = _FakeReport.from_url(created.report_url)
     assert parse_report_marker(destination.description) == json.loads(
-        report_description(plan, media).split("ecocorridor-visual-story-report:", 1)[1].split(
-            " -->", 1
-        )[0]
+        report_description(plan, media)
+        .split("ecocorridor-visual-story-report:", 1)[1]
+        .split(" -->", 1)[0]
     )
     media_blocks = [item for item in destination.blocks if isinstance(item, PanelGrid)]
-    assert len(media_blocks) == 6
-    assert [
-        item._spec["panels"][0]["media_keys"][0] for item in media_blocks
-    ] == [f"article/figures/{item.figure_id}" for item in plan.assets.figures]
+    assert len(media_blocks) == 4
+    assert [item._spec["panels"][0]["media_keys"][0] for item in media_blocks] == [
+        f"article/figures/{item.figure_id}" for item in plan.assets.figures
+    ]
     assert all(item._spec["hide_run_sets"] is True for item in media_blocks)
     for figure, item in zip(plan.assets.figures, media_blocks, strict=True):
         runset = item._spec["runsets"][0]
         assert runset["name"] == f"Verified article media · {figure.figure_id}"
         assert f"ID = '{plan.run_id}'" in runset["filters"]
         assert f"Config('plan_sha256') = '{plan.plan_sha256}'" in runset["filters"]
-        assert (
-            f"Config('article_sha256') = '{plan.assets.article_sha256}'"
-            in runset["filters"]
-        )
+        assert f"Config('article_sha256') = '{plan.assets.article_sha256}'" in runset["filters"]
 
     reused_publisher = VerifiedVisualStoryReportPublisher(
         api=api,
         reports_module=reports,
         web_base_url="https://wandb.ai",
-        authorize_new_report=True,
+        authorize_report_revision=True,
         source_reader=lambda: plan,
         media_publisher=lambda _plan: _media(plan, status="REUSED"),
         figure_verifier=lambda _plan: None,
@@ -605,7 +600,7 @@ def test_new_report_preserves_both_sources_and_exact_retry_reuses(
     assert source.saved == old.saved == 0
 
 
-def test_title_collision_and_source_drift_fail_closed(
+def test_target_and_source_drift_fail_closed(
     fake_cloud: tuple[Any, _FakeApi],
 ) -> None:
     reports, api = fake_cloud
@@ -622,14 +617,8 @@ def test_title_collision_and_source_drift_fail_closed(
         url=OLD_ARTICLE_URL,
     )
     plan = _plan(source, old)
-    occupied = _FakeReport.retained(
-        title=REPORT_TITLE,
-        blocks=[MarkdownBlock("unrelated")],
-        report_id="occupied",
-        url=(
-            "https://wandb.ai/wandb/ecocorridor-scenario-studio/reports/occupied"
-        ),
-    )
+    target = _FakeReport.from_url(TARGET_REPORT_URL)
+    target.blocks.append(MarkdownBlock("new manual edit"))
     media_calls: list[str] = []
 
     def _publish_media(_plan: VisualStoryReportPlan) -> VisualStoryMediaReceipt:
@@ -640,35 +629,36 @@ def test_title_collision_and_source_drift_fail_closed(
         api=api,
         reports_module=reports,
         web_base_url="https://wandb.ai",
-        authorize_new_report=True,
+        authorize_report_revision=True,
         source_reader=lambda: plan,
         media_publisher=_publish_media,
         figure_verifier=lambda _plan: None,
     )
-    with pytest.raises(PermissionError, match="title is occupied"):
+    with pytest.raises(RuntimeError, match="changed since the frozen"):
         publisher.publish(plan)
-    assert occupied.saved == source.saved == old.saved == 0
+    assert target.saved == source.saved == old.saved == 0
     assert media_calls == []
 
-    api.items.remove(occupied)
-    _FakeReport.registry.pop(occupied.url)
+    target.blocks.pop()
     old.blocks.append(MarkdownBlock("drift"))
     with pytest.raises(RuntimeError, match="protected W&B Report changed"):
         publisher.publish(plan)
 
 
-def test_artifact_download_requires_exact_source_bytes(tmp_path: Path) -> None:
-    assets = load_visual_story_assets(ROOT)
-    source = HumanReadableSourceSnapshot.model_construct(
-        source_commit=SOURCE_COMMIT,
-        snapshot_sha256="d" * 64,
-    )
-    plan = VisualStoryReportPlan.model_construct(assets=assets, source=source)
+def test_artifact_download_requires_exact_source_bytes(
+    tmp_path: Path, fake_cloud: tuple[Any, _FakeApi]
+) -> None:
+    plan, _api = _media_plan(fake_cloud)
+    assets = plan.assets
     downloaded = tmp_path / "artifact"
     for item in assets.artifact_files:
         target = downloaded / item.logical_name
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / item.repository_path, target)
+    for name, payload in revision_artifact_payloads(plan).items():
+        target = downloaded / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(payload)
     validate_artifact_download(plan, root=ROOT, downloaded_root=downloaded)
     (downloaded / assets.artifact_files[0].logical_name).write_bytes(b"changed")
     with pytest.raises(RuntimeError, match="digest differs"):
@@ -695,14 +685,14 @@ def test_report_blocks_keep_caption_and_accessible_description(
     blocks = render_report_blocks(reports, plan, _media(plan))
     assert isinstance(blocks[0], H1)
     assert blocks[0].text == REPORT_TITLE
-    assert len([item for item in blocks if isinstance(item, PanelGrid)]) == 6
+    assert len([item for item in blocks if isinstance(item, PanelGrid)]) == 4
     prose = "\n".join(item.text for item in blocks if isinstance(item, MarkdownBlock))
     for figure in plan.assets.figures:
         assert figure.caption in prose
         assert figure.alt_text in prose
 
 
-def test_real_wandb_sdk_serializes_six_hidden_exact_media_panels(
+def test_real_wandb_sdk_serializes_four_hidden_exact_media_panels(
     fake_cloud: tuple[Any, _FakeApi],
 ) -> None:
     import wandb_workspaces.reports.v2 as real_reports
@@ -723,13 +713,18 @@ def test_real_wandb_sdk_serializes_six_hidden_exact_media_panels(
     plan = _plan(source, old)
     blocks = render_report_blocks(real_reports, plan, _media(plan))
     grids = [item for item in blocks if isinstance(item, real_reports.PanelGrid)]
-    assert len(grids) == 6
+    assert len(grids) == 4
     for figure, grid in zip(plan.assets.figures, grids, strict=True):
         assert grid.hide_run_sets is True
         assert len(grid.runsets) == len(grid.panels) == 1
         assert grid.panels[0].media_keys == [f"article/figures/{figure.figure_id}"]
         assert grid.panels[0].title == figure.title
         assert f"ID = '{plan.run_id}'" in str(grid.runsets[0].filters)
+        panel = grid.panels[0]
+        expected_height = 12 if figure.figure_id == "evidence-rail-receipt" else 36
+        assert (panel.layout.w, panel.layout.h) == (24, expected_height)
+        serialized_layout = panel._to_model().layout
+        assert (serialized_layout.w, serialized_layout.h) == (24, expected_height)
 
 
 def _media_plan(fake_cloud: tuple[Any, _FakeApi]) -> tuple[VisualStoryReportPlan, _FakeApi]:
@@ -836,7 +831,7 @@ def test_media_publisher_rejects_incomplete_cloud_readback(
     if mutation == "missing_media":
         run._history.clear()
     elif mutation == "extra_artifact_file":
-        artifact.files["unexpected.txt"] = ROOT / "README.md"
+        artifact.files["unexpected.txt"] = b"unexpected"
     elif mutation == "wrong_artifact_url":
         artifact.url = artifact.url.replace("/v0", "/v1")
     elif mutation == "wrong_artifact_metadata":
@@ -868,3 +863,162 @@ def test_commit_pinned_figure_sources_are_byte_verified(
     (tmp_path / plan.assets.figures[0].png_path).write_bytes(b"corrupt")
     with pytest.raises(RuntimeError, match="bytes differ"):
         visual_story_cli.verify_committed_figure_bytes(plan, root=tmp_path)
+
+
+def _report_publisher(
+    fake_cloud: tuple[Any, _FakeApi],
+    plan: VisualStoryReportPlan,
+    **overrides: Any,
+) -> VerifiedVisualStoryReportPublisher:
+    reports, api = fake_cloud
+    return VerifiedVisualStoryReportPublisher(
+        **{
+            "api": api,
+            "reports_module": reports,
+            "web_base_url": "https://wandb.ai",
+            "authorize_report_revision": True,
+            "source_reader": lambda: plan,
+            "media_publisher": lambda _plan: _media(plan),
+            "figure_verifier": lambda _plan: None,
+            **overrides,
+        }
+    )
+
+
+@pytest.mark.parametrize("field", ["title", "description", "blocks"])
+def test_every_target_edit_blocks_before_media_upload(
+    fake_cloud: tuple[Any, _FakeApi], field: str
+) -> None:
+    plan, _api = _media_plan(fake_cloud)
+    target = _FakeReport.from_url(TARGET_REPORT_URL)
+    setattr(target, field, [MarkdownBlock("manual edit")] if field == "blocks" else "manual edit")
+    calls: list[str] = []
+    publisher = _report_publisher(
+        fake_cloud, plan, media_publisher=lambda _plan: calls.append("upload")
+    )
+    with pytest.raises(RuntimeError, match="changed since the frozen"):
+        publisher.publish(plan)
+    assert calls == [] and target.saved == 0
+
+
+def test_target_identity_cannot_be_redirected(fake_cloud: tuple[Any, _FakeApi]) -> None:
+    plan, _api = _media_plan(fake_cloud)
+    target = _FakeReport.from_url(TARGET_REPORT_URL)
+    target.id = "another-report"
+    with pytest.raises(PermissionError, match="target identity differs"):
+        _report_publisher(fake_cloud, plan).publish(plan)
+    assert target.saved == 0
+
+
+def test_final_reread_blocks_edit_during_media_work(fake_cloud: tuple[Any, _FakeApi]) -> None:
+    plan, _api = _media_plan(fake_cloud)
+    target = _FakeReport.from_url(TARGET_REPORT_URL)
+    reads: list[bool] = []
+
+    def source_reader() -> VisualStoryReportPlan:
+        reads.append(True)
+        if len(reads) == 2:
+            target.description = "manual edit just before save"
+        return plan
+
+    with pytest.raises(RuntimeError, match="changed since the frozen"):
+        _report_publisher(fake_cloud, plan, source_reader=source_reader).publish(plan)
+    assert target.saved == 0
+
+
+def test_uncertain_completed_save_retries_without_second_save(
+    fake_cloud: tuple[Any, _FakeApi], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan, _api = _media_plan(fake_cloud)
+    original_save = _FakeReport.save
+
+    def save_then_timeout(self: _FakeReport) -> None:
+        original_save(self)
+        raise TimeoutError("uncertain save response")
+
+    publisher = _report_publisher(fake_cloud, plan)
+    monkeypatch.setattr(_FakeReport, "save", save_then_timeout)
+    with pytest.raises(TimeoutError, match="uncertain save"):
+        publisher.publish(plan)
+    receipt = publisher.publish(plan)
+    assert receipt.status == "REUSED" and receipt.report_id == TARGET_REPORT_ID
+    assert _FakeReport.from_url(TARGET_REPORT_URL).saved == 1
+
+
+def test_postpublication_manual_edit_is_not_mistaken_for_reuse(
+    fake_cloud: tuple[Any, _FakeApi],
+) -> None:
+    plan, _api = _media_plan(fake_cloud)
+    publisher = _report_publisher(fake_cloud, plan)
+    publisher.publish(plan)
+    target = _FakeReport.from_url(TARGET_REPORT_URL)
+    target.blocks.append(MarkdownBlock("manual postpublication edit"))
+    with pytest.raises(RuntimeError, match="body differs"):
+        publisher.publish(plan)
+    assert target.saved == 1
+
+
+def test_portrait_panel_height_drift_blocks_exact_reuse(
+    fake_cloud: tuple[Any, _FakeApi],
+) -> None:
+    plan, _api = _media_plan(fake_cloud)
+    publisher = _report_publisher(fake_cloud, plan)
+    publisher.publish(plan)
+    target = _FakeReport.from_url(TARGET_REPORT_URL)
+    panel_grid = next(block for block in target.blocks if isinstance(block, PanelGrid))
+    panel_grid._spec["panels"][0]["layout"]["h"] = 12
+    with pytest.raises(RuntimeError, match="media panel dimensions differ"):
+        publisher.publish(plan)
+    assert target.saved == 1
+
+
+def test_prior_report_prose_and_exact_body_are_immutable_artifact_members(
+    fake_cloud: tuple[Any, _FakeApi],
+) -> None:
+    plan, api = _media_plan(fake_cloud)
+    sdk = _FakeWandbSdk(api)
+    _media_publisher(api=api, sdk=sdk).publish(plan)
+    artifact = api.run_items[0]._artifacts[0]
+    previous = revision_artifact_payloads(plan)
+    assert artifact.files["previous/previous-text.md"] == previous["previous/previous-text.md"]
+    snapshot = json.loads(artifact.files["previous/previous-report.json"])
+    assert snapshot == plan.target_report.model_dump(mode="json")
+    assert "Previous article with manual notes." in snapshot["previous_text"]
+    artifact.files["previous/previous-text.md"] = b"changed"
+    with pytest.raises(RuntimeError, match="previous Report artifact snapshot digest differs"):
+        _media_publisher(api=api, sdk=sdk).publish(plan)
+
+
+def test_markdown_tables_remain_native_text_blocks(fake_cloud: tuple[Any, _FakeApi]) -> None:
+    import wandb_workspaces.reports.v2 as real_reports
+    from ecocorridor_core.visual_story_report import _prose_blocks
+
+    table = "| Check | Result |\n| --- | --- |\n| Cost | $400,000 |\n| Overall | review |"
+    blocks = _prose_blocks(real_reports, f"Before.\n\n{table}\n\nAfter.")
+    assert len(blocks) == 3
+    assert isinstance(blocks[1], real_reports.MarkdownBlock)
+    assert blocks[1]._to_model().content == table
+
+
+def test_target_snapshot_cannot_forge_body_or_identity(fake_cloud: tuple[Any, _FakeApi]) -> None:
+    _reports, _api = fake_cloud
+    target = _FakeReport.retained(
+        title="Live title",
+        description="Live description",
+        blocks=[MarkdownBlock("Live manual prose")],
+        report_id=TARGET_REPORT_ID,
+        url=TARGET_REPORT_URL,
+    )
+    snapshot = ArticleRevisionSnapshot.from_report(
+        target, web_base_url="https://wandb.ai", label="target"
+    )
+    assert "Live manual prose" in snapshot.previous_text
+    assert snapshot.report_description == "Live description"
+    payload = snapshot.model_dump(mode="json")
+    payload["blocks"][0]["value"]["text"] = "forged prose"
+    with pytest.raises(ValueError, match="body digest differs"):
+        ArticleRevisionSnapshot.model_validate(payload)
+    payload = snapshot.model_dump(mode="json")
+    payload["report_id"] = "another-report"
+    with pytest.raises(ValueError, match="literal_error"):
+        ArticleRevisionSnapshot.model_validate(payload)

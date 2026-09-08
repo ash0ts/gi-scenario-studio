@@ -1,7 +1,7 @@
 """Hash-verified publication of the visual EcoCorridor field-review article.
 
-The article is a separate W&B Report. It does not edit the historical technical
-Report or the previous reader article. Its figures are derived from committed
+The article revises one explicitly identified W&B Report. It does not edit the
+historical technical Report or the previous reader article. Figures use committed
 synthetic evidence, logged as article media (not experiment results), retained
 in an immutable W&B Artifact, and rendered through native W&B media panels.
 """
@@ -22,14 +22,15 @@ from pydantic import Field, model_validator
 from .contracts import ContractModel, canonical_sha256
 from .human_readable_report import HumanReadableSourceSnapshot
 from .usefulness_narrative import (
+    _block_representation,
     _blocks_sha256,
     _require_web_origin,
     _semantic_blocks_sha256,
 )
 
-REPORT_TITLE = "The Model Passed. We Sent a Human to the Road."
-REPORT_SCHEMA_VERSION = "ecocorridor-visual-story-report/v1"
-RECEIPT_SCHEMA_VERSION = "ecocorridor-visual-story-report-receipt/v1"
+REPORT_TITLE = "Why I Built EcoCorridor"
+REPORT_SCHEMA_VERSION = "ecocorridor-visual-story-report/v2"
+RECEIPT_SCHEMA_VERSION = "ecocorridor-visual-story-report-receipt/v2"
 ASSET_SCHEMA_VERSION = "ecocorridor-visual-story-assets/v1"
 SOURCE_PROJECTION_RELATIVE_PATH = "benchmarks/ecocorridor/ridgeway/ui_projection.json"
 PREVIOUS_READER_REPORT_URL = (
@@ -37,17 +38,27 @@ PREVIOUS_READER_REPORT_URL = (
     "A-Green-Model-Result-Is-Not-a-Green-Light--VmlldzoxNzcwMDM4Nw=="
 )
 PREVIOUS_READER_REPORT_TITLE = "A Green Model Result Is Not a Green Light"
+TARGET_REPORT_ID = "VmlldzoxNzc4MjAxMw=="
+TARGET_REPORT_URL = (
+    "https://wandb.ai/wandb/ecocorridor-scenario-studio/reports/"
+    "The-Model-Passed.-We-Sent-a-Human-to-the-Road.--" + TARGET_REPORT_ID
+)
 EXPECTED_FIGURE_IDS = (
-    "ridgeway-decision",
-    "road-mask-hypotheses",
     "road-mask-current-maps",
     "evidence-rail-receipt",
     "evidence-handoff",
     "agent-promotion-gate",
 )
-ARTICLE_RELATIVE_PATH = (
-    "docs/ecocorridor/articles/the-model-passed-we-sent-a-human-to-the-road.md"
-)
+# The three generated figures are 960×1600 portraits. W&B's 24-column
+# grid needs tall panels to show these at readable width; the 720×662
+# application screenshot keeps its compact panel. Heights are grid units.
+FIGURE_PANEL_HEIGHTS = {
+    "road-mask-current-maps": 36,
+    "evidence-rail-receipt": 12,
+    "evidence-handoff": 36,
+    "agent-promotion-gate": 36,
+}
+ARTICLE_RELATIVE_PATH = "docs/ecocorridor/articles/the-model-passed-we-sent-a-human-to-the-road.md"
 MANIFEST_RELATIVE_PATH = "docs/ecocorridor/article-assets/the-model-passed/manifest.json"
 REPORT_MARKER_PREFIX = "<!-- ecocorridor-visual-story-report:"
 REPORT_READBACK_TIMEOUT_SECONDS = 20.0
@@ -86,6 +97,7 @@ class ProtectedReportSnapshot(ContractModel):
     report_url: str
     report_id: str = Field(min_length=1)
     report_title: str = Field(min_length=1)
+    report_description: str = ""
     entity: Literal["wandb"] = "wandb"
     project: Literal["ecocorridor-scenario-studio"] = "ecocorridor-scenario-studio"
     blocks_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -113,10 +125,47 @@ class ProtectedReportSnapshot(ContractModel):
             report_url=url,
             report_id=report_id,
             report_title=title,
+            report_description=str(getattr(report, "description", "") or ""),
             entity=entity,
             project=project,
             blocks_sha256=_blocks_sha256(blocks),
             block_count=len(blocks),
+        )
+
+
+class ArticleRevisionSnapshot(ProtectedReportSnapshot):
+    """Lossless prior body and readable prose frozen before a same-ID revision."""
+
+    report_id: Literal["VmlldzoxNzc4MjAxMw=="] = TARGET_REPORT_ID
+    blocks: tuple[dict[str, Any], ...] = Field(min_length=1)
+    previous_text: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_previous_body(self) -> Self:
+        if canonical_sha256(list(self.blocks)) != self.blocks_sha256:
+            raise ValueError("previous Report body digest differs")
+        if len(self.blocks) != self.block_count:
+            raise ValueError("previous Report block count differs")
+        if not self.report_url.endswith("--" + TARGET_REPORT_ID):
+            raise ValueError("article revision target URL names another Report")
+        return self
+
+    @classmethod
+    def from_report(cls, report: Any, *, web_base_url: str, label: str) -> ArticleRevisionSnapshot:
+        protected = ProtectedReportSnapshot.from_report(
+            report, web_base_url=web_base_url, label=label
+        )
+        blocks = list(getattr(report, "blocks", []))
+        prose = [f"# {protected.report_title}", protected.report_description]
+        for block in blocks:
+            value = getattr(block, "text", None)
+            if isinstance(value, str) and value:
+                prefix = {"H1": "# ", "H2": "## ", "H3": "### "}.get(type(block).__name__, "")
+                prose.append(prefix + value)
+        return cls(
+            **protected.model_dump(mode="json"),
+            blocks=tuple(_block_representation(block) for block in blocks),
+            previous_text="\n\n".join(part for part in prose if part) + "\n",
         )
 
 
@@ -153,7 +202,7 @@ class VisualStoryFigure(ContractModel):
 
 class VisualStoryAssets(ContractModel):
     schema_version: Literal["ecocorridor-visual-story-assets/v1"] = ASSET_SCHEMA_VERSION
-    title: Literal["The Model Passed. We Sent a Human to the Road."] = REPORT_TITLE
+    title: Literal["Why I Built EcoCorridor"] = REPORT_TITLE
     article_relative_path: Literal[
         "docs/ecocorridor/articles/the-model-passed-we-sent-a-human-to-the-road.md"
     ] = ARTICLE_RELATIVE_PATH
@@ -168,7 +217,7 @@ class VisualStoryAssets(ContractModel):
         "benchmarks/ecocorridor/ridgeway/ui_projection.json"
     ] = SOURCE_PROJECTION_RELATIVE_PATH
     source_projection_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    figures: tuple[VisualStoryFigure, ...] = Field(min_length=6, max_length=6)
+    figures: tuple[VisualStoryFigure, ...] = Field(min_length=4, max_length=4)
     artifact_files: tuple[VisualStoryArtifactFile, ...] = Field(min_length=6)
     artifact_manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     assets_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -194,9 +243,7 @@ class VisualStoryAssets(ContractModel):
             raise ValueError("visual-story figure IDs must be unique")
         if tuple(item.figure_id for item in self.figures) != EXPECTED_FIGURE_IDS:
             raise ValueError("visual-story figure set or order differs")
-        if len({item.logical_name for item in self.artifact_files}) != len(
-            self.artifact_files
-        ):
+        if len({item.logical_name for item in self.artifact_files}) != len(self.artifact_files):
             raise ValueError("visual-story artifact logical names must be unique")
         expected_manifest = canonical_sha256(
             [item.model_dump(mode="json") for item in self.artifact_files]
@@ -210,11 +257,12 @@ class VisualStoryAssets(ContractModel):
 
 
 class VisualStoryReportPlan(ContractModel):
-    schema_version: Literal["ecocorridor-visual-story-report/v1"] = REPORT_SCHEMA_VERSION
+    schema_version: Literal["ecocorridor-visual-story-report/v2"] = REPORT_SCHEMA_VERSION
     entity: Literal["wandb"] = "wandb"
     project: Literal["ecocorridor-scenario-studio"] = "ecocorridor-scenario-studio"
     source: HumanReadableSourceSnapshot
     protected_reports: tuple[ProtectedReportSnapshot, ...] = Field(min_length=1)
+    target_report: ArticleRevisionSnapshot
     assets: VisualStoryAssets
     publication_key: str = Field(pattern=r"^[0-9a-f]{64}$")
     run_id: str = Field(pattern=r"^eco-article-[0-9a-f]{12}$")
@@ -225,14 +273,12 @@ class VisualStoryReportPlan(ContractModel):
     def validate_plan(self) -> Self:
         if self.source.source_commit != self.source.source_commit.lower():
             raise ValueError("source commit must be lowercase")
-        if len({item.report_url for item in self.protected_reports}) != len(
-            self.protected_reports
-        ):
+        if self.target_report.report_id in {item.report_id for item in self.protected_reports}:
+            raise ValueError("article revision target cannot be a protected Report")
+        if len({item.report_url for item in self.protected_reports}) != len(self.protected_reports):
             raise ValueError("protected Report URLs must be unique")
         previous = [
-            item
-            for item in self.protected_reports
-            if item.report_url == PREVIOUS_READER_REPORT_URL
+            item for item in self.protected_reports if item.report_url == PREVIOUS_READER_REPORT_URL
         ]
         if len(previous) != 1 or previous[0].report_title != PREVIOUS_READER_REPORT_TITLE:
             raise ValueError("the previous reader Report is not protected exactly")
@@ -244,6 +290,7 @@ class VisualStoryReportPlan(ContractModel):
                     item.model_dump(mode="json") for item in self.protected_reports
                 ],
                 "assets_sha256": self.assets.assets_sha256,
+                "target_report": self.target_report.model_dump(mode="json"),
             }
         )
         if self.publication_key != key:
@@ -263,6 +310,7 @@ class VisualStoryReportPlan(ContractModel):
         *,
         source: HumanReadableSourceSnapshot,
         protected_reports: Sequence[ProtectedReportSnapshot],
+        target_report: ArticleRevisionSnapshot,
         assets: VisualStoryAssets,
     ) -> VisualStoryReportPlan:
         key = canonical_sha256(
@@ -271,6 +319,7 @@ class VisualStoryReportPlan(ContractModel):
                 "source_snapshot_sha256": source.snapshot_sha256,
                 "protected_reports": [item.model_dump(mode="json") for item in protected_reports],
                 "assets_sha256": assets.assets_sha256,
+                "target_report": target_report.model_dump(mode="json"),
             }
         )
         payload = {
@@ -279,6 +328,7 @@ class VisualStoryReportPlan(ContractModel):
             "project": "ecocorridor-scenario-studio",
             "source": source.model_dump(mode="json"),
             "protected_reports": [item.model_dump(mode="json") for item in protected_reports],
+            "target_report": target_report.model_dump(mode="json"),
             "assets": assets.model_dump(mode="json"),
             "publication_key": key,
             "run_id": f"eco-article-{key[:12]}",
@@ -297,17 +347,15 @@ class VisualStoryMediaReceipt(ContractModel):
 
 
 class VisualStoryReportReceipt(ContractModel):
-    schema_version: Literal["ecocorridor-visual-story-report-receipt/v1"] = (
-        RECEIPT_SCHEMA_VERSION
-    )
-    status: Literal["CREATED", "REUSED"]
+    schema_version: Literal["ecocorridor-visual-story-report-receipt/v2"] = RECEIPT_SCHEMA_VERSION
+    status: Literal["UPDATED", "REUSED"]
     media_status: Literal["CREATED", "REUSED"]
     plan_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     publication_key: str = Field(pattern=r"^[0-9a-f]{64}$")
     source_commit: str = Field(pattern=r"^[0-9a-f]{40}$")
     report_url: str
     report_id: str
-    report_title: Literal["The Model Passed. We Sent a Human to the Road."] = REPORT_TITLE
+    report_title: Literal["Why I Built EcoCorridor"] = REPORT_TITLE
     run_url: str
     artifact_ref: str
     artifact_url: str
@@ -477,14 +525,36 @@ def validate_plan_bytes(payload: bytes) -> VisualStoryReportPlan:
 
 def canonical_plan_bytes(plan: VisualStoryReportPlan) -> bytes:
     return (
-        json.dumps(plan.model_dump(mode="json"), indent=2, sort_keys=True).encode("utf-8")
-        + b"\n"
+        json.dumps(plan.model_dump(mode="json"), indent=2, sort_keys=True).encode("utf-8") + b"\n"
     )
 
 
-def report_marker(
-    plan: VisualStoryReportPlan, media: VisualStoryMediaReceipt
-) -> dict[str, str]:
+def revision_artifact_payloads(plan: VisualStoryReportPlan) -> dict[str, bytes]:
+    """Retain the exact pre-edit snapshot, including all original prose blocks."""
+
+    return {
+        "previous/previous-report.json": (
+            json.dumps(plan.target_report.model_dump(mode="json"), indent=2, sort_keys=True) + "\n"
+        ).encode("utf-8"),
+        "previous/previous-text.md": plan.target_report.previous_text.encode("utf-8"),
+    }
+
+
+def publication_artifact_manifest_sha256(plan: VisualStoryReportPlan) -> str:
+    files = [item.model_dump(mode="json") for item in plan.assets.artifact_files]
+    files.extend(
+        {
+            "logical_name": name,
+            "generated_from": "frozen_target_report",
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "bytes": len(payload),
+        }
+        for name, payload in revision_artifact_payloads(plan).items()
+    )
+    return canonical_sha256(sorted(files, key=lambda item: item["logical_name"]))
+
+
+def report_marker(plan: VisualStoryReportPlan, media: VisualStoryMediaReceipt) -> dict[str, str]:
     return {
         "schema_version": plan.schema_version,
         "publication_key": plan.publication_key,
@@ -500,8 +570,8 @@ def report_description(plan: VisualStoryReportPlan, media: VisualStoryMediaRecei
     encoded = json.dumps(report_marker(plan, media), sort_keys=True, separators=(",", ":"))
     return (
         "A source-pinned, visual interpretation of synthetic EcoCorridor evidence and one "
-        "historical agent campaign. This creates no new experiment result and edits no prior "
-        "Report.\n\n"
+        "historical agent campaign. This editorial revision creates no new experiment result; "
+        "the previous article is retained in its immutable publication artifact.\n\n"
         f"{REPORT_MARKER_PREFIX}{encoded} -->"
     )
 
@@ -531,6 +601,34 @@ def parse_report_marker(value: object) -> dict[str, str] | None:
     return marker
 
 
+def _prose_blocks(reports: Any, markdown: str) -> list[Any]:
+    """Keep GFM tables as their own native Markdown blocks, never image panels."""
+
+    table = re.compile(r"(?m)^\|[^\n]+\|\n\|[ :|\-]+\|\n(?:\|[^\n]+\|(?:\n|$))+")
+    blocks: list[Any] = []
+    cursor = 0
+    for match in table.finditer(markdown):
+        prefix = markdown[cursor : match.start()].strip()
+        if prefix:
+            blocks.append(reports.MarkdownBlock(text=prefix))
+        blocks.append(reports.MarkdownBlock(text=match.group().strip()))
+        cursor = match.end()
+    tail = markdown[cursor:].strip()
+    if tail:
+        blocks.append(reports.MarkdownBlock(text=tail))
+    return blocks
+
+
+def _media_panel_dimensions(blocks: Sequence[Any]) -> list[tuple[int, int]]:
+    dimensions = []
+    for block in blocks:
+        if type(block).__name__ != "PanelGrid":
+            continue
+        for panel in _block_representation(block)["value"]["panels"]:
+            dimensions.append((panel["layout"]["w"], panel["layout"]["h"]))
+    return dimensions
+
+
 def render_report_blocks(
     reports: Any,
     plan: VisualStoryReportPlan,
@@ -549,7 +647,7 @@ def render_report_blocks(
     for match in FIGURE_BLOCK.finditer(markdown):
         prose = markdown[cursor : match.start()].strip()
         if prose:
-            blocks.append(reports.MarkdownBlock(text=prose))
+            blocks.extend(_prose_blocks(reports, prose))
         figure = figures[match.group("figure_id")]
         runset = reports.Runset(
             entity=plan.entity,
@@ -572,23 +670,20 @@ def render_report_blocks(
                         media_keys=[f"article/figures/{figure.figure_id}"],
                         mode="gallery",
                         gallery_axis="index",
-                        layout=reports.Layout(w=24, h=12),
+                        layout=reports.Layout(w=24, h=FIGURE_PANEL_HEIGHTS[figure.figure_id]),
                     )
                 ],
             )
         )
         blocks.append(
             reports.MarkdownBlock(
-                text=(
-                    f"_{figure.caption}_\n\n"
-                    f"**Accessible description:** {figure.alt_text}"
-                )
+                text=(f"_{figure.caption}_\n\n**Accessible description:** {figure.alt_text}")
             )
         )
         cursor = match.end()
     tail = markdown[cursor:].strip()
     if tail:
-        blocks.append(reports.MarkdownBlock(text=tail))
+        blocks.extend(_prose_blocks(reports, tail))
     blocks.extend(
         [
             reports.H2("Inspect the publication record"),
@@ -599,7 +694,7 @@ def render_report_blocks(
                     f"Source commit `{plan.source.source_commit}` · article "
                     f"`{plan.assets.article_sha256}` · visual manifest "
                     f"`{plan.assets.visual_manifest_file_sha256}` · artifact file manifest "
-                    f"`{plan.assets.artifact_manifest_sha256}`\n\n"
+                    f"`{publication_artifact_manifest_sha256(plan)}`\n\n"
                     "This publication run labels `new_experiment_result=false`. It packages the "
                     "article and derived figures; it does not add a scientific result."
                 )
@@ -610,7 +705,12 @@ def render_report_blocks(
 
 
 class VerifiedVisualStoryReportPublisher:
-    """Create or reuse one separate article after exact source/media readback."""
+    """Revise only the frozen Report ID after exact source/media readback.
+
+    W&B Reports save has no compare-and-swap argument. Two bounded rereads catch
+    observed edits, but cannot eliminate an edit concurrent with the final save.
+    A failed/uncertain save is safe to retry: the exact revised body is reused.
+    """
 
     def __init__(
         self,
@@ -618,13 +718,13 @@ class VerifiedVisualStoryReportPublisher:
         api: Any,
         reports_module: Any,
         web_base_url: str,
-        authorize_new_report: bool,
+        authorize_report_revision: bool,
         source_reader: Callable[[], VisualStoryReportPlan],
         media_publisher: Callable[[VisualStoryReportPlan], VisualStoryMediaReceipt],
         figure_verifier: Callable[[VisualStoryReportPlan], None],
     ) -> None:
-        if not authorize_new_report:
-            raise PermissionError("visual-story Report creation requires explicit authorization")
+        if not authorize_report_revision:
+            raise PermissionError("visual-story Report revision requires explicit authorization")
         self.api = api
         self.reports = reports_module
         self.web_base_url = web_base_url.rstrip("/")
@@ -642,63 +742,46 @@ class VerifiedVisualStoryReportPublisher:
             if observed != expected:
                 raise RuntimeError("a protected W&B Report changed during article publication")
 
-    def _discover(
-        self,
-        plan: VisualStoryReportPlan,
-        media: VisualStoryMediaReceipt,
-    ) -> Any | None:
-        expected_marker = report_marker(plan, media)
-        exact: list[Any] = []
-        for candidate in self.api.reports(
-            path=f"{plan.entity}/{plan.project}", per_page=100
+    def _read_target(self, plan: VisualStoryReportPlan) -> Any:
+        report = self.reports.Report.from_url(plan.target_report.report_url)
+        if (
+            str(getattr(report, "id", "")) != TARGET_REPORT_ID
+            or str(getattr(report, "entity", "")) != plan.entity
+            or str(getattr(report, "project", "")) != plan.project
         ):
-            title = str(
-                getattr(candidate, "display_name", getattr(candidate, "title", ""))
+            raise PermissionError("article revision target identity differs")
+        return report
+
+    def _check_target(
+        self, plan: VisualStoryReportPlan, report: Any
+    ) -> Literal["ORIGINAL", "REVISED"]:
+        marker = parse_report_marker(getattr(report, "description", ""))
+        if marker is not None and marker.get("plan_sha256") == plan.plan_sha256:
+            match = re.fullmatch(
+                rf"{plan.entity}/{plan.project}/{re.escape(plan.artifact_name)}:(v[0-9]+)",
+                marker.get("artifact_ref", ""),
             )
-            marker = parse_report_marker(getattr(candidate, "description", ""))
-            if marker == expected_marker:
-                exact.append(candidate)
-            elif title == REPORT_TITLE:
-                raise PermissionError("visual-story Report title is occupied by another source")
-        if len(exact) > 1:
-            raise RuntimeError("multiple Reports carry the visual-story publication key")
-        if not exact:
-            return None
-        url = _require_web_origin(
-            getattr(exact[0], "url", ""),
-            web_base_url=self.web_base_url,
-            label="existing visual-story W&B Report URL",
+            if match is None:
+                raise RuntimeError("revised Report artifact identity differs")
+            media = VisualStoryMediaReceipt(
+                status="REUSED",
+                run_id=plan.run_id,
+                run_url=f"{self.web_base_url}/{plan.entity}/{plan.project}/runs/{plan.run_id}",
+                artifact_ref=marker["artifact_ref"],
+                artifact_url=(
+                    f"{self.web_base_url}/{plan.entity}/{plan.project}/artifacts/"
+                    f"article-publication/{plan.artifact_name}/{match.group(1)}"
+                ),
+                artifact_manifest_sha256=publication_artifact_manifest_sha256(plan),
+            )
+            self._verify_destination(report, plan=plan, media=media)
+            return "REVISED"
+        observed = ArticleRevisionSnapshot.from_report(
+            report, web_base_url=self.web_base_url, label="article revision target"
         )
-        return self.reports.Report.from_url(url)
-
-    def _preflight_destination(self, plan: VisualStoryReportPlan) -> None:
-        """Block an occupied title before creating any run, artifact, or Report."""
-
-        matching: list[Any] = []
-        for candidate in self.api.reports(
-            path=f"{plan.entity}/{plan.project}", per_page=100
-        ):
-            title = str(
-                getattr(candidate, "display_name", getattr(candidate, "title", ""))
-            )
-            if title != REPORT_TITLE:
-                continue
-            marker = parse_report_marker(getattr(candidate, "description", ""))
-            if (
-                marker is None
-                or marker.get("publication_key") != plan.publication_key
-                or marker.get("plan_sha256") != plan.plan_sha256
-                or marker.get("article_sha256") != plan.assets.article_sha256
-                or marker.get("visual_manifest_sha256")
-                != plan.assets.visual_manifest_file_sha256
-                or marker.get("run_id") != plan.run_id
-            ):
-                raise PermissionError(
-                    "visual-story Report title is occupied by another source"
-                )
-            matching.append(candidate)
-        if len(matching) > 1:
-            raise RuntimeError("multiple Reports occupy the visual-story title")
+        if observed != plan.target_report:
+            raise RuntimeError("target W&B Report changed since the frozen revision snapshot")
+        return "ORIGINAL"
 
     def _verify_destination(
         self,
@@ -711,8 +794,7 @@ class VerifiedVisualStoryReportPublisher:
             str(getattr(report, "entity", "")) != plan.entity
             or str(getattr(report, "project", "")) != plan.project
             or str(getattr(report, "title", "")) != REPORT_TITLE
-            or parse_report_marker(getattr(report, "description", ""))
-            != report_marker(plan, media)
+            or str(getattr(report, "description", "")) != report_description(plan, media)
         ):
             raise RuntimeError("visual-story Report identity differs")
         url = _require_web_origin(
@@ -721,17 +803,19 @@ class VerifiedVisualStoryReportPublisher:
             label="visual-story W&B Report URL",
         )
         report_id = str(getattr(report, "id", "") or "")
-        if not report_id:
-            raise RuntimeError("visual-story W&B Report lacks a stable ID")
+        if report_id != TARGET_REPORT_ID or not url.endswith("--" + TARGET_REPORT_ID):
+            raise RuntimeError("visual-story W&B Report changed its stable ID")
         if url in {item.report_url for item in plan.protected_reports}:
             raise RuntimeError("visual-story destination reused a protected Report")
         if report_id in {item.report_id for item in plan.protected_reports}:
             raise RuntimeError("visual-story destination reused a protected Report ID")
         expected_blocks = render_report_blocks(self.reports, plan, media)
-        if _semantic_blocks_sha256(list(report.blocks)) != _semantic_blocks_sha256(
-            expected_blocks
-        ):
+        if _semantic_blocks_sha256(list(report.blocks)) != _semantic_blocks_sha256(expected_blocks):
             raise RuntimeError("visual-story W&B Report body differs")
+        # General Report canonicalization ignores backend layout placement. For
+        # these article figures, width/height are also part of readable delivery.
+        if _media_panel_dimensions(report.blocks) != _media_panel_dimensions(expected_blocks):
+            raise RuntimeError("visual-story W&B media panel dimensions differ")
         return url, report_id
 
     def publish(self, frozen_plan: VisualStoryReportPlan) -> VisualStoryReportReceipt:
@@ -739,34 +823,36 @@ class VerifiedVisualStoryReportPublisher:
         if first != frozen_plan:
             raise RuntimeError("verified source differs from the frozen visual-story plan")
         self._verify_protected_reports(frozen_plan)
-        self._preflight_destination(frozen_plan)
+        self._check_target(frozen_plan, self._read_target(frozen_plan))
         self.figure_verifier(frozen_plan)
         media = self.media_publisher(frozen_plan)
-        existing = self._discover(frozen_plan, media)
-        status: Literal["CREATED", "REUSED"]
-        if existing is None:
+        report = self._read_target(frozen_plan)
+        target_status = self._check_target(frozen_plan, report)
+        status: Literal["UPDATED", "REUSED"]
+        if target_status == "ORIGINAL":
             second = self.source_reader()
             if second != frozen_plan:
-                raise RuntimeError("verified source changed before visual-story Report creation")
+                raise RuntimeError("verified source changed before visual-story Report revision")
             self._verify_protected_reports(frozen_plan)
-            report = self.reports.Report(
-                entity=frozen_plan.entity,
-                project=frozen_plan.project,
-                title=REPORT_TITLE,
-                description=report_description(frozen_plan, media),
-                blocks=render_report_blocks(self.reports, frozen_plan, media),
-                width="readable",
-            )
+            blocks = render_report_blocks(self.reports, frozen_plan, media)
+            # Last network operation before save: refuse an observed manual edit.
+            report = self._read_target(frozen_plan)
+            if self._check_target(frozen_plan, report) != "ORIGINAL":
+                raise RuntimeError("target W&B Report changed immediately before revision")
+            report.title = REPORT_TITLE
+            report.description = report_description(frozen_plan, media)
+            report.blocks = blocks
+            report.width = "readable"
             report.save()
-            status = "CREATED"
+            status = "UPDATED"
         else:
-            report = existing
+            self._verify_destination(report, plan=frozen_plan, media=media)
             status = "REUSED"
 
         url = _require_web_origin(
             getattr(report, "url", ""),
             web_base_url=self.web_base_url,
-            label="created visual-story W&B Report URL",
+            label="revised visual-story W&B Report URL",
         )
         deadline = time.monotonic() + REPORT_READBACK_TIMEOUT_SECONDS
         while True:
@@ -806,10 +892,12 @@ def expected_run_config(plan: VisualStoryReportPlan) -> dict[str, Any]:
         "publication_key": plan.publication_key,
         "article_sha256": plan.assets.article_sha256,
         "visual_manifest_sha256": plan.assets.visual_manifest_file_sha256,
-        "artifact_manifest_sha256": plan.assets.artifact_manifest_sha256,
+        "artifact_manifest_sha256": publication_artifact_manifest_sha256(plan),
         "source_repository": "ash0ts/gi-scenario-studio",
         "source_commit": plan.source.source_commit,
         "figure_count": len(plan.assets.figures),
+        "revises_report_id": plan.target_report.report_id,
+        "previous_blocks_sha256": plan.target_report.blocks_sha256,
         "new_experiment_result": False,
         "cc0_synthetic_only": True,
     }
@@ -822,8 +910,10 @@ def expected_artifact_metadata(plan: VisualStoryReportPlan) -> dict[str, Any]:
         "publication_key": plan.publication_key,
         "article_sha256": plan.assets.article_sha256,
         "visual_manifest_sha256": plan.assets.visual_manifest_file_sha256,
-        "artifact_manifest_sha256": plan.assets.artifact_manifest_sha256,
+        "artifact_manifest_sha256": publication_artifact_manifest_sha256(plan),
         "source_commit": plan.source.source_commit,
+        "revises_report_id": plan.target_report.report_id,
+        "previous_blocks_sha256": plan.target_report.blocks_sha256,
         "new_experiment_result": False,
         "cc0_synthetic_only": True,
     }
@@ -835,7 +925,8 @@ def validate_artifact_download(
     root: Path,
     downloaded_root: Path,
 ) -> None:
-    expected_paths = {item.logical_name for item in plan.assets.artifact_files}
+    previous = revision_artifact_payloads(plan)
+    expected_paths = {item.logical_name for item in plan.assets.artifact_files} | set(previous)
     observed_paths: set[str] = set()
     for candidate in downloaded_root.rglob("*"):
         if candidate.is_symlink():
@@ -844,6 +935,9 @@ def validate_artifact_download(
             observed_paths.add(candidate.relative_to(downloaded_root).as_posix())
     if observed_paths != expected_paths:
         raise RuntimeError("article artifact download file set differs")
+    for name, payload in previous.items():
+        if (downloaded_root / name).read_bytes() != payload:
+            raise RuntimeError("previous Report artifact snapshot digest differs")
     for item in plan.assets.artifact_files:
         downloaded = downloaded_root / item.logical_name
         if downloaded.is_symlink() or not downloaded.is_file():
@@ -877,6 +971,9 @@ __all__ = [
     "PREVIOUS_READER_REPORT_URL",
     "REPORT_TITLE",
     "SOURCE_PROJECTION_RELATIVE_PATH",
+    "TARGET_REPORT_ID",
+    "TARGET_REPORT_URL",
+    "ArticleRevisionSnapshot",
     "ProtectedReportSnapshot",
     "VerifiedVisualStoryReportPublisher",
     "VisualStoryAssets",
@@ -888,8 +985,10 @@ __all__ = [
     "expected_run_config",
     "load_visual_story_assets",
     "parse_report_marker",
+    "publication_artifact_manifest_sha256",
     "render_report_blocks",
     "report_description",
+    "revision_artifact_payloads",
     "safe_https",
     "validate_artifact_download",
     "validate_plan_bytes",

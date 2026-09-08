@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Verify and publish the separate visual EcoCorridor W&B article.
+"""Verify and revise the explicitly identified EcoCorridor W&B article.
 
 ``verify`` is read-only and writes a canonical plan outside the repository.
 ``publish`` rereads every local and remote source, creates or reuses one
-deterministic article-media run and immutable artifact, then creates or reuses
-one new Report. Existing Reports are never saved.
+deterministic article-media run and immutable artifact, then updates the same
+Report ID. Its prior body is archived; other Reports are never saved.
 """
 
 from __future__ import annotations
@@ -35,6 +35,8 @@ from ecocorridor_core.human_readable_report import HumanReadableSourceSnapshot
 from ecocorridor_core.visual_story_report import (
     PREVIOUS_READER_REPORT_URL,
     SOURCE_PROJECTION_RELATIVE_PATH,
+    TARGET_REPORT_URL,
+    ArticleRevisionSnapshot,
     ProtectedReportSnapshot,
     VerifiedVisualStoryReportPublisher,
     VisualStoryMediaReceipt,
@@ -44,6 +46,8 @@ from ecocorridor_core.visual_story_report import (
     expected_artifact_metadata,
     expected_run_config,
     load_visual_story_assets,
+    publication_artifact_manifest_sha256,
+    revision_artifact_payloads,
     safe_https,
     validate_artifact_download,
     validate_plan_bytes,
@@ -107,6 +111,7 @@ def read_plan(
     protect_report_urls: Sequence[str],
     wandb_module: Any,
     reports_module: Any,
+    target_snapshot: ArticleRevisionSnapshot | None = None,
 ) -> VisualStoryReportPlan:
     source_commit = require_publishable_source(root)
     receipt, ridgeway = _source_reader(
@@ -127,6 +132,11 @@ def read_plan(
         web_base_url=web_base_url,
     )
     assets = load_visual_story_assets(root)
+    target = target_snapshot or ArticleRevisionSnapshot.from_report(
+        reports_module.Report.from_url(TARGET_REPORT_URL),
+        web_base_url=web_base_url,
+        label="article revision target",
+    )
     _require_exact_pushed_assets(
         root=root,
         source_commit=source_commit,
@@ -138,6 +148,7 @@ def read_plan(
     return VisualStoryReportPlan.create(
         source=source,
         protected_reports=protected,
+        target_report=target,
         assets=assets,
     )
 
@@ -288,11 +299,7 @@ class WandbVisualStoryMediaPublisher:
 
     def _verify_media_history(self, plan: VisualStoryReportPlan, run: Any) -> None:
         keys = [f"article/figures/{item.figure_id}" for item in plan.assets.figures]
-        rows = [
-            row
-            for row in run.scan_history(keys=keys)
-            if any(key in row for key in keys)
-        ]
+        rows = [row for row in run.scan_history(keys=keys) if any(key in row for key in keys)]
         if len(rows) != 1 or any(key not in rows[0] for key in keys):
             raise RuntimeError("article run does not retain one complete figure-history row")
         by_path = {item.repository_path: item for item in plan.assets.artifact_files}
@@ -345,13 +352,11 @@ class WandbVisualStoryMediaPublisher:
             "article/plan_sha256": plan.plan_sha256,
             "article/article_sha256": plan.assets.article_sha256,
             "article/visual_manifest_sha256": plan.assets.visual_manifest_file_sha256,
-            "article/artifact_manifest_sha256": plan.assets.artifact_manifest_sha256,
+            "article/artifact_manifest_sha256": publication_artifact_manifest_sha256(plan),
             "article/figure_count": len(plan.assets.figures),
             "article/new_experiment_result": 0,
         }
-        mismatches = [
-            key for key, value in expected_summary.items() if summary.get(key) != value
-        ]
+        mismatches = [key for key, value in expected_summary.items() if summary.get(key) != value]
         if mismatches:
             raise RuntimeError(
                 "deterministic article run completion summary differs: "
@@ -397,7 +402,7 @@ class WandbVisualStoryMediaPublisher:
             run_url=run_url,
             artifact_ref=artifact_ref,
             artifact_url=artifact_url,
-            artifact_manifest_sha256=plan.assets.artifact_manifest_sha256,
+            artifact_manifest_sha256=publication_artifact_manifest_sha256(plan),
         )
 
     def _readback(
@@ -495,6 +500,10 @@ class WandbVisualStoryMediaPublisher:
                         str(self.root / item.repository_path),
                         name=item.logical_name,
                     )
+                for name, payload in revision_artifact_payloads(plan).items():
+                    previous = Path(temporary) / name
+                    _atomic_write(previous, payload)
+                    artifact.add_file(str(previous), name=name)
                 logged = run.log_artifact(artifact).wait()
                 artifact_ref = str(getattr(logged, "qualified_name", "") or "")
                 match = re.fullmatch(
@@ -518,7 +527,7 @@ class WandbVisualStoryMediaPublisher:
                     plan.assets.visual_manifest_file_sha256
                 )
                 run.summary["article/artifact_manifest_sha256"] = (
-                    plan.assets.artifact_manifest_sha256
+                    publication_artifact_manifest_sha256(plan)
                 )
                 run.summary["article/figure_count"] = len(plan.assets.figures)
                 run.summary["article/new_experiment_result"] = 0
@@ -552,12 +561,12 @@ def _parser() -> argparse.ArgumentParser:
     verify = commands.add_parser("verify", help="freeze exact sources without W&B writes")
     _common_arguments(verify)
     verify.add_argument("--authorize-source-readback", action="store_true")
-    publish = commands.add_parser("publish", help="create or reuse article media and Report")
+    publish = commands.add_parser("publish", help="revise the exact Report and retain prior text")
     _common_arguments(publish)
     publish.add_argument("--plan", type=Path, required=True)
     publish.add_argument("--authorize-source-readback", action="store_true")
     publish.add_argument("--authorize-synthetic-public-upload", action="store_true")
-    publish.add_argument("--authorize-new-report", action="store_true")
+    publish.add_argument("--authorize-report-revision", action="store_true")
     return parser
 
 
@@ -577,6 +586,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     import wandb
 
+    frozen: VisualStoryReportPlan | None = None
+
     def current_plan() -> VisualStoryReportPlan:
         return read_plan(
             root=root,
@@ -588,6 +599,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             protect_report_urls=arguments.protect_report_url,
             wandb_module=wandb,
             reports_module=reports,
+            target_snapshot=frozen.target_report if frozen is not None else None,
         )
 
     if arguments.command == "verify":
@@ -614,8 +626,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if not arguments.authorize_synthetic_public_upload:
         raise SystemExit("article upload requires --authorize-synthetic-public-upload")
-    if not arguments.authorize_new_report:
-        raise SystemExit("new Report creation requires --authorize-new-report")
+    if not arguments.authorize_report_revision:
+        raise SystemExit("Report revision requires --authorize-report-revision")
     frozen = _load_plan(arguments.plan)
     if current_plan() != frozen:
         raise SystemExit("frozen visual-story plan differs from current verified sources")
@@ -634,7 +646,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         api=api,
         reports_module=reports,
         web_base_url=arguments.wandb_web_base_url,
-        authorize_new_report=True,
+        authorize_report_revision=True,
         source_reader=current_plan,
         media_publisher=media.publish,
         figure_verifier=lambda plan: verify_committed_figure_bytes(plan, root=root),
