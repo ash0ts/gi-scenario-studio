@@ -1,0 +1,64 @@
+1
+00:00:00,500 --> 00:00:10,575
+Now the plans become characters rather than
+dots. First is the bargain-looking plan,
+
+2
+00:00:10,575 --> 00:00:21,130
+ALT-017: about 55 thousand dollars and just over
+4 percent less total water. That misses
+
+3
+00:00:21,130 --> 00:00:30,966
+our target, and its long-storm peak rises from
+3.14 to 3.21 cubic feet per second.
+
+4
+00:00:30,966 --> 00:00:40,801
+Cheap is not the same as acceptable. Next is
+ALT-207: about 6.4 percent less water
+
+5
+00:00:40,801 --> 00:00:50,397
+for 190 thousand dollars. None of its four peaks
+rises, and every run passes its
+
+6
+00:00:50,397 --> 00:01:00,112
+checks. It clears this teaching screen, so it is
+a candidate to carry forward for
+
+7
+00:01:00,112 --> 00:01:10,427
+site and feasibility review—a question to
+investigate, not an approval. ALT-109 offers
+
+8
+00:01:10,427 --> 00:01:19,543
+about 7 percent reduction, but its
+222-thousand-dollar cost crosses the cap.
+
+9
+00:01:19,543 --> 00:01:29,978
+ALT-014 gives the strongest volume reduction
+seen among all 220 guided plans, about 8.8
+
+10
+00:01:29,978 --> 00:01:41,253
+percent, but costs roughly 362 thousand dollars.
+More hydraulic benefit can still be the wrong
+
+11
+00:01:41,253 --> 00:01:51,328
+fit for the brief. The detailed values remain on
+screen, while the app evaluates the
+
+12
+00:01:51,328 --> 00:02:02,123
+unrounded stored numbers. Among these four
+examples, one clears every rule. We have earned
+
+13
+00:02:02,123 --> 00:02:08,000
+a smaller set of questions, not a design
+verdict.

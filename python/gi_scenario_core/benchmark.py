@@ -10,11 +10,14 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib
+import importlib.metadata
 import json
 import math
 import os
+import platform
 import random
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -27,6 +30,62 @@ Method = Literal["random", "sobol", "nsga2", "sobol_extratrees"]
 NSGA2_POPULATION_SIZE = 64
 NSGA2_OFFSPRING_BATCH_SIZE = 32
 NSGA2_CROSSOVER_PROBABILITY = 0.9
+SCIPY_SOBOL_ENGINE = "scipy_sobol_scrambled"
+
+
+def _dependency_version(module: str, distribution: str) -> str:
+    """Import a benchmark dependency and return its installed distribution version.
+
+    Application search deliberately supports lean-install fallbacks. Release-gate
+    benchmarks do not: silently changing the algorithm would make method labels and
+    cross-seed comparisons invalid.
+    """
+
+    try:
+        importlib.import_module(module)
+        return importlib.metadata.version(distribution)
+    except (ImportError, importlib.metadata.PackageNotFoundError) as exc:
+        raise RuntimeError(
+            f"BENCHMARK_DEPENDENCY_REQUIRED: install the locked science extra; "
+            f"missing {distribution} for the requested benchmark method"
+        ) from exc
+
+
+def _benchmark_runtime(method: Method) -> dict[str, Any]:
+    """Fail closed on method dependencies and capture scientific provenance."""
+
+    runtime: dict[str, Any] = {
+        "python": platform.python_version(),
+        "method_implementation": (
+            "internal_deterministic_integer_nsga2" if method == "nsga2" else method
+        ),
+    }
+    if method != "random":
+        runtime["scipy"] = _dependency_version("scipy", "scipy")
+    if method == "sobol_extratrees":
+        runtime["scikit_learn"] = _dependency_version("sklearn", "scikit-learn")
+
+    # PyMOO is part of the locked science environment for research comparators, but
+    # this campaign's NSGA-II is the repository-owned implementation documented in
+    # method_configuration. Recording availability without claiming use makes that
+    # boundary inspectable in W&B.
+    try:
+        importlib.import_module("pymoo")
+        runtime["pymoo"] = importlib.metadata.version("pymoo")
+        runtime["pymoo_role"] = "available_not_used_by_internal_nsga2"
+    except (ImportError, importlib.metadata.PackageNotFoundError):
+        runtime["pymoo"] = None
+        runtime["pymoo_role"] = "not_installed_not_required"
+    return runtime
+
+
+def _require_scipy_sobol(engine: str, *, context: str) -> None:
+    if engine != SCIPY_SOBOL_ENGINE:
+        raise RuntimeError(
+            "BENCHMARK_ENGINE_MISMATCH: "
+            f"{context} required {SCIPY_SOBOL_ENGINE}, received {engine}; "
+            "the replay was stopped before it could be mislabeled"
+        )
 
 
 def _canonical_sha256(value: object) -> str:
@@ -227,7 +286,8 @@ def _candidate_order(
         random.Random(seed).shuffle(order)
         return order
     slots = [CandidateSlot.model_validate(slot) for slot in payload.get("candidate_slots", [])]
-    vectors, _engine = qmc_vectors(slots, len(rows), seed)
+    vectors, engine = qmc_vectors(slots, len(rows), seed)
+    _require_scipy_sobol(engine, context="Sobol candidate ordering")
     order = [tuple(vector) for vector in vectors]
     exact_vectors = {item.vector for item in rows}
     if set(order) != exact_vectors:
@@ -543,9 +603,11 @@ def run_replay(
     method: Method,
     seed: int,
     budget: int,
+    scientific_observer: Callable[[str, dict[str, Any], dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     if budget < 1:
         raise ValueError("benchmark budget must be positive")
+    scientific_runtime = _benchmark_runtime(method)
     budget = min(budget, len(rows))
     directions = {key: str(value) for key, value in payload["objective_directions"].items()}
     oracle = HiddenExactOracle(rows)
@@ -554,6 +616,7 @@ def run_replay(
     adaptive = 0
     nsga2_population: list[ExactBenchmarkRow] = []
     nsga2_generations: list[dict[str, Any]] = []
+    extratrees_batches: list[dict[str, Any]] = []
     if method in {"random", "sobol"}:
         for vector in _candidate_order(payload, rows, method=method, seed=seed)[:budget]:
             oracle.evaluate(vector)
@@ -571,6 +634,7 @@ def run_replay(
         slots = [CandidateSlot.model_validate(slot) for slot in payload["candidate_slots"]]
         initial_count = min(NSGA2_POPULATION_SIZE, budget)
         initial, _engine = qmc_vectors(slots, initial_count, seed)
+        _require_scipy_sobol(_engine, context=f"{method} initialization")
         for vector in initial:
             oracle.evaluate(vector)
             exploration += 1
@@ -613,6 +677,11 @@ def run_replay(
                     seed=seed + batch_index,
                     count=batch_count,
                 )
+                if qmc_fill_count:
+                    _require_scipy_sobol(
+                        qmc_fill_engine,
+                        context=f"NSGA-II generation {batch_index} operator-exhaustion fill",
+                    )
                 sources = ["adaptive"] * (len(candidates) - qmc_fill_count) + [
                     "exploration"
                 ] * qmc_fill_count
@@ -633,9 +702,33 @@ def run_replay(
                     seed=seed + batch_index,
                     exploration_fraction=0.25,
                     benchmark_approved=True,
+                    scientific_observer=scientific_observer,
+                )
+                if diagnostics.get("method") != "adaptive_extratrees":
+                    raise RuntimeError(
+                        "BENCHMARK_ENGINE_MISMATCH: sobol_extratrees required an "
+                        "adaptive ExtraTrees batch after initialization, received "
+                        f"{diagnostics.get('method', 'unknown')}: "
+                        f"{diagnostics.get('reason', 'no reason reported')}"
+                    )
+                _require_scipy_sobol(
+                    str(diagnostics.get("engine", "unknown")),
+                    context=f"ExtraTrees batch {batch_index} candidate pool",
                 )
                 candidates = [tuple(item.vector) for item in proposed]
                 exploration_in_batch = int(diagnostics.get("exploration_count", len(candidates)))
+                extratrees_batches.append(
+                    {
+                        "batch": batch_index,
+                        "seed": seed + batch_index,
+                        "engine": diagnostics["engine"],
+                        "training_rows": int(diagnostics["training_rows"]),
+                        "candidate_pool": int(diagnostics["candidate_pool"]),
+                        "adaptive_designs": len(candidates) - exploration_in_batch,
+                        "exploration_designs": exploration_in_batch,
+                        "model_hash": str(diagnostics["model_hash"]),
+                    }
+                )
                 sources = ["adaptive"] * max(0, len(candidates) - exploration_in_batch) + [
                     "exploration"
                 ] * min(exploration_in_batch, len(candidates))
@@ -682,6 +775,7 @@ def run_replay(
         "method": method,
         "seed": seed,
         "budget": budget,
+        "scientific_runtime": scientific_runtime,
         "history": history,
         "summary": score_replay(rows, oracle.revealed, directions),
         "selection_counts": {"exploration": exploration, "adaptive": adaptive},
@@ -705,8 +799,106 @@ def run_replay(
             "generation_count": len(nsga2_generations) - 1,
         }
         result["nsga2_generations"] = nsga2_generations
+    elif method == "sobol_extratrees":
+        result["method_configuration"] = {
+            "variant": "barriered_sobol_plus_extratrees",
+            "initialization_designs": initial_count,
+            "initialization": f"qmc:{_engine}",
+            "minimum_training_rows": 64,
+            "offspring_batch_size": NSGA2_OFFSPRING_BATCH_SIZE,
+            "exploration_fraction": 0.25,
+            "adaptive_batch_count": len(extratrees_batches),
+            "notice": "Model spread is an acquisition heuristic, not engineering confidence.",
+        }
+        result["extratrees_batches"] = extratrees_batches
     result["campaign_sha256"] = _canonical_sha256(result)
     return result
+
+
+def _trace_benchmark_scientific_batches(
+    binding: Any,
+    run_id: str,
+    result: dict[str, Any],
+    *,
+    adapter: Any | None = None,
+) -> dict[str, Any]:
+    """Link adaptive batch-proposal calls to the active benchmark W&B run.
+
+    Tracing is deliberately best effort.  A Weave failure is summarized on the
+    W&B run but cannot invalidate or change the already-computed benchmark.
+    """
+
+    if adapter is None:
+        from .observability import WeaveAdapter
+
+        adapter = WeaveAdapter()
+    observations: list[tuple[int, dict[str, Any], dict[str, Any]]] = []
+    if result.get("method") == "sobol_extratrees":
+        for item in result.get("extratrees_batches", []):
+            observations.append(
+                (
+                    int(item["batch"]),
+                    {
+                        "method": "sobol_extratrees",
+                        "batch": int(item["batch"]),
+                        "seed": int(item["seed"]),
+                        "observed_exact_design_count": int(item["training_rows"]),
+                        "candidate_pool": int(item["candidate_pool"]),
+                    },
+                    {
+                        "adaptive_design_count": int(item["adaptive_designs"]),
+                        "exploration_design_count": int(item["exploration_designs"]),
+                        "model_hash": str(item["model_hash"]),
+                    },
+                )
+            )
+    elif result.get("method") == "nsga2":
+        for item in result.get("nsga2_generations", []):
+            generation = int(item["generation"])
+            if generation == 0:
+                continue
+            observations.append(
+                (
+                    generation,
+                    {
+                        "method": "nsga2",
+                        "batch": generation,
+                        "seed": int(item["seed"]),
+                        "population_size": len(item["population_design_ids"]),
+                    },
+                    {
+                        "adaptive_design_count": len(item["offspring_design_ids"]),
+                        "exploration_design_count": int(item["qmc_fill_designs"]),
+                    },
+                )
+            )
+
+    traced = 0
+    failed = 0
+    campaign_sha256 = str(result.get("campaign_sha256", "not-recorded"))
+    for batch, inputs, output in observations:
+        call_id = "scientific_" + hashlib.sha256(
+            f"{campaign_sha256}|adaptive-search-batch|{batch}".encode()
+        ).hexdigest()[:24]
+        try:
+            adapter.trace_scientific_operation(
+                binding,
+                call_id=call_id,
+                operation="adaptive_search_batch_proposal",
+                inputs=inputs,
+                output=output,
+                wandb_run_id=run_id,
+                wandb_step=None,
+            )
+            traced += 1
+        except Exception:  # noqa: BLE001 - benchmark science is already committed
+            failed += 1
+    return {
+        "eligible_batch_count": len(observations),
+        "traced_batch_count": traced,
+        "failed_batch_count": failed,
+        "wandb_run_linked": traced > 0,
+    }
 
 
 def _sync_wandb(result: dict[str, Any], output: Path) -> str:
@@ -720,13 +912,15 @@ def _sync_wandb(result: dict[str, Any], output: Path) -> str:
     project = os.environ.get("WANDB_PROJECT", "")
     if not entity or not project:
         raise RuntimeError("WANDB_RESTRICTED_DESTINATION_REQUIRED")
-    validate_binding_from_environment(
+    verified_binding = validate_binding_from_environment(
         entity=entity,
         project=project,
         deployment=os.environ.get("WANDB_DEPLOYMENT", "wandb_cloud"),
         project_id=f"benchmark-{result['campaign_sha256'][:16]}",
     )
-    config = {key: result[key] for key in ("dataset_id", "method", "seed", "budget")}
+    config = {
+        key: result[key] for key in ("dataset_id", "method", "seed", "budget", "scientific_runtime")
+    }
     if "method_configuration" in result:
         config["method_configuration"] = result["method_configuration"]
     with wandb.init(
@@ -737,13 +931,23 @@ def _sync_wandb(result: dict[str, Any], output: Path) -> str:
         settings=wandb.Settings(
             console="off",
             disable_code=True,
+            disable_git=True,
             save_code=False,
             show_errors=False,
+            x_disable_machine_info=True,
+            x_disable_meta=True,
+            x_disable_stats=True,
+            x_save_requirements=False,
         ),
     ) as run:
         for row in result["history"]:
             run.log(row, step=int(row["step"]))
         run.summary.update(result["summary"])
+        run.summary["weave_scientific_operations"] = _trace_benchmark_scientific_batches(
+            verified_binding,
+            str(run.id),
+            result,
+        )
         artifact = wandb.Artifact(
             name=f"search-trace-{result['campaign_sha256'][:12]}", type="search-trace"
         )

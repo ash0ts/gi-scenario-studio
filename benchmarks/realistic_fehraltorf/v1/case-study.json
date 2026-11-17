@@ -1,0 +1,676 @@
+{
+  "analysis_boundary": {
+    "analysis_type": "independent reanalysis of published SWMM output summaries",
+    "authority": "published model output, not measured catchment response",
+    "fresh_swmm_rerun": false,
+    "not_established": [
+      "fresh SWMM reproduction",
+      "field performance of any green-infrastructure scenario",
+      "regulatory suitability",
+      "construction feasibility",
+      "water-quality or ecological benefit"
+    ],
+    "reason_rerun_not_possible": "The public package omits complete SWMM OUT files and requires separately licensed MeteoSwiss rainfall and evapotranspiration series for a fresh rerun."
+  },
+  "case_id": "eawag-fehraltorf-published-output-reanalysis-v1",
+  "cases": [
+    {
+      "case_id": "BC-sq",
+      "csv_source": {
+        "member": "results/SWMM_simulation_results/results_sq_BC.csv",
+        "sha256": "d3a1eeb4c9809b6ceadc43d6c52988c326317359b1eacc5ee0780dbd82d276c2"
+      },
+      "gi_scenario_id": "sq",
+      "median_annual_cso_m3": 142179.557,
+      "model_structure_id": "BC",
+      "qa": {
+        "groundwater_continuity_error_percent": null,
+        "max_abs_node_continuity_error_percent": 249.82,
+        "model_disclaimer_present": true,
+        "percent_not_converging": 2.51,
+        "routing_continuity_error_percent": -0.154,
+        "runoff_continuity_error_percent": -0.795,
+        "swmm_version": "5.1 (Build 5.1.13)",
+        "warning_count": 6
+      },
+      "reduction_from_same_structure_baseline_percent": null,
+      "report_source": {
+        "member": "results/SWMM_simulation_results/1a_cal_basecase_sq.rpt",
+        "sha256": "21ef34027a6fa06490afcd7daede342eef81bc8020c8a4c53eea535d50e8a502"
+      },
+      "year_count": 30
+    },
+    {
+      "case_id": "BC-bb",
+      "csv_source": {
+        "member": "results/SWMM_simulation_results/results_bb_BC.csv",
+        "sha256": "a77ebd5350487c85772a2acf86af22aca9c6f2dd9421184586fdcdfe752aae1c"
+      },
+      "gi_scenario_id": "bb",
+      "median_annual_cso_m3": 24505.018,
+      "model_structure_id": "BC",
+      "qa": {
+        "groundwater_continuity_error_percent": null,
+        "max_abs_node_continuity_error_percent": 251.29,
+        "model_disclaimer_present": true,
+        "percent_not_converging": 0.74,
+        "routing_continuity_error_percent": -0.538,
+        "runoff_continuity_error_percent": -0.751,
+        "swmm_version": "5.1 (Build 5.1.13)",
+        "warning_count": 6
+      },
+      "reduction_from_same_structure_baseline_percent": 82.8394,
+      "report_source": {
+        "member": "results/SWMM_simulation_results/1b_cal_basecase_bc.rpt",
+        "sha256": "a85c076dc7a4bb3752c3dd39809ddd51219486395f93bc8bdf19be92caa10249"
+      },
+      "year_count": 30
+    },
+    {
+      "case_id": "BC-pp",
+      "csv_source": {
+        "member": "results/SWMM_simulation_results/results_pp_BC.csv",
+        "sha256": "651614a645d36ee99da54cbf063855d43ac07d4c86c786c6174510882688a8ff"
+      },
+      "gi_scenario_id": "pp",
+      "median_annual_cso_m3": 64735.016,
+      "model_structure_id": "BC",
+      "qa": {
+        "groundwater_continuity_error_percent": null,
+        "max_abs_node_continuity_error_percent": 250.99,
+        "model_disclaimer_present": true,
+        "percent_not_converging": 1.16,
+        "routing_continuity_error_percent": -0.218,
+        "runoff_continuity_error_percent": -0.558,
+        "swmm_version": "5.1 (Build 5.1.13)",
+        "warning_count": 6
+      },
+      "reduction_from_same_structure_baseline_percent": 55.2165,
+      "report_source": {
+        "member": "results/SWMM_simulation_results/1c_cal_basecase_pp.rpt",
+        "sha256": "0f117daf176becadd1c81aba32c95141261a21205ddb118ae6642f97dd99a5e9"
+      },
+      "year_count": 30
+    },
+    {
+      "case_id": "BC-gr",
+      "csv_source": {
+        "member": "results/SWMM_simulation_results/results_gr_BC.csv",
+        "sha256": "396e68da018e47f79568a592b8095dafd04e6e9f366f424b22b36a55eb2a68a4"
+      },
+      "gi_scenario_id": "gr",
+      "median_annual_cso_m3": 126811.391,
+      "model_structure_id": "BC",
+      "qa": {
+        "groundwater_continuity_error_percent": null,
+        "max_abs_node_continuity_error_percent": 251.24,
+        "model_disclaimer_present": true,
+        "percent_not_converging": 2.28,
+        "routing_continuity_error_percent": -0.204,
+        "runoff_continuity_error_percent": -0.68,
+        "swmm_version": "5.1 (Build 5.1.13)",
+        "warning_count": 6
+      },
+      "reduction_from_same_structure_baseline_percent": 11.4398,
+      "report_source": {
+        "member": "results/SWMM_simulation_results/1d_cal_basecase_gr.rpt",
+        "sha256": "93db1b20d480ca7cd7cc489ded3462673c93e180cee313acad331df35915088c"
+      },
+      "year_count": 30
+    },
+    {
+      "case_id": "BI-sq",
+      "csv_source": {
+        "member": "results/SWMM_simulation_results/results_sq_BI.csv",
+        "sha256": "b7382d2ede0d76b424f76aa6ee2dd79eb13a928910df733d989b5dd15dbc2e45"
+      },
+      "gi_scenario_id": "sq",
+      "median_annual_cso_m3": 209184.892,
+      "model_structure_id": "BI",
+      "qa": {
+        "groundwater_continuity_error_percent": null,
+        "max_abs_node_continuity_error_percent": 250.97,
+        "model_disclaimer_present": true,
+        "percent_not_converging": 3.72,
+        "routing_continuity_error_percent": -0.241,
+        "runoff_continuity_error_percent": -0.795,
+        "swmm_version": "5.1 (Build 5.1.13)",
+        "warning_count": 6
+      },
+      "reduction_from_same_structure_baseline_percent": null,
+      "report_source": {
+        "member": "results/SWMM_simulation_results/3a_cal_inflow_sq.rpt",
+        "sha256": "719b2804898f6ed881082c6bfb4c986e70c273681ccb84665910ff3c7c3abef7"
+      },
+      "year_count": 30
+    },
+    {
+      "case_id": "BI-bb",
+      "csv_source": {
+        "member": "results/SWMM_simulation_results/results_bb_BI.csv",
+        "sha256": "dcadccfc170e76d9a31e73a8fcd75bce923c10da379b23cb715e42d572863ca6"
+      },
+      "gi_scenario_id": "bb",
+      "median_annual_cso_m3": 43493.907,
+      "model_structure_id": "BI",
+      "qa": {
+        "groundwater_continuity_error_percent": null,
+        "max_abs_node_continuity_error_percent": 250.56,
+        "model_disclaimer_present": true,
+        "percent_not_converging": 1.17,
+        "routing_continuity_error_percent": -0.368,
+        "runoff_continuity_error_percent": -0.751,
+        "swmm_version": "5.1 (Build 5.1.13)",
+        "warning_count": 6
+      },
+      "reduction_from_same_structure_baseline_percent": 76.945,
+      "report_source": {
+        "member": "results/SWMM_simulation_results/3b_cal_inflow_bc.rpt",
+        "sha256": "72226e5548264ee90e827441dfbf410480d394ba09b7ef499b376ac5c06ddd88"
+      },
+      "year_count": 30
+    },
+    {
+      "case_id": "BI-pp",
+      "csv_source": {
+        "member": "results/SWMM_simulation_results/results_pp_BI.csv",
+        "sha256": "eaccc96ec65a2fd80e2e22f17df61aed0522fb646418bc30fc89de0e3159083c"
+      },
+      "gi_scenario_id": "pp",
+      "median_annual_cso_m3": 93438.603,
+      "model_structure_id": "BI",
+      "qa": {
+        "groundwater_continuity_error_percent": null,
+        "max_abs_node_continuity_error_percent": 251.34,
+        "model_disclaimer_present": true,
+        "percent_not_converging": 1.59,
+        "routing_continuity_error_percent": -0.273,
+        "runoff_continuity_error_percent": -0.558,
+        "swmm_version": "5.1 (Build 5.1.13)",
+        "warning_count": 6
+      },
+      "reduction_from_same_structure_baseline_percent": 49.3882,
+      "report_source": {
+        "member": "results/SWMM_simulation_results/3c_cal_inflow_pp.rpt",
+        "sha256": "86fd3a5f1549616d2152ed51fdb0eac9cdd7f03f0ab3a3a5f050936e5a864121"
+      },
+      "year_count": 30
+    },
+    {
+      "case_id": "BI-gr",
+      "csv_source": {
+        "member": "results/SWMM_simulation_results/results_gr_BI.csv",
+        "sha256": "7560da90b3e472b99ac94083b16bac93d0dd650474b5f3d614b55e538295a1dd"
+      },
+      "gi_scenario_id": "gr",
+      "median_annual_cso_m3": 191621.614,
+      "model_structure_id": "BI",
+      "qa": {
+        "groundwater_continuity_error_percent": null,
+        "max_abs_node_continuity_error_percent": 254.61,
+        "model_disclaimer_present": true,
+        "percent_not_converging": 3.32,
+        "routing_continuity_error_percent": -0.279,
+        "runoff_continuity_error_percent": -0.68,
+        "swmm_version": "5.1 (Build 5.1.13)",
+        "warning_count": 6
+      },
+      "reduction_from_same_structure_baseline_percent": 9.4692,
+      "report_source": {
+        "member": "results/SWMM_simulation_results/3d_cal_inflow_gr.rpt",
+        "sha256": "6f0f4882a587b8fc88cc0c1f2ab0a88f3d17cd8c77fd46b1d72a9111dee94494"
+      },
+      "year_count": 30
+    },
+    {
+      "case_id": "CB-sq",
+      "csv_source": {
+        "member": "results/SWMM_simulation_results/results_sq_CB.csv",
+        "sha256": "352ba588d8e53172df445c73b1595f1c5adfe877ada1fc1ed9e5bbcdea8d6c68"
+      },
+      "gi_scenario_id": "sq",
+      "median_annual_cso_m3": 183032.1,
+      "model_structure_id": "CB",
+      "qa": {
+        "groundwater_continuity_error_percent": -5.812,
+        "max_abs_node_continuity_error_percent": 253.95,
+        "model_disclaimer_present": true,
+        "percent_not_converging": 3.07,
+        "routing_continuity_error_percent": -0.198,
+        "runoff_continuity_error_percent": -0.971,
+        "swmm_version": "5.1 (Build 5.1.13)",
+        "warning_count": 6
+      },
+      "reduction_from_same_structure_baseline_percent": null,
+      "report_source": {
+        "member": "results/SWMM_simulation_results/5a_cal_comb_sq.rpt",
+        "sha256": "180732e6068a9b1c5031e57640a75a52b1a28e43d64176005f9d5b6de3ea0cb3"
+      },
+      "year_count": 30
+    },
+    {
+      "case_id": "CB-bb",
+      "csv_source": {
+        "member": "results/SWMM_simulation_results/results_bb_CB.csv",
+        "sha256": "d6ef4bc391ff92dfe4e5eed2e5cb5fa68a8035fc14157b77eba2d3947a9de461"
+      },
+      "gi_scenario_id": "bb",
+      "median_annual_cso_m3": 69956.694,
+      "model_structure_id": "CB",
+      "qa": {
+        "groundwater_continuity_error_percent": -54.273,
+        "max_abs_node_continuity_error_percent": 253.94,
+        "model_disclaimer_present": true,
+        "percent_not_converging": 0.51,
+        "routing_continuity_error_percent": -2.107,
+        "runoff_continuity_error_percent": -0.913,
+        "swmm_version": "5.1 (Build 5.1.13)",
+        "warning_count": 6
+      },
+      "reduction_from_same_structure_baseline_percent": 56.8133,
+      "report_source": {
+        "member": "results/SWMM_simulation_results/5b_cal_comb_bc.rpt",
+        "sha256": "08284d431d6f88cb9893f1d90480c4d633a8ea277feebd8a4b1e296510d378ab"
+      },
+      "year_count": 30
+    },
+    {
+      "case_id": "CB-pp",
+      "csv_source": {
+        "member": "results/SWMM_simulation_results/results_pp_CB.csv",
+        "sha256": "259fe9806dbb092b0e3e849b009ed8e58b073ee1ab0a19fa6723f7640be501ec"
+      },
+      "gi_scenario_id": "pp",
+      "median_annual_cso_m3": 91717.104,
+      "model_structure_id": "CB",
+      "qa": {
+        "groundwater_continuity_error_percent": -20.269,
+        "max_abs_node_continuity_error_percent": 251.79,
+        "model_disclaimer_present": true,
+        "percent_not_converging": 1.09,
+        "routing_continuity_error_percent": -0.11,
+        "runoff_continuity_error_percent": -0.784,
+        "swmm_version": "5.1 (Build 5.1.13)",
+        "warning_count": 6
+      },
+      "reduction_from_same_structure_baseline_percent": 43.7597,
+      "report_source": {
+        "member": "results/SWMM_simulation_results/5c_cal_comb_pp.rpt",
+        "sha256": "a728d66360f361b744d1dda99cce6f39ab45cb7c3eca05a6d2e81b5e27ac4401"
+      },
+      "year_count": 30
+    },
+    {
+      "case_id": "CB-gr",
+      "csv_source": {
+        "member": "results/SWMM_simulation_results/results_gr_CB.csv",
+        "sha256": "7d3f6b4f958ebda9e3f957445b56ab10b3cde969505e9279c6e127ad63a1b350"
+      },
+      "gi_scenario_id": "gr",
+      "median_annual_cso_m3": 152717.952,
+      "model_structure_id": "CB",
+      "qa": {
+        "groundwater_continuity_error_percent": -20.66,
+        "max_abs_node_continuity_error_percent": 254.08,
+        "model_disclaimer_present": true,
+        "percent_not_converging": 1.95,
+        "routing_continuity_error_percent": 0.002,
+        "runoff_continuity_error_percent": -0.872,
+        "swmm_version": "5.1 (Build 5.1.13)",
+        "warning_count": 6
+      },
+      "reduction_from_same_structure_baseline_percent": 14.7567,
+      "report_source": {
+        "member": "results/SWMM_simulation_results/5d_cal_comb_gr.rpt",
+        "sha256": "f5fdbb015478a417f82a5afaea5c24f71c6919a77147590525a3e2e28c0becb9"
+      },
+      "year_count": 30
+    },
+    {
+      "case_id": "ET-sq",
+      "csv_source": {
+        "member": "results/SWMM_simulation_results/results_sq_ET.csv",
+        "sha256": "35b0e788b560119110b81497b110edb463e744b463fd087c258dd8e365e31e7a"
+      },
+      "gi_scenario_id": "sq",
+      "median_annual_cso_m3": 121129.998,
+      "model_structure_id": "ET",
+      "qa": {
+        "groundwater_continuity_error_percent": null,
+        "max_abs_node_continuity_error_percent": 249.53,
+        "model_disclaimer_present": true,
+        "percent_not_converging": 2.19,
+        "routing_continuity_error_percent": -0.145,
+        "runoff_continuity_error_percent": -1.003,
+        "swmm_version": "5.1 (Build 5.1.13)",
+        "warning_count": 6
+      },
+      "reduction_from_same_structure_baseline_percent": null,
+      "report_source": {
+        "member": "results/SWMM_simulation_results/2a_cal_et_sq.rpt",
+        "sha256": "6b98b4cdd0b0763068d016422bb2af24753185d39ec745078d5829dfba64031e"
+      },
+      "year_count": 30
+    },
+    {
+      "case_id": "ET-bb",
+      "csv_source": {
+        "member": "results/SWMM_simulation_results/results_bb_ET.csv",
+        "sha256": "2da2f64d993a8d8127d850d94890302000bba18ab2c24f20a9e49b52956997fd"
+      },
+      "gi_scenario_id": "bb",
+      "median_annual_cso_m3": 21990.842,
+      "model_structure_id": "ET",
+      "qa": {
+        "groundwater_continuity_error_percent": null,
+        "max_abs_node_continuity_error_percent": 250.97,
+        "model_disclaimer_present": true,
+        "percent_not_converging": 0.66,
+        "routing_continuity_error_percent": -0.548,
+        "runoff_continuity_error_percent": -0.913,
+        "swmm_version": "5.1 (Build 5.1.13)",
+        "warning_count": 6
+      },
+      "reduction_from_same_structure_baseline_percent": 83.2266,
+      "report_source": {
+        "member": "results/SWMM_simulation_results/2b_cal_et_bc.rpt",
+        "sha256": "b9dae2a1f9b5e069c3c5c7cd16d724133050c2d19ff051bb2aadb2e93e8b3677"
+      },
+      "year_count": 30
+    },
+    {
+      "case_id": "ET-pp",
+      "csv_source": {
+        "member": "results/SWMM_simulation_results/results_pp_ET.csv",
+        "sha256": "79c78add9956c3477a52ef78a9d6e8c9e7b4d9314e74453ec276ea287d4993db"
+      },
+      "gi_scenario_id": "pp",
+      "median_annual_cso_m3": 57570.571,
+      "model_structure_id": "ET",
+      "qa": {
+        "groundwater_continuity_error_percent": null,
+        "max_abs_node_continuity_error_percent": 250.83,
+        "model_disclaimer_present": true,
+        "percent_not_converging": 1.1,
+        "routing_continuity_error_percent": -0.211,
+        "runoff_continuity_error_percent": -0.835,
+        "swmm_version": "5.1 (Build 5.1.13)",
+        "warning_count": 6
+      },
+      "reduction_from_same_structure_baseline_percent": 49.7099,
+      "report_source": {
+        "member": "results/SWMM_simulation_results/2c_cal_et_pp.rpt",
+        "sha256": "e957de55c7aad4f9ef889e591531a82dd28efa38a512619da7682907b5d6a4b5"
+      },
+      "year_count": 30
+    },
+    {
+      "case_id": "ET-gr",
+      "csv_source": {
+        "member": "results/SWMM_simulation_results/results_gr_ET.csv",
+        "sha256": "558240677bf04b3592ae06023a2538d0d301fa07297126ba0f556e070675f210"
+      },
+      "gi_scenario_id": "gr",
+      "median_annual_cso_m3": 98767.154,
+      "model_structure_id": "ET",
+      "qa": {
+        "groundwater_continuity_error_percent": null,
+        "max_abs_node_continuity_error_percent": 251.26,
+        "model_disclaimer_present": true,
+        "percent_not_converging": 1.84,
+        "routing_continuity_error_percent": -0.174,
+        "runoff_continuity_error_percent": -0.873,
+        "swmm_version": "5.1 (Build 5.1.13)",
+        "warning_count": 6
+      },
+      "reduction_from_same_structure_baseline_percent": 16.9666,
+      "report_source": {
+        "member": "results/SWMM_simulation_results/2d_cal_et_gr.rpt",
+        "sha256": "decaae4e2a5495f1c70971e829847d96c8fb8579964f70eeac13873d26802aa8"
+      },
+      "year_count": 30
+    },
+    {
+      "case_id": "GW-sq",
+      "csv_source": {
+        "member": "results/SWMM_simulation_results/results_sq_GW.csv",
+        "sha256": "4d4dc526391f2e620cb43bfdfd2b6ce2d180881f1575b1ff7f5ecfa95cdef405"
+      },
+      "gi_scenario_id": "sq",
+      "median_annual_cso_m3": 124567.889,
+      "model_structure_id": "GW",
+      "qa": {
+        "groundwater_continuity_error_percent": 9.177,
+        "max_abs_node_continuity_error_percent": 251.23,
+        "model_disclaimer_present": true,
+        "percent_not_converging": 2.4,
+        "routing_continuity_error_percent": -1.208,
+        "runoff_continuity_error_percent": -0.795,
+        "swmm_version": "5.1 (Build 5.1.13)",
+        "warning_count": 6
+      },
+      "reduction_from_same_structure_baseline_percent": null,
+      "report_source": {
+        "member": "results/SWMM_simulation_results/4a_cal_GW_sq.rpt",
+        "sha256": "099073973725ea9e43cdb665c1aa7c00c2f6afe4979f7fce2bdf843a72b6dbde"
+      },
+      "year_count": 30
+    },
+    {
+      "case_id": "GW-bb",
+      "csv_source": {
+        "member": "results/SWMM_simulation_results/results_bb_GW.csv",
+        "sha256": "cb7f2fe832970098cbe3afc1eab9ffb4dff0884eaf31a785e30f70936ee29e9d"
+      },
+      "gi_scenario_id": "bb",
+      "median_annual_cso_m3": 5869.214,
+      "model_structure_id": "GW",
+      "qa": {
+        "groundwater_continuity_error_percent": 41.863,
+        "max_abs_node_continuity_error_percent": 251.34,
+        "model_disclaimer_present": true,
+        "percent_not_converging": 0.16,
+        "routing_continuity_error_percent": -18.636,
+        "runoff_continuity_error_percent": -0.752,
+        "swmm_version": "5.1 (Build 5.1.13)",
+        "warning_count": 6
+      },
+      "reduction_from_same_structure_baseline_percent": 92.2367,
+      "report_source": {
+        "member": "results/SWMM_simulation_results/4b_cal_GW_bc.rpt",
+        "sha256": "069bb91aa14092e669709187a553341a5e07f0dfd8c310113a86035091b5ba88"
+      },
+      "year_count": 30
+    },
+    {
+      "case_id": "GW-pp",
+      "csv_source": {
+        "member": "results/SWMM_simulation_results/results_pp_GW.csv",
+        "sha256": "ebbd727e8cba905040fddabf880c6c78663cadde3ac3b1c454be34d6974e924e"
+      },
+      "gi_scenario_id": "pp",
+      "median_annual_cso_m3": 30094.731,
+      "model_structure_id": "GW",
+      "qa": {
+        "groundwater_continuity_error_percent": 32.082,
+        "max_abs_node_continuity_error_percent": 253.97,
+        "model_disclaimer_present": true,
+        "percent_not_converging": 0.48,
+        "routing_continuity_error_percent": -9.821,
+        "runoff_continuity_error_percent": -0.559,
+        "swmm_version": "5.1 (Build 5.1.13)",
+        "warning_count": 6
+      },
+      "reduction_from_same_structure_baseline_percent": 73.7149,
+      "report_source": {
+        "member": "results/SWMM_simulation_results/4c_cal_GW_pp.rpt",
+        "sha256": "3fe635593c26ce6d6a399ef9d00d114f4d71ece74c0e652ba62a9ce6e6d7a31d"
+      },
+      "year_count": 30
+    },
+    {
+      "case_id": "GW-gr",
+      "csv_source": {
+        "member": "results/SWMM_simulation_results/results_gr_GW.csv",
+        "sha256": "95f1a77aa9f3e45d2d4b84aafb48e531530256d77d605e0a3cc69cb33964a02b"
+      },
+      "gi_scenario_id": "gr",
+      "median_annual_cso_m3": 107406.934,
+      "model_structure_id": "GW",
+      "qa": {
+        "groundwater_continuity_error_percent": 9.759,
+        "max_abs_node_continuity_error_percent": 240.38,
+        "model_disclaimer_present": true,
+        "percent_not_converging": 2.16,
+        "routing_continuity_error_percent": -1.377,
+        "runoff_continuity_error_percent": -0.68,
+        "swmm_version": "5.1 (Build 5.1.13)",
+        "warning_count": 6
+      },
+      "reduction_from_same_structure_baseline_percent": 12.7571,
+      "report_source": {
+        "member": "results/SWMM_simulation_results/4d_cal_GW_gr.rpt",
+        "sha256": "721d9408ddd35c17f6eb09ab566d8d8b4cbe1d48bccf98109dd5842c7df0946b"
+      },
+      "year_count": 30
+    }
+  ],
+  "comparison_claims": [
+    {
+      "claim_id": "fehraltorf-bb-model-structure-sensitivity",
+      "gi_scenario_id": "bb",
+      "limitation": "Published modeled CSO response varies with model structure; this comparison does not establish field performance or resolve the reports' QA findings.",
+      "max_reduction_percent": 92.2367,
+      "max_structure_id": "GW",
+      "min_reduction_percent": 56.8133,
+      "min_structure_id": "CB",
+      "spread_percentage_points": 35.4234
+    },
+    {
+      "claim_id": "fehraltorf-pp-model-structure-sensitivity",
+      "gi_scenario_id": "pp",
+      "limitation": "Published modeled CSO response varies with model structure; this comparison does not establish field performance or resolve the reports' QA findings.",
+      "max_reduction_percent": 73.7149,
+      "max_structure_id": "GW",
+      "min_reduction_percent": 43.7597,
+      "min_structure_id": "CB",
+      "spread_percentage_points": 29.9552
+    },
+    {
+      "claim_id": "fehraltorf-gr-model-structure-sensitivity",
+      "gi_scenario_id": "gr",
+      "limitation": "Published modeled CSO response varies with model structure; this comparison does not establish field performance or resolve the reports' QA findings.",
+      "max_reduction_percent": 16.9666,
+      "max_structure_id": "ET",
+      "min_reduction_percent": 9.4692,
+      "min_structure_id": "BI",
+      "spread_percentage_points": 7.4974
+    }
+  ],
+  "generation": {
+    "builder_version": "1.0.0",
+    "deterministic": true
+  },
+  "gi_scenarios": [
+    {
+      "id": "sq",
+      "label": "No green infrastructure"
+    },
+    {
+      "id": "bb",
+      "label": "Bioretention basin"
+    },
+    {
+      "id": "pp",
+      "label": "Porous pavement"
+    },
+    {
+      "id": "gr",
+      "label": "Green roof"
+    }
+  ],
+  "method": {
+    "annual_conversion": "For each calendar year, values below 0.003 L/s are set to zero; the mean L/s is multiplied by 31,536,000 seconds and divided by 1,000 to obtain m3/year. This is equivalent to the authors' hourly-then-annual mean for the complete half-hour records in the verified archive.",
+    "baseline_comparison": "For each structure and GI scenario, reduction is median(baseline annual volume minus GI annual volume) divided by median(baseline annual volume), multiplied by 100. Annual values are paired by calendar year; the baseline always comes from the same model structure.",
+    "outlet_metric": "published System combined-sewer-overflow flow",
+    "summary_statistic": "median of 30 annual CSO volumes",
+    "threshold_lps": 0.003,
+    "year_range": {
+      "count": 30,
+      "end": 2019,
+      "start": 1990
+    }
+  },
+  "model_structures": [
+    {
+      "id": "BC",
+      "included_processes": [
+        "basecase assumptions"
+      ],
+      "label": "Basecase"
+    },
+    {
+      "id": "BI",
+      "included_processes": [
+        "basecase assumptions",
+        "boundary inflow"
+      ],
+      "label": "Boundary inflow"
+    },
+    {
+      "id": "CB",
+      "included_processes": [
+        "basecase assumptions",
+        "boundary inflow",
+        "evapotranspiration",
+        "groundwater"
+      ],
+      "label": "Combined"
+    },
+    {
+      "id": "ET",
+      "included_processes": [
+        "basecase assumptions",
+        "evapotranspiration"
+      ],
+      "label": "Evapotranspiration"
+    },
+    {
+      "id": "GW",
+      "included_processes": [
+        "basecase assumptions",
+        "groundwater"
+      ],
+      "label": "Groundwater"
+    }
+  ],
+  "schema_version": "1.0",
+  "sources": [
+    {
+      "role": "model-input provenance and rerun-boundary verification",
+      "sha256": "de7fe255ee0f69cc0ea426d82edb633599b620591062c58830525d8d68cd566f",
+      "source_id": "swmm-input-archive",
+      "url": "https://opendata.eawag.ch/dataset/58c87cc9-00d2-4ad3-87a6-190e177f4900/resource/851af9e8-c4cb-4d1a-99a7-5c03592bd193/download/swmm_input_files.zip"
+    },
+    {
+      "role": "published CSO projections and retained SWMM reports",
+      "sha256": "b0cb5d50ade421cc416cfa857f5017827db2b1e4a159345657a025e58f0ca31a",
+      "source_id": "published-results-archive",
+      "url": "https://opendata.eawag.ch/dataset/58c87cc9-00d2-4ad3-87a6-190e177f4900/resource/a4bafc54-2870-4510-843b-9a6f13e5a1b5/download/results.zip"
+    },
+    {
+      "role": "study scope, file definitions, license notice, and data limitations",
+      "sha256": "36fe3b580c3a3a26728da41b83e0e74828f414b9336332a99b00f3a009954bdb",
+      "source_id": "dataset-readme",
+      "url": "https://opendata.eawag.ch/dataset/58c87cc9-00d2-4ad3-87a6-190e177f4900/resource/95073d24-6f11-4d8f-8daa-85c4506b43a7/download/readme.md"
+    }
+  ],
+  "study": {
+    "dataset_doi": "https://doi.org/10.25678/0009PE",
+    "license": "CC0-1.0 in the dataset metadata; included software files carry an MIT-style permission notice",
+    "location": "Fehraltorf, Switzerland",
+    "paper_doi": "https://doi.org/10.1016/j.watres.2024.121284",
+    "source_model_disclaimer": "The published reports state that the model is incomplete and may contain errors."
+  },
+  "title": "Fehraltorf model-structure sensitivity and green-infrastructure screening"
+}

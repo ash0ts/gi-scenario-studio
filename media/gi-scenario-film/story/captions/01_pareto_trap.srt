@@ -1,0 +1,39 @@
+1
+00:00:00,500 --> 00:00:07,977
+Imagine you are responsible for a neighborhood
+where hard rain can overwhelm the drains. You
+
+2
+00:00:07,977 --> 00:00:13,909
+have 220 improvement plans and no budget to
+build them all. So you draw a
+
+3
+00:00:13,909 --> 00:00:20,411
+map: cost along the bottom, and how much less
+water reaches the outlet along the
+
+4
+00:00:20,411 --> 00:00:26,994
+side. One plan looks like a bargain. It costs
+about 55 thousand dollars and sends
+
+5
+00:00:26,994 --> 00:00:33,577
+a little less water out. But the picture has
+hidden something. In the long storm,
+
+6
+00:00:33,577 --> 00:00:39,834
+the highest flow rate rises from 3.14 to 3.21
+cubic feet per second. A second
+
+7
+00:00:39,834 --> 00:00:46,580
+storm rises too. And the plan still misses our 6
+percent reduction target. The plot
+
+8
+00:00:46,580 --> 00:00:53,000
+did not lie. It answered a smaller question. A
+good decision must ask the rest.

@@ -1,0 +1,93 @@
+{
+  "schema_version": "1.0",
+  "media_kind": "evidence_grounded_canvas_films",
+  "manifest": "media/gi-scenario-report-films/dist/manifest.json",
+  "receipt": "media/gi-scenario-report-films/dist/wandb-publication.json",
+  "frame_rate": 30,
+  "persistent_boundary": "Synthetic test events · modeled, not measured · not annualized · not field evidence.",
+  "clips": [
+    {
+      "key": "animation/incomplete_plot",
+      "marker": "incomplete_plot",
+      "title": "The plot was honest. It was incomplete.",
+      "section": "The attractive point that fails",
+      "placement": "after_opening_problem",
+      "layout": "full_width",
+      "target_duration_seconds": 34,
+      "report_copy": "Follow ALT-017 from an attractive cost-volume point into the complete four-rule decision. Its $54.99k cost and 4.14% modeled volume reduction do not rescue a missed 6% target or peak increases in two selected storms.",
+      "caption": "Synthetic teaching evidence. A useful projection can omit a required engineering guardrail.",
+      "establishes": "ALT-017 looks attractive in a cost-volume projection but fails both the aggregate-volume target and the selected-storm peak guardrail.",
+      "does_not_establish": "This comparison does not rank real projects or establish that any Cedar Trace alternative is field-ready.",
+      "claim_ids": [
+        "A-ALT017"
+      ]
+    },
+    {
+      "key": "animation/water_ledger",
+      "marker": "water_ledger",
+      "title": "What did the model say happened to the water?",
+      "section": "Follow the modeled water ledger",
+      "placement": "after_swmm_boundary",
+      "layout": "full_width",
+      "target_duration_seconds": 50,
+      "report_copy": "Hold the long synthetic storm fixed and compare the baseline with ALT-207 across SWMM's runoff-accounting categories. Then widen back to all four selected events, where modeled OUT1 volume changes from 0.748 to 0.700 million gallons.",
+      "caption": "Infiltration loss is a SWMM runoff-accounting term here, not a measurement of groundwater recharge.",
+      "establishes": "Under the declared synthetic model, ALT-207 changes the modeled partition among infiltration loss, surface runoff, final storage, LID drainage, and outfall volume; across four events, about 48,000 fewer modeled gallons reach OUT1.",
+      "does_not_establish": "The calculation does not measure groundwater recharge, water quality, habitat, avoided flooding, annual performance, or realized ecological benefit.",
+      "claim_ids": [
+        "A-WATER-LEDGER",
+        "A-OUTFALL"
+      ]
+    },
+    {
+      "key": "animation/storm_reveals",
+      "marker": "storm_reveals",
+      "title": "The biggest storm was not the most revealing test.",
+      "section": "Different storms expose different weaknesses",
+      "placement": "before_storm_guardrail_atlas",
+      "layout": "full_width",
+      "target_duration_seconds": 36,
+      "report_copy": "Sweep all 699 exact alternatives through four selected synthetic storms. The long event exposes 420 peak increases, the deeper stress event exposes 47, and overlap reconciliation leaves 421 unique adverse alternatives.",
+      "caption": "Depth, duration, and temporal shape changed together; this comparison does not isolate a universal controlling-storm mechanism.",
+      "establishes": "Inside this finite Cedar Trace model and candidate space, the selected storms expose materially different adverse peak-flow behavior.",
+      "does_not_establish": "The result does not prove that long storms are generally more important than deeper storms or that temporal pattern alone caused the difference.",
+      "claim_ids": [
+        "A-STORMS"
+      ]
+    },
+    {
+      "key": "animation/decision_funnel",
+      "marker": "decision_funnel",
+      "title": "Six hundred ninety-nine plans enter. Twelve survive.",
+      "section": "Restore every declared rule",
+      "placement": "before_exact_decision_landscape",
+      "layout": "full_width",
+      "target_duration_seconds": 38,
+      "report_copy": "Apply the teaching rules in order: 699 exact alternatives become 297 volume-pass alternatives, then 46 volume-and-cost passes, 12 complete-rule passes, and four exact feasible-frontier points. Numerical execution QA removes none.",
+      "caption": "The funnel focuses follow-up effort under synthetic rules; it does not complete the engineering decision.",
+      "establishes": "Restoring the cost, storm-specific peak, and QA requirements narrows the synthetic modeled shortlist from hundreds of alternatives to twelve complete-rule passes.",
+      "does_not_establish": "Passing this screen does not prove site feasibility, field performance, construction value, or global optimality beyond the finite modeled universe.",
+      "claim_ids": [
+        "A-FUNNEL"
+      ]
+    },
+    {
+      "key": "animation/search_release_gate",
+      "marker": "search_release_gate",
+      "title": "Can AI earn the right to choose the next simulation?",
+      "section": "Treat ML as a candidate selector, not a hydraulic authority",
+      "placement": "before_release_gate_audit",
+      "layout": "full_width",
+      "target_duration_seconds": 46,
+      "report_copy": "Track one candidate from a face-down choice through four direct SWMM results, then inspect the controlled 120-replay benchmark. ExtraTrees is encouraging at the largest budget but passes only one of five production gates.",
+      "caption": "Search chooses a candidate; direct SWMM evidence supplies every displayed hydraulic value. Energy and CO₂e were not measured.",
+      "establishes": "The adaptive proposer reaches strong median tradeoff coverage at the largest declared budget, yet its release evidence is insufficient and one preregistered recall gate is mathematically impossible at that budget.",
+      "does_not_establish": "This one-network replay does not establish ML superiority, live solver savings, carbon savings, or production readiness.",
+      "claim_ids": [
+        "A-SEARCH",
+        "A-GATE",
+        "A-COMPUTE"
+      ]
+    }
+  ]
+}

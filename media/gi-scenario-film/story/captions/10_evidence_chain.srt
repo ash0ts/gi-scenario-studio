@@ -1,0 +1,43 @@
+1
+00:00:00,500 --> 00:00:07,212
+Take one red number: plus 0.07 cubic feet per
+second. Imagine handing it to another
+
+2
+00:00:07,212 --> 00:00:14,006
+engineer. Their first question should be,
+compared with what? The answer is the long
+
+3
+00:00:14,006 --> 00:00:20,961
+storm: 3.14 in the unchanged model, 3.21 in
+ALT-017. Then comes the receipt. This plan
+
+4
+00:00:20,961 --> 00:00:28,239
+added one rain-garden unit and six rain-barrel
+units. The project stores that compactly as
+
+5
+00:00:28,239 --> 00:00:34,305
+zero, zero, one, six. It wrote the change into
+an input file, ran the fixed
+
+6
+00:00:34,305 --> 00:00:41,098
+SWMM version, kept the report and detailed
+output, identified the files with digital
+
+7
+00:00:41,098 --> 00:00:48,700
+fingerprints, and recorded the numerical check.
+That chain is called provenance: a path from a
+
+8
+00:00:48,700 --> 00:00:54,523
+claim back to what created it. It shows how the
+number was made. It does
+
+9
+00:00:54,523 --> 00:00:58,000
+not prove the model matches the real world.

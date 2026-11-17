@@ -1,0 +1,162 @@
+name: Evidence-grounded report films
+
+on:
+  pull_request:
+    paths:
+      - "media/gi-scenario-report-films/**"
+      - "media/gi-scenario-film/assets/fonts/**"
+      - "media/gi-scenario-film/story/article.md"
+      - "media/gi-scenario-film/story/report-animation-media.json"
+      - "media/gi-scenario-film/story/research-resources.json"
+      - "media/gi-scenario-film/scripts/publish_wandb_report.py"
+      - "media/gi-scenario-film/scripts/build_fehraltorf_case_media.py"
+      - "media/gi-scenario-film/tests/test_article_package.py"
+      - "media/gi-scenario-film/tests/test_fehraltorf_case_media.py"
+      - "media/gi-scenario-film/tests/test_research_resources.py"
+      - "apps/desktop/src/data/guidedFixture.json"
+      - "benchmarks/exhaustive_exact/dataset.json"
+      - "benchmarks/evidence_guide/**"
+      - "benchmarks/realistic_fehraltorf/**"
+      - "benchmarks/guided_exact/**"
+      - "python/gi_scenario_core/**"
+      - "scripts/build_benchmark_publication.py"
+      - "scripts/evaluate_evidence_guide.py"
+      - "scripts/build_fehraltorf_case_study.py"
+      - "scripts/publish_fehraltorf_case_study.py"
+      - "scripts/run_search_benchmark_campaign.py"
+      - "tests/python/test_runoff_quantity_ledger.py"
+      - "tests/python/test_evidence_evaluation.py"
+      - "tests/python/test_fehraltorf_case_study.py"
+      - "tests/python/test_publish_fehraltorf_case_study.py"
+      - "docs/research-basis.md"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/animation.yml"
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Render profile
+        required: true
+        default: production
+        type: choice
+        options:
+          - smoke
+          - production
+
+permissions:
+  contents: read
+
+concurrency:
+  group: report-films-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FILM_PROFILE: ${{ github.event_name == 'workflow_dispatch' && inputs.profile || 'smoke' }}
+  NODE_VERSION: "22"
+  PNPM_VERSION: "11.9.0"
+  PYTHON_VERSION: "3.12"
+  MPLBACKEND: Agg
+
+jobs:
+  report-films:
+    name: Canvas films (${{ github.event_name == 'workflow_dispatch' && inputs.profile || 'smoke' }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python and uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install locked scientific and test dependencies
+        run: uv sync --locked --extra dev --extra science
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install locked Node dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install pinned Chromium and FFmpeg
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes ffmpeg
+          pnpm exec playwright install --with-deps chromium
+          node --input-type=module -e "import { chromium } from '@playwright/test'; process.stdout.write('CHROME_BIN=' + chromium.executablePath() + '\n')" >> "$GITHUB_ENV"
+
+      - name: Rebuild deterministic search campaign
+        run: pnpm build:report-films:campaign
+
+      - name: Rebuild benchmark publication tables
+        run: pnpm build:report-films:tables
+
+      - name: Rebuild exact animation projection
+        run: pnpm build:report-films:data
+
+      - name: Verify checked-in animation data is current
+        run: git diff --exit-code -- media/gi-scenario-report-films/data
+
+      - name: Build the realistic Fehraltorf report figure
+        run: >-
+          uv run --no-sync python
+          media/gi-scenario-film/scripts/build_fehraltorf_case_media.py
+
+      - name: Test the deterministic Canvas toolchain
+        run: pnpm test:report-films:node
+
+      - name: Test evidence, publication, article, and research contracts
+        run: >-
+          uv run --no-sync pytest
+          tests/python/test_evidence_evaluation.py
+          tests/python/test_fehraltorf_case_study.py
+          tests/python/test_publish_fehraltorf_case_study.py
+          tests/python/test_runoff_quantity_ledger.py
+          media/gi-scenario-report-films/tests
+          media/gi-scenario-film/tests/test_article_package.py
+          media/gi-scenario-film/tests/test_fehraltorf_case_media.py
+          media/gi-scenario-film/tests/test_research_resources.py
+
+      - name: Render report films
+        shell: bash
+        run: |
+          if [[ "$FILM_PROFILE" == "production" ]]; then
+            pnpm render:report-films
+          else
+            pnpm render:report-films:stills
+          fi
+
+      - name: Validate report films
+        shell: bash
+        run: |
+          if [[ "$FILM_PROFILE" == "production" ]]; then
+            pnpm check:report-films
+          else
+            pnpm check:report-films:stills
+          fi
+
+      - name: Upload review package
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: gi-report-films-${{ env.FILM_PROFILE }}-${{ github.run_id }}
+          path: media/gi-scenario-report-films/dist/
+          if-no-files-found: error
+          retention-days: 14

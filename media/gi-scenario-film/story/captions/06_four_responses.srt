@@ -1,0 +1,38 @@
+1
+00:00:00,500 --> 00:00:06,336
+Now take one plan and run it through all four
+rain patterns. We get four
+
+2
+00:00:06,336 --> 00:00:13,307
+answers, not one. For total volume, adding the
+four storm totals is useful because our
+
+3
+00:00:13,307 --> 00:00:20,197
+teaching rule asks about their combined
+reduction. For peak flow, adding or averaging
+
+4
+00:00:20,197 --> 00:00:26,763
+would destroy the question we care about: did
+any single storm get worse? So each
+
+5
+00:00:26,763 --> 00:00:34,301
+peak keeps its own before-and-after comparison.
+ALT-017 lowers two peaks, but raises two. The
+
+6
+00:00:34,301 --> 00:00:40,786
+long storm is worst, up 0.07 cubic feet per
+second. If we squash everything into
+
+7
+00:00:40,786 --> 00:00:47,433
+one score, that red warning can disappear. Every
+summary is a choice about what to
+
+8
+00:00:47,433 --> 00:00:48,000
+forget.

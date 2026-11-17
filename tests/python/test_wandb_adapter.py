@@ -244,6 +244,12 @@ def test_wandb_upload_projects_lineage_and_verifies_exact_download(
     expected_run_id = hashlib.sha256(b"gi-v2|project_1|envelope_1").hexdigest()[:24]
     assert run.init_values["id"] == expected_run_id
     assert run.init_values["resume"] == "allow"
+    settings = run.init_values["settings"]
+    assert isinstance(settings, _Settings)
+    assert settings.values["x_disable_machine_info"] is True
+    assert settings.values["x_disable_meta"] is True
+    assert settings.values["x_disable_stats"] is True
+    assert settings.values["x_save_requirements"] is False
     assert run.used_artifacts == [
         "team/project/source-bundle:v3",
         "wandb-registry-Datasets/approved-storms:v7",

@@ -102,7 +102,7 @@ def test_v2_bound_revisions_migrate_and_local_revisions_persist(tmp_path) -> Non
 
     repository = ProjectRepository(root)
     try:
-        assert repository._connection.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert repository._connection.execute("PRAGMA user_version").fetchone()[0] == 4
         assert repository._connection.execute("PRAGMA foreign_key_check").fetchall() == []
         assert repository.get_model_revision("revision_child")["parent_revision_id"] == (
             "revision_parent"

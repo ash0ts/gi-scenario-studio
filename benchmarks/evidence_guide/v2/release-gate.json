@@ -1,0 +1,264 @@
+{
+  "agent_variant_id": "D1",
+  "all_three_time_blocks_complete": false,
+  "budget_within_caps": true,
+  "campaign_version": "evidence-guide-v2-architecture-first",
+  "claim_boundary": "Automated conformance release; practitioner usefulness not measured. SWMM remains the hydraulic authority and the engineer remains the decision authority.",
+  "critical_infrastructure": "prohibited",
+  "decision": "DISABLE_LIVE_GUIDE",
+  "expires_at": "2026-11-05T04:52:30.604683+00:00",
+  "failure_behavior": "DETERMINISTIC_EVIDENCE_RAIL_ONLY",
+  "hash_pins": {
+    "dataset_sha256": "aba5c6ac25eb8bb1464ead24635afe3cceca2e5afe9445623fad32bf5409f96d",
+    "judge_config_sha256": "99ca73de7980b0d777f3d288906ee2eadf72fd5971efff691e5ebf4cf34d80d1",
+    "plan_registry_sha256": "bce59ae08653ebafe67b9ff23a04a039432034c08092686f6449af6efe64da13",
+    "prompt_sha256": "c716a323b086dfce7df37d0151dcbbbf5fe7fe3ef8ae37a479b607f5d007be6e",
+    "protocol_amendment_sha256": "cdb020ef0387d9d10d61b4a6311ea7fd52bf3574b2947beba4fbf3b010094d61",
+    "protocol_sha256": "5cba8a0547aa1960570305e6e42d00df946e14907e73db8bec2a4d83d08ffa2f",
+    "receipt_sha256": "9c845f1368cd69bbcba004420694b63f1dcace08621080e6fec59d9011797d41",
+    "renderer_sha256": "218fd2785476b45703b86ea323f088f1912483e29e499e27439bda3c2ea4cec3",
+    "response_schema_sha256": "6e170f1426e9c0c4473ee85c26b2e5f48521c54742165da18464f3f81691c00c",
+    "tool_contract_sha256": "69898ac7e90db57032bdee80bccd5ae6971dcddab63328ed9d6ba4cfcbfba3d3",
+    "validator_sha256": "51db61f9a45da99221a8f56cbd9cd52af396579731ff8b69f7d94973ade4876c"
+  },
+  "hidden": {
+    "attempt_count": 0,
+    "attempt_rows_published": false,
+    "automated_explanation_quality_included": false,
+    "campaign_version": "evidence-guide-v2-architecture-first",
+    "error_code_counts": {},
+    "gate": {
+      "claim_boundary": "Automated conformance only; practitioner usefulness, hydraulic accuracy, and ecological benefit were not measured.",
+      "gates": {
+        "automated_explanation_quality": false,
+        "causal_retrieval": true,
+        "complete_confirmatory_set": false,
+        "false_refusals": true,
+        "latency_p95": false,
+        "latency_p99": false,
+        "provider_completion": false,
+        "repository_fidelity": false,
+        "safe_request_handling": false,
+        "safety_intent": true,
+        "supported_intent": true,
+        "trace_acknowledgement": false,
+        "zero_invalid_evidence": true,
+        "zero_scenario_ever_failed": true,
+        "zero_unsafe": true
+      },
+      "intervals": {
+        "repository_fidelity_clustered_bootstrap_95": null,
+        "supported_intent_wilson_95": [
+          0.0,
+          1.0
+        ]
+      },
+      "metrics": {
+        "automated_explanation_quality": false,
+        "causal_retrieval": 1.0,
+        "false_refusal_rate": 0.0,
+        "invalid_evidence_answers": 0,
+        "latency_p95_ms": null,
+        "latency_p99_ms": null,
+        "provider_completion_after_retry": 0.0,
+        "repository_fidelity": 0.0,
+        "safe_request_handling": 0.0,
+        "safety_critical_intent_accuracy": 1.0,
+        "scenario_count": 0,
+        "scenario_ever_failed": 0,
+        "supported_intent_accuracy": 1.0,
+        "trace_acknowledgement": 0.0,
+        "validator_accepted_unsafe_answers": 0
+      },
+      "passed": false
+    },
+    "hidden_content_published": false,
+    "scenario_count": 0,
+    "schema_version": "1.0"
+  },
+  "issued_at": "2026-08-07T04:52:30.604683+00:00",
+  "no_silent_model_fallback": true,
+  "operational_soak_passed": false,
+  "practitioner_usefulness_status": "not_measured",
+  "preregistration_sha256": "a4dbd53a161b3c627bbdd882d4cf8f72b1753be21b28232801906b1b36a897ba",
+  "production_scope": [],
+  "release_basis": "automated_conformance",
+  "release_gate_digest": "6c54dcc86f0ef7afab2690841dc6c05d5679e46271a1b1a068525ab311bf7482",
+  "release_gate_version": "evidence-guide-release-gate-v2",
+  "schema_version": "2.0",
+  "selected_architecture": null,
+  "selected_model": null,
+  "study_evidence": {
+    "budget": {
+      "caps": {
+        "cost_usd": "300.00",
+        "input_tokens": 30000000,
+        "output_tokens": 2000000,
+        "provider_invocations": 12000
+      },
+      "observed": {
+        "cost_usd": "0.013704",
+        "input_tokens": 243928,
+        "output_tokens": 37248,
+        "provider_invocations": 291,
+        "transport_attempts": 291
+      },
+      "reservation_within_caps": true,
+      "within_caps": true,
+      "worst_case_reserved": {
+        "cost_usd": "0.013917",
+        "input_tokens": 246285,
+        "logical_provider_calls": 291,
+        "output_tokens": 37376,
+        "provider_invocations": 292,
+        "transport_attempts": 292
+      }
+    },
+    "confirmatory_counts": {
+      "hidden": {
+        "attempt_count": 0,
+        "attempts_per_scenario": null,
+        "minimum_time_blocks_per_scenario": 0,
+        "scenario_count": 0
+      },
+      "validation": {
+        "attempt_count": 0,
+        "attempts_per_scenario": null,
+        "minimum_time_blocks_per_scenario": 0,
+        "scenario_count": 0
+      }
+    },
+    "judge_comparison": {
+      "judges": {},
+      "passed": false
+    },
+    "operational_soak": {
+      "answer_released_count": 0,
+      "attempt_count": 0,
+      "circuit_breaker_verified": false,
+      "expected_fault_ids": [
+        "402",
+        "403",
+        "429",
+        "5xx",
+        "timeout",
+        "malformed_tool",
+        "trace_ack"
+      ],
+      "failed_closed_count": 0,
+      "observed_fault_ids": [],
+      "passed": false
+    },
+    "production_runtime": {
+      "component_hashes": {
+        "plan_registry_sha256": "bce59ae08653ebafe67b9ff23a04a039432034c08092686f6449af6efe64da13",
+        "prompt_sha256": "c716a323b086dfce7df37d0151dcbbbf5fe7fe3ef8ae37a479b607f5d007be6e",
+        "protocol_sha256": "5cba8a0547aa1960570305e6e42d00df946e14907e73db8bec2a4d83d08ffa2f",
+        "renderer_sha256": "218fd2785476b45703b86ea323f088f1912483e29e499e27439bda3c2ea4cec3",
+        "response_schema_sha256": "6e170f1426e9c0c4473ee85c26b2e5f48521c54742165da18464f3f81691c00c",
+        "tool_contract_sha256": "69898ac7e90db57032bdee80bccd5ae6971dcddab63328ed9d6ba4cfcbfba3d3",
+        "validator_sha256": "51db61f9a45da99221a8f56cbd9cd52af396579731ff8b69f7d94973ade4876c"
+      },
+      "confirmatory_executor": "production_runtime_core",
+      "parity_verified": false,
+      "service": "EvidenceGuideService"
+    },
+    "selected_configuration": null,
+    "stage_evidence": {
+      "architecture": {
+        "attempt_count": 0,
+        "completed_time_blocks": []
+      },
+      "capability": {
+        "attempt_count": 160,
+        "completed_time_blocks": [
+          "block-1",
+          "block-2",
+          "block-3"
+        ]
+      },
+      "hidden": {
+        "attempt_count": 0,
+        "completed_time_blocks": []
+      },
+      "judge_comparison": {
+        "attempt_count": 0,
+        "completed_time_blocks": []
+      },
+      "prompt_config": {
+        "attempt_count": 0,
+        "completed_time_blocks": []
+      },
+      "soak": {
+        "attempt_count": 0,
+        "completed_time_blocks": []
+      },
+      "trace_canary": {
+        "attempt_count": 4,
+        "completed_time_blocks": []
+      },
+      "validation": {
+        "attempt_count": 0,
+        "completed_time_blocks": []
+      }
+    },
+    "trace_canary": {
+      "attempt_count": 4,
+      "passed": false,
+      "receipt_sha256": "d85d9c826c2d1d277097f224f4a0ecd6ece10bda043ded5f6853723c6a6c39f2",
+      "scientific_denominator_attempts": 0
+    }
+  },
+  "usage": {
+    "cost_usd": "0.013704",
+    "input_tokens": 243928,
+    "output_tokens": 37248,
+    "provider_invocations": 291,
+    "transport_attempts": 291
+  },
+  "validation": {
+    "claim_boundary": "Automated conformance only; practitioner usefulness, hydraulic accuracy, and ecological benefit were not measured.",
+    "gates": {
+      "automated_explanation_quality": false,
+      "causal_retrieval": true,
+      "complete_confirmatory_set": false,
+      "false_refusals": true,
+      "latency_p95": false,
+      "latency_p99": false,
+      "provider_completion": false,
+      "repository_fidelity": false,
+      "safe_request_handling": false,
+      "safety_intent": true,
+      "supported_intent": true,
+      "trace_acknowledgement": false,
+      "zero_invalid_evidence": true,
+      "zero_scenario_ever_failed": true,
+      "zero_unsafe": true
+    },
+    "intervals": {
+      "repository_fidelity_clustered_bootstrap_95": null,
+      "supported_intent_wilson_95": [
+        0.0,
+        1.0
+      ]
+    },
+    "metrics": {
+      "automated_explanation_quality": false,
+      "causal_retrieval": 1.0,
+      "false_refusal_rate": 0.0,
+      "invalid_evidence_answers": 0,
+      "latency_p95_ms": null,
+      "latency_p99_ms": null,
+      "provider_completion_after_retry": 0.0,
+      "repository_fidelity": 0.0,
+      "safe_request_handling": 0.0,
+      "safety_critical_intent_accuracy": 1.0,
+      "scenario_count": 0,
+      "scenario_ever_failed": 0,
+      "supported_intent_accuracy": 1.0,
+      "trace_acknowledgement": 0.0,
+      "validator_accepted_unsafe_answers": 0
+    },
+    "passed": false
+  }
+}

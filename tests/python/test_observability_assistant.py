@@ -309,7 +309,13 @@ def test_v2_contract_surface_and_fitness_gate_are_independent() -> None:
         "CloudArtifactManifest",
         "WandbRunReference",
         "WeaveTraceReference",
+        "WeaveConversationReference",
         "BenchmarkRunEnvelope",
+        "AssistantEvidenceAnchor",
+        "AssistantEvidencePacket",
+        "AssistantProviderPolicy",
+        "AssistantConversation",
+        "AssistantTurn",
         "AssistantAnswer",
         "AssistantEvaluationRecord",
         "GuidedCheckpoint",
@@ -374,6 +380,25 @@ def test_candidate_credential_rolls_back_without_destroying_prior_session() -> N
         assert os.environ["WANDB_API_KEY"] == "a" * 32
         assert os.environ["WANDB_BASE_URL"] == "https://api.wandb.ai"
     session.clear()
+
+
+def test_process_environment_credentials_do_not_take_the_secret_mutation_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = CredentialSession()
+    monkeypatch.setenv("WANDB_API_KEY", "e" * 32)
+
+    class UnexpectedLock:
+        def __enter__(self) -> None:
+            raise AssertionError("read-only environment credentials must not serialize calls")
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+    monkeypatch.setattr("gi_scenario_core.observability._WANDB_ENV_LOCK", UnexpectedLock())
+
+    with session.environment():
+        assert os.environ["WANDB_API_KEY"] == "e" * 32
 
 
 def test_account_policy_block_is_visible_without_retaining_candidate_secret(tmp_path) -> None:
@@ -492,11 +517,11 @@ def test_open_local_project_binds_and_local_mode_authoritatively_stops_sync(tmp_
     dispatcher._executor.shutdown(wait=True)
 
 
-def test_repository_bootstraps_the_complete_v3_local_and_cloud_schema(tmp_path) -> None:
+def test_repository_bootstraps_the_complete_v4_local_cloud_and_assistant_schema(tmp_path) -> None:
     root = tmp_path / "fresh-v2"
     repository = ProjectRepository(root)
     try:
-        assert repository._connection.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert repository._connection.execute("PRAGMA user_version").fetchone()[0] == 4
         tables = {
             row[0]
             for row in repository._connection.execute(
@@ -514,6 +539,10 @@ def test_repository_bootstraps_the_complete_v3_local_and_cloud_schema(tmp_path) 
             "model_fitness_passports",
             "decision_briefs",
             "guided_checkpoints",
+            "assistant_provider_policies",
+            "assistant_conversations",
+            "assistant_turns",
+            "weave_conversation_references",
         }.issubset(tables)
         revision_columns = {
             row["name"]: row
@@ -744,39 +773,14 @@ def test_binding_is_immutable_after_first_upload(tmp_path) -> None:
         repository.close()
 
 
-def test_every_assistant_answer_requires_weave_and_exact_claim_validation(tmp_path) -> None:
-    root, project_id, _, job_id = _seed_project(tmp_path)
-    weave = FakeWeave()
-    dispatcher = _dispatcher(tmp_path, weave=weave)
-    _connect(dispatcher, root)
-    response = dispatcher.dispatch(
+def test_legacy_one_shot_assistant_surface_is_not_exposed(tmp_path) -> None:
+    dispatcher = _dispatcher(tmp_path)
+    assert {
         "assistant.explain",
-        {
-            "project_directory": str(root),
-            "project_id": project_id,
-            "intent": "exact_run",
-            "job_id": job_id,
-            "question": "What happened at the selected node?",
-        },
-    )
-    assert response["evaluation"]["valid"] is True
-    assert "12.5 m3" in response["answer"]["answer"]
-    assert "101.25 m" in response["answer"]["answer"]
-    assert response["answer"]["weave_trace"]["trace_id"].startswith("trace-")
-    assert response["answer"]["read_only"] is True
-    assert len(weave.calls) == 1
-
-    failing = _dispatcher(tmp_path, weave=FakeWeave(fail=True))
-    with pytest.raises(RPCFault, match="required Weave trace"):
-        failing.dispatch(
-            "assistant.explain",
-            {
-                "project_directory": str(root),
-                "project_id": project_id,
-                "intent": "exact_run",
-                "job_id": job_id,
-            },
-        )
+        "assistant.follow_up",
+        "assistant.get_trace",
+    }.isdisjoint(dispatcher.methods)
+    dispatcher._executor.shutdown(wait=True)
 
 
 def test_guided_workflow_explains_why_how_and_completion(tmp_path) -> None:
@@ -846,10 +850,12 @@ def test_required_v2_rpc_methods_are_dispatched(tmp_path) -> None:
         "guided.pause",
         "guided.resume",
         "guided.cancel",
-        "assistant.explain",
-        "assistant.follow_up",
+        "assistant.get_capabilities",
+        "assistant.start_conversation",
+        "assistant.ask",
+        "assistant.get_conversation",
         "assistant.feedback",
-        "assistant.get_trace",
+        "assistant.open_weave_conversation",
         "decision_brief.get",
         "decision_brief.update",
         "model.attest",

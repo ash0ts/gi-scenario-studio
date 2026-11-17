@@ -1,0 +1,44 @@
+1
+00:00:00,500 --> 00:00:06,689
+Before we use any software, follow the water.
+Rain lands on an area that drains
+
+2
+00:00:06,689 --> 00:00:13,582
+to the same place—engineers call that area a
+catchment. Some water soaks into soil. Some
+
+3
+00:00:13,582 --> 00:00:19,614
+waits in a shallow basin or rain garden. The
+rest runs across the surface and
+
+4
+00:00:19,614 --> 00:00:26,978
+into pipes. Eventually it reaches an outfall,
+simply the point where water leaves the drainage
+
+5
+00:00:26,978 --> 00:00:33,167
+model. The flow there rises and falls during a
+storm. The total area under this
+
+6
+00:00:33,167 --> 00:00:39,512
+curve is event volume: all the water that
+passed. The highest point is peak flow:
+
+7
+00:00:39,512 --> 00:00:46,406
+the highest modeled flow rate during the storm.
+A project can lower one without lowering
+
+8
+00:00:46,406 --> 00:00:52,516
+the other. A different rain pattern can change
+both. That is why one plan must
+
+9
+00:00:52,516 --> 00:00:58,000
+face more than one storm. These drawings are
+conceptual, not measured.

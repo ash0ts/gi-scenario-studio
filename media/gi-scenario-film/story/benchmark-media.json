@@ -1,0 +1,56 @@
+{
+  "schema_version": "2.0",
+  "media_kind": "exact_benchmark_analysis",
+  "publication_manifest": "dist/benchmark-publication/publication-manifest.json",
+  "receipt": "dist/benchmark-publication/wandb-publication.json",
+  "charts": [
+    {
+      "key": "benchmark/storm_guardrail_atlas",
+      "figure_key": "storm_guardrail_atlas",
+      "section": "Which storm exposes the guardrail problem?",
+      "layout": "full_width",
+      "report_copy": "Across all 699 exact alternatives, the four synthetic storms do not reveal the same behavior. The long-duration event exposes 420 peak increases, while the deeper stress event exposes 47. Rainfall depth alone does not identify the controlling modeled response.",
+      "caption": "Exact synthetic fixture result. A real project must supply authoritative storms and a declared precision and tolerance policy."
+    },
+    {
+      "key": "benchmark/guided_coverage",
+      "figure_key": "guided_coverage",
+      "section": "What can a teaching subset miss?",
+      "layout": "full_width",
+      "report_copy": "The deterministic guided replay covers 220 of 699 alternatives, two of twelve rule-feasible designs, 127 of 421 adverse designs, and none of the four exact feasible-frontier alternatives. It demonstrates the workflow; it does not establish an exhaustive winner.",
+      "caption": "Coverage audit of the guided subset against the complete Cedar Trace exact oracle."
+    },
+    {
+      "key": "benchmark/exact_decision_landscape",
+      "figure_key": "exact_decision_landscape",
+      "section": "What does the complete design landscape look like?",
+      "layout": "full_width",
+      "report_copy": "All 699 nonbaseline combinations are shown against cost and aggregate volume reduction, with adverse peak behavior and the complete-rule shortlist restored. Twelve alternatives satisfy the teaching contract; four are nondominated within that feasible set.",
+      "caption": "Nondominated means only that no exact feasible alternative is both cheaper and better on aggregate volume in this bounded synthetic universe."
+    },
+    {
+      "key": "benchmark/rule_filter",
+      "figure_key": "rule_filter",
+      "section": "Why is the complete decision contract necessary?",
+      "layout": "full_width",
+      "report_copy": "Forty-six alternatives satisfy cost and aggregate volume together, but 34 of those increase at least one selected-storm peak. Checking only the two visible axes would leave a shortlist nearly four times too large.",
+      "caption": "All 699 alternatives passed the fixture's numerical execution checks; the reduction from 46 to 12 comes from the peak guardrail."
+    },
+    {
+      "key": "benchmark/search_efficiency",
+      "figure_key": "search_efficiency",
+      "section": "Does adaptive search use the exact-run budget better?",
+      "layout": "full_width",
+      "report_copy": "Ten seeds compare Random, scrambled Sobol, deterministic integer NSGA-II, and Sobol plus ExtraTrees at 256, 512, and 1,024 exact-job equivalents. ExtraTrees becomes strong at the largest budget, but its middle-budget lower tail is unstable.",
+      "caption": "Median with 10th–90th percentile bands. Replays reveal outcomes from the frozen exact oracle only after a design request; no predicted hydraulic value appears in the result."
+    },
+    {
+      "key": "benchmark/release_gate_audit",
+      "figure_key": "release_gate_audit",
+      "section": "Did ML earn production use?",
+      "layout": "full_width",
+      "report_copy": "No. The adaptive method beats Sobol strongly at the largest budget, but not at two budgets, and its lower-tail condition fails. The study also covers only one synthetic network. The preregistered 95% adverse-recall gate is mathematically unreachable with 256 requests against 421 adverse alternatives, so that gate must be redesigned before a multi-network release study.",
+      "caption": "Production remains on scrambled Sobol. Adaptive ML stays experimental; the benchmark reports both encouraging and disqualifying evidence."
+    }
+  ]
+}

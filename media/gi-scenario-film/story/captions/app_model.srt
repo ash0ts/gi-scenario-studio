@@ -1,0 +1,48 @@
+1
+00:00:00,500 --> 00:00:10,138
+Before comparing plans, the app checks the
+unchanged model and the saved study. It
+
+2
+00:00:10,138 --> 00:00:21,186
+identifies the exact software version, confirms
+that every required file is present, opens the
+
+3
+00:00:21,186 --> 00:00:30,236
+model, and confirms that the four stored
+starting runs completed. The largest
+
+4
+00:00:30,236 --> 00:00:41,637
+water-accounting mismatch is less than one tenth
+of one percent, comfortably inside this lesson's
+
+5
+00:00:41,637 --> 00:00:51,275
+warning limit. So the saved calculation
+completed cleanly. One caution remains. No
+
+6
+00:00:51,275 --> 00:01:02,206
+observed storm and no trusted prior result were
+supplied for comparison. The screen therefore
+
+7
+00:01:02,206 --> 00:01:11,139
+says model fitness: not assessed. That label is
+not a failure, and it is not
+
+8
+00:01:11,139 --> 00:01:20,894
+permission. It tells us that the saved
+calculation is inspectable while the model's
+
+9
+00:01:20,894 --> 00:01:31,942
+connection to a real place remains unknown. The
+acknowledgment simply records that we saw this
+
+10
+00:01:31,942 --> 00:01:33,000
+boundary.

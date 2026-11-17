@@ -1,0 +1,26 @@
+{
+  "candidate_order": [
+    "ibm-granite/granite-4.1-8b",
+    "openai/gpt-oss-20b"
+  ],
+  "candidate_receipt_sha256": {
+    "ibm-granite/granite-4.1-8b": "4beac97a3ffb090bd495d19cbd7787f248af0359fb7f49e53080ee9bbae985e6",
+    "openai/gpt-oss-20b": "a943d01b4302efbbb4310022090e4547bb812b9a5e0a8f0603870368dfd03792"
+  },
+  "claim_boundary": "Passing this gate establishes bounded synthetic explanation behavior only. It does not make the guide, SWMM model, or an alternative an engineering authority.",
+  "dataset_id": "gi-evidence-guide-evaluation",
+  "dataset_sha256": "55e45cbc961673d015715c053486fc7af4ae2386a9c80f328eddbb3b0fbee035",
+  "dataset_version": "v1",
+  "decision": "DISABLE_LIVE_GUIDE",
+  "enabled": false,
+  "evaluated_models": [
+    "ibm-granite/granite-4.1-8b",
+    "openai/gpt-oss-20b"
+  ],
+  "reasons": [
+    "no candidate passed every deterministic and practitioner gate"
+  ],
+  "release_gate_version": "evidence-guide-release-gate-v1",
+  "schema_version": "1.0",
+  "selected_model": null
+}

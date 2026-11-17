@@ -1,0 +1,53 @@
+1
+00:00:00,500 --> 00:00:08,559
+Before looking at answers, we write down what
+good enough means. This matters: if we
+
+2
+00:00:08,559 --> 00:00:17,098
+invent the rules after seeing a favorite, the
+analysis becomes a story we tell ourselves.
+
+3
+00:00:17,098 --> 00:00:26,117
+Our fictional engineer sets four rules. First,
+across four practice storms, at least 6 percent
+
+4
+00:00:26,117 --> 00:00:34,752
+less water must reach the model's outlet than in
+the unchanged model. That unchanged model
+
+5
+00:00:34,752 --> 00:00:43,003
+is our baseline. Second, the 30-year screening
+cost must stay at or below 200 thousand
+
+6
+00:00:43,003 --> 00:00:50,582
+dollars. Third, no storm is allowed to create a
+higher peak flow at the outlet.
+
+7
+00:00:50,582 --> 00:00:59,313
+A good total cannot excuse one sharper surge.
+Fourth, every simulation used in the decision
+
+8
+00:00:59,313 --> 00:01:07,756
+must pass basic numerical checks. The storms and
+costs are invented for this lesson. And
+
+9
+00:01:07,756 --> 00:01:15,911
+verified replay means the saved files still
+match the recorded runs. It does not mean
+
+10
+00:01:15,911 --> 00:01:24,066
+the model matches a real neighborhood. With the
+question and rules fixed, we can look
+
+11
+00:01:24,066 --> 00:01:28,000
+at evidence without moving the goalposts.

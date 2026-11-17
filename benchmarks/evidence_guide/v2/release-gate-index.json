@@ -1,0 +1,6 @@
+{
+  "corpus_manifest_sha256": "ddfb2a3e6ce737f0914ceed8091b59d9dda8c25a35db8781787b20b091fa3a0d",
+  "release_gate_file": "release-gate.json",
+  "release_gate_sha256": "93dbd760b33d9be2934cc02136e48260aab8c7359934b5c55fd10c90cbeb1ba0",
+  "schema_version": "1.0"
+}

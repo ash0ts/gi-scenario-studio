@@ -140,9 +140,16 @@ def _repository(tmp_path) -> ProjectRepository:
 def test_exact_analysis_persists_direct_evidence_and_projects_adverse_changes(tmp_path):
     repository = _repository(tmp_path)
     solver = FakeExactSolver()
+    observations: list[tuple[str, dict, dict]] = []
     try:
         analysis = repository.create_analysis("project_1", analysis_id="analysis_1")
-        orchestrator = AnalysisOrchestrator(repository, solver)
+        orchestrator = AnalysisOrchestrator(
+            repository,
+            solver,
+            scientific_observer=lambda operation, inputs, output: observations.append(
+                (operation, inputs, output)
+            ),
+        )
         plan = orchestrator.plan(
             analysis["analysis_id"],
             candidate_slots=[_slot()],
@@ -182,6 +189,10 @@ def test_exact_analysis_persists_direct_evidence_and_projects_adverse_changes(tm
         assert repository.table_counts()["run_metrics"] == 28
         assert repository._connection.execute("SELECT count(*) FROM qa_findings").fetchone()[0] == 4
         assert events[-1]["event"] == "analysis.completed"
+        assert [item[0] for item in observations] == ["exact_result_ingestion"]
+        assert observations[0][1]["planned_job_count"] == 4
+        assert observations[0][2]["ingested_exact_job_count"] == 4
+        assert observations[0][2]["metric_count"] == 28
 
         for job_id in plan["job_ids"]:
             roles = {
@@ -193,6 +204,16 @@ def test_exact_analysis_persists_direct_evidence_and_projects_adverse_changes(tm
             assert roles == {"input", "report", "output"}
 
         board = orchestrator.decision_board("analysis_1")
+        assert [item[0] for item in observations] == [
+            "exact_result_ingestion",
+            "adverse_effect_evaluation",
+        ]
+        assert observations[1][2] == {
+            "baseline_available": True,
+            "adverse_alternative_count": 1,
+            "adverse_change_count": 2,
+            "excluded_design_count": 0,
+        }
         assert board["exact_only"] is True
         assert board["blockers"] == []
         assert board["excluded_designs"] == []
@@ -372,5 +393,40 @@ def test_missing_direct_report_metrics_fail_closed_and_never_become_claims(tmp_p
         assert repository.table_counts()["run_metrics"] == 0
         assert repository.table_counts()["run_artifacts"] == 3
         assert orchestrator.decision_board(analysis["analysis_id"])["alternatives"] == []
+    finally:
+        repository.close()
+
+
+def test_observability_failure_never_changes_exact_results_or_decision_board(tmp_path):
+    repository = _repository(tmp_path)
+
+    def unavailable(_operation, _inputs, _output):
+        raise RuntimeError("Weave unavailable")
+
+    try:
+        repository.create_analysis("project_1", analysis_id="analysis_observer_failure")
+        orchestrator = AnalysisOrchestrator(
+            repository,
+            FakeExactSolver(),
+            scientific_observer=unavailable,
+        )
+        orchestrator.plan(
+            "analysis_observer_failure",
+            candidate_slots=[_slot()],
+            design_vectors=[[1]],
+            storms=_storms(),
+        )
+
+        status = orchestrator.run(
+            "analysis_observer_failure",
+            candidate_slots=[_slot()],
+            storms=_storms(),
+        )
+        board = orchestrator.decision_board("analysis_observer_failure")
+
+        assert status["state"] == "COMPLETED"
+        assert status["job_state_counts"] == {"SUCCEEDED": 4}
+        assert len(board["alternatives"]) == 1
+        assert len(board["alternatives"][0]["adverse_peak_changes"]) == 2
     finally:
         repository.close()

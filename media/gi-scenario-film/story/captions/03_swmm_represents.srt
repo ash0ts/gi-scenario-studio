@@ -1,0 +1,43 @@
+1
+00:00:00,500 --> 00:00:06,898
+Now we can introduce SWMM, the EPA's Storm Water
+Management Model. Think of it as
+
+2
+00:00:06,898 --> 00:00:13,690
+a calculator for a simplified drainage world.
+The engineer supplies a map of the land,
+
+3
+00:00:13,690 --> 00:00:21,036
+junctions, pipes, and outlet; a rain pattern;
+and the green-infrastructure plan to test. SWMM
+
+4
+00:00:21,036 --> 00:00:27,907
+follows those declared rules and produces
+modeled flows and water levels. The app reads
+
+5
+00:00:27,907 --> 00:00:35,332
+the output, checks that the run completed and
+its numerical balance stayed within the declared
+
+6
+00:00:35,332 --> 00:00:42,282
+limit, and gives each file a digital fingerprint
+for later. But a careful calculation is
+
+7
+00:00:42,282 --> 00:00:48,127
+still only as good as the world described to it.
+SWMM cannot see a missing
+
+8
+00:00:48,127 --> 00:00:54,604
+pipe, test the soil, or tell us whether the
+chosen storm represents reality. Exact
+
+9
+00:00:54,604 --> 00:00:58,000
+calculation is not the same as field truth.

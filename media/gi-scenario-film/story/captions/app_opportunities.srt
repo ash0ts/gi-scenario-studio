@@ -1,0 +1,53 @@
+1
+00:00:00,500 --> 00:00:08,543
+Now we decide what the software is allowed to
+change. Not pipe sizes. Not soil
+
+2
+00:00:08,543 --> 00:00:17,618
+properties. Not the design of a rain garden.
+Only four whole-number counts of additional
+
+3
+00:00:17,618 --> 00:00:26,796
+units at four teaching locations: planted
+bioretention, areas of permeable pavement, rain
+
+4
+00:00:26,796 --> 00:00:35,355
+gardens, and groups of rain barrels. Each
+location has a maximum count and a stated
+
+5
+00:00:35,355 --> 00:00:44,945
+drainage destination. The map is a diagram, not
+surveyed geometry. The engineering details of
+
+6
+00:00:44,945 --> 00:00:54,123
+each practice stay fixed. The search can ask,
+for example, what happens after adding zero
+
+7
+00:00:54,123 --> 00:01:03,713
+bioretention units, three pavement units, two
+rain-garden units, and six barrel groups to the
+
+8
+00:01:03,713 --> 00:01:12,273
+unchanged model? It cannot invent a new soil mix
+or pretend a utility conflict does
+
+9
+00:01:12,273 --> 00:01:22,069
+not exist. Automation is useful when it explores
+choices an engineer has deliberately admitted.
+
+10
+00:01:22,069 --> 00:01:31,350
+Here, demo approved means allowed into the
+lesson—not feasible, constructible, or approved
+
+11
+00:01:31,350 --> 00:01:33,000
+for a real site.

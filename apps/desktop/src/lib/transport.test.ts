@@ -17,6 +17,26 @@ describe("guided transport boundary", () => {
     expect(opened.fixture.job_accounting.completed_jobs).toBe(884);
   });
 
+  it("projects the checked Evidence Guide release gate without making a model call", async () => {
+    const transport = new BrowserDemoTransport();
+    const capabilities = await transport.request<{
+      available: boolean;
+      state: string;
+      reason: string;
+      model: string | null;
+      provider: string;
+      local_evidence_available: boolean;
+    }>("assistant.get_capabilities", { project_id: "cedar-trace" });
+
+    expect(capabilities.available).toBe(false);
+    expect(capabilities.state).toBe("MODEL_NOT_RELEASE_GATED");
+    expect(capabilities.reason).toContain("DISABLE_LIVE_GUIDE");
+    expect(capabilities.reason).toContain("no candidate passed every deterministic and practitioner gate");
+    expect(capabilities.model).toBeNull();
+    expect(capabilities.provider).toBe("W&B Inference");
+    expect(capabilities.local_evidence_available).toBe(true);
+  });
+
   it("uses an explicit timeout without changing successful responses", async () => {
     await expect(withRequestTimeout(Promise.resolve("connected"), 120_000)).resolves.toBe("connected");
     expect(() => withRequestTimeout(Promise.resolve("nope"), 0)).toThrow(/positive/);

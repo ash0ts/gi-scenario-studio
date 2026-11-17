@@ -1,0 +1,62 @@
+{
+  "schema_version": "1.1",
+  "palette": {
+    "survey_paper": "#F5F7F6",
+    "watershed_ink": "#17313A",
+    "channel_teal": "#08766F",
+    "rain_blue": "#2F6F9F",
+    "caution_ochre": "#A96315",
+    "flood_red": "#B43D47"
+  },
+  "active_element_order": ["alt017-rules", "02-listening-tests", "01-counterfactual", "held-out-results"],
+  "tables": [
+    {
+      "id": "alt017-rules",
+      "reader_question": "Why does this inexpensive option fail the project brief?",
+      "takeaway": "ALT-017 meets the cost and numerical-check requirements, but misses the volume target and increases peak flow in two synthetic storms.",
+      "columns": ["Requirement", "Observed result", "Disposition"],
+      "boundary": "Cedar Trace is a synthetic SWMM teaching fixture; these are modeled hydraulic results and screening costs.",
+      "source": "apps/desktop/src/data/guidedFixture.json#/teaching_alternatives/id=ALT-017"
+    },
+    {
+      "id": "held-out-results",
+      "reader_question": "How often did each tested configuration make the required choice?",
+      "takeaway": "On twelve validation scenarios from separate project families, Granite passed all three behaviors in zero scenarios and Qwen in three.",
+      "columns": ["Expected behavior", "Granite", "Qwen"],
+      "boundary": "Both reordered presentations must pass. This small prepared-evidence study does not establish generalized model rankings or practitioner usefulness.",
+      "source": "media/gi-scenario-film/dist/evidence-guide-r4c/article-summary.json#/mechanism_summaries/split=validation"
+    }
+  ],
+  "figures": [
+    {
+      "id": "02-listening-tests",
+      "reader_question": "What did we ask the selected answer structure to do?",
+      "takeaway": "Choose a different plan when the relevant value crosses a fixed limit, keep the plan when only an irrelevant value changes, and choose the insufficient-evidence plan when required evidence is missing.",
+      "boundary": "This figure explains the test logic, not a performance result. A plan is a predefined answer structure.",
+      "source": "media/gi-scenario-film/dist/evidence-guide-r4c/article-summary.json#/analysis_contract"
+    },
+    {
+      "id": "01-counterfactual",
+      "reader_question": "What exactly failed?",
+      "takeaway": "The capacity ratio changed from 0.79 to 0.91 across a fixed 0.85 limit; the same predefined answer structure was selected.",
+      "boundary": "One synthetic validation pair from a separate project family, not a SWMM result or surveyed asset. Both Weave traces were acknowledged. No answer was released.",
+      "source": "media/gi-scenario-film/dist/evidence-guide-r4c/article-summary.json#/representative_counterfactual"
+    }
+  ],
+  "preserved_inactive_figures": [
+    {
+      "id": "03-two-ledgers",
+      "reader_question": "How could every scheduled call return and the behavior still fail?",
+      "takeaway": "Every scheduled call can return and receive a trace acknowledgement while the tested behavior still fails its release rule.",
+      "boundary": "The 192/192 deterministic control checks protocol machinery; it is not a practitioner-usefulness comparison.",
+      "source": "media/gi-scenario-film/dist/evidence-guide-r4c/article-summary.json"
+    },
+    {
+      "id": "04-authority-map",
+      "reader_question": "Where does authority live when the explanation is generated?",
+      "takeaway": "In the intended product path, SWMM supplies modeled hydraulics, the repository renders canonical facts and validates the selected plan, Weave records execution, and the engineer owns the decision.",
+      "boundary": "R4c began with prepared post-retrieval packets, so the figure marks retrieval as untested. Tracing is an observation layer, never hydraulic or decision authority.",
+      "source": "docs/product-principles.md; docs/observability.md; python/gi_scenario_core/evidence_guide.py"
+    }
+  ]
+}

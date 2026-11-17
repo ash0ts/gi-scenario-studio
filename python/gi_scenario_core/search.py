@@ -7,7 +7,7 @@ import itertools
 import json
 import math
 import random
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Any
 
 from .contracts import (
@@ -280,6 +280,7 @@ def propose_adaptive(
     seed: int,
     exploration_fraction: float = 0.25,
     benchmark_approved: bool = False,
+    scientific_observer: Callable[[str, dict[str, Any], dict[str, Any]], None] | None = None,
 ) -> tuple[list[DesignCandidate], dict[str, Any]]:
     """Propose candidates; use ExtraTrees only when eligible and installed.
 
@@ -291,39 +292,80 @@ def propose_adaptive(
     seen = {tuple(int(value) for value in row["vector"]) for row in exact_rows}
     available = finite_universe_size(parsed_slots) - len(seen)
     count = min(count, max(0, available))
+
+    def finish(
+        candidates: list[DesignCandidate],
+        diagnostics: dict[str, Any],
+    ) -> tuple[list[DesignCandidate], dict[str, Any]]:
+        if scientific_observer is not None:
+            try:
+                scientific_observer(
+                    "adaptive_search_batch_proposal",
+                    {
+                        "candidate_slot_count": len(parsed_slots),
+                        "observed_exact_design_count": len(seen),
+                        "requested_candidate_count": count,
+                        "objective_count": len(objective_directions),
+                        "seed": seed,
+                        "exploration_fraction": exploration_fraction,
+                        "benchmark_approved": benchmark_approved,
+                    },
+                    {
+                        "method": diagnostics.get("method", "unknown"),
+                        "proposed_candidate_count": len(candidates),
+                        "ml_eligible": bool(diagnostics.get("ml_eligible", False)),
+                        "training_rows": int(diagnostics.get("training_rows", 0)),
+                        "candidate_pool": int(diagnostics.get("candidate_pool", 0)),
+                        "exploration_count": int(diagnostics.get("exploration_count", 0)),
+                        "model_hash": diagnostics.get("model_hash"),
+                    },
+                )
+            except Exception:  # noqa: BLE001 - search order cannot depend on telemetry
+                return candidates, diagnostics
+        return candidates, diagnostics
+
     if count == 0:
-        return [], {"method": "exhausted", "ml_eligible": False}
+        return finish([], {"method": "exhausted", "ml_eligible": False})
     exploration_count = max(1, math.ceil(count * exploration_fraction))
     qmc, engine = qmc_vectors(parsed_slots, max(count * 32, 256), seed, exclude=seen)
     if not benchmark_approved:
         selected = qmc[:count]
-        return _adaptive_candidates(selected, "qmc_production_gate"), {
-            "method": "qmc_production_gate",
-            "engine": engine,
-            "ml_eligible": False,
-            "reason": (
-                "ExtraTrees remains experimental until its version passes the declared "
-                "multi-network benchmark release gates"
-            ),
-        }
+        return finish(
+            _adaptive_candidates(selected, "qmc_production_gate"),
+            {
+                "method": "qmc_production_gate",
+                "engine": engine,
+                "ml_eligible": False,
+                "reason": (
+                    "ExtraTrees remains experimental until its version passes the declared "
+                    "multi-network benchmark release gates"
+                ),
+            },
+        )
     if len(seen) < 64:
         selected = qmc[:count]
-        return _adaptive_candidates(selected, "qmc_exploration"), {
-            "method": "qmc_exploration",
-            "engine": engine,
-            "ml_eligible": False,
-            "reason": "at least 64 unique exact designs are required",
-        }
+        return finish(
+            _adaptive_candidates(selected, "qmc_exploration"),
+            {
+                "method": "qmc_exploration",
+                "engine": engine,
+                "ml_eligible": False,
+                "reason": "at least 64 unique exact designs are required",
+            },
+        )
     try:  # pragma: no cover - optional packaged dependency
         from sklearn.ensemble import ExtraTreesRegressor
     except ImportError:
         selected = qmc[:count]
-        return _adaptive_candidates(selected, "qmc_fallback"), {
-            "method": "qmc_fallback",
-            "engine": engine,
-            "ml_eligible": True,
-            "reason": "scikit-learn is unavailable",
-        }
+        return finish(
+            _adaptive_candidates(selected, "qmc_fallback"),
+            {
+                "method": "qmc_fallback",
+                "engine": engine,
+                "ml_eligible": True,
+                "reason": "scikit-learn is unavailable",
+            },
+        )
     metrics = list(objective_directions)
     valid_by_vector: dict[tuple[int, ...], dict[str, Any]] = {}
     for row in exact_rows:
@@ -335,12 +377,15 @@ def propose_adaptive(
     valid_rows = list(valid_by_vector.values())
     if len(valid_rows) < 64:
         selected = qmc[:count]
-        return _adaptive_candidates(selected, "qmc_fallback"), {
-            "method": "qmc_fallback",
-            "engine": engine,
-            "ml_eligible": False,
-            "reason": "fewer than 64 QA-usable exact designs",
-        }
+        return finish(
+            _adaptive_candidates(selected, "qmc_fallback"),
+            {
+                "method": "qmc_fallback",
+                "engine": engine,
+                "ml_eligible": False,
+                "reason": "fewer than 64 QA-usable exact designs",
+            },
+        )
     x_train = [row["vector"] for row in valid_rows]
     pool = qmc
     predictions: dict[str, list[float]] = {}
@@ -412,16 +457,19 @@ def propose_adaptive(
         used.add(tuple(vector))
         if len(selected) >= count:
             break
-    return _adaptive_candidates(selected, "adaptive_extratrees"), {
-        "method": "adaptive_extratrees",
-        "engine": engine,
-        "ml_eligible": True,
-        "training_rows": len(valid_rows),
-        "candidate_pool": len(pool),
-        "exploration_count": min(exploration_count, len(selected)),
-        "model_hash": hashlib.sha256("".join(model_fingerprints).encode()).hexdigest(),
-        "notice": "Model spread is an acquisition heuristic, not engineering confidence.",
-    }
+    return finish(
+        _adaptive_candidates(selected, "adaptive_extratrees"),
+        {
+            "method": "adaptive_extratrees",
+            "engine": engine,
+            "ml_eligible": True,
+            "training_rows": len(valid_rows),
+            "candidate_pool": len(pool),
+            "exploration_count": min(exploration_count, len(selected)),
+            "model_hash": hashlib.sha256("".join(model_fingerprints).encode()).hexdigest(),
+            "notice": "Model spread is an acquisition heuristic, not engineering confidence.",
+        },
+    )
 
 
 def _adaptive_candidates(vectors: list[list[int]], source: str) -> list[DesignCandidate]:

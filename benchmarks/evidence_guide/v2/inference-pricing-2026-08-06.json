@@ -1,0 +1,54 @@
+{
+  "schema_version": "1.0",
+  "source": "https://wandb.ai/site/pricing/tokens/",
+  "observed_at": "2026-08-06T00:00:00-04:00",
+  "currency": "USD",
+  "unit": "per_million_tokens",
+  "models": {
+    "MiniMaxAI/MiniMax-M3": {
+      "available": true,
+      "input": "0.23",
+      "output": "0.96"
+    },
+    "Qwen/Qwen3-30B-A3B-Instruct-2507": {
+      "available": true,
+      "input": "0.10",
+      "output": "0.30"
+    },
+    "deepseek-ai/DeepSeek-V4-Pro": {
+      "available": true,
+      "input": "1.74",
+      "output": "3.48"
+    },
+    "google/gemma-4-31B-it": {
+      "available": true,
+      "input": "0.10",
+      "output": "0.34"
+    },
+    "ibm-granite/granite-4.1-8b": {
+      "available": true,
+      "input": "0.05",
+      "output": "0.10"
+    },
+    "meta-llama/Llama-3.3-70B-Instruct": {
+      "available": true,
+      "input": "0.71",
+      "output": "0.71"
+    },
+    "openai/gpt-oss-120b": {
+      "available": true,
+      "input": "0.03",
+      "output": "0.17"
+    },
+    "openai/gpt-oss-20b": {
+      "available": true,
+      "input": "0.03",
+      "output": "0.13"
+    },
+    "zai-org/GLM-5.2": {
+      "available": true,
+      "input": "0.76",
+      "output": "2.42"
+    }
+  }
+}

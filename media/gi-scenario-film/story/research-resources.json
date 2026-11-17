@@ -1,0 +1,272 @@
+{
+  "schema_version": "1.0",
+  "scope": "Primary literature and official resources supporting the workflow and its limitations. No source validates Cedar Trace, converts its synthetic results into field evidence, or supplies an unmeasured ecological or life-cycle outcome.",
+  "cedar_trace_boundary": {
+    "measures": "Synthetic, model-computed hydraulic and runoff-accounting quantities under the checked-in SWMM assumptions.",
+    "does_not_measure": [
+      "Pollutant loads, pollutant removal, or receiving-water quality.",
+      "Groundwater recharge; SWMM infiltration loss is a runoff-accounting term, not a field recharge measurement.",
+      "Habitat condition, connectivity, or biodiversity.",
+      "Air temperature, surface temperature, or heat-island reduction.",
+      "Real flood probability, property damage, or avoided flood risk.",
+      "Materials, construction, transport, maintenance, replacement, end-of-life, or embodied carbon.",
+      "Measured computational energy or carbon emissions."
+    ],
+    "interpretation": "EPA describes potential green-infrastructure benefit categories, while life-cycle studies show that benefits and burdens depend on site conditions, functional units, materials, construction, operation, maintenance, and end-of-life boundaries. Those outcomes require separate evidence ledgers and cannot be inferred from Cedar Trace hydraulics."
+  },
+  "sources": [
+    {
+      "id": "epa-swmm-5.2-manual",
+      "kind": "official_manual",
+      "title": "Storm Water Management Model User's Manual Version 5.2",
+      "publisher": "U.S. Environmental Protection Agency",
+      "year": 2022,
+      "url": "https://www.epa.gov/system/files/documents/2022-04/swmm-users-manual-version-5.2.pdf",
+      "supports": "SWMM's rainfall-runoff and routing scope, LID representation, input/report/output workflow, continuity diagnostics, and the need for calibration data.",
+      "does_not_support": "That a particular model is calibrated, fit for a site decision, regulator-approved, or design-ready."
+    },
+    {
+      "id": "eckart-2018",
+      "kind": "peer_reviewed_primary",
+      "title": "Multiobjective optimization of low impact development stormwater controls",
+      "authors": "Kyle Eckart; Zach McPhee; Tirupati Bolisetti",
+      "year": 2018,
+      "doi": "10.1016/j.jhydrol.2018.04.068",
+      "url": "https://doi.org/10.1016/j.jhydrol.2018.04.068",
+      "supports": "Coupling a calibrated SWMM model to multiobjective search to expose cost, peak-flow, and runoff-volume tradeoffs over multiple return periods.",
+      "does_not_support": "Generalizing one Windsor sewershed's reductions or treating every nondominated alternative as professionally acceptable."
+    },
+    {
+      "id": "epa-gi-environmental-benefits",
+      "kind": "official_resource",
+      "title": "Environmental Benefits of Green Infrastructure",
+      "publisher": "U.S. Environmental Protection Agency",
+      "url": "https://www.epa.gov/green-infrastructure/environmental-benefits-green-infrastructure",
+      "supports": "Potential green-infrastructure benefit categories, including runoff capture and slowing, water-quality improvement, groundwater recharge where site conditions allow, heat-island reduction, and habitat connectivity.",
+      "does_not_support": "That Cedar Trace measures any of those field outcomes, that every GI practice provides every benefit, or that a modeled runoff change establishes real flood-risk reduction."
+    },
+    {
+      "id": "epa-gi-groundwater-protection",
+      "kind": "official_resource",
+      "title": "Green Infrastructure and Groundwater Protection",
+      "publisher": "U.S. Environmental Protection Agency",
+      "url": "https://www.epa.gov/green-infrastructure/green-infrastructure-and-groundwater-protection",
+      "supports": "Treating recharge and groundwater quality as site- and design-dependent outcomes that require soil, water-table, contaminant, siting, pretreatment, and monitoring evidence.",
+      "does_not_support": "Interpreting SWMM infiltration loss as measured groundwater recharge or assuming infiltration always improves groundwater quality."
+    },
+    {
+      "id": "giacomoni-joseph-2017",
+      "kind": "peer_reviewed_primary",
+      "title": "Multi-Objective Evolutionary Optimization and Monte Carlo Simulation for Placement of Low Impact Development in the Catchment Scale",
+      "authors": "Marcio H. Giacomoni; John Joseph",
+      "year": 2017,
+      "doi": "10.1061/(ASCE)WR.1943-5452.0000812",
+      "url": "https://doi.org/10.1061/%28ASCE%29WR.1943-5452.0000812",
+      "supports": "The importance of placement and the use of SWMM-linked evolutionary search to characterize cost and flow-regime tradeoffs.",
+      "does_not_support": "A global-optimum claim for an incompletely evaluated or different candidate universe."
+    },
+    {
+      "id": "fadhel-2018",
+      "kind": "peer_reviewed_primary",
+      "title": "Sensitivity of peak flow to the change of rainfall temporal pattern due to warmer climate",
+      "authors": "Samira Fadhel; Miguel Angel Rico-Ramirez; Dawei Han",
+      "year": 2018,
+      "doi": "10.1016/j.jhydrol.2018.03.041",
+      "url": "https://doi.org/10.1016/j.jhydrol.2018.03.041",
+      "supports": "Within-event rainfall timing, as well as volume, can change sewer-network peak-flow response.",
+      "does_not_support": "That Cedar Trace's synthetic storms have authoritative recurrence intervals or field probabilities."
+    },
+    {
+      "id": "rosa-2015",
+      "kind": "peer_reviewed_primary",
+      "title": "Calibration and Verification of SWMM for Low Impact Development",
+      "authors": "David J. Rosa; John C. Clausen; Michael E. Dietz",
+      "year": 2015,
+      "doi": "10.1111/jawr.12272",
+      "url": "https://doi.org/10.1111/jawr.12272",
+      "supports": "Separating numerical execution from calibration and verification evidence for LID modeling.",
+      "does_not_support": "Transferring the study's site-specific error magnitudes to other SWMM models."
+    },
+    {
+      "id": "rodriguez-cavadini-cook-2024",
+      "kind": "peer_reviewed_primary",
+      "title": "Do baseline assumptions alter the efficacy of green stormwater infrastructure to reduce combined sewer overflows?",
+      "authors": "Mayra Rodriguez; Giovan Battista Cavadini; Lauren M. Cook",
+      "year": 2024,
+      "doi": "10.1016/j.watres.2024.121284",
+      "url": "https://doi.org/10.1016/j.watres.2024.121284",
+      "supports": "Testing how evapotranspiration, upstream inflow, groundwater, and their interactions change modeled combined-sewer-overflow estimates and modeled GI effectiveness over a thirty-year Fehraltorf study.",
+      "does_not_support": "Treating any modeled reduction as observed field performance, ignoring the retained SWMM-report QA, or transferring Fehraltorf results to another catchment."
+    },
+    {
+      "id": "eawag-fehraltorf-open-data-0009pe",
+      "kind": "primary_open_dataset",
+      "title": "Data for: Do baseline assumptions alter the efficacy of green stormwater infrastructure to reduce combined sewer overflows?",
+      "publisher": "Eawag Research Data Institutional Collection",
+      "year": 2024,
+      "doi": "10.25678/0009PE",
+      "url": "https://doi.org/10.25678/0009PE",
+      "supports": "Hash-verifiable SWMM input packages, retained reports, published thirty-year result tables, and analysis code for the Fehraltorf model-structure case study.",
+      "does_not_support": "A fresh independent SWMM reproduction because the complete licensed meteorological forcing is not redistributed; nor does it establish field, ecological, regulatory, or construction outcomes."
+    },
+    {
+      "id": "flynn-traver-2013",
+      "kind": "peer_reviewed_primary",
+      "title": "Green infrastructure life cycle assessment: A bio-infiltration case study",
+      "authors": "Kathleen M. Flynn; Robert G. Traver",
+      "year": 2013,
+      "doi": "10.1016/j.ecoleng.2013.01.004",
+      "url": "https://doi.org/10.1016/j.ecoleng.2013.01.004",
+      "supports": "A cradle-to-grave, site-specific LCA of a bio-infiltration rain garden that accounts for construction, operation, maintenance-related inputs, decommissioning, environmental impact categories, and life-cycle cost.",
+      "does_not_support": "Transferring the case study's impacts or benefits to Cedar Trace, inferring embodied carbon from hydraulic output, or omitting materials and end-of-life boundaries."
+    },
+    {
+      "id": "vineyard-2015",
+      "kind": "peer_reviewed_primary",
+      "title": "Comparing Green and Grey Infrastructure Using Life Cycle Cost and Environmental Impact: A Rain Garden Case Study in Cincinnati, OH",
+      "authors": "Donald Vineyard; Wesley W. Ingwersen; Troy R. Hawkins; Xiaobo Xue; Bayou Demeke; William Shuster",
+      "year": 2015,
+      "doi": "10.1111/1752-1688.12320",
+      "url": "https://doi.org/10.1111/1752-1688.12320",
+      "supports": "Comparing a site-specific rain-garden program with grey infrastructure using explicit life-cycle environmental and cost boundaries, including material extraction, manufacturing, use, and disposal.",
+      "does_not_support": "Generalizing the Cincinnati comparison to Cedar Trace or claiming real environmental return on investment without a project-specific inventory and functional unit."
+    },
+    {
+      "id": "osullivan-2015",
+      "kind": "peer_reviewed_primary",
+      "title": "Life Cycle Assessment modelling of stormwater treatment systems",
+      "authors": "Aisling D. O'Sullivan; Daniel Wicke; Tyler J. Hengen; Heidi L. Sieverding; James J. Stone",
+      "year": 2015,
+      "doi": "10.1016/j.jenvman.2014.10.025",
+      "url": "https://doi.org/10.1016/j.jenvman.2014.10.025",
+      "supports": "Evaluating stormwater-treatment impacts across materials, construction, transport, operation, and maintenance using an explicit functional unit and multiple environmental indicators.",
+      "does_not_support": "Assuming a hydraulically attractive alternative has low embodied or operating impact, or transferring one treatment system's footprint to a different site and design."
+    },
+    {
+      "id": "deb-2002",
+      "kind": "peer_reviewed_primary",
+      "title": "A Fast and Elitist Multiobjective Genetic Algorithm: NSGA-II",
+      "authors": "Kalyanmoy Deb; Amrit Pratap; Sameer Agarwal; T. Meyarivan",
+      "year": 2002,
+      "doi": "10.1109/4235.996017",
+      "url": "https://doi.org/10.1109/4235.996017",
+      "supports": "Elitist nondominated sorting and diversity preservation as a multiobjective search baseline.",
+      "does_not_support": "That NSGA-II is universally best or that its observed frontier is globally complete."
+    },
+    {
+      "id": "zitzler-2003",
+      "kind": "peer_reviewed_primary",
+      "title": "Performance Assessment of Multiobjective Optimizers: An Analysis and Review",
+      "authors": "Eckart Zitzler; Lothar Thiele; Marco Laumanns; Carlos M. Fonseca; Viviane Grunert da Fonseca",
+      "year": 2003,
+      "doi": "10.1109/TEVC.2003.810758",
+      "url": "https://doi.org/10.1109/TEVC.2003.810758",
+      "supports": "Assessing approximation sets with more than one quality perspective rather than declaring a winner from one scalar metric.",
+      "does_not_support": "A field-engineering conclusion from algorithm quality alone."
+    },
+    {
+      "id": "geurts-2006",
+      "kind": "peer_reviewed_primary",
+      "title": "Extremely Randomized Trees",
+      "authors": "Pierre Geurts; Damien Ernst; Louis Wehenkel",
+      "year": 2006,
+      "doi": "10.1007/s10994-006-6226-1",
+      "url": "https://doi.org/10.1007/s10994-006-6226-1",
+      "supports": "ExtraTrees as a computationally efficient randomized tree ensemble for regression and classification.",
+      "does_not_support": "That ExtraTrees improves GI search; that proposition must be tested in the controlled benchmark."
+    },
+    {
+      "id": "yang-2023",
+      "kind": "peer_reviewed_primary",
+      "title": "Surrogate-based multiobjective optimization to rapidly size low impact development practices for outflow capture",
+      "year": 2023,
+      "doi": "10.1016/j.jhydrol.2022.128848",
+      "url": "https://doi.org/10.1016/j.jhydrol.2022.128848",
+      "supports": "Testing surrogate-assisted search as a way to reduce expensive simulator evaluations in an LID sizing study.",
+      "does_not_support": "Using surrogate predictions as engineering evidence, transferring one catchment's speedup, or assuming reliable extrapolation."
+    },
+    {
+      "id": "lannelongue-2021",
+      "kind": "peer_reviewed_primary",
+      "title": "Green Algorithms: Quantifying the Carbon Footprint of Computation",
+      "authors": "Loic Lannelongue; Jason Grealey; Michael Inouye",
+      "year": 2021,
+      "doi": "10.1002/advs.202100707",
+      "url": "https://doi.org/10.1002/advs.202100707",
+      "supports": "Transparent computational-footprint estimates based on runtime, processor and memory use, facility efficiency, and electricity carbon intensity.",
+      "does_not_support": "A full hardware lifecycle assessment or a carbon-savings claim when energy observations are unavailable."
+    },
+    {
+      "id": "henderson-2020",
+      "kind": "peer_reviewed_primary",
+      "title": "Towards the Systematic Reporting of the Energy and Carbon Footprints of Machine Learning",
+      "authors": "Peter Henderson et al.",
+      "year": 2020,
+      "url": "https://jmlr.org/papers/v21/20-312.html",
+      "supports": "Reporting resource and energy context alongside model quality rather than treating accuracy as the only outcome.",
+      "does_not_support": "A universal carbon conversion factor independent of hardware, utilization, location, and accounting boundary."
+    },
+    {
+      "id": "epa-gi-toolkit",
+      "kind": "official_resource",
+      "title": "Green Infrastructure Modeling Toolkit",
+      "publisher": "U.S. Environmental Protection Agency",
+      "url": "https://www.epa.gov/water-research/green-infrastructure-modeling-toolkit",
+      "supports": "SWMM and cost/performance screening as established green-infrastructure planning categories.",
+      "does_not_support": "Automatic regulatory compliance or design approval."
+    },
+    {
+      "id": "ribeiro-checklist-2020",
+      "kind": "peer_reviewed_primary",
+      "title": "Beyond Accuracy: Behavioral Testing of NLP Models with CheckList",
+      "authors": "Marco Tulio Ribeiro; Tongshuang Wu; Carlos Guestrin; Sameer Singh",
+      "year": 2020,
+      "doi": "10.18653/v1/2020.acl-main.442",
+      "url": "https://aclanthology.org/2020.acl-main.442/",
+      "supports": "Testing concrete capabilities with invariance and directional-expectation cases instead of treating one aggregate accuracy score as a complete behavioral evaluation.",
+      "does_not_support": "That the R4c corpus measures general model capability, practitioner usefulness, or performance outside its fixed synthetic evidence-following tasks."
+    },
+    {
+      "id": "nist-ai-800-3-2026",
+      "kind": "official_report",
+      "title": "Expanding the AI Evaluation Toolbox with Statistical Models",
+      "authors": "Andrew Keller; Kweku Kwegyir-Aggrey; Ryan Steed; Anita Rao; Julia Sharp; Amanda Bergman",
+      "publisher": "National Institute of Standards and Technology",
+      "year": 2026,
+      "doi": "10.6028/NIST.AI.800-3",
+      "url": "https://www.nist.gov/publications/expanding-ai-evaluation-toolbox-statistical-models",
+      "supports": "Distinguishing performance conditioned on a fixed benchmark from generalized performance over a broader population of possible test items.",
+      "does_not_support": "Calling R4c generalized model accuracy or extrapolating its scenario counts beyond the frozen benchmark families that were actually tested."
+    },
+    {
+      "id": "wandb-resources",
+      "kind": "official_resource",
+      "title": "W&B Tables, Artifacts, lineage, and Reports",
+      "publisher": "Weights & Biases",
+      "urls": [
+        "https://docs.wandb.ai/models/tables/log_tables",
+        "https://docs.wandb.ai/models/artifacts",
+        "https://docs.wandb.ai/models/artifacts/explore-and-traverse-an-artifact-graph",
+        "https://docs.wandb.ai/models/reports"
+      ],
+      "supports": "The observability primitives used to mirror exact tables, campaign runs, artifact versions, and report panels.",
+      "does_not_support": "Treating W&B as the hydraulic authority or allowing cloud state to change engineering results."
+    },
+    {
+      "id": "wandb-weave-agent-evaluation",
+      "kind": "official_resource",
+      "title": "W&B Weave agent tracing, evaluations, and structured inference",
+      "publisher": "Weights & Biases",
+      "urls": [
+        "https://docs.wandb.ai/weave/guides/tracking/trace-agents",
+        "https://docs.wandb.ai/weave/guides/core-types/evaluations",
+        "https://docs.wandb.ai/weave/guides/evaluation/evaluation_logger",
+        "https://docs.wandb.ai/weave/guides/tracking/trace-to-run",
+        "https://docs.wandb.ai/inference/response-settings/structured-output",
+        "https://docs.wandb.ai/inference/models"
+      ],
+      "supports": "Grouping stable multi-turn conversations, tracing each turn with model and tool activity, recording token use and feedback, and comparing pinned model outputs with versioned datasets and explicit scorers.",
+      "does_not_support": "Treating a trace as proof that an explanation is correct, treating structured output as evidence fidelity, or enabling a model that failed local deterministic and practitioner gates."
+    }
+  ]
+}

@@ -28,15 +28,9 @@ from typing import Any, TextIO
 from .bundle import inspect_bundle, safe_extract_bundle
 from .concept import generate_concept_model
 from .contracts import (
-    CONCEPTUAL_NOTICE,
     FULL_EVIDENCE_SYNC_CATEGORIES,
     PUBLIC_CONTRACTS,
     AnalysisRunPlan,
-    AssistantAnswer,
-    AssistantEvaluationRecord,
-    AssistantEvidenceReference,
-    AssistantNumericClaim,
-    AssistantProposedAction,
     CandidateSlot,
     CloudArtifactManifest,
     DecisionBrief,
@@ -54,8 +48,10 @@ from .contracts import (
     public_schemas,
 )
 from .demo import create_demo_project
+from .evidence_guide import EvidenceGuideError, EvidenceGuideService
 from .export import create_evidence_bundle, validate_export
-from .observability import ObservabilityService
+from .inference import WandbInferenceAdapter
+from .observability import ObservabilityService, exact_analysis_batch_envelope_id
 from .orchestrator import AnalysisOrchestrator, StormModel
 from .repository import ProjectRepository
 from .search import nondominated_indices
@@ -75,6 +71,21 @@ class RPCFault(Exception):
         self.message = message
         self.data = data
         super().__init__(message)
+
+
+def _evidence_guide_fault(error: EvidenceGuideError) -> RPCFault:
+    return RPCFault(
+        -32031,
+        error.user_message,
+        {
+            "code": error.code,
+            "category": "MODEL_QUALITY"
+            if "VALIDATION" in error.code or "EVIDENCE" in error.code
+            else "DATA_PROVIDER",
+            "retryable": error.retryable,
+            "local_evidence_available": True,
+        },
+    )
 
 
 class RPCDispatcher:
@@ -145,6 +156,12 @@ class RPCDispatcher:
             wandb_adapter=adapters.get("wandb"),
             weave_adapter=adapters.get("weave"),
         )
+        self.evidence_guide = EvidenceGuideService(
+            self.observability,
+            adapters.get("inference")
+            or WandbInferenceAdapter(self.observability.credentials),
+            release_gate=adapters.get("evidence_guide_release_gate"),
+        )
         self._methods: dict[str, Callable[[dict[str, Any]], Any]] = {
             "system.ping": self.system_ping,
             "schema.list": self.schema_list,
@@ -183,10 +200,12 @@ class RPCDispatcher:
             "observability.open_run": self.observability_open_run,
             "observability.open_artifact": self.observability_open_artifact,
             "observability.open_trace": self.observability_open_trace,
-            "assistant.explain": self.assistant_explain,
-            "assistant.follow_up": self.assistant_follow_up,
+            "assistant.get_capabilities": self.assistant_get_capabilities,
+            "assistant.start_conversation": self.assistant_start_conversation,
+            "assistant.ask": self.assistant_ask,
+            "assistant.get_conversation": self.assistant_get_conversation,
             "assistant.feedback": self.assistant_feedback,
-            "assistant.get_trace": self.assistant_get_trace,
+            "assistant.open_weave_conversation": self.assistant_open_weave_conversation,
             "guided.open": self.guided_open,
             "guided.get_state": self.guided_get_state,
             "guided.rerun": self.guided_rerun,
@@ -1575,6 +1594,11 @@ class RPCDispatcher:
                 repository,
                 self._solver_runner(timeout_seconds),
                 qa_policy=analysis_payload["qa_policy"],
+                scientific_observer=self._scientific_observer(
+                    repository,
+                    project_id,
+                    analysis["analysis_id"],
+                ),
             )
             if analysis["state"] == "DRAFT":
                 exact_plan = orchestrator.plan(
@@ -1635,6 +1659,11 @@ class RPCDispatcher:
                     repository,
                     self._solver_runner(int(analysis["payload"]["timeout_seconds"])),
                     qa_policy=analysis["payload"].get("qa_policy"),
+                    scientific_observer=self._scientific_observer(
+                        repository,
+                        analysis["project_id"],
+                        analysis_id,
+                    ),
                 )
                 return orchestrator.status(analysis_id)
             if analysis["state"] not in {"READY", "PAUSED", "RUNNING"}:
@@ -1651,6 +1680,28 @@ class RPCDispatcher:
         if runner.solver_sha256 != self.solver_sha256:
             raise ValueError("configured SWMM executable changed before exact planning")
         return runner
+
+    def _scientific_observer(
+        self,
+        repository: ProjectRepository,
+        project_id: str,
+        analysis_id: str,
+    ) -> Callable[[str, dict[str, Any], dict[str, Any]], None]:
+        def observe(
+            operation: str,
+            inputs: dict[str, Any],
+            output: dict[str, Any],
+        ) -> None:
+            self.observability.trace_scientific_operation(
+                repository,
+                project_id=project_id,
+                analysis_id=analysis_id,
+                operation=operation,
+                inputs=inputs,
+                output=output,
+            )
+
+        return observe
 
     def _prepare_exact_storms(
         self,
@@ -1765,6 +1816,11 @@ class RPCDispatcher:
                     repository,
                     self._solver_runner(int(analysis["payload"]["timeout_seconds"])),
                     qa_policy=analysis["payload"].get("qa_policy"),
+                    scientific_observer=self._scientific_observer(
+                        repository,
+                        analysis["project_id"],
+                        analysis_id,
+                    ),
                 )
                 orchestrator.recover(analysis_id)
 
@@ -2027,6 +2083,11 @@ class RPCDispatcher:
                     repository,
                     self._solver_runner(int(current["payload"]["timeout_seconds"])),
                     qa_policy=current["payload"].get("qa_policy"),
+                    scientific_observer=self._scientific_observer(
+                        repository,
+                        current["project_id"],
+                        analysis_id,
+                    ),
                 )
                 analysis = orchestrator.cancel(analysis_id)
             else:
@@ -2089,7 +2150,14 @@ class RPCDispatcher:
             if not isinstance(model_revision_id, str) or not model_revision_id:
                 raise ValueError("decision board requires an analysis pinned to a ModelRevision")
             _validate_authoritative_analysis_runs(repository, analysis["analysis_id"])
-            board = AnalysisOrchestrator(repository).decision_board(
+            board = AnalysisOrchestrator(
+                repository,
+                scientific_observer=self._scientific_observer(
+                    repository,
+                    analysis["project_id"],
+                    analysis["analysis_id"],
+                ),
+            ).decision_board(
                 analysis["analysis_id"],
                 adverse_tolerance=float(params.get("adverse_tolerance", 0.0)),
             )
@@ -2924,11 +2992,8 @@ class RPCDispatcher:
                 qa_rows.extend(
                     [[job["job_id"], item["severity"], item["code"]] for item in findings]
                 )
-            stable = hashlib.sha256(
-                f"{analysis_id}|exact-run-batch|{batch_index}".encode()
-            ).hexdigest()[:24]
             envelope = TelemetryEnvelope(
-                envelope_id=f"envelope_{stable}",
+                envelope_id=exact_analysis_batch_envelope_id(analysis_id, batch_index),
                 project_id=project_id,
                 analysis_id=analysis_id,
                 binding_id=binding["binding_id"],
@@ -2983,181 +3048,200 @@ class RPCDispatcher:
             queued.append(self._enqueue_and_schedule_telemetry(repository, envelope))
         return queued
 
-    def assistant_explain(self, params: dict[str, Any]) -> dict[str, Any]:
+    def assistant_get_capabilities(self, params: dict[str, Any]) -> dict[str, Any]:
         _require_only(
             params,
-            {"project_directory", "project_id", "intent", "job_id", "question"},
+            {
+                "project_directory",
+                "project_id",
+                "analysis_id",
+                "model_revision_id",
+                "anchor",
+            },
         )
-        return self._assistant_answer(
-            params,
-            operation="explain",
-            prior_answer_id=None,
-        )
-
-    def assistant_follow_up(self, params: dict[str, Any]) -> dict[str, Any]:
-        _require_only(
-            params,
-            {"project_directory", "project_id", "answer_id", "question"},
-        )
-        project_directory = self.require_project_directory(_required(params, "project_directory"))
-        repository = ProjectRepository(project_directory)
-        try:
-            prior = repository.get_assistant_answer(
-                str(_required(params, "project_id")), str(_required(params, "answer_id"))
-            )
-        finally:
-            repository.close()
-        job_ids = [item["run_id"] for item in prior.get("numeric_claims", [])]
-        derived = {
-            "project_directory": str(project_directory),
-            "project_id": prior["project_id"],
-            "intent": prior["intent"],
-            "job_id": job_ids[0] if job_ids else None,
-            "question": _required(params, "question"),
-        }
-        return self._assistant_answer(
-            derived,
-            operation="follow_up",
-            prior_answer_id=prior["answer_id"],
-        )
-
-    def _assistant_answer(
-        self,
-        params: dict[str, Any],
-        *,
-        operation: str,
-        prior_answer_id: str | None,
-    ) -> dict[str, Any]:
-        project_id = str(_required(params, "project_id"))
-        intent = str(_required(params, "intent"))
-        if intent not in {"model_fitness", "exact_run"}:
-            raise ValueError("assistant intent must be model_fitness or exact_run")
-        if intent == "exact_run" and not params.get("job_id"):
-            raise ValueError("exact_run assistant calls require job_id")
-        question = str(params.get("question") or "Explain the evidence relevant to this view.")
-        if len(question) > 2_000:
-            raise ValueError("assistant question exceeds the supported length")
         repository = ProjectRepository(
             self.require_project_directory(_required(params, "project_directory"))
         )
         try:
-            project = repository.get_project(project_id)
-            cloud_status = self.observability.status(repository, project_id)
-            if cloud_status.binding is None or not cloud_status.binding.verified:
-                raise RPCFault(
-                    -32010,
-                    (
-                        "Evidence Assistant is off until this project has an online, "
-                        "exactly verified Restricted W&B binding and Weave access."
-                    ),
-                    {"code": "ASSISTANT_DISABLED_WEAVE_UNAVAILABLE"},
-                )
-            draft = _assistant_draft(
+            return self.evidence_guide.get_capabilities(
                 repository,
-                project,
-                intent=intent,
-                job_id=str(params["job_id"]) if params.get("job_id") else None,
+                project_id=str(_required(params, "project_id")),
+                analysis_id=str(params["analysis_id"]) if params.get("analysis_id") else None,
+                model_revision_id=(
+                    str(params["model_revision_id"])
+                    if params.get("model_revision_id")
+                    else None
+                ),
+                anchor=_required(params, "anchor"),
             )
-            prevalidation = _validate_assistant_draft(repository, project_id, draft)
-            if prevalidation["errors"]:
-                raise ValueError("assistant evidence template failed deterministic validation")
-            call_id = new_id("assistantcall")
-            trace_inputs = {
-                "project_id": project_id,
-                "intent": intent,
-                "job_id": params.get("job_id"),
-                "question": question,
-                "prior_answer_id": prior_answer_id,
-            }
-            try:
-                with self._cloud_lifecycle_lock:
-                    trace = self.observability.trace_assistant_call(
-                        repository,
-                        project_id=project_id,
-                        call_id=call_id,
-                        operation=operation,
-                        inputs=trace_inputs,
-                        output={**draft, "validation": prevalidation},
-                    )
-            except Exception as exc:
-                raise RPCFault(
-                    -32010,
-                    "Evidence Assistant is unavailable because a required Weave trace could not be created.",
-                    {"code": "ASSISTANT_DISABLED_WEAVE_UNAVAILABLE"},
-                ) from exc
-            answer = AssistantAnswer(
-                call_id=call_id,
-                project_id=project_id,
-                intent=intent,
-                weave_trace=trace,
-                **draft,
-            )
-            evaluation = AssistantEvaluationRecord(
-                project_id=project_id,
-                answer_id=answer.answer_id,
-                trace_id=trace.trace_id,
-                valid=True,
-                checked_evidence_ids=prevalidation["checked_evidence_ids"],
-            )
-            repository.store_assistant_answer(answer)
-            repository.store_assistant_evaluation(evaluation)
         finally:
             repository.close()
-        return {
-            "answer": answer.model_dump(mode="json"),
-            "evaluation": evaluation.model_dump(mode="json"),
-        }
+
+    def assistant_start_conversation(self, params: dict[str, Any]) -> dict[str, Any]:
+        _require_only(
+            params,
+            {
+                "project_directory",
+                "project_id",
+                "analysis_id",
+                "model_revision_id",
+                "anchor",
+                "inference_consent",
+                "content_logging_consent",
+            },
+        )
+        repository = ProjectRepository(
+            self.require_project_directory(_required(params, "project_directory"))
+        )
+        try:
+            try:
+                return self.evidence_guide.start_conversation(
+                    repository,
+                    project_id=str(_required(params, "project_id")),
+                    analysis_id=(
+                        str(params["analysis_id"]) if params.get("analysis_id") else None
+                    ),
+                    model_revision_id=(
+                        str(params["model_revision_id"])
+                        if params.get("model_revision_id")
+                        else None
+                    ),
+                    anchor=_required(params, "anchor"),
+                    inference_consent=params.get("inference_consent") is True,
+                    content_logging_consent=params.get("content_logging_consent") is True,
+                )
+            except EvidenceGuideError as exc:
+                raise _evidence_guide_fault(exc) from exc
+        finally:
+            repository.close()
+
+    def assistant_ask(self, params: dict[str, Any]) -> dict[str, Any]:
+        _require_only(
+            params,
+            {"project_directory", "project_id", "conversation_id", "question"},
+        )
+        repository = ProjectRepository(
+            self.require_project_directory(_required(params, "project_directory"))
+        )
+        try:
+            try:
+                with self._cloud_lifecycle_lock:
+                    return self.evidence_guide.ask(
+                        repository,
+                        project_id=str(_required(params, "project_id")),
+                        conversation_id=str(_required(params, "conversation_id")),
+                        question=str(_required(params, "question")),
+                    )
+            except EvidenceGuideError as exc:
+                raise _evidence_guide_fault(exc) from exc
+        finally:
+            repository.close()
+
+    def assistant_get_conversation(self, params: dict[str, Any]) -> dict[str, Any]:
+        _require_only(
+            params,
+            {"project_directory", "project_id", "conversation_id"},
+        )
+        project_id = str(_required(params, "project_id"))
+        conversation_id = str(_required(params, "conversation_id"))
+        repository = ProjectRepository(
+            self.require_project_directory(_required(params, "project_directory"))
+        )
+        try:
+            conversation = repository.get_assistant_conversation(
+                project_id, conversation_id
+            )
+            turns = repository.list_assistant_turns(project_id, conversation_id)
+            hydrated = []
+            for turn in turns:
+                answer = None
+                if turn.get("answer_id"):
+                    answer = repository.get_assistant_answer(project_id, turn["answer_id"])
+                hydrated.append({**turn, "answer": answer})
+            return {"conversation": {**conversation, "turns": hydrated}, "turns": hydrated}
+        finally:
+            repository.close()
+
+    def assistant_open_weave_conversation(self, params: dict[str, Any]) -> dict[str, Any]:
+        _require_only(
+            params,
+            {"project_directory", "project_id", "conversation_id"},
+        )
+        project_id = str(_required(params, "project_id"))
+        repository = ProjectRepository(
+            self.require_project_directory(_required(params, "project_directory"))
+        )
+        try:
+            conversation = repository.get_assistant_conversation(
+                project_id, str(_required(params, "conversation_id"))
+            )
+            url = conversation.get("weave_url")
+            if not isinstance(url, str) or not url:
+                raise RPCFault(
+                    -32010,
+                    "No acknowledged Weave conversation is available for this investigation.",
+                    {"code": "WEAVE_CONVERSATION_UNAVAILABLE"},
+                )
+            binding = repository.get_observability_binding(project_id)
+            parsed = urllib.parse.urlsplit(url)
+            expected = urllib.parse.urlsplit(str(binding["web_base_url"]))
+            expected_path = "/".join(
+                (
+                    expected.path.rstrip("/"),
+                    urllib.parse.quote(str(binding["entity"]), safe=""),
+                    urllib.parse.quote(str(binding["external_project"]), safe=""),
+                    "weave/agents/conversations",
+                    urllib.parse.quote(str(conversation["conversation_id"]), safe=""),
+                )
+            )
+            if (
+                parsed.scheme != expected.scheme
+                or parsed.netloc != expected.netloc
+                or parsed.username
+                or parsed.password
+                or parsed.path.rstrip("/") != expected_path.rstrip("/")
+                or parsed.query
+                or parsed.fragment
+            ):
+                raise RPCFault(
+                    -32010,
+                    "The stored Weave conversation link did not match the verified project origin.",
+                    {"code": "WEAVE_CONVERSATION_URL_INVALID"},
+                )
+            return {"url": url}
+        finally:
+            repository.close()
 
     def assistant_feedback(self, params: dict[str, Any]) -> dict[str, Any]:
         _require_only(
             params,
-            {"project_directory", "project_id", "answer_id", "feedback", "notes"},
+            {
+                "project_directory",
+                "project_id",
+                "conversation_id",
+                "turn_id",
+                "feedback",
+                "notes",
+            },
         )
-        project_id = str(_required(params, "project_id"))
-        feedback = str(_required(params, "feedback"))
         repository = ProjectRepository(
             self.require_project_directory(_required(params, "project_directory"))
         )
         try:
-            answer = repository.get_assistant_answer(
-                project_id, str(_required(params, "answer_id"))
-            )
-            call_id = new_id("assistantfeedback")
             try:
                 with self._cloud_lifecycle_lock:
-                    trace = self.observability.trace_assistant_call(
+                    return self.evidence_guide.feedback(
                         repository,
-                        project_id=project_id,
-                        call_id=call_id,
-                        operation="feedback",
-                        inputs={
-                            "answer_id": answer["answer_id"],
-                            "feedback": feedback,
-                            "notes": params.get("notes"),
-                        },
-                        output={"recorded": True},
+                        project_id=str(_required(params, "project_id")),
+                        conversation_id=str(_required(params, "conversation_id")),
+                        turn_id=str(_required(params, "turn_id")),
+                        feedback=str(_required(params, "feedback")),
+                        notes=str(params["notes"]) if params.get("notes") else None,
                     )
-            except Exception as exc:
-                raise RPCFault(
-                    -32010,
-                    "Assistant feedback was not recorded because its required Weave trace failed.",
-                    {"code": "ASSISTANT_DISABLED_WEAVE_UNAVAILABLE"},
-                ) from exc
-            evaluation = AssistantEvaluationRecord(
-                project_id=project_id,
-                answer_id=answer["answer_id"],
-                trace_id=trace.trace_id,
-                valid=True,
-                user_feedback=feedback,
-                feedback_notes=params.get("notes"),
-            )
-            repository.store_assistant_evaluation(evaluation)
+            except EvidenceGuideError as exc:
+                raise _evidence_guide_fault(exc) from exc
         finally:
             repository.close()
-        return evaluation.model_dump(mode="json")
-
-    def assistant_get_trace(self, params: dict[str, Any]) -> dict[str, Any]:
-        return self.observability_open_trace(params)
 
     def guided_open(self, params: dict[str, Any]) -> dict[str, Any]:
         _require_only(params, {"project_directory", "project_id"})
@@ -3857,201 +3941,6 @@ class RPCDispatcher:
             json.dumps(diagnostic, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
         return {"path": str(destination), "redacted": not diagnostic["include_model_content"]}
-
-
-def _project_limitations(project: dict[str, Any]) -> list[str]:
-    state = project.get("state") if isinstance(project.get("state"), dict) else {}
-    raw = state.get("unresolved_limitations", state.get("limitations", []))
-    limitations = [str(item) for item in raw] if isinstance(raw, list) else []
-    if project["project_kind"] == ProjectKind.CONCEPTUAL.value:
-        limitations.insert(0, CONCEPTUAL_NOTICE)
-    elif project["project_kind"] == ProjectKind.DEMO.value:
-        limitations.insert(0, "Bundled demo evidence is for learning, not a professional decision.")
-    return list(dict.fromkeys(limitations))
-
-
-def _assistant_draft(
-    repository: ProjectRepository,
-    project: dict[str, Any],
-    *,
-    intent: str,
-    job_id: str | None,
-) -> dict[str, Any]:
-    project_id = project["project_id"]
-    if intent == "model_fitness":
-        passport = repository.get_model_fitness_passport(project_id)
-        evidence_id = (
-            f"model-fitness:{passport['passport_id']}"
-            if passport
-            else f"model-fitness:{project_id}:not-assessed"
-        )
-        disposition = passport["disposition"] if passport else "not_assessed"
-        limitations = (
-            list(passport.get("unresolved_limitations", []))
-            if passport
-            else ["No engineer-attested Model Fitness Passport is stored for this revision."]
-        )
-        return {
-            "answer": (
-                f"Model fitness for the stated use is {disposition}. This is an independent "
-                "engineer-controlled decision gate; cloud sync state and the assistant cannot change it."
-            ),
-            "evidence_references": [
-                AssistantEvidenceReference(
-                    evidence_id=evidence_id,
-                    kind="project",
-                    label="Model Fitness Passport" if passport else "Fitness not yet assessed",
-                    source_id=passport["passport_id"] if passport else project_id,
-                ).model_dump(mode="json")
-            ],
-            "numeric_claims": [],
-            "assumptions_used": [],
-            "limitations": limitations,
-            "proposed_actions": [
-                AssistantProposedAction(
-                    action="review",
-                    reason="Review or complete the intended-use Model Fitness Passport.",
-                    evidence_ids=[evidence_id],
-                    object_ids=["model-fitness"],
-                ).model_dump(mode="json")
-            ],
-        }
-
-    authoritative = _load_authoritative_run(
-        repository,
-        str(job_id),
-        expected_project_id=project_id,
-    )
-    result: ExactRunResult = authoritative["result"]
-    references: list[dict[str, Any]] = [
-        AssistantEvidenceReference(
-            evidence_id=f"exact-run:{result.run_id}",
-            kind="exact_run",
-            label="Pinned exact SWMM execution",
-            source_id=result.run_id,
-        ).model_dump(mode="json")
-    ]
-    claims: list[dict[str, Any]] = []
-    rendered: list[str] = []
-    for record in authoritative["metric_records"]:
-        metric_id = str(record["metric_id"])
-        object_id = str(record["object_id"])
-        label = metric_id if not object_id else f"{metric_id} at {object_id}"
-        evidence_id = f"exact-metric:{result.run_id}:{metric_id}:{object_id or 'system'}"
-        references.append(
-            AssistantEvidenceReference(
-                evidence_id=evidence_id,
-                kind="exact_metric",
-                label=label,
-                source_id=result.run_id,
-            ).model_dump(mode="json")
-        )
-        claims.append(
-            AssistantNumericClaim(
-                label=label,
-                value=float(record["value"]),
-                units=str(record["units"]),
-                evidence_id=evidence_id,
-                run_id=result.run_id,
-                metric_id=metric_id,
-                object_id=object_id,
-            ).model_dump(mode="json")
-        )
-        rendered.append(f"{label} = {float(record['value']):.12g} {record['units']}")
-    return {
-        "answer": (
-            "Exact SWMM result under documented assumptions: "
-            + ("; ".join(rendered) if rendered else "no numeric metrics are stored")
-            + f". QA status is {result.qa_status}."
-        ),
-        "evidence_references": references,
-        "numeric_claims": claims,
-        "assumptions_used": [
-            "Stored input, report, output, and solver hashes identify this execution.",
-            f"Hydraulic metrics were extracted with {result.extractor_version}.",
-            "The result applies to the recorded design and storm case only.",
-        ],
-        "limitations": [
-            "This answer does not infer field performance, approval, or regulatory acceptance."
-        ],
-        "proposed_actions": [
-            AssistantProposedAction(
-                action="open_evidence",
-                reason="Inspect the exact run, QA findings, metrics, and hashes.",
-                evidence_ids=[item["evidence_id"] for item in references],
-                object_ids=[result.run_id],
-            ).model_dump(mode="json")
-        ],
-    }
-
-
-def _validate_assistant_draft(
-    repository: ProjectRepository,
-    project_id: str,
-    draft: dict[str, Any],
-) -> dict[str, Any]:
-    errors: list[str] = []
-    checked: set[str] = set()
-    references = {
-        item["evidence_id"]: AssistantEvidenceReference.model_validate(item)
-        for item in draft.get("evidence_references", [])
-    }
-    claims = [
-        AssistantNumericClaim.model_validate(item) for item in draft.get("numeric_claims", [])
-    ]
-    run_cache: dict[str, dict[str, Any]] = {}
-    for claim in claims:
-        reference = references.get(claim.evidence_id)
-        if (
-            reference is None
-            or reference.kind != "exact_metric"
-            or reference.source_id != claim.run_id
-        ):
-            errors.append(f"Numeric claim {claim.label!r} lacks exact-metric evidence.")
-            continue
-        if claim.run_id not in run_cache:
-            try:
-                run_cache[claim.run_id] = _load_authoritative_run(
-                    repository, claim.run_id, expected_project_id=project_id
-                )
-            except (KeyError, TypeError, ValueError):
-                errors.append(f"Numeric claim {claim.label!r} names a nonauthoritative run.")
-                continue
-        records = [
-            item
-            for item in run_cache[claim.run_id]["metric_records"]
-            if item["metric_id"] == claim.metric_id and item["object_id"] == claim.object_id
-        ]
-        if len(records) != 1 or float(records[0]["value"]) != claim.value:
-            errors.append(f"Numeric claim {claim.label!r} does not match stored exact evidence.")
-        elif str(records[0]["units"]) != claim.units:
-            errors.append(f"Numeric claim {claim.label!r} does not match stored units.")
-        else:
-            checked.add(claim.evidence_id)
-    allowed_values = [claim.value for claim in claims]
-    number_pattern = re.compile(r"(?<![\w.])-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?(?![\w.])")
-    blocked = [
-        match.group(0)
-        for match in number_pattern.finditer(str(draft.get("answer", "")))
-        if float(match.group(0)) not in allowed_values
-    ]
-    if blocked:
-        errors.append("Assistant prose contains numbers without exact evidence claims.")
-    prohibited = {
-        "real-world truth",
-        "verified global optimum",
-        "regulator approved",
-        "filing ready",
-        "guaranteed resilient",
-    }
-    lowered = str(draft.get("answer", "")).casefold()
-    if any(phrase in lowered for phrase in prohibited):
-        errors.append("Assistant prose contains a prohibited engineering claim.")
-    return {
-        "errors": errors,
-        "blocked_numeric_claims": blocked,
-        "checked_evidence_ids": sorted(checked or set(references)),
-    }
 
 
 def _guided_checkpoints(project: dict[str, Any]) -> list[GuidedCheckpoint]:

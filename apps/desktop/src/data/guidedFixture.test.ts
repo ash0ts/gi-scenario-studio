@@ -72,6 +72,16 @@ describe("exact guided fixture projection", () => {
       worstPeakAlternative: 3.21,
       worstPeakDelta: 0.07,
     });
+    const alt017Source = fixture.alternatives.find((alternative) => alternative.id === "ALT-017");
+    expect(alt017Source?.storm_runs.filter((run) => run.outfall_peak_delta_cfs > 0).map((run) => ({
+      storm_id: run.storm_id,
+      baseline: run.baseline_outfall_peak_cfs,
+      alternative: run.outfall_peak_cfs,
+      delta: run.outfall_peak_delta_cfs,
+    }))).toEqual([
+      { storm_id: "synthetic_long_2_5in", baseline: 3.14, alternative: 3.21, delta: 0.07 },
+      { storm_id: "synthetic_stress_4in", baseline: 13.33, alternative: 13.34, delta: 0.01 },
+    ]);
     expect(alternatives.filter((alternative) => alternative.meetsAllRules).map((alternative) => alternative.id)).toEqual(["ALT-207"]);
   });
 

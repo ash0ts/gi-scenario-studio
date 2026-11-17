@@ -1,0 +1,102 @@
+{
+  "schema_version": "1.0",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "persistent_notice": "Synthetic test events · modeled, not measured · not annualized · not field evidence.",
+  "films": [
+    {
+      "key": "animation/incomplete_plot",
+      "slug": "incomplete-plot",
+      "title": "The plot was honest. It was incomplete.",
+      "duration": 34,
+      "poster_time": 30,
+      "reduced_motion_time": 30,
+      "checkpoints": [
+        {"name": "attractive-point", "time": 9},
+        {"name": "four-rules", "time": 20},
+        {"name": "incomplete-conclusion", "time": 30}
+      ],
+      "transition_checkpoints": [
+        {"name": "plot-to-rules-transition", "time": 12.6},
+        {"name": "rules-to-conclusion-transition", "time": 24.0}
+      ],
+      "claim_ids": ["A-ALT017"]
+    },
+    {
+      "key": "animation/water_ledger",
+      "slug": "modeled-water-ledger",
+      "title": "What did the model say happened to the water?",
+      "duration": 50,
+      "poster_time": 45,
+      "reduced_motion_time": 45,
+      "checkpoints": [
+        {"name": "same-rain", "time": 9},
+        {"name": "runoff-ledger", "time": 27},
+        {"name": "outfall-difference", "time": 39},
+        {"name": "water-boundary", "time": 45}
+      ],
+      "transition_checkpoints": [
+        {"name": "rain-to-ledger-transition", "time": 10.6},
+        {"name": "ledger-to-outfall-transition", "time": 30.5},
+        {"name": "outfall-to-boundary-transition", "time": 41.2}
+      ],
+      "claim_ids": ["A-WATER-LEDGER", "A-OUTFALL"]
+    },
+    {
+      "key": "animation/storm_reveals",
+      "slug": "storm-reveals",
+      "title": "The biggest storm was not the most revealing test.",
+      "duration": 36,
+      "poster_time": 32,
+      "reduced_motion_time": 32,
+      "checkpoints": [
+        {"name": "four-storms", "time": 8},
+        {"name": "adverse-counts", "time": 22},
+        {"name": "storm-conclusion", "time": 32}
+      ],
+      "transition_checkpoints": [
+        {"name": "storms-to-counts-transition", "time": 12.7},
+        {"name": "counts-to-conclusion-transition", "time": 25.7}
+      ],
+      "claim_ids": ["A-STORMS"]
+    },
+    {
+      "key": "animation/decision_funnel",
+      "slug": "decision-funnel",
+      "title": "Six hundred ninety-nine plans enter. Twelve survive.",
+      "duration": 38,
+      "poster_time": 34,
+      "reduced_motion_time": 34,
+      "checkpoints": [
+        {"name": "all-alternatives", "time": 7},
+        {"name": "rule-funnel", "time": 24},
+        {"name": "focused-not-finished", "time": 34}
+      ],
+      "transition_checkpoints": [
+        {"name": "funnel-to-field-transition", "time": 28.9}
+      ],
+      "claim_ids": ["A-FUNNEL"]
+    },
+    {
+      "key": "animation/search_release_gate",
+      "slug": "search-release-gate",
+      "title": "Can AI earn the right to choose the next simulation?",
+      "duration": 46,
+      "poster_time": 42,
+      "reduced_motion_time": 42,
+      "checkpoints": [
+        {"name": "search-asks", "time": 10},
+        {"name": "controlled-exam", "time": 21},
+        {"name": "release-gates", "time": 34},
+        {"name": "experimental-conclusion", "time": 42}
+      ],
+      "transition_checkpoints": [
+        {"name": "search-to-exam-transition", "time": 12.0},
+        {"name": "exam-to-gates-transition", "time": 22.7},
+        {"name": "gates-to-decision-transition", "time": 35.7}
+      ],
+      "claim_ids": ["A-SEARCH", "A-GATE", "A-COMPUTE"]
+    }
+  ]
+}

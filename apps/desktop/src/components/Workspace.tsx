@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { GuidedData } from "../data/demo";
 import { initialGuidedRunState, summarizeSolverJobs, type GuidedRunState, type SolverJobStatusRow } from "../lib/guidedRun";
+import type { EvidenceGuideReference } from "../lib/evidenceGuide";
 import {
   observabilityDetail,
   observabilityLabel,
@@ -876,6 +877,25 @@ export function Workspace({ project, onProjectUpdate, guidedData, observability,
     window.requestAnimationFrame(() => evidenceReturnFocus.current?.focus());
   };
 
+  const openAssistantEvidenceReference = (reference: EvidenceGuideReference) => {
+    const localEvidence = data
+      ? Object.values(data.evidence).find((candidate) => (
+        candidate.id === reference.evidenceId
+        || candidate.id === reference.sourceId
+        || candidate.runIds?.includes(reference.sourceId)
+        || candidate.runRecords?.some((run) => run.runId === reference.sourceId)
+      ))
+      : undefined;
+    if (localEvidence) {
+      setEvidenceItem(localEvidence);
+      setEvidenceOpen(true);
+      return;
+    }
+    if (reference.kind === "exact_run" || reference.kind === "exact_metric") {
+      void showWorkerRunEvidence(reference.sourceId);
+    }
+  };
+
   return (
     <div className={`app-frame ${evidenceOpen ? "evidence-visible" : ""} ${railCollapsed ? "nav-collapsed" : ""}`}>
       <header className="app-header">
@@ -968,7 +988,20 @@ export function Workspace({ project, onProjectUpdate, guidedData, observability,
       {!evidenceOpen && (
         <button className="evidence-tab" onClick={(event) => { evidenceReturnFocus.current = event.currentTarget; setEvidenceOpen(true); }} aria-label="Open evidence rail"><Icon name="trace" /><span>Evidence</span></button>
       )}
-      <EvidenceRail item={evidenceItem} projectKind={project.kind} observability={observability} projectCloudSync={projectCloudSync} open={evidenceOpen} onClose={closeEvidence} />
+      <EvidenceRail
+        item={evidenceItem}
+        projectId={project.id}
+        projectDirectory={project.projectDirectory}
+        analysisId={practitionerRun.analysisId}
+        modelRevisionId={project.bundle?.currentModelRevisionId}
+        projectKind={project.kind}
+        observability={observability}
+        projectCloudSync={projectCloudSync}
+        open={evidenceOpen}
+        onClose={closeEvidence}
+        onEvidenceReference={openAssistantEvidenceReference}
+        onConfigureObservability={onObservability}
+      />
     </div>
   );
 }

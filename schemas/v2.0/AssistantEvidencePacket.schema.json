@@ -1,0 +1,331 @@
+{
+  "$defs": {
+    "AssistantEvidenceAnchor": {
+      "additionalProperties": false,
+      "properties": {
+        "identifier": {
+          "title": "Identifier",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "project",
+            "model_fitness",
+            "alternative",
+            "exact_run",
+            "export"
+          ],
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "identifier"
+      ],
+      "title": "AssistantEvidenceAnchor",
+      "type": "object"
+    },
+    "AssistantEvidenceReference": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_id": {
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "project",
+            "model_fitness",
+            "alternative",
+            "exact_run",
+            "exact_metric",
+            "derived_metric",
+            "decision_rule",
+            "cost_basis",
+            "qa",
+            "limitation",
+            "artifact",
+            "documentation"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "source_id": {
+          "title": "Source Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "evidence_id",
+        "kind",
+        "label",
+        "source_id"
+      ],
+      "title": "AssistantEvidenceReference",
+      "type": "object"
+    },
+    "EvidenceAuthority": {
+      "description": "Authority carried by a claim without implying that every value is hydraulic truth.",
+      "enum": [
+        "exact_swmm",
+        "derived_exact",
+        "sourced_input",
+        "decision_rule",
+        "qa_record",
+        "model_fitness",
+        "project_record",
+        "documentation"
+      ],
+      "title": "EvidenceAuthority",
+      "type": "string"
+    },
+    "EvidenceClaim": {
+      "additionalProperties": false,
+      "properties": {
+        "authority": {
+          "$ref": "#/$defs/EvidenceAuthority",
+          "default": "project_record"
+        },
+        "claim_id": {
+          "title": "Claim Id",
+          "type": "string"
+        },
+        "claim_type": {
+          "enum": [
+            "exact_metric",
+            "qa",
+            "assumption",
+            "cost",
+            "provenance",
+            "fitness",
+            "reference_comparison",
+            "derived_metric",
+            "decision_rule",
+            "limitation"
+          ],
+          "title": "Claim Type",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "derivation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Derivation"
+        },
+        "evidence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "exact": {
+          "default": false,
+          "title": "Exact",
+          "type": "boolean"
+        },
+        "metric_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Metric Id"
+        },
+        "object_id": {
+          "default": "",
+          "title": "Object Id",
+          "type": "string"
+        },
+        "project_id": {
+          "title": "Project Id",
+          "type": "string"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Run Id"
+        },
+        "run_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Run Ids",
+          "type": "array"
+        },
+        "source_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Source Ids",
+          "type": "array"
+        },
+        "statement": {
+          "title": "Statement",
+          "type": "string"
+        },
+        "units": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Units"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "project_id",
+        "claim_type",
+        "statement",
+        "evidence_ids"
+      ],
+      "title": "EvidenceClaim",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "analysis_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Analysis Id"
+    },
+    "anchor": {
+      "$ref": "#/$defs/AssistantEvidenceAnchor"
+    },
+    "capability_names": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Capability Names",
+      "type": "array"
+    },
+    "claims": {
+      "items": {
+        "$ref": "#/$defs/EvidenceClaim"
+      },
+      "title": "Claims",
+      "type": "array"
+    },
+    "evidence_references": {
+      "items": {
+        "$ref": "#/$defs/AssistantEvidenceReference"
+      },
+      "title": "Evidence References",
+      "type": "array"
+    },
+    "limitations": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Limitations",
+      "type": "array"
+    },
+    "local_authority": {
+      "const": true,
+      "default": true,
+      "title": "Local Authority",
+      "type": "boolean"
+    },
+    "model_revision_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Model Revision Id"
+    },
+    "packet_id": {
+      "title": "Packet Id",
+      "type": "string"
+    },
+    "packet_sha256": {
+      "title": "Packet Sha256",
+      "type": "string"
+    },
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    },
+    "project_kind": {
+      "enum": [
+        "demo",
+        "conceptual",
+        "existing"
+      ],
+      "title": "Project Kind",
+      "type": "string"
+    },
+    "source_hashes": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Source Hashes",
+      "type": "object"
+    }
+  },
+  "required": [
+    "packet_id",
+    "project_id",
+    "anchor",
+    "project_kind",
+    "packet_sha256"
+  ],
+  "title": "AssistantEvidencePacket",
+  "type": "object"
+}

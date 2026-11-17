@@ -1,0 +1,1624 @@
+{
+  "schema_version": "1.0",
+  "film_id": "gi-scenario-studio-evidence-first-demo",
+  "title": "Which Stormwater Plan Deserves a Closer Look?",
+  "runtime_seconds": 1670,
+  "runtime_timecode": "00:27:50",
+  "frame": {
+    "width": 1920,
+    "height": 1080,
+    "fps": 30,
+    "aspect_ratio": "16:9"
+  },
+  "edit_handles": {
+    "head_seconds": 0.5,
+    "tail_seconds": 0.6
+  },
+  "claim_sources": {
+    "guided_fixture": {
+      "path": "apps/desktop/src/data/guidedFixture.json",
+      "sha256": "65eff394a0a59cc3b47053c7134beb3816200c107400fc2c42a8dbc962073984"
+    },
+    "exhaustive_benchmark": {
+      "path": "benchmarks/exhaustive_exact/dataset.json",
+      "sha256": "421a7f3aad4364b874bca58b3557e6ff1588fc8f770c6b6e2c7293ec2c00a43b"
+    }
+  },
+  "audience": "Environmental, civil, stormwater, and water-resources engineers, students, and curious newcomers. No prior knowledge of SWMM, green infrastructure, optimization, or machine learning is assumed.",
+  "question": "When a neighborhood has many possible ways to slow stormwater and limited money for field investigation, how can an engineer find a useful shortlist without hiding a worsened storm response?",
+  "takeaway": "Drainage software calculates what each declared plan does in the model. Search can choose which plan to test next. Evidence preserves how each result was made. The engineer decides what deserves real-world investigation.",
+  "source_boundary": "Cedar Trace is a self-authored synthetic teaching fixture. Displayed hydraulic values come from the pinned exact-run manifest. Any cloud synchronization or provider-backed assistant workflow requires a W&B binding whose exact Restricted policy status is verified; local evidence remains authoritative. This source-build recording stays local-only and performs no upload or provider-backed call because that scope cannot be proven. It also does not demonstrate an adaptive-ML advantage, calibrated model, native release installer, or regulatory workflow.",
+  "forbidden_overclaims": [
+    "best design",
+    "global optimum",
+    "validated model",
+    "calibrated model",
+    "approved design",
+    "regulator approved",
+    "design ready",
+    "real-world flood reduction",
+    "AI-designed infrastructure",
+    "carbon saved"
+  ],
+  "palette": {
+    "watershed_ink": "#17313A",
+    "survey_paper": "#F5F7F6",
+    "channel_teal": "#08766F",
+    "rain_blue": "#2F6F9F",
+    "caution_ochre": "#A96315",
+    "flood_red": "#B43D47"
+  },
+  "segments": [
+    {
+      "id": "01_pareto_trap",
+      "kind": "animation",
+      "scene_class": "Scene01ParetoTrap",
+      "source_file": "src/gi_story/scenes/scene_01_pareto_trap.py",
+      "output_file": "01_pareto_trap.mp4",
+      "start_seconds": 0,
+      "duration_seconds": 55,
+      "narration": "Imagine you are responsible for a neighborhood where hard rain can overwhelm the drains. You have 220 improvement plans and no budget to build them all. So you draw a map: cost along the bottom, and how much less water reaches the outlet along the side. One plan looks like a bargain. It costs about 55 thousand dollars and sends a little less water out. But the picture has hidden something. In the long storm, the highest flow rate rises from 3.14 to 3.21 cubic feet per second. A second storm rises too. And the plan still misses our 6 percent reduction target. The plot did not lie. It answered a smaller question. A good decision must ask the rest.",
+      "caption_cues": [
+        {
+          "start": 0.5,
+          "end": 7.977,
+          "text": "Imagine you are responsible for a neighborhood\nwhere hard rain can overwhelm the drains. You"
+        },
+        {
+          "start": 7.977,
+          "end": 13.909,
+          "text": "have 220 improvement plans and no budget to\nbuild them all. So you draw a"
+        },
+        {
+          "start": 13.909,
+          "end": 20.411,
+          "text": "map: cost along the bottom, and how much less\nwater reaches the outlet along the"
+        },
+        {
+          "start": 20.411,
+          "end": 26.994,
+          "text": "side. One plan looks like a bargain. It costs\nabout 55 thousand dollars and sends"
+        },
+        {
+          "start": 26.994,
+          "end": 33.577,
+          "text": "a little less water out. But the picture has\nhidden something. In the long storm,"
+        },
+        {
+          "start": 33.577,
+          "end": 39.834,
+          "text": "the highest flow rate rises from 3.14 to 3.21\ncubic feet per second. A second"
+        },
+        {
+          "start": 39.834,
+          "end": 46.58,
+          "text": "storm rises too. And the plan still misses our 6\npercent reduction target. The plot"
+        },
+        {
+          "start": 46.58,
+          "end": 53.0,
+          "text": "did not lie. It answered a smaller question. A\ngood decision must ask the rest."
+        }
+      ],
+      "claim_ids": [
+        "C-GUIDED-SYNTHETIC",
+        "C-STORMS-4",
+        "C-ALT017"
+      ],
+      "app_before": null,
+      "app_after": "home",
+      "entry_frame": "Survey-paper field asks what the 220-alternative cost-volume plot forgot.",
+      "exit_frame": "ALT-017 remains visible beside both peak increases and the distinction between nondominance and acceptance.",
+      "caption_file": "captions/01_pareto_trap.srt"
+    },
+    {
+      "id": "app_home",
+      "kind": "application",
+      "start_seconds": 55,
+      "duration_seconds": 55,
+      "screen": "home",
+      "actions": [
+        "Hold the full Home screen long enough to read the three starting paths.",
+        "Point to Open existing SWMM model while explaining who that path is for.",
+        "Point to Run guided example while introducing Cedar Trace.",
+        "Indicate the fictional teaching notice and the conceptual-model roadmap without clicking it.",
+        "Briefly point to LOCAL_ONLY; do not open cloud setup.",
+        "Click Run guided example."
+      ],
+      "narration": "This is what GI Scenario Studio is for: comparing ways to change how much runoff reaches a drainage system, and how quickly it arrives. Engineers call these features green infrastructure\u2014rain gardens, porous pavement, planted basins, and rain barrels. If you already have a drainage model, you can open it here. For this walkthrough, we will use Cedar Trace, a tiny fictional neighborhood built for teaching. It is not a real town or a design recommendation. It gives us something safer: a complete example we can take apart. The demo stays on this computer; cloud sharing is off. Our question is simple: which plan, if any, deserves the cost of a real field investigation?",
+      "caption_cues": [
+        {
+          "start": 0.5,
+          "end": 6.806,
+          "text": "This is what GI Scenario Studio is for:\ncomparing ways to change how much runoff"
+        },
+        {
+          "start": 6.806,
+          "end": 13.901,
+          "text": "reaches a drainage system, and how quickly it\narrives. Engineers call these features green"
+        },
+        {
+          "start": 13.901,
+          "end": 21.311,
+          "text": "infrastructure\u2014rain gardens, porous pavement,\nplanted basins, and rain barrels. If you already"
+        },
+        {
+          "start": 21.311,
+          "end": 27.459,
+          "text": "have a drainage model, you can open it here. For\nthis walkthrough, we will use"
+        },
+        {
+          "start": 27.459,
+          "end": 34.081,
+          "text": "Cedar Trace, a tiny fictional neighborhood built\nfor teaching. It is not a real town"
+        },
+        {
+          "start": 34.081,
+          "end": 40.939,
+          "text": "or a design recommendation. It gives us\nsomething safer: a complete example we can take"
+        },
+        {
+          "start": 40.939,
+          "end": 47.64,
+          "text": "apart. The demo stays on this computer; cloud\nsharing is off. Our question is simple:"
+        },
+        {
+          "start": 47.64,
+          "end": 53.0,
+          "text": "which plan, if any, deserves the cost of a real\nfield investigation?"
+        }
+      ],
+      "claim_ids": [
+        "C-GUIDED-SYNTHETIC",
+        "C-WANDB-BOUNDARY"
+      ],
+      "caption_file": "captions/app_home.srt"
+    },
+    {
+      "id": "02_rainfall_to_runoff",
+      "kind": "animation",
+      "scene_class": "Scene02RainfallToRunoff",
+      "source_file": "src/gi_story/scenes/scene_02_rainfall_to_runoff.py",
+      "output_file": "02_rainfall_to_runoff.mp4",
+      "start_seconds": 110,
+      "duration_seconds": 60,
+      "narration": "Before we use any software, follow the water. Rain lands on an area that drains to the same place\u2014engineers call that area a catchment. Some water soaks into soil. Some waits in a shallow basin or rain garden. The rest runs across the surface and into pipes. Eventually it reaches an outfall, simply the point where water leaves the drainage model. The flow there rises and falls during a storm. The total area under this curve is event volume: all the water that passed. The highest point is peak flow: the highest modeled flow rate during the storm. A project can lower one without lowering the other. A different rain pattern can change both. That is why one plan must face more than one storm. These drawings are conceptual, not measured.",
+      "caption_cues": [
+        {
+          "start": 0.5,
+          "end": 6.689,
+          "text": "Before we use any software, follow the water.\nRain lands on an area that drains"
+        },
+        {
+          "start": 6.689,
+          "end": 13.582,
+          "text": "to the same place\u2014engineers call that area a\ncatchment. Some water soaks into soil. Some"
+        },
+        {
+          "start": 13.582,
+          "end": 19.614,
+          "text": "waits in a shallow basin or rain garden. The\nrest runs across the surface and"
+        },
+        {
+          "start": 19.614,
+          "end": 26.978,
+          "text": "into pipes. Eventually it reaches an outfall,\nsimply the point where water leaves the drainage"
+        },
+        {
+          "start": 26.978,
+          "end": 33.167,
+          "text": "model. The flow there rises and falls during a\nstorm. The total area under this"
+        },
+        {
+          "start": 33.167,
+          "end": 39.512,
+          "text": "curve is event volume: all the water that\npassed. The highest point is peak flow:"
+        },
+        {
+          "start": 39.512,
+          "end": 46.406,
+          "text": "the highest modeled flow rate during the storm.\nA project can lower one without lowering"
+        },
+        {
+          "start": 46.406,
+          "end": 52.516,
+          "text": "the other. A different rain pattern can change\nboth. That is why one plan must"
+        },
+        {
+          "start": 52.516,
+          "end": 58.0,
+          "text": "face more than one storm. These drawings are\nconceptual, not measured."
+        }
+      ],
+      "claim_ids": [
+        "C-STORMS-4",
+        "C-GUIDED-SYNTHETIC"
+      ],
+      "app_before": "home",
+      "app_after": "overview",
+      "entry_frame": "A conceptual rainfall pattern appears above one catchment.",
+      "exit_frame": "The catchment routes runoff to OUT1 while the hydrograph keeps peak flow distinct from event volume.",
+      "caption_file": "captions/02_rainfall_to_runoff.srt"
+    },
+    {
+      "id": "03_swmm_represents",
+      "kind": "animation",
+      "scene_class": "Scene03SwmmRepresents",
+      "source_file": "src/gi_story/scenes/scene_03_swmm_represents.py",
+      "output_file": "03_swmm_represents.mp4",
+      "start_seconds": 170,
+      "duration_seconds": 60,
+      "narration": "Now we can introduce SWMM, the EPA's Storm Water Management Model. Think of it as a calculator for a simplified drainage world. The engineer supplies a map of the land, junctions, pipes, and outlet; a rain pattern; and the green-infrastructure plan to test. SWMM follows those declared rules and produces modeled flows and water levels. The app reads the output, checks that the run completed and its numerical balance stayed within the declared limit, and gives each file a digital fingerprint for later. But a careful calculation is still only as good as the world described to it. SWMM cannot see a missing pipe, test the soil, or tell us whether the chosen storm represents reality. Exact calculation is not the same as field truth.",
+      "caption_cues": [
+        {
+          "start": 0.5,
+          "end": 6.898,
+          "text": "Now we can introduce SWMM, the EPA's Storm Water\nManagement Model. Think of it as"
+        },
+        {
+          "start": 6.898,
+          "end": 13.69,
+          "text": "a calculator for a simplified drainage world.\nThe engineer supplies a map of the land,"
+        },
+        {
+          "start": 13.69,
+          "end": 21.036,
+          "text": "junctions, pipes, and outlet; a rain pattern;\nand the green-infrastructure plan to test. SWMM"
+        },
+        {
+          "start": 21.036,
+          "end": 27.907,
+          "text": "follows those declared rules and produces\nmodeled flows and water levels. The app reads"
+        },
+        {
+          "start": 27.907,
+          "end": 35.332,
+          "text": "the output, checks that the run completed and\nits numerical balance stayed within the declared"
+        },
+        {
+          "start": 35.332,
+          "end": 42.282,
+          "text": "limit, and gives each file a digital fingerprint\nfor later. But a careful calculation is"
+        },
+        {
+          "start": 42.282,
+          "end": 48.127,
+          "text": "still only as good as the world described to it.\nSWMM cannot see a missing"
+        },
+        {
+          "start": 48.127,
+          "end": 54.604,
+          "text": "pipe, test the soil, or tell us whether the\nchosen storm represents reality. Exact"
+        },
+        {
+          "start": 54.604,
+          "end": 58.0,
+          "text": "calculation is not the same as field truth."
+        }
+      ],
+      "claim_ids": [
+        "C-GUIDED-SYNTHETIC",
+        "C-JOBS-884",
+        "C-RETAINED-20"
+      ],
+      "app_before": "home",
+      "app_after": "overview",
+      "entry_frame": "A neighborhood sketch introduces the physical system the engineer wants to understand.",
+      "exit_frame": "Direct SWMM execution, evidence post-processing, and missing field evidence remain visibly separate under Exact execution does not equal field truth.",
+      "caption_file": "captions/03_swmm_represents.srt"
+    },
+    {
+      "id": "app_overview",
+      "kind": "application",
+      "start_seconds": 230,
+      "duration_seconds": 90,
+      "screen": "guided_overview",
+      "actions": [
+        "Hold the human decision question and synthetic notice.",
+        "Move across the four rules in order.",
+        "Point to the 220 tested plans, then the ALT-017 and ALT-207 teaching callouts.",
+        "Open Inspect model limits, read the plain-language boundary, and close the Evidence Rail.",
+        "Click Start the evidence review."
+      ],
+      "narration": "Before looking at answers, we write down what good enough means. This matters: if we invent the rules after seeing a favorite, the analysis becomes a story we tell ourselves. Our fictional engineer sets four rules. First, across four practice storms, at least 6 percent less water must reach the model's outlet than in the unchanged model. That unchanged model is our baseline. Second, the 30-year screening cost must stay at or below 200 thousand dollars. Third, no storm is allowed to create a higher peak flow at the outlet. A good total cannot excuse one sharper surge. Fourth, every simulation used in the decision must pass basic numerical checks. The storms and costs are invented for this lesson. And verified replay means the saved files still match the recorded runs. It does not mean the model matches a real neighborhood. With the question and rules fixed, we can look at evidence without moving the goalposts.",
+      "caption_cues": [
+        {
+          "start": 0.5,
+          "end": 8.559,
+          "text": "Before looking at answers, we write down what\ngood enough means. This matters: if we"
+        },
+        {
+          "start": 8.559,
+          "end": 17.098,
+          "text": "invent the rules after seeing a favorite, the\nanalysis becomes a story we tell ourselves."
+        },
+        {
+          "start": 17.098,
+          "end": 26.117,
+          "text": "Our fictional engineer sets four rules. First,\nacross four practice storms, at least 6 percent"
+        },
+        {
+          "start": 26.117,
+          "end": 34.752,
+          "text": "less water must reach the model's outlet than in\nthe unchanged model. That unchanged model"
+        },
+        {
+          "start": 34.752,
+          "end": 43.003,
+          "text": "is our baseline. Second, the 30-year screening\ncost must stay at or below 200 thousand"
+        },
+        {
+          "start": 43.003,
+          "end": 50.582,
+          "text": "dollars. Third, no storm is allowed to create a\nhigher peak flow at the outlet."
+        },
+        {
+          "start": 50.582,
+          "end": 59.313,
+          "text": "A good total cannot excuse one sharper surge.\nFourth, every simulation used in the decision"
+        },
+        {
+          "start": 59.313,
+          "end": 67.756,
+          "text": "must pass basic numerical checks. The storms and\ncosts are invented for this lesson. And"
+        },
+        {
+          "start": 67.756,
+          "end": 75.911,
+          "text": "verified replay means the saved files still\nmatch the recorded runs. It does not mean"
+        },
+        {
+          "start": 75.911,
+          "end": 84.066,
+          "text": "the model matches a real neighborhood. With the\nquestion and rules fixed, we can look"
+        },
+        {
+          "start": 84.066,
+          "end": 88.0,
+          "text": "at evidence without moving the goalposts."
+        }
+      ],
+      "claim_ids": [
+        "C-GUIDED-SYNTHETIC",
+        "C-STORMS-4",
+        "C-JOBS-884",
+        "C-ALT017",
+        "C-ALT207"
+      ],
+      "caption_file": "captions/app_overview.srt"
+    },
+    {
+      "id": "04_decision_intersection",
+      "kind": "animation",
+      "scene_class": "Scene04DecisionIntersection",
+      "source_file": "src/gi_story/scenes/scene_04_decision_intersection.py",
+      "output_file": "04_decision_intersection.mp4",
+      "start_seconds": 320,
+      "duration_seconds": 40,
+      "narration": "Picture four lights wired together. Under this teaching brief, a plan advances only when all four are green: enough volume reduction, acceptable cost, no peak increase, and clean runs. ALT-207 turns on all four: more than 6 percent reduction, under 200 thousand dollars, no higher peak, and four clean runs. ALT-017 is cheaper, but two lights stay red. It misses the volume target and raises two storm peaks. We do not average red lights into green ones. One required failure stops the plan.",
+      "caption_cues": [
+        {
+          "start": 0.5,
+          "end": 7.599,
+          "text": "Picture four lights wired together. Under this\nteaching brief, a plan advances only when all"
+        },
+        {
+          "start": 7.599,
+          "end": 14.157,
+          "text": "four are green: enough volume reduction,\nacceptable cost, no peak increase, and clean"
+        },
+        {
+          "start": 14.157,
+          "end": 21.179,
+          "text": "runs. ALT-207 turns on all four: more than 6\npercent reduction, under 200 thousand dollars,"
+        },
+        {
+          "start": 21.179,
+          "end": 27.429,
+          "text": "no higher peak, and four clean runs. ALT-017 is\ncheaper, but two lights stay red."
+        },
+        {
+          "start": 27.429,
+          "end": 33.37,
+          "text": "It misses the volume target and raises two storm\npeaks. We do not average red"
+        },
+        {
+          "start": 33.37,
+          "end": 38.0,
+          "text": "lights into green ones. One required failure\nstops the plan."
+        }
+      ],
+      "claim_ids": [
+        "C-ALT017",
+        "C-ALT207"
+      ],
+      "app_before": "overview",
+      "app_after": "model",
+      "entry_frame": "Four equal rule cards enter as parallel required conditions.",
+      "exit_frame": "ALT-017's two false terms remain visible beneath the AND rail and the rule that required failures cannot be averaged away.",
+      "caption_file": "captions/04_decision_intersection.srt"
+    },
+    {
+      "id": "app_model",
+      "kind": "application",
+      "start_seconds": 360,
+      "duration_seconds": 95,
+      "screen": "model_preflight",
+      "actions": [
+        "Hold on the model file, SWMM version, units, and digital fingerprint.",
+        "Inspect the file-completeness details.",
+        "Move through the findings and stop on the missing real-world comparison.",
+        "Point to the 0.079% water-accounting mismatch and the \u00b12% teaching limit.",
+        "Open the source record and local explanation, then close it.",
+        "Check I reviewed the preflight findings.",
+        "Click Review synthetic storm cases."
+      ],
+      "narration": "Before comparing plans, the app checks the unchanged model and the saved study. It identifies the exact software version, confirms that every required file is present, opens the model, and confirms that the four stored starting runs completed. The largest water-accounting mismatch is less than one tenth of one percent, comfortably inside this lesson's warning limit. So the saved calculation completed cleanly. One caution remains. No observed storm and no trusted prior result were supplied for comparison. The screen therefore says model fitness: not assessed. That label is not a failure, and it is not permission. It tells us that the saved calculation is inspectable while the model's connection to a real place remains unknown. The acknowledgment simply records that we saw this boundary.",
+      "caption_cues": [
+        {
+          "start": 0.5,
+          "end": 10.138,
+          "text": "Before comparing plans, the app checks the\nunchanged model and the saved study. It"
+        },
+        {
+          "start": 10.138,
+          "end": 21.186,
+          "text": "identifies the exact software version, confirms\nthat every required file is present, opens the"
+        },
+        {
+          "start": 21.186,
+          "end": 30.236,
+          "text": "model, and confirms that the four stored\nstarting runs completed. The largest"
+        },
+        {
+          "start": 30.236,
+          "end": 41.637,
+          "text": "water-accounting mismatch is less than one tenth\nof one percent, comfortably inside this lesson's"
+        },
+        {
+          "start": 41.637,
+          "end": 51.275,
+          "text": "warning limit. So the saved calculation\ncompleted cleanly. One caution remains. No"
+        },
+        {
+          "start": 51.275,
+          "end": 62.206,
+          "text": "observed storm and no trusted prior result were\nsupplied for comparison. The screen therefore"
+        },
+        {
+          "start": 62.206,
+          "end": 71.139,
+          "text": "says model fitness: not assessed. That label is\nnot a failure, and it is not"
+        },
+        {
+          "start": 71.139,
+          "end": 80.894,
+          "text": "permission. It tells us that the saved\ncalculation is inspectable while the model's"
+        },
+        {
+          "start": 80.894,
+          "end": 91.942,
+          "text": "connection to a real place remains unknown. The\nacknowledgment simply records that we saw this"
+        },
+        {
+          "start": 91.942,
+          "end": 93.0,
+          "text": "boundary."
+        }
+      ],
+      "claim_ids": [
+        "C-GUIDED-SYNTHETIC",
+        "C-STORMS-4",
+        "C-QA-0079"
+      ],
+      "caption_file": "captions/app_model.srt"
+    },
+    {
+      "id": "05_qa_vs_fitness",
+      "kind": "animation",
+      "scene_class": "Scene05QaVsFitness",
+      "source_file": "src/gi_story/scenes/scene_05_qa_vs_fitness.py",
+      "output_file": "05_qa_vs_fitness.mp4",
+      "start_seconds": 455,
+      "duration_seconds": 40,
+      "narration": "A navigation app can follow its map perfectly even when a real road has closed. Drainage models have the same two questions. Did the software run cleanly and account for the water? For Cedar Trace, yes. Does this simplified model describe a real neighborhood well enough for this decision? We do not know. No observed events or approved reference result were supplied. Clean execution earns confidence in the calculation. It does not earn confidence in the world the calculation describes.",
+      "caption_cues": [
+        {
+          "start": 0.5,
+          "end": 6.621,
+          "text": "A navigation app can follow its map perfectly\neven when a real road has closed."
+        },
+        {
+          "start": 6.621,
+          "end": 13.517,
+          "text": "Drainage models have the same two questions. Did\nthe software run cleanly and account for"
+        },
+        {
+          "start": 13.517,
+          "end": 20.335,
+          "text": "the water? For Cedar Trace, yes. Does this\nsimplified model describe a real neighborhood"
+        },
+        {
+          "start": 20.335,
+          "end": 27.075,
+          "text": "well enough for this decision? We do not know.\nNo observed events or approved reference"
+        },
+        {
+          "start": 27.075,
+          "end": 34.126,
+          "text": "result were supplied. Clean execution earns\nconfidence in the calculation. It does not earn"
+        },
+        {
+          "start": 34.126,
+          "end": 38.0,
+          "text": "confidence in the world the calculation\ndescribes."
+        }
+      ],
+      "claim_ids": [
+        "C-GUIDED-SYNTHETIC",
+        "C-QA-0079"
+      ],
+      "app_before": "model",
+      "app_after": "storms",
+      "entry_frame": "Two empty evidence columns ask whether the computation ran cleanly and whether the model fits the real decision.",
+      "exit_frame": "Accepted execution evidence and unresolved site evidence remain independent under A clean run is not a fit model.",
+      "caption_file": "captions/05_qa_vs_fitness.srt"
+    },
+    {
+      "id": "app_storms",
+      "kind": "application",
+      "start_seconds": 495,
+      "duration_seconds": 95,
+      "screen": "storms",
+      "actions": [
+        "Hold on the labels that identify all four storms as artificial teaching cases.",
+        "Move through the four rainfall amounts, durations, and rain-over-time shapes.",
+        "Open and close the long-duration Evidence Rail.",
+        "Point to the stress-event rain chart and its accessible table.",
+        "Point to the checks showing that only the rain changes between comparisons.",
+        "Click Review GI opportunities."
+      ],
+      "narration": "Rainfall is not just a depth; timing matters. An inch falling gradually can interact with storage very differently from two inches arriving mostly at the beginning. Cedar Trace uses four artificial rain patterns so we can see that difference. One inch over one hour. Two inches over one hour, weighted toward the front. Two and a half inches spread over four hours. And a four-inch, two-hour stress test. These are not historical storms or official design events. They are practice questions. Everything else in the model stays the same while the rain changes, so the comparison is fair inside this example. One surprising lesson will come from the long, four-hour event: it creates ALT-017's worst increase at the outlet even though another storm has a much larger overall peak. The biggest storm is not automatically the one that controls every decision.",
+      "caption_cues": [
+        {
+          "start": 0.5,
+          "end": 10.22,
+          "text": "Rainfall is not just a depth; timing matters. An\ninch falling gradually can interact with"
+        },
+        {
+          "start": 10.22,
+          "end": 19.612,
+          "text": "storage very differently from two inches\narriving mostly at the beginning. Cedar Trace"
+        },
+        {
+          "start": 19.612,
+          "end": 28.676,
+          "text": "uses four artificial rain patterns so we can see\nthat difference. One inch over one"
+        },
+        {
+          "start": 28.676,
+          "end": 37.413,
+          "text": "hour. Two inches over one hour, weighted toward\nthe front. Two and a half inches"
+        },
+        {
+          "start": 37.413,
+          "end": 46.914,
+          "text": "spread over four hours. And a four-inch,\ntwo-hour stress test. These are not historical"
+        },
+        {
+          "start": 46.914,
+          "end": 56.852,
+          "text": "storms or official design events. They are\npractice questions. Everything else in the model"
+        },
+        {
+          "start": 56.852,
+          "end": 66.135,
+          "text": "stays the same while the rain changes, so the\ncomparison is fair inside this example."
+        },
+        {
+          "start": 66.135,
+          "end": 75.963,
+          "text": "One surprising lesson will come from the long,\nfour-hour event: it creates ALT-017's worst"
+        },
+        {
+          "start": 75.963,
+          "end": 85.137,
+          "text": "increase at the outlet even though another storm\nhas a much larger overall peak. The"
+        },
+        {
+          "start": 85.137,
+          "end": 93.0,
+          "text": "biggest storm is not automatically the one that\ncontrols every decision."
+        }
+      ],
+      "claim_ids": [
+        "C-GUIDED-SYNTHETIC",
+        "C-STORMS-4",
+        "C-ALT017"
+      ],
+      "caption_file": "captions/app_storms.srt"
+    },
+    {
+      "id": "06_four_responses",
+      "kind": "animation",
+      "scene_class": "Scene06FourResponses",
+      "source_file": "src/gi_story/scenes/scene_06_storm_response.py",
+      "output_file": "06_four_responses.mp4",
+      "start_seconds": 590,
+      "duration_seconds": 50,
+      "narration": "Now take one plan and run it through all four rain patterns. We get four answers, not one. For total volume, adding the four storm totals is useful because our teaching rule asks about their combined reduction. For peak flow, adding or averaging would destroy the question we care about: did any single storm get worse? So each peak keeps its own before-and-after comparison. ALT-017 lowers two peaks, but raises two. The long storm is worst, up 0.07 cubic feet per second. If we squash everything into one score, that red warning can disappear. Every summary is a choice about what to forget.",
+      "caption_cues": [
+        {
+          "start": 0.5,
+          "end": 6.336,
+          "text": "Now take one plan and run it through all four\nrain patterns. We get four"
+        },
+        {
+          "start": 6.336,
+          "end": 13.307,
+          "text": "answers, not one. For total volume, adding the\nfour storm totals is useful because our"
+        },
+        {
+          "start": 13.307,
+          "end": 20.197,
+          "text": "teaching rule asks about their combined\nreduction. For peak flow, adding or averaging"
+        },
+        {
+          "start": 20.197,
+          "end": 26.763,
+          "text": "would destroy the question we care about: did\nany single storm get worse? So each"
+        },
+        {
+          "start": 26.763,
+          "end": 34.301,
+          "text": "peak keeps its own before-and-after comparison.\nALT-017 lowers two peaks, but raises two. The"
+        },
+        {
+          "start": 34.301,
+          "end": 40.786,
+          "text": "long storm is worst, up 0.07 cubic feet per\nsecond. If we squash everything into"
+        },
+        {
+          "start": 40.786,
+          "end": 47.433,
+          "text": "one score, that red warning can disappear. Every\nsummary is a choice about what to"
+        },
+        {
+          "start": 47.433,
+          "end": 48.0,
+          "text": "forget."
+        }
+      ],
+      "claim_ids": [
+        "C-STORMS-4",
+        "C-ALT017"
+      ],
+      "app_before": "storms",
+      "app_after": "opportunities",
+      "entry_frame": "ALT-017's bounded deployment vector appears as one question for four storms.",
+      "exit_frame": "All four storm responses remain visible under Sum volume, test peaks one by one.",
+      "caption_file": "captions/06_four_responses.srt"
+    },
+    {
+      "id": "app_opportunities",
+      "kind": "application",
+      "start_seconds": 640,
+      "duration_seconds": 95,
+      "screen": "opportunities",
+      "actions": [
+        "Hold on the question describing what the software is allowed to change.",
+        "Select bioretention, permeable pavement, rain gardens, and rain barrels in turn.",
+        "For each practice, show the space used, whole-number limit, and where its water goes.",
+        "Point to Schematic, Not site geometry, Demo approval only, and Read only while explaining those limits.",
+        "Click Review teaching objectives."
+      ],
+      "narration": "Now we decide what the software is allowed to change. Not pipe sizes. Not soil properties. Not the design of a rain garden. Only four whole-number counts of additional units at four teaching locations: planted bioretention, areas of permeable pavement, rain gardens, and groups of rain barrels. Each location has a maximum count and a stated drainage destination. The map is a diagram, not surveyed geometry. The engineering details of each practice stay fixed. The search can ask, for example, what happens after adding zero bioretention units, three pavement units, two rain-garden units, and six barrel groups to the unchanged model? It cannot invent a new soil mix or pretend a utility conflict does not exist. Automation is useful when it explores choices an engineer has deliberately admitted. Here, demo approved means allowed into the lesson\u2014not feasible, constructible, or approved for a real site.",
+      "caption_cues": [
+        {
+          "start": 0.5,
+          "end": 8.543,
+          "text": "Now we decide what the software is allowed to\nchange. Not pipe sizes. Not soil"
+        },
+        {
+          "start": 8.543,
+          "end": 17.618,
+          "text": "properties. Not the design of a rain garden.\nOnly four whole-number counts of additional"
+        },
+        {
+          "start": 17.618,
+          "end": 26.796,
+          "text": "units at four teaching locations: planted\nbioretention, areas of permeable pavement, rain"
+        },
+        {
+          "start": 26.796,
+          "end": 35.355,
+          "text": "gardens, and groups of rain barrels. Each\nlocation has a maximum count and a stated"
+        },
+        {
+          "start": 35.355,
+          "end": 44.945,
+          "text": "drainage destination. The map is a diagram, not\nsurveyed geometry. The engineering details of"
+        },
+        {
+          "start": 44.945,
+          "end": 54.123,
+          "text": "each practice stay fixed. The search can ask,\nfor example, what happens after adding zero"
+        },
+        {
+          "start": 54.123,
+          "end": 63.713,
+          "text": "bioretention units, three pavement units, two\nrain-garden units, and six barrel groups to the"
+        },
+        {
+          "start": 63.713,
+          "end": 72.273,
+          "text": "unchanged model? It cannot invent a new soil mix\nor pretend a utility conflict does"
+        },
+        {
+          "start": 72.273,
+          "end": 82.069,
+          "text": "not exist. Automation is useful when it explores\nchoices an engineer has deliberately admitted."
+        },
+        {
+          "start": 82.069,
+          "end": 91.35,
+          "text": "Here, demo approved means allowed into the\nlesson\u2014not feasible, constructible, or approved"
+        },
+        {
+          "start": 91.35,
+          "end": 93.0,
+          "text": "for a real site."
+        }
+      ],
+      "claim_ids": [
+        "C-GUIDED-SYNTHETIC",
+        "C-UNIVERSE-700"
+      ],
+      "caption_file": "captions/app_opportunities.srt"
+    },
+    {
+      "id": "07_bounded_search_space",
+      "kind": "animation",
+      "scene_class": "Scene07BoundedSearchSpace",
+      "source_file": "src/gi_story/scenes/scene_07_bounded_search_space.py",
+      "output_file": "07_bounded_search_space.mp4",
+      "start_seconds": 735,
+      "duration_seconds": 75,
+      "narration": "Those four additional-unit counts work like four dials. The first has five settings, the second four, the third five, and the fourth seven. Multiply them and we get 700 possible combinations, including the unchanged baseline. Testing every combination under four storms would require 2,800 SWMM runs. That complete study exists as a benchmark. The guided story is smaller: 220 chosen combinations, four storms each, plus four baseline runs\u2014884 runs in all. It is not every possibility, and it is not a demonstration that machine learning found a better answer. Imagine the untested combinations as face-down cards. A search method may choose which card to turn over next. That choice is a question, not an answer. Only a direct SWMM run can reveal the modeled hydraulics. Search decides where to look. SWMM supplies what we see.",
+      "caption_cues": [
+        {
+          "start": 0.5,
+          "end": 8.91,
+          "text": "Those four additional-unit counts work like four\ndials. The first has five settings, the second"
+        },
+        {
+          "start": 8.91,
+          "end": 16.08,
+          "text": "four, the third five, and the fourth seven.\nMultiply them and we get 700 possible"
+        },
+        {
+          "start": 16.08,
+          "end": 24.136,
+          "text": "combinations, including the unchanged baseline.\nTesting every combination under four storms"
+        },
+        {
+          "start": 24.136,
+          "end": 32.103,
+          "text": "would require 2,800 SWMM runs. That complete\nstudy exists as a benchmark. The guided story"
+        },
+        {
+          "start": 32.103,
+          "end": 40.512,
+          "text": "is smaller: 220 chosen combinations, four storms\neach, plus four baseline runs\u2014884 runs in all."
+        },
+        {
+          "start": 40.512,
+          "end": 48.125,
+          "text": "It is not every possibility, and it is not a\ndemonstration that machine learning found"
+        },
+        {
+          "start": 48.125,
+          "end": 55.738,
+          "text": "a better answer. Imagine the untested\ncombinations as face-down cards. A search method"
+        },
+        {
+          "start": 55.738,
+          "end": 62.289,
+          "text": "may choose which card to turn over next. That\nchoice is a question, not an"
+        },
+        {
+          "start": 62.289,
+          "end": 70.167,
+          "text": "answer. Only a direct SWMM run can reveal the\nmodeled hydraulics. Search decides where to"
+        },
+        {
+          "start": 70.167,
+          "end": 73.0,
+          "text": "look. SWMM supplies what we see."
+        }
+      ],
+      "claim_ids": [
+        "C-UNIVERSE-700",
+        "C-BENCHMARK-2800",
+        "C-ML-BOUNDARY",
+        "C-JOBS-884"
+      ],
+      "app_before": "opportunities",
+      "app_after": "goals",
+      "entry_frame": "Four discrete opportunity ranges reveal the 700-vector question space.",
+      "exit_frame": "A face-down candidate passes through direct SWMM execution before modeled hydraulic quantities appear, ending on Search chooses the card; SWMM computes the answer.",
+      "caption_file": "captions/07_bounded_search_space.srt"
+    },
+    {
+      "id": "app_goals",
+      "kind": "application",
+      "start_seconds": 810,
+      "duration_seconds": 80,
+      "screen": "goals",
+      "actions": [
+        "Hold on the fictional decision brief and its four fixed rules.",
+        "Move through all four rule cards.",
+        "Point to the outlet units and the comparison with the unchanged model.",
+        "Point to the fictional 2026-dollar, 30-year, and 3% cost assumptions.",
+        "Point to the requirement for four completed runs.",
+        "Hold on the narrow zero-modeled-flooding caution and the ALT-017 warning.",
+        "Click Review verified replay."
+      ],
+      "narration": "The four plain-language rules now become checks the computer can apply consistently. Water volume is measured at the same outlet and compared with the same unchanged model. Peak flow is checked separately for every storm. The teaching cost rolls installation, future upkeep, and replacement over 30 years into one today-dollar screening estimate. It keeps the lesson consistent; it is not a contractor's price or a local budget. Every option also needs four completed SWMM runs and clean numerical checks. If this tiny model reports zero for a flooding measure, that remains a modeled result\u2014not a promise that a real street stays dry. The point of this screen is not to add more numbers. It is to stop the meaning of success from changing after an attractive plan appears.",
+      "caption_cues": [
+        {
+          "start": 0.5,
+          "end": 9.618,
+          "text": "The four plain-language rules now become checks\nthe computer can apply consistently. Water"
+        },
+        {
+          "start": 9.618,
+          "end": 18.33,
+          "text": "volume is measured at the same outlet and\ncompared with the same unchanged model. Peak"
+        },
+        {
+          "start": 18.33,
+          "end": 28.056,
+          "text": "flow is checked separately for every storm. The\nteaching cost rolls installation, future upkeep,"
+        },
+        {
+          "start": 28.056,
+          "end": 36.565,
+          "text": "and replacement over 30 years into one\ntoday-dollar screening estimate. It keeps the"
+        },
+        {
+          "start": 36.565,
+          "end": 45.278,
+          "text": "lesson consistent; it is not a contractor's\nprice or a local budget. Every option also"
+        },
+        {
+          "start": 45.278,
+          "end": 53.889,
+          "text": "needs four completed SWMM runs and clean\nnumerical checks. If this tiny model reports"
+        },
+        {
+          "start": 53.889,
+          "end": 62.399,
+          "text": "zero for a flooding measure, that remains a\nmodeled result\u2014not a promise that a real"
+        },
+        {
+          "start": 62.399,
+          "end": 69.794,
+          "text": "street stays dry. The point of this screen is\nnot to add more numbers. It"
+        },
+        {
+          "start": 69.794,
+          "end": 78.0,
+          "text": "is to stop the meaning of success from changing\nafter an attractive plan appears."
+        }
+      ],
+      "claim_ids": [
+        "C-COST-BASIS",
+        "C-STORMS-4",
+        "C-JOBS-884"
+      ],
+      "caption_file": "captions/app_goals.srt"
+    },
+    {
+      "id": "08_job_matrix",
+      "kind": "animation",
+      "scene_class": "Scene08JobMatrix",
+      "source_file": "src/gi_story/scenes/scene_08_job_matrix.py",
+      "output_file": "08_job_matrix.mp4",
+      "start_seconds": 890,
+      "duration_seconds": 50,
+      "narration": "Here is where 884 comes from. Put the four storms across the top. The unchanged model fills the first four squares. Then each of 220 plans gets a row of four more squares\u2014one real SWMM run per storm. Four plus 220 times four equals 884. Each square keeps the result, the numerical check, and digital fingerprints of its files. The project also keeps complete input, report, and output files for the four baseline runs and for four teaching plans under four storms: 20 full evidence sets. Opening those finished records is a replay. Running all 884 again would be a new experiment. A replay is a receipt, not a progress bar.",
+      "caption_cues": [
+        {
+          "start": 0.5,
+          "end": 6.592,
+          "text": "Here is where 884 comes from. Put the four\nstorms across the top. The unchanged"
+        },
+        {
+          "start": 6.592,
+          "end": 12.144,
+          "text": "model fills the first four squares. Then each of\n220 plans gets a row of"
+        },
+        {
+          "start": 12.144,
+          "end": 18.544,
+          "text": "four more squares\u2014one real SWMM run per storm.\nFour plus 220 times four equals 884."
+        },
+        {
+          "start": 18.544,
+          "end": 25.407,
+          "text": "Each square keeps the result, the numerical\ncheck, and digital fingerprints of its files."
+        },
+        {
+          "start": 25.407,
+          "end": 32.347,
+          "text": "The project also keeps complete input, report,\nand output files for the four baseline runs"
+        },
+        {
+          "start": 32.347,
+          "end": 39.441,
+          "text": "and for four teaching plans under four storms:\n20 full evidence sets. Opening those finished"
+        },
+        {
+          "start": 39.441,
+          "end": 45.455,
+          "text": "records is a replay. Running all 884 again would\nbe a new experiment. A replay"
+        },
+        {
+          "start": 45.455,
+          "end": 48.0,
+          "text": "is a receipt, not a progress bar."
+        }
+      ],
+      "claim_ids": [
+        "C-JOBS-884",
+        "C-STORMS-4",
+        "C-RETAINED-20"
+      ],
+      "app_before": "goals",
+      "app_after": "run",
+      "entry_frame": "Four named storm columns receive the untouched-model baseline row.",
+      "exit_frame": "The 884-job record and 20 retained run sets resolve into the distinction between opening a verified replay and creating a new local execution record.",
+      "caption_file": "captions/08_job_matrix.srt"
+    },
+    {
+      "id": "app_run",
+      "kind": "application",
+      "start_seconds": 940,
+      "duration_seconds": 90,
+      "screen": "run_verified_replay",
+      "actions": [
+        "Hold on the sentence saying that no simulations are running now.",
+        "Trace the 4 + 220 \u00d7 4 = 884 equation.",
+        "Point to the completed job count, SWMM version, 220 plans, and accepted numerical checks.",
+        "Point to replay versus rerun; do not attempt a rerun in this recording.",
+        "Move through the saved execution-record rows as receipts, not progress.",
+        "Click Compare pinned alternatives."
+      ],
+      "narration": "This screen is showing receipts, not pretending to run a simulation. The 884 jobs were completed earlier and stored in a manifest\u2014a list of what ran and which files belong to each result. It names the fixed SWMM version, the 220 plans, the four storms, and the numerical check for every job. The plans were ordered in a repeatable way chosen in advance; machine learning did not select this guided set. A local rerun would be different: the app would launch SWMM again, show real progress, and compare the new answers with the stored ones. That control appears only when the expected engine is actually available. It is not available in this recording, so the app does not fake it. Replay lets us inspect what happened. Rerun lets us test whether it happens again. Neither should be confused with work currently running.",
+      "caption_cues": [
+        {
+          "start": 0.5,
+          "end": 9.779,
+          "text": "This screen is showing receipts, not pretending\nto run a simulation. The 884 jobs were"
+        },
+        {
+          "start": 9.779,
+          "end": 18.842,
+          "text": "completed earlier and stored in a manifest\u2014a\nlist of what ran and which files belong"
+        },
+        {
+          "start": 18.842,
+          "end": 27.473,
+          "text": "to each result. It names the fixed SWMM version,\nthe 220 plans, the four storms,"
+        },
+        {
+          "start": 27.473,
+          "end": 36.212,
+          "text": "and the numerical check for every job. The plans\nwere ordered in a repeatable way"
+        },
+        {
+          "start": 36.212,
+          "end": 45.599,
+          "text": "chosen in advance; machine learning did not\nselect this guided set. A local rerun would"
+        },
+        {
+          "start": 45.599,
+          "end": 54.877,
+          "text": "be different: the app would launch SWMM again,\nshow real progress, and compare the new"
+        },
+        {
+          "start": 54.877,
+          "end": 63.832,
+          "text": "answers with the stored ones. That control\nappears only when the expected engine is"
+        },
+        {
+          "start": 63.832,
+          "end": 72.787,
+          "text": "actually available. It is not available in this\nrecording, so the app does not fake"
+        },
+        {
+          "start": 72.787,
+          "end": 82.066,
+          "text": "it. Replay lets us inspect what happened. Rerun\nlets us test whether it happens again."
+        },
+        {
+          "start": 82.066,
+          "end": 88.0,
+          "text": "Neither should be confused with work currently\nrunning."
+        }
+      ],
+      "claim_ids": [
+        "C-JOBS-884",
+        "C-STORMS-4",
+        "C-ML-BOUNDARY"
+      ],
+      "caption_file": "captions/app_run.srt"
+    },
+    {
+      "id": "app_acceptance_matrix",
+      "kind": "application",
+      "start_seconds": 1030,
+      "duration_seconds": 130,
+      "screen": "compare_acceptance_matrix",
+      "actions": [
+        "Hold on the decision statement and the one-of-four teaching count.",
+        "Introduce ALT-017 as the bargain-looking plan and pause on its failed volume and peak cells.",
+        "Introduce ALT-207 as the plan that clears this teaching screen and read its four passing cells.",
+        "Introduce ALT-109 as over budget and ALT-014 as the strongest volume reduction among the 220 guided plans but far over budget.",
+        "Point to stored-full-precision note and cautious handoff language.",
+        "Hold on the adverse-result lesson without opening the rail."
+      ],
+      "narration": "Now the plans become characters rather than dots. First is the bargain-looking plan, ALT-017: about 55 thousand dollars and just over 4 percent less total water. That misses our target, and its long-storm peak rises from 3.14 to 3.21 cubic feet per second. Cheap is not the same as acceptable. Next is ALT-207: about 6.4 percent less water for 190 thousand dollars. None of its four peaks rises, and every run passes its checks. It clears this teaching screen, so it is a candidate to carry forward for site and feasibility review\u2014a question to investigate, not an approval. ALT-109 offers about 7 percent reduction, but its 222-thousand-dollar cost crosses the cap. ALT-014 gives the strongest volume reduction seen among all 220 guided plans, about 8.8 percent, but costs roughly 362 thousand dollars. More hydraulic benefit can still be the wrong fit for the brief. The detailed values remain on screen, while the app evaluates the unrounded stored numbers. Among these four examples, one clears every rule. We have earned a smaller set of questions, not a design verdict.",
+      "caption_cues": [
+        {
+          "start": 0.5,
+          "end": 10.575,
+          "text": "Now the plans become characters rather than\ndots. First is the bargain-looking plan,"
+        },
+        {
+          "start": 10.575,
+          "end": 21.13,
+          "text": "ALT-017: about 55 thousand dollars and just over\n4 percent less total water. That misses"
+        },
+        {
+          "start": 21.13,
+          "end": 30.966,
+          "text": "our target, and its long-storm peak rises from\n3.14 to 3.21 cubic feet per second."
+        },
+        {
+          "start": 30.966,
+          "end": 40.801,
+          "text": "Cheap is not the same as acceptable. Next is\nALT-207: about 6.4 percent less water"
+        },
+        {
+          "start": 40.801,
+          "end": 50.397,
+          "text": "for 190 thousand dollars. None of its four peaks\nrises, and every run passes its"
+        },
+        {
+          "start": 50.397,
+          "end": 60.112,
+          "text": "checks. It clears this teaching screen, so it is\na candidate to carry forward for"
+        },
+        {
+          "start": 60.112,
+          "end": 70.427,
+          "text": "site and feasibility review\u2014a question to\ninvestigate, not an approval. ALT-109 offers"
+        },
+        {
+          "start": 70.427,
+          "end": 79.543,
+          "text": "about 7 percent reduction, but its\n222-thousand-dollar cost crosses the cap."
+        },
+        {
+          "start": 79.543,
+          "end": 89.978,
+          "text": "ALT-014 gives the strongest volume reduction\nseen among all 220 guided plans, about 8.8"
+        },
+        {
+          "start": 89.978,
+          "end": 101.253,
+          "text": "percent, but costs roughly 362 thousand dollars.\nMore hydraulic benefit can still be the wrong"
+        },
+        {
+          "start": 101.253,
+          "end": 111.328,
+          "text": "fit for the brief. The detailed values remain on\nscreen, while the app evaluates the"
+        },
+        {
+          "start": 111.328,
+          "end": 122.123,
+          "text": "unrounded stored numbers. Among these four\nexamples, one clears every rule. We have earned"
+        },
+        {
+          "start": 122.123,
+          "end": 128.0,
+          "text": "a smaller set of questions, not a design\nverdict."
+        }
+      ],
+      "claim_ids": [
+        "C-BASELINE-0748",
+        "C-ALT017",
+        "C-ALT207",
+        "C-ALT109",
+        "C-ALT014",
+        "C-COST-BASIS"
+      ],
+      "caption_file": "captions/app_acceptance_matrix.srt"
+    },
+    {
+      "id": "09_hidden_dimension",
+      "kind": "animation",
+      "scene_class": "Scene09HiddenDimension",
+      "source_file": "src/gi_story/scenes/scene_09_hidden_dimension.py",
+      "output_file": "09_hidden_dimension.mp4",
+      "start_seconds": 1160,
+      "duration_seconds": 60,
+      "narration": "Why did ALT-017 look so good at the beginning? Because a flat plot is a shadow. Here, better means farther left for lower cost and higher for more volume reduction. Along the visible edge, no other tested plan is at least as cheap and at least as effective while improving one of those measures. Engineers call a point like that nondominated, and the edge a Pareto frontier. The names sound like verdicts. They only describe this two-number picture. Bring back the 6 percent target and ALT-017 falls short. Bring back each storm's peak and two red increases appear. Then remember that the model's real-world fitness is still unknown. A Pareto frontier is a useful map of one tradeoff. It is not the border between acceptable and unacceptable.",
+      "caption_cues": [
+        {
+          "start": 0.5,
+          "end": 6.062,
+          "text": "Why did ALT-017 look so good at the beginning?\nBecause a flat plot is a"
+        },
+        {
+          "start": 6.062,
+          "end": 13.269,
+          "text": "shadow. Here, better means farther left for\nlower cost and higher for more volume reduction."
+        },
+        {
+          "start": 13.269,
+          "end": 18.909,
+          "text": "Along the visible edge, no other tested plan is\nat least as cheap and at"
+        },
+        {
+          "start": 18.909,
+          "end": 25.96,
+          "text": "least as effective while improving one of those\nmeasures. Engineers call a point like that"
+        },
+        {
+          "start": 25.96,
+          "end": 32.697,
+          "text": "nondominated, and the edge a Pareto frontier.\nThe names sound like verdicts. They only"
+        },
+        {
+          "start": 32.697,
+          "end": 40.217,
+          "text": "describe this two-number picture. Bring back the\n6 percent target and ALT-017 falls short. Bring"
+        },
+        {
+          "start": 40.217,
+          "end": 46.719,
+          "text": "back each storm's peak and two red increases\nappear. Then remember that the model's"
+        },
+        {
+          "start": 46.719,
+          "end": 53.535,
+          "text": "real-world fitness is still unknown. A Pareto\nfrontier is a useful map of one tradeoff."
+        },
+        {
+          "start": 53.535,
+          "end": 58.0,
+          "text": "It is not the border between acceptable and\nunacceptable."
+        }
+      ],
+      "claim_ids": [
+        "C-ALT017",
+        "C-ALT207",
+        "C-ML-BOUNDARY"
+      ],
+      "app_before": "acceptance_matrix",
+      "app_after": "tradeoff",
+      "entry_frame": "Four teaching alternatives enter with volume, cost, peak, and QA dimensions visible.",
+      "exit_frame": "The cost-volume projection restores its hidden peak dimension and holds Pareto frontier does not equal acceptance boundary.",
+      "caption_file": "captions/09_hidden_dimension.srt"
+    },
+    {
+      "id": "app_tradeoff",
+      "kind": "application",
+      "start_seconds": 1220,
+      "duration_seconds": 90,
+      "screen": "compare_supporting_views",
+      "actions": [
+        "Hold on the cost-volume Tradeoff plot and legend.",
+        "Select ALT-017 and ALT-207.",
+        "Change the chart measure to maximum outlet peak and back, explaining that this is another view of saved results.",
+        "Open Storm results, numerical-check context, and Accessible table.",
+        "Return to Tradeoff and the adverse-result lesson."
+      ],
+      "narration": "Now the plot has a proper job: exploration. The teal edge shows the cost-versus-volume tradeoff we just named. Each gray dot has a tested competitor that is at least as cheap and effective, and better on one of those measures. The ochre dots are our four teaching plans with complete files ready to inspect. Select ALT-017 beside ALT-207. The first is cheaper. The second clears the full brief. Neither fact cancels the other. We can change the vertical measure, open the four storm results, or read the accessible table instead of the chart. Each view opens another window onto the same stored simulations; none creates a new run. Use the plot to decide where to look. Use the declared rules to decide what passes this screen.",
+      "caption_cues": [
+        {
+          "start": 0.5,
+          "end": 12.061,
+          "text": "Now the plot has a proper job: exploration. The\nteal edge shows the cost-versus-volume tradeoff"
+        },
+        {
+          "start": 12.061,
+          "end": 20.823,
+          "text": "we just named. Each gray dot has a tested\ncompetitor that is at least as"
+        },
+        {
+          "start": 20.823,
+          "end": 30.559,
+          "text": "cheap and effective, and better on one of those\nmeasures. The ochre dots are our"
+        },
+        {
+          "start": 30.559,
+          "end": 41.755,
+          "text": "four teaching plans with complete files ready to\ninspect. Select ALT-017 beside ALT-207. The"
+        },
+        {
+          "start": 41.755,
+          "end": 52.221,
+          "text": "first is cheaper. The second clears the full\nbrief. Neither fact cancels the other. We"
+        },
+        {
+          "start": 52.221,
+          "end": 63.174,
+          "text": "can change the vertical measure, open the four\nstorm results, or read the accessible table"
+        },
+        {
+          "start": 63.174,
+          "end": 74.248,
+          "text": "instead of the chart. Each view opens another\nwindow onto the same stored simulations; none"
+        },
+        {
+          "start": 74.248,
+          "end": 83.132,
+          "text": "creates a new run. Use the plot to decide where\nto look. Use the declared"
+        },
+        {
+          "start": 83.132,
+          "end": 88.0,
+          "text": "rules to decide what passes this screen."
+        }
+      ],
+      "claim_ids": [
+        "C-JOBS-884",
+        "C-ALT017",
+        "C-ALT207",
+        "C-GUIDED-SYNTHETIC"
+      ],
+      "caption_file": "captions/app_tradeoff.srt"
+    },
+    {
+      "id": "10_evidence_chain",
+      "kind": "animation",
+      "scene_class": "Scene10EvidenceChain",
+      "source_file": "src/gi_story/scenes/scene_10_evidence_chain.py",
+      "output_file": "10_evidence_chain.mp4",
+      "start_seconds": 1310,
+      "duration_seconds": 60,
+      "narration": "Take one red number: plus 0.07 cubic feet per second. Imagine handing it to another engineer. Their first question should be, compared with what? The answer is the long storm: 3.14 in the unchanged model, 3.21 in ALT-017. Then comes the receipt. This plan added one rain-garden unit and six rain-barrel units. The project stores that compactly as zero, zero, one, six. It wrote the change into an input file, ran the fixed SWMM version, kept the report and detailed output, identified the files with digital fingerprints, and recorded the numerical check. That chain is called provenance: a path from a claim back to what created it. It shows how the number was made. It does not prove the model matches the real world.",
+      "caption_cues": [
+        {
+          "start": 0.5,
+          "end": 7.212,
+          "text": "Take one red number: plus 0.07 cubic feet per\nsecond. Imagine handing it to another"
+        },
+        {
+          "start": 7.212,
+          "end": 14.006,
+          "text": "engineer. Their first question should be,\ncompared with what? The answer is the long"
+        },
+        {
+          "start": 14.006,
+          "end": 20.961,
+          "text": "storm: 3.14 in the unchanged model, 3.21 in\nALT-017. Then comes the receipt. This plan"
+        },
+        {
+          "start": 20.961,
+          "end": 28.239,
+          "text": "added one rain-garden unit and six rain-barrel\nunits. The project stores that compactly as"
+        },
+        {
+          "start": 28.239,
+          "end": 34.305,
+          "text": "zero, zero, one, six. It wrote the change into\nan input file, ran the fixed"
+        },
+        {
+          "start": 34.305,
+          "end": 41.098,
+          "text": "SWMM version, kept the report and detailed\noutput, identified the files with digital"
+        },
+        {
+          "start": 41.098,
+          "end": 48.7,
+          "text": "fingerprints, and recorded the numerical check.\nThat chain is called provenance: a path from a"
+        },
+        {
+          "start": 48.7,
+          "end": 54.523,
+          "text": "claim back to what created it. It shows how the\nnumber was made. It does"
+        },
+        {
+          "start": 54.523,
+          "end": 58.0,
+          "text": "not prove the model matches the real world."
+        }
+      ],
+      "claim_ids": [
+        "C-ALT017",
+        "C-JOBS-884",
+        "C-EVIDENCE-CHAIN"
+      ],
+      "app_before": "tradeoff",
+      "app_after": "evidence_rail",
+      "entry_frame": "The +0.07 cfs claim appears alone and asks Compared with what?",
+      "exit_frame": "The causal evidence snake resolves into a right-side Evidence Rail and keeps the claim inside its actual boundary.",
+      "caption_file": "captions/10_evidence_chain.srt"
+    },
+    {
+      "id": "app_evidence_rail",
+      "kind": "application",
+      "start_seconds": 1370,
+      "duration_seconds": 110,
+      "screen": "evidence_rail",
+      "actions": [
+        "Open ALT-017 and select Explain how to use this.",
+        "Hold until both recorded peak increases are readable: 3.14 to 3.21 cfs and 13.33 to 13.34 cfs.",
+        "Move to the Evidence Guide and hold on the checked release-gate failure; do not attempt a model call.",
+        "Close ALT-017, open ALT-207, and select its built-in explanation.",
+        "Hold on the ecological boundary covering water quality, recharge, habitat, heat, flooding, maintenance, and lifecycle effects.",
+        "Keep the browser-preview label visible; do not imply this is packaged desktop execution."
+      ],
+      "narration": "Inside the app, open ALT-017 and ask for the built-in explanation. It does something deliberately unglamorous: it copies both recorded peak failures from local evidence. The long event rises from 3.14 to 3.21 cubic feet per second; the stress event rises from 13.33 to 13.34. These are not values remembered by a language model. Just below them, the model-backed Evidence Guide is held behind its release gate. The evaluation selected no model, so the interface makes no inference call and substitutes no plausible-sounding answer. That is what fail closed means: the optional explanation disappears, while the evidence stays useful. Now move to ALT-207. It passes the four synthetic teaching rules, but hydrology is not ecology. These runs do not measure water quality, groundwater recharge, habitat, heat, actual flooding, maintenance, or lifecycle effects. The rail keeps what the model supports beside what remains unknown. Computation can organize evidence; it cannot enlarge it.",
+      "caption_cues": [
+        {
+          "start": 0.5,
+          "end": 9.781,
+          "text": "Inside the app, open ALT-017 and ask for the\nbuilt-in explanation. It does something"
+        },
+        {
+          "start": 9.781,
+          "end": 19.503,
+          "text": "deliberately unglamorous: it copies both\nrecorded peak failures from local evidence. The"
+        },
+        {
+          "start": 19.503,
+          "end": 28.342,
+          "text": "long event rises from 3.14 to 3.21 cubic feet\nper second; the stress event rises"
+        },
+        {
+          "start": 28.342,
+          "end": 37.622,
+          "text": "from 13.33 to 13.34. These are not values\nremembered by a language model. Just below"
+        },
+        {
+          "start": 37.622,
+          "end": 48.008,
+          "text": "them, the model-backed Evidence Guide is held\nbehind its release gate. The evaluation selected"
+        },
+        {
+          "start": 48.008,
+          "end": 57.73,
+          "text": "no model, so the interface makes no inference\ncall and substitutes no plausible-sounding"
+        },
+        {
+          "start": 57.73,
+          "end": 67.232,
+          "text": "answer. That is what fail closed means: the\noptional explanation disappears, while the"
+        },
+        {
+          "start": 67.232,
+          "end": 77.396,
+          "text": "evidence stays useful. Now move to ALT-207. It\npasses the four synthetic teaching rules, but"
+        },
+        {
+          "start": 77.396,
+          "end": 87.119,
+          "text": "hydrology is not ecology. These runs do not\nmeasure water quality, groundwater recharge,"
+        },
+        {
+          "start": 87.119,
+          "end": 97.725,
+          "text": "habitat, heat, actual flooding, maintenance, or\nlifecycle effects. The rail keeps what the model"
+        },
+        {
+          "start": 97.725,
+          "end": 106.785,
+          "text": "supports beside what remains unknown.\nComputation can organize evidence; it cannot"
+        },
+        {
+          "start": 106.785,
+          "end": 108.0,
+          "text": "enlarge it."
+        }
+      ],
+      "claim_ids": [
+        "C-ALT017",
+        "C-ALT207",
+        "C-EVIDENCE-CHAIN",
+        "C-WANDB-BOUNDARY"
+      ],
+      "caption_file": "captions/app_evidence_rail.srt"
+    },
+    {
+      "id": "app_export_observability",
+      "kind": "application",
+      "start_seconds": 1480,
+      "duration_seconds": 95,
+      "screen": "export_and_observability",
+      "actions": [
+        "Hold on the notice that this is a synthetic learning package, not design approval.",
+        "Move through the automatically checked package requirements and inspect the saved study list.",
+        "Point to the evidence files and 20 complete run sets.",
+        "Scroll to the real-world questions an engineer must investigate next.",
+        "Download the compact local learning summary once.",
+        "Open observability status and explain in one sentence why cloud upload remains blocked.",
+        "Do not enter a key or attempt connection.",
+        "Close observability and return to Export."
+      ],
+      "narration": "The final product is not a winning dot. It is a handoff another engineer can question. The package carries the original question, the rules, the plans compared, the results, the model runs behind them, and the limitations that still matter. The app checks those pieces before enabling the learning export, then records which cases include complete input, report, and detailed output files. For this recording, we download a compact local summary. W&B can mirror the evidence for private collaboration only after the destination's access policy is verified. It is not verified here, so nothing uploads. The local receipt remains available. A good export does not make the conclusion larger. It makes the work easier for the next person to inspect.",
+      "caption_cues": [
+        {
+          "start": 0.5,
+          "end": 10.026,
+          "text": "The final product is not a winning dot. It is a\nhandoff another engineer can"
+        },
+        {
+          "start": 10.026,
+          "end": 20.93,
+          "text": "question. The package carries the original\nquestion, the rules, the plans compared, the"
+        },
+        {
+          "start": 20.93,
+          "end": 32.211,
+          "text": "results, the model runs behind them, and the\nlimitations that still matter. The app checks"
+        },
+        {
+          "start": 32.211,
+          "end": 42.488,
+          "text": "those pieces before enabling the learning\nexport, then records which cases include"
+        },
+        {
+          "start": 42.488,
+          "end": 54.02,
+          "text": "complete input, report, and detailed output\nfiles. For this recording, we download a compact"
+        },
+        {
+          "start": 54.02,
+          "end": 64.423,
+          "text": "local summary. W&B can mirror the evidence for\nprivate collaboration only after the"
+        },
+        {
+          "start": 64.423,
+          "end": 76.33,
+          "text": "destination's access policy is verified. It is\nnot verified here, so nothing uploads. The local"
+        },
+        {
+          "start": 76.33,
+          "end": 87.61,
+          "text": "receipt remains available. A good export does\nnot make the conclusion larger. It makes the"
+        },
+        {
+          "start": 87.61,
+          "end": 93.0,
+          "text": "work easier for the next person to inspect."
+        }
+      ],
+      "claim_ids": [
+        "C-JOBS-884",
+        "C-RETAINED-20",
+        "C-WANDB-BOUNDARY"
+      ],
+      "caption_file": "captions/app_export_observability.srt"
+    },
+    {
+      "id": "11_engineer_decides",
+      "kind": "animation",
+      "scene_class": "Scene11EngineerDecides",
+      "source_file": "src/gi_story/scenes/scene_11_engineer_decides.py",
+      "output_file": "11_engineer_decides.mp4",
+      "start_seconds": 1575,
+      "duration_seconds": 40,
+      "narration": "ALT-207 passes the teaching screen. Now the question moves outside the computer. Is there space? Where are the utilities? Will the soil soak up water? Who maintains it? Can it be built? Are the storms, costs, and model appropriate? Good screening does not manufacture certainty. It focuses expensive field work. ALT-207 is only a candidate to carry forward for site and feasibility review. SWMM computes. Search allocates attention. Evidence preserves the path. The engineer decides.",
+      "caption_cues": [
+        {
+          "start": 0.5,
+          "end": 7.482,
+          "text": "ALT-207 passes the teaching screen. Now the\nquestion moves outside the computer. Is there"
+        },
+        {
+          "start": 7.482,
+          "end": 13.915,
+          "text": "space? Where are the utilities? Will the soil\nsoak up water? Who maintains it? Can"
+        },
+        {
+          "start": 13.915,
+          "end": 21.29,
+          "text": "it be built? Are the storms, costs, and model\nappropriate? Good screening does not manufacture"
+        },
+        {
+          "start": 21.29,
+          "end": 28.507,
+          "text": "certainty. It focuses expensive field work.\nALT-207 is only a candidate to carry forward for"
+        },
+        {
+          "start": 28.507,
+          "end": 35.568,
+          "text": "site and feasibility review. SWMM computes.\nSearch allocates attention. Evidence preserves"
+        },
+        {
+          "start": 35.568,
+          "end": 38.0,
+          "text": "the path. The engineer decides."
+        }
+      ],
+      "claim_ids": [
+        "C-ALT207",
+        "C-GUIDED-SYNTHETIC"
+      ],
+      "app_before": "export",
+      "app_after": "closing",
+      "entry_frame": "ALT-207 enters a screening handoff explicitly separated from design approval.",
+      "exit_frame": "Field questions surround the four-line authority summary ending with The engineer decides.",
+      "caption_file": "captions/11_engineer_decides.srt"
+    },
+    {
+      "id": "app_closing",
+      "kind": "application",
+      "start_seconds": 1615,
+      "duration_seconds": 55,
+      "screen": "closing_export_home_or_decision_summary",
+      "actions": [
+        "Hold on Not design approval and professional next actions.",
+        "Return to the decision summary or Home.",
+        "Point to Open existing SWMM model.",
+        "End with an Evidence Rail affordance visible.",
+        "Hold final frame for four seconds."
+      ],
+      "narration": "The product's value is not an automatic winner. It is the ability to say: here are the plans, the rules we chose first, the reason each example passed or failed, and the model runs behind those statements. A practitioner can repeat this with an existing SWMM project, locally appropriate storm definitions, engineer-predefined locations, and local costs. The result will still depend on that model and its assumptions. But it is no longer a mysterious dot. It is a claim another engineer can open, question, and trace. That is the difference between trust this result and here is how to check it.",
+      "caption_cues": [
+        {
+          "start": 0.5,
+          "end": 7.452,
+          "text": "The product's value is not an automatic winner.\nIt is the ability to say: here"
+        },
+        {
+          "start": 7.452,
+          "end": 14.761,
+          "text": "are the plans, the rules we chose first, the\nreason each example passed or failed,"
+        },
+        {
+          "start": 14.761,
+          "end": 22.873,
+          "text": "and the model runs behind those statements. A\npractitioner can repeat this with an existing"
+        },
+        {
+          "start": 22.873,
+          "end": 30.627,
+          "text": "SWMM project, locally appropriate storm\ndefinitions, engineer-predefined locations, and"
+        },
+        {
+          "start": 30.627,
+          "end": 38.025,
+          "text": "local costs. The result will still depend on\nthat model and its assumptions. But it"
+        },
+        {
+          "start": 38.025,
+          "end": 45.245,
+          "text": "is no longer a mysterious dot. It is a claim\nanother engineer can open, question,"
+        },
+        {
+          "start": 45.245,
+          "end": 52.198,
+          "text": "and trace. That is the difference between trust\nthis result and here is how to"
+        },
+        {
+          "start": 52.198,
+          "end": 53.0,
+          "text": "check it."
+        }
+      ],
+      "claim_ids": [
+        "C-GUIDED-SYNTHETIC",
+        "C-ML-BOUNDARY",
+        "C-WANDB-BOUNDARY"
+      ],
+      "caption_file": "captions/app_closing.srt"
+    }
+  ]
+}

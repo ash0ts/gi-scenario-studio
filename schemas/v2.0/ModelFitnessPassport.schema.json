@@ -1,8 +1,27 @@
 {
   "$defs": {
+    "EvidenceAuthority": {
+      "description": "Authority carried by a claim without implying that every value is hydraulic truth.",
+      "enum": [
+        "exact_swmm",
+        "derived_exact",
+        "sourced_input",
+        "decision_rule",
+        "qa_record",
+        "model_fitness",
+        "project_record",
+        "documentation"
+      ],
+      "title": "EvidenceAuthority",
+      "type": "string"
+    },
     "EvidenceClaim": {
       "additionalProperties": false,
       "properties": {
+        "authority": {
+          "$ref": "#/$defs/EvidenceAuthority",
+          "default": "project_record"
+        },
         "claim_id": {
           "title": "Claim Id",
           "type": "string"
@@ -15,7 +34,10 @@
             "cost",
             "provenance",
             "fitness",
-            "reference_comparison"
+            "reference_comparison",
+            "derived_metric",
+            "decision_rule",
+            "limitation"
           ],
           "title": "Claim Type",
           "type": "string"
@@ -24,6 +46,18 @@
           "format": "date-time",
           "title": "Created At",
           "type": "string"
+        },
+        "derivation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Derivation"
         },
         "evidence_ids": {
           "items": {
@@ -70,6 +104,20 @@
           ],
           "default": null,
           "title": "Run Id"
+        },
+        "run_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Run Ids",
+          "type": "array"
+        },
+        "source_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Source Ids",
+          "type": "array"
         },
         "statement": {
           "title": "Statement",

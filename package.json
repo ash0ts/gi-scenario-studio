@@ -8,8 +8,23 @@
     "build": "pnpm --dir apps/desktop build",
     "test": "pnpm test:frontend && pnpm test:python",
     "test:frontend": "pnpm --dir apps/desktop test",
-    "test:python": "python3 -m pytest tests/python",
-    "check": "pnpm --dir apps/desktop check && python3 -m pytest tests/python",
-    "desktop": "pnpm --dir apps/desktop tauri dev"
+    "test:python": "uv run --no-sync --no-cache python -m pytest tests/python",
+    "check": "pnpm --dir apps/desktop check && uv run --no-sync --no-cache python -m pytest tests/python",
+    "desktop": "pnpm --dir apps/desktop tauri dev",
+    "record:article-app": "node media/gi-scenario-film/scripts/record_app_walkthrough.mjs",
+    "build:report-films:campaign": "uv run --no-sync --no-cache python scripts/run_search_benchmark_campaign.py --workers 1",
+    "build:report-films:tables": "uv run --no-sync --no-cache python scripts/build_benchmark_publication.py",
+    "build:report-films:data": "uv run --no-sync --no-cache python media/gi-scenario-report-films/scripts/build_animation_data.py",
+    "build:realistic-case-media": "uv run --no-sync --no-cache python media/gi-scenario-film/scripts/build_fehraltorf_case_media.py",
+    "test:report-films:node": "node --test media/gi-scenario-report-films/tests/*.test.mjs",
+    "render:report-films:stills": "node media/gi-scenario-report-films/scripts/render.mjs --stills-only",
+    "render:report-films": "node media/gi-scenario-report-films/scripts/render.mjs",
+    "check:report-films:stills": "node media/gi-scenario-report-films/scripts/validate.mjs --stills-only",
+    "check:report-films": "node media/gi-scenario-report-films/scripts/validate.mjs",
+    "publish:report-films:dry-run": "uv run --no-sync --no-cache python media/gi-scenario-report-films/scripts/publish_wandb.py --entity wandb --project gi-scenario-studio-article",
+    "publish:realistic-case:dry-run": "uv run --no-sync --no-cache python scripts/publish_fehraltorf_case_study.py --entity wandb --project gi-scenario-studio-article"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1"
   }
 }

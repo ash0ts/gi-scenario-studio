@@ -1,0 +1,69 @@
+{
+  "additionalProperties": false,
+  "description": "Acknowledged Weave Agents turn associated with one local assistant turn.",
+  "properties": {
+    "agent_id": {
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "agent_version": {
+      "title": "Agent Version",
+      "type": "string"
+    },
+    "conversation_id": {
+      "title": "Conversation Id",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "entity": {
+      "title": "Entity",
+      "type": "string"
+    },
+    "external_project": {
+      "title": "External Project",
+      "type": "string"
+    },
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    },
+    "reference_id": {
+      "title": "Reference Id",
+      "type": "string"
+    },
+    "root_span_id": {
+      "title": "Root Span Id",
+      "type": "string"
+    },
+    "trace_id": {
+      "title": "Trace Id",
+      "type": "string"
+    },
+    "turn_id": {
+      "title": "Turn Id",
+      "type": "string"
+    },
+    "url": {
+      "title": "Url",
+      "type": "string"
+    }
+  },
+  "required": [
+    "project_id",
+    "conversation_id",
+    "turn_id",
+    "entity",
+    "external_project",
+    "trace_id",
+    "root_span_id",
+    "url",
+    "agent_id",
+    "agent_version"
+  ],
+  "title": "WeaveConversationReference",
+  "type": "object"
+}

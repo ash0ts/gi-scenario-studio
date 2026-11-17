@@ -4,6 +4,7 @@ import random
 import sys
 from pathlib import Path
 
+import gi_scenario_core.benchmark as benchmark_module
 import pytest
 from gi_scenario_core.benchmark import (
     ExactBenchmarkRow,
@@ -16,10 +17,12 @@ from gi_scenario_core.benchmark import (
     _rank_and_crowding,
     _sync_wandb,
     _tournament_winner,
+    _trace_benchmark_scientific_batches,
     run_replay,
     score_replay,
 )
 from gi_scenario_core.contracts import CandidateSlot
+from gi_scenario_core.search import DesignCandidate
 
 
 def _rows():
@@ -212,6 +215,75 @@ def test_replay_is_deterministic_and_spends_exactly_the_budget(method):
     assert len(first["selected_design_ids"]) == 3
 
 
+def test_benchmark_fails_closed_when_scipy_is_unavailable(monkeypatch):
+    original_import = benchmark_module.importlib.import_module
+
+    def reject_scipy(name):
+        if name == "scipy":
+            raise ImportError("science extra omitted")
+        return original_import(name)
+
+    monkeypatch.setattr(benchmark_module.importlib, "import_module", reject_scipy)
+
+    with pytest.raises(RuntimeError, match="BENCHMARK_DEPENDENCY_REQUIRED.*scipy"):
+        run_replay(_payload(), _rows(), method="sobol", seed=9, budget=3)
+
+
+def test_extratrees_benchmark_rejects_a_search_fallback(monkeypatch):
+    def fallback(*args, **kwargs):
+        slots = args[0]
+        count = kwargs["count"]
+        seed = kwargs["seed"]
+        seen = {tuple(row["vector"]) for row in args[1]}
+        vectors, engine = benchmark_module.qmc_vectors(slots, count, seed, exclude=seen)
+        candidates = [
+            DesignCandidate(
+                design_id=f"fallback-{index}",
+                vector=vector,
+                source="qmc_fallback",
+                sequence=index,
+            )
+            for index, vector in enumerate(vectors)
+        ]
+        return candidates, {
+            "method": "qmc_fallback",
+            "engine": engine,
+            "reason": "scikit-learn is unavailable",
+            "exploration_count": len(candidates),
+        }
+
+    monkeypatch.setattr(benchmark_module, "propose_adaptive", fallback)
+
+    with pytest.raises(RuntimeError, match="BENCHMARK_ENGINE_MISMATCH.*ExtraTrees"):
+        run_replay(_large_payload(), _large_rows(), method="sobol_extratrees", seed=9, budget=96)
+
+
+def test_benchmark_rejects_a_qmc_engine_fallback(monkeypatch):
+    original_qmc_vectors = benchmark_module.qmc_vectors
+
+    def mislabeled_qmc(*args, **kwargs):
+        vectors, _engine = original_qmc_vectors(*args, **kwargs)
+        return vectors, "halton_cranley_patterson_fallback"
+
+    monkeypatch.setattr(benchmark_module, "qmc_vectors", mislabeled_qmc)
+
+    with pytest.raises(RuntimeError, match="BENCHMARK_ENGINE_MISMATCH.*Sobol"):
+        run_replay(_payload(), _rows(), method="sobol", seed=9, budget=3)
+
+
+def test_extratrees_replay_records_real_adaptive_batches():
+    result = run_replay(
+        _large_payload(), _large_rows(), method="sobol_extratrees", seed=17, budget=96
+    )
+
+    assert result["selection_counts"] == {"exploration": 72, "adaptive": 24}
+    assert result["method_configuration"]["variant"] == "barriered_sobol_plus_extratrees"
+    assert result["method_configuration"]["adaptive_batch_count"] == 1
+    assert result["extratrees_batches"][0]["training_rows"] == 64
+    assert result["extratrees_batches"][0]["adaptive_designs"] == 24
+    assert result["extratrees_batches"][0]["exploration_designs"] == 8
+
+
 def test_nsga2_replay_records_environmental_generations_without_budget_or_duplicate_leaks():
     first = run_replay(_large_payload(), _large_rows(), method="nsga2", seed=23, budget=96)
     second = run_replay(_large_payload(), _large_rows(), method="nsga2", seed=23, budget=96)
@@ -251,3 +323,87 @@ def test_wandb_benchmark_sync_requires_an_explicit_restricted_destination(monkey
 
     with pytest.raises(RuntimeError, match="WANDB_RESTRICTED_DESTINATION_REQUIRED"):
         _sync_wandb({"campaign_sha256": "a" * 64}, Path("unused.json"))
+
+
+def test_benchmark_adaptive_batch_traces_are_linked_and_best_effort() -> None:
+    class Adapter:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def trace_scientific_operation(self, binding, **kwargs):
+            self.calls.append((binding, kwargs))
+            if kwargs["inputs"]["batch"] == 2:
+                raise RuntimeError("Weave unavailable")
+
+    adapter = Adapter()
+    result = {
+        "method": "sobol_extratrees",
+        "campaign_sha256": "c" * 64,
+        "extratrees_batches": [
+            {
+                "batch": batch,
+                "seed": 10 + batch,
+                "training_rows": 64 + batch,
+                "candidate_pool": 256,
+                "adaptive_designs": 24,
+                "exploration_designs": 8,
+                "model_hash": str(batch) * 64,
+            }
+            for batch in (1, 2)
+        ],
+    }
+
+    summary = _trace_benchmark_scientific_batches(
+        object(),
+        "benchmark-run-1",
+        result,
+        adapter=adapter,
+    )
+
+    assert summary == {
+        "eligible_batch_count": 2,
+        "traced_batch_count": 1,
+        "failed_batch_count": 1,
+        "wandb_run_linked": True,
+    }
+    assert len(adapter.calls) == 2
+    assert all(
+        item[1]["operation"] == "adaptive_search_batch_proposal" for item in adapter.calls
+    )
+    assert all(item[1]["wandb_run_id"] == "benchmark-run-1" for item in adapter.calls)
+
+
+def test_benchmark_does_not_claim_wandb_link_when_every_trace_fails() -> None:
+    class FailingAdapter:
+        def trace_scientific_operation(self, _binding, **_kwargs):
+            raise RuntimeError("Weave unavailable")
+
+    result = {
+        "method": "sobol_extratrees",
+        "campaign_sha256": "d" * 64,
+        "extratrees_batches": [
+            {
+                "batch": 1,
+                "seed": 11,
+                "training_rows": 65,
+                "candidate_pool": 256,
+                "adaptive_designs": 24,
+                "exploration_designs": 8,
+                "model_hash": "1" * 64,
+            }
+        ],
+    }
+
+    summary = _trace_benchmark_scientific_batches(
+        object(),
+        "benchmark-run-1",
+        result,
+        adapter=FailingAdapter(),
+    )
+
+    assert summary == {
+        "eligible_batch_count": 1,
+        "traced_batch_count": 0,
+        "failed_batch_count": 1,
+        "wandb_run_linked": False,
+    }

@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="540" height="1140" viewBox="0 0 540 1140" role="img" aria-labelledby="title desc">
+  <title id="title">Three checks for choosing an explanation</title>
+  <desc id="desc">The model selects a predefined answer structure. A relevant value crossing the fixed limit requires a plan for the changed result. Changing only an irrelevant value should keep the same plan. Missing required evidence should select the insufficient-evidence plan. Both reordered, renamed presentations must behave correctly for a scenario to pass.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke"/></marker>
+    <style>
+      @font-face { font-family: Atkinson; src: url('../../gi-scenario-film/assets/fonts/AtkinsonHyperlegible-Regular.ttf'); }
+      @font-face { font-family: Atkinson; src: url('../../gi-scenario-film/assets/fonts/AtkinsonHyperlegible-Bold.ttf'); font-weight: 700; }
+      @font-face { font-family: PlexCondensed; src: url('../../gi-scenario-film/assets/fonts/IBMPlexSansCondensed-SemiBold.ttf'); font-weight: 600; }
+      @font-face { font-family: PlexMono; src: url('../../gi-scenario-film/assets/fonts/IBMPlexMono-Regular.ttf'); }
+      .eyebrow { font: 700 21px Atkinson, sans-serif; letter-spacing: 1px; fill: #08766F; }
+      .headline { font: 600 42px PlexCondensed, Atkinson, sans-serif; fill: #17313A; }
+      .subhead { font: 400 24px Atkinson, sans-serif; fill: #48616B; }
+      .section { font: 700 30px Atkinson, sans-serif; fill: #17313A; }
+      .body { font: 400 26px Atkinson, sans-serif; fill: #17313A; }
+      .small { font: 400 21px Atkinson, sans-serif; fill: #48616B; }
+      .label { font: 700 24px Atkinson, sans-serif; letter-spacing: .4px; fill: #17313A; }
+      .tinyLabel { font: 700 18px Atkinson, sans-serif; letter-spacing: .25px; fill: #17313A; }
+      .mono { font: 400 27px PlexMono, monospace; fill: #17313A; }
+      .number { font: 600 62px PlexCondensed, Atkinson, sans-serif; fill: #17313A; }
+      .numberSmall { font: 600 46px PlexCondensed, Atkinson, sans-serif; fill: #17313A; }
+      .whiteLabel { font: 700 23px Atkinson, sans-serif; fill: white; }
+      .whiteBody { font: 400 24px Atkinson, sans-serif; fill: white; }
+    </style>
+  </defs>
+  <rect width="540" height="1140" fill="#F5F7F6"/>
+  <text x="30" y="46" class="eyebrow" text-anchor="start">CONTROLLED EVIDENCE TEST</text>
+<text x="30" y="102" class="headline" text-anchor="start">Three checks for choosing</text>
+<text x="30" y="152" class="headline" text-anchor="start">an explanation</text>
+<text x="30" y="196" class="subhead" text-anchor="start"><tspan x="30" dy="0">The model selects a plan:</tspan><tspan x="30" dy="31">a predefined answer structure.</tspan></text>
+<rect x="30" y="264" width="480" height="220" rx="22" fill="#FFFFFF" stroke="#CBD8D8" stroke-width="2"/>
+<circle cx="76" cy="325" r="27" fill="#B43D47" stroke="none" stroke-width="0"/>
+<text x="76" y="334" class="whiteLabel" text-anchor="middle">1</text>
+<text x="120" y="315" class="body" text-anchor="start"><tspan x="120" dy="0">Relevant value crosses</tspan><tspan x="120" dy="32">the fixed limit</tspan></text>
+<line x1="270" y1="364" x2="270" y2="388" stroke="#B43D47" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow)"/>
+<rect x="56" y="402" width="428" height="66" rx="12" fill="#F6E3E5" stroke="#B43D47" stroke-width="2"/>
+<text x="270" y="428" class="body" text-anchor="middle" style="fill:#B43D47"><tspan x="270" dy="0">Choose the plan for</tspan><tspan x="270" dy="29">the changed result</tspan></text>
+<rect x="30" y="516" width="480" height="220" rx="22" fill="#FFFFFF" stroke="#CBD8D8" stroke-width="2"/>
+<circle cx="76" cy="577" r="27" fill="#2F6F9F" stroke="none" stroke-width="0"/>
+<text x="76" y="586" class="whiteLabel" text-anchor="middle">2</text>
+<text x="120" y="567" class="body" text-anchor="start"><tspan x="120" dy="0">Only an irrelevant</tspan><tspan x="120" dy="32">value changes</tspan></text>
+<line x1="270" y1="616" x2="270" y2="640" stroke="#2F6F9F" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow)"/>
+<rect x="56" y="654" width="428" height="66" rx="12" fill="#E4EFF6" stroke="#2F6F9F" stroke-width="2"/>
+<text x="270" y="697" class="body" text-anchor="middle" style="fill:#2F6F9F"><tspan x="270" dy="0">Keep the same plan</tspan></text>
+<rect x="30" y="768" width="480" height="220" rx="22" fill="#FFFFFF" stroke="#CBD8D8" stroke-width="2"/>
+<circle cx="76" cy="829" r="27" fill="#A96315" stroke="none" stroke-width="0"/>
+<text x="76" y="838" class="whiteLabel" text-anchor="middle">3</text>
+<text x="120" y="819" class="body" text-anchor="start"><tspan x="120" dy="0">Required evidence</tspan><tspan x="120" dy="32">is missing</tspan></text>
+<line x1="270" y1="868" x2="270" y2="892" stroke="#A96315" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow)"/>
+<rect x="56" y="906" width="428" height="66" rx="12" fill="#F6E9D8" stroke="#A96315" stroke-width="2"/>
+<text x="270" y="932" class="body" text-anchor="middle" style="fill:#A96315"><tspan x="270" dy="0">Choose an insufficient-</tspan><tspan x="270" dy="29">evidence plan</tspan></text>
+<text x="30" y="1040" class="small" text-anchor="start"><tspan x="30" dy="0">Each scenario is shown twice, with reordered</tspan><tspan x="30" dy="30">evidence and renamed identifiers.</tspan><tspan x="30" dy="30">Both presentations must behave correctly.</tspan></text>
+</svg>

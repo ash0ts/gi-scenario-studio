@@ -1,0 +1,44 @@
+1
+00:00:00,500 --> 00:00:09,618
+The four plain-language rules now become checks
+the computer can apply consistently. Water
+
+2
+00:00:09,618 --> 00:00:18,330
+volume is measured at the same outlet and
+compared with the same unchanged model. Peak
+
+3
+00:00:18,330 --> 00:00:28,056
+flow is checked separately for every storm. The
+teaching cost rolls installation, future upkeep,
+
+4
+00:00:28,056 --> 00:00:36,565
+and replacement over 30 years into one
+today-dollar screening estimate. It keeps the
+
+5
+00:00:36,565 --> 00:00:45,278
+lesson consistent; it is not a contractor's
+price or a local budget. Every option also
+
+6
+00:00:45,278 --> 00:00:53,889
+needs four completed SWMM runs and clean
+numerical checks. If this tiny model reports
+
+7
+00:00:53,889 --> 00:01:02,399
+zero for a flooding measure, that remains a
+modeled result—not a promise that a real
+
+8
+00:01:02,399 --> 00:01:09,794
+street stays dry. The point of this screen is
+not to add more numbers. It
+
+9
+00:01:09,794 --> 00:01:18,000
+is to stop the meaning of success from changing
+after an attractive plan appears.

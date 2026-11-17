@@ -1,0 +1,168 @@
+{
+  "schema_version": "1.0",
+  "amendment_id": "gi-evidence-guide-r4b-provider-schema-amendment-2026-08-07",
+  "recorded_at": "2026-08-07",
+  "superseded_study_version": "gi-evidence-guide-grounding-r4-final",
+  "replacement_study_version": "gi-evidence-guide-grounding-r4b-final",
+  "disposition": "R4 stopped after its first time block; R4b starts from a new preregistration and output root.",
+  "r4_live_incident": {
+    "preserved_output_root": "dist/evidence-guide-r4-grounding-final-r1/live",
+    "time_block": "block-1",
+    "attempt_count": 224,
+    "provider_response_count": 0,
+    "failed_closed_count": 224,
+    "model_counts": {
+      "Qwen/Qwen3-30B-A3B-Instruct-2507": 112,
+      "ibm-granite/granite-4.1-8b": 112
+    },
+    "error_code_counts": {
+      "INFERENCE_REQUEST_FAILED": 224,
+      "trace_acknowledgement_missing": 224
+    },
+    "answers_released": 0,
+    "scientific_denominator": 0,
+    "production_release_eligible": false,
+    "receipt_references": {
+      "block_receipt_sha256": "1a6703250f61ca30fb6f63f1279b37c5d49e6253574d533f46c0f7a2d4331995",
+      "execution_receipt_sha256": "0d54448933a91b5f930daaaf544eab0f66a5574efdaf8d72ca5c5cc6d41db0a8",
+      "preregistration_sha256": "4c4e6820b319b75f369fe3f371bda41c308d0793d28de9e555980991a10d7a51"
+    }
+  },
+  "six_call_schema_diagnostic": {
+    "role": "diagnostic only; not a substantive R4 or R4b evaluation cell",
+    "call_count": 6,
+    "models": [
+      "ibm-granite/granite-4.1-8b",
+      "Qwen/Qwen3-30B-A3B-Instruct-2507"
+    ],
+    "one_call_per_model_per_condition": true,
+    "conditions": {
+      "plain_chat": {
+        "http_200": 2,
+        "http_400": 0
+      },
+      "docs_minimal_schema": {
+        "http_200": 2,
+        "http_400": 0
+      },
+      "r4_schema_shape": {
+        "http_200": 0,
+        "http_400": 2,
+        "error_type": "BadRequestError",
+        "provider_message": "Grammar error: Unimplemented keys: [\"uniqueItems\"]"
+      }
+    },
+    "successful_calls": 4,
+    "expected_unique_items_failures": 2,
+    "provider_ids_retained": false,
+    "raw_outputs_retained": false,
+    "inference": "The rejected provider grammar keyword, rather than model identity or endpoint availability, explains the uniform R4 pre-execution failures."
+  },
+  "four_call_corrected_schema_preflight": {
+    "role": "diagnostic-only pre-preregistration compatibility evidence; substantive cells remain separate",
+    "call_count": 4,
+    "http_200": 4,
+    "http_400": 0,
+    "finish_reason": "stop",
+    "provider_id_present_for_every_call": true,
+    "raw_outputs_retained": false,
+    "cells": [
+      {
+        "model_id": "ibm-granite/granite-4.1-8b",
+        "schema": "r4b_grounding_without_unique_items",
+        "prompt_tokens": 28,
+        "completion_tokens": 19
+      },
+      {
+        "model_id": "ibm-granite/granite-4.1-8b",
+        "schema": "r4b_prose_without_unique_items",
+        "prompt_tokens": 28,
+        "completion_tokens": 53
+      },
+      {
+        "model_id": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+        "schema": "r4b_grounding_without_unique_items",
+        "prompt_tokens": 28,
+        "completion_tokens": 16
+      },
+      {
+        "model_id": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+        "schema": "r4b_prose_without_unique_items",
+        "prompt_tokens": 28,
+        "completion_tokens": 43
+      }
+    ]
+  },
+  "resource_ledger": {
+    "policy": "R4b cap enforcement carries forward the preserved cumulative execution ledger, adds a conservative estimate for the failed R4 block, and includes all diagnostic calls. Verified observed cost is reported separately.",
+    "preserved_r4_execution_cumulative": {
+      "provider_invocations": 1669,
+      "transport_attempts": 1668,
+      "input_token_envelope": 1249661,
+      "output_token_envelope": 219528,
+      "verified_observed_cost_usd": "0.066883",
+      "basis": "Preserved R4 execution receipt; cumulative through R3 and R4 block 1. Failed requests reported no provider tokens."
+    },
+    "failed_r4_block_at_risk": {
+      "attempt_count": 224,
+      "conservative_at_risk_cost_usd": "0.041520",
+      "verified_billed_cost_usd": "0",
+      "basis": "Sum of per-attempt pricing-snapshot token envelopes retained by the failed R4 block. This is a cap reservation, not observed provider billing."
+    },
+    "all_schema_diagnostics": {
+      "provider_invocations": 10,
+      "transport_attempts": 10,
+      "successful_calls": 8,
+      "failed_calls": 2,
+      "successful_reported_usage_by_model": {
+        "ibm-granite/granite-4.1-8b": {
+          "input_tokens": 112,
+          "output_tokens": 83
+        },
+        "Qwen/Qwen3-30B-A3B-Instruct-2507": {
+          "input_tokens": 112,
+          "output_tokens": 68
+        }
+      },
+      "failed_call_envelope_by_model": {
+        "ibm-granite/granite-4.1-8b": {
+          "input_tokens": 2048,
+          "output_tokens": 64
+        },
+        "Qwen/Qwen3-30B-A3B-Instruct-2507": {
+          "input_tokens": 2048,
+          "output_tokens": 64
+        }
+      },
+      "input_token_envelope": 4320,
+      "output_token_envelope": 279,
+      "verified_observed_cost_usd": "0.0000455",
+      "conservative_envelope_cost_usd": "0.0003783",
+      "basis": "Successful calls use provider-reported tokens. Each HTTP 400 call reserves 2,048 input and 64 output tokens because no usage was reported. Costs use the pinned 2026-08-06 per-model pricing snapshot."
+    },
+    "r4b_prior_for_cap_enforcement": {
+      "provider_invocations": 1679,
+      "transport_attempts": 1678,
+      "input_token_envelope": 1253981,
+      "output_token_envelope": 219807,
+      "conservative_cumulative_cost_usd": "0.1087813",
+      "formula": "0.066883 preserved verified + 0.041520 failed-R4 at-risk + 0.0003783 diagnostic conservative"
+    },
+    "separate_verified_observed_total": {
+      "verified_observed_cost_usd": "0.0669285",
+      "formula": "0.066883 preserved verified + 0.0000455 diagnostic verified"
+    }
+  },
+  "r4b_protocol_change": {
+    "provider_schema_change": "Remove the unsupported JSON Schema uniqueItems keyword from array descriptors.",
+    "repository_validation_unchanged": "Duplicate evidence, limitation, and action identifiers are rejected locally after parsing.",
+    "new_output_root": "dist/evidence-guide-r4b-grounding-final-r1",
+    "new_schema_ids": [
+      "r4b-plan-and-evidence-v1",
+      "r4b-full-prose-v1"
+    ],
+    "state_reuse_permitted": false,
+    "r4_outputs_deleted_or_rewritten": false
+  },
+  "claim_boundary": "The diagnostics establish provider-schema compatibility only. They do not establish evidence grounding, model quality, practitioner usefulness, hydraulic validity, ecological benefit, or production safety."
+}

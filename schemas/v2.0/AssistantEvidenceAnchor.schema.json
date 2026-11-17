@@ -1,0 +1,26 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "identifier": {
+      "title": "Identifier",
+      "type": "string"
+    },
+    "kind": {
+      "enum": [
+        "project",
+        "model_fitness",
+        "alternative",
+        "exact_run",
+        "export"
+      ],
+      "title": "Kind",
+      "type": "string"
+    }
+  },
+  "required": [
+    "kind",
+    "identifier"
+  ],
+  "title": "AssistantEvidenceAnchor",
+  "type": "object"
+}

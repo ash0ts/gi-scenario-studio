@@ -1,0 +1,29 @@
+1
+00:00:00,500 --> 00:00:07,599
+Picture four lights wired together. Under this
+teaching brief, a plan advances only when all
+
+2
+00:00:07,599 --> 00:00:14,157
+four are green: enough volume reduction,
+acceptable cost, no peak increase, and clean
+
+3
+00:00:14,157 --> 00:00:21,179
+runs. ALT-207 turns on all four: more than 6
+percent reduction, under 200 thousand dollars,
+
+4
+00:00:21,179 --> 00:00:27,429
+no higher peak, and four clean runs. ALT-017 is
+cheaper, but two lights stay red.
+
+5
+00:00:27,429 --> 00:00:33,370
+It misses the volume target and raises two storm
+peaks. We do not average red
+
+6
+00:00:33,370 --> 00:00:38,000
+lights into green ones. One required failure
+stops the plan.

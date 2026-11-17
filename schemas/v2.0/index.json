@@ -3,7 +3,13 @@
     "AlternativeDecisionSummary": "AlternativeDecisionSummary.schema.json",
     "AnalysisRunPlan": "AnalysisRunPlan.schema.json",
     "AssistantAnswer": "AssistantAnswer.schema.json",
+    "AssistantConversation": "AssistantConversation.schema.json",
     "AssistantEvaluationRecord": "AssistantEvaluationRecord.schema.json",
+    "AssistantEvidenceAnchor": "AssistantEvidenceAnchor.schema.json",
+    "AssistantEvidencePacket": "AssistantEvidencePacket.schema.json",
+    "AssistantProviderPolicy": "AssistantProviderPolicy.schema.json",
+    "AssistantReleaseBasis": "AssistantReleaseBasis.schema.json",
+    "AssistantTurn": "AssistantTurn.schema.json",
     "BenchmarkRunEnvelope": "BenchmarkRunEnvelope.schema.json",
     "CandidateSlot": "CandidateSlot.schema.json",
     "CloudArtifactManifest": "CloudArtifactManifest.schema.json",
@@ -40,6 +46,7 @@
     "TelemetryEnvelope": "TelemetryEnvelope.schema.json",
     "TelemetryOutboxItem": "TelemetryOutboxItem.schema.json",
     "WandbRunReference": "WandbRunReference.schema.json",
+    "WeaveConversationReference": "WeaveConversationReference.schema.json",
     "WeaveTraceReference": "WeaveTraceReference.schema.json"
   },
   "schema_version": "2.0"

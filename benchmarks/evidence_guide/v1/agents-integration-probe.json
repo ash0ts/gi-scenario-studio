@@ -1,0 +1,152 @@
+{
+  "schema_version": "1.0",
+  "receipt_type": "evidence_guide_agents_manual_integration_probe",
+  "environment": "temporary_synthetic_cedar_trace",
+  "test_only": true,
+  "production_release_gate": {
+    "path": "benchmarks/evidence_guide/v1/release-gate.json",
+    "sha256": "62ef84b78d6642f8014556513e623d05708cabef283362f0ebedc64a5c3eccf5",
+    "decision": "DISABLE_LIVE_GUIDE",
+    "overridden_in_memory": true,
+    "unchanged_on_disk": true
+  },
+  "test_only_gate": {
+    "model_id": "ibm-granite/granite-4.1-8b",
+    "prompt_version": "evidence-guide-prompt-v1",
+    "response_schema_version": "evidence-guide-answer-schema-v1",
+    "response_schema_sha256": "7a565d1b904ae54e6ec81fe0db207504ede6c352de7aa5cabbc9d06611dae7e2",
+    "tool_contract_version": "evidence-query-tools-v1",
+    "validator_version": "deterministic-evidence-validator-v3",
+    "purpose": "manual synthetic W&B Inference and Weave Agents integration probe only"
+  },
+  "destination": {
+    "entity": "wandb",
+    "project": "gi-scenario-studio-article",
+    "access": "RESTRICTED",
+    "deployment": "wandb_cloud",
+    "binding_verified": true
+  },
+  "investigations": [
+    {
+      "anchor": "ALT-017",
+      "capability_state": "CONSENT_REQUIRED",
+      "conversation_id": "assistantconversation_58cfd7fc090a352803e27990",
+      "turns": [
+        {
+          "sequence": 0,
+          "question_key": "tradeoff_vs_acceptance",
+          "local_state": "failed",
+          "validation_outcome": "rejected",
+          "error_code": "EVIDENCE_NEXT_CHECK_SELECTION_INVALID",
+          "answer_released": false,
+          "weave_acknowledged": true,
+          "trace_id": "52a0438e9ea576a5198e1e3ec1870006",
+          "root_span_id": "b3c31ddfe16d3b7d",
+          "weave_url": "https://wandb.ai/wandb/gi-scenario-studio-article/weave/agents/conversations/assistantconversation_58cfd7fc090a352803e27990",
+          "root_status": "ERROR",
+          "agent_identity": {
+            "agent_name": "gi-evidence-guide",
+            "agent_version": "evidence-guide-v1",
+            "root_span_name": "gi-evidence-guide"
+          },
+          "message_types": [
+            "agent_start",
+            "assistant_message",
+            "tool_call",
+            "user_message"
+          ],
+          "message_count": 5,
+          "tool_activity_observed": true,
+          "tool_parentage_verified": null,
+          "tool_parentage_reason": "routing_parent_span_not_exposed_by_sdk",
+          "agent_span_count": 3,
+          "tool_span_count": 1,
+          "routing_parent_count": 1
+        },
+        {
+          "sequence": 1,
+          "question_key": "controlling_storm",
+          "local_state": "failed",
+          "validation_outcome": "rejected",
+          "error_code": "EVIDENCE_GENERATED_NUMBER_BLOCKED",
+          "answer_released": false,
+          "weave_acknowledged": true,
+          "trace_id": "1f53e67eb959b14cc311a955f48c1280",
+          "root_span_id": "5f1ad11b1a1708ea",
+          "weave_url": "https://wandb.ai/wandb/gi-scenario-studio-article/weave/agents/conversations/assistantconversation_58cfd7fc090a352803e27990",
+          "root_status": "ERROR",
+          "agent_identity": {
+            "agent_name": "gi-evidence-guide",
+            "agent_version": "evidence-guide-v1",
+            "root_span_name": "gi-evidence-guide"
+          },
+          "message_types": [
+            "agent_start",
+            "assistant_message",
+            "tool_call",
+            "user_message"
+          ],
+          "message_count": 5,
+          "tool_activity_observed": true,
+          "tool_parentage_verified": null,
+          "tool_parentage_reason": "routing_parent_span_not_exposed_by_sdk",
+          "agent_span_count": 3,
+          "tool_span_count": 1,
+          "routing_parent_count": 1
+        }
+      ]
+    },
+    {
+      "anchor": "ALT-207",
+      "capability_state": "READY",
+      "conversation_id": "assistantconversation_d103df23fa3aed51516cce15",
+      "turns": [
+        {
+          "sequence": 0,
+          "question_key": "ecological_boundary",
+          "local_state": "failed",
+          "validation_outcome": "rejected",
+          "error_code": "EVIDENCE_SUPPORT_CLAIM_INVALID",
+          "answer_released": false,
+          "weave_acknowledged": true,
+          "trace_id": "b6b08d7dfcbba83a3836009b8f69eaec",
+          "root_span_id": "25aebdcbc5881da6",
+          "weave_url": "https://wandb.ai/wandb/gi-scenario-studio-article/weave/agents/conversations/assistantconversation_d103df23fa3aed51516cce15",
+          "root_status": "ERROR",
+          "agent_identity": {
+            "agent_name": "gi-evidence-guide",
+            "agent_version": "evidence-guide-v1",
+            "root_span_name": "gi-evidence-guide"
+          },
+          "message_types": [
+            "agent_start",
+            "assistant_message",
+            "tool_call",
+            "user_message"
+          ],
+          "message_count": 5,
+          "tool_activity_observed": true,
+          "tool_parentage_verified": null,
+          "tool_parentage_reason": "routing_parent_span_not_exposed_by_sdk",
+          "agent_span_count": 3,
+          "tool_span_count": 1,
+          "routing_parent_count": 1
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "conversation_count": 2,
+    "turn_count": 3,
+    "alt_017_turns_share_conversation": true,
+    "alt_207_uses_clean_conversation": true,
+    "all_turns_cloud_acknowledged": true,
+    "all_turns_read_back_from_weave": true,
+    "all_turns_observed_tool_activity": true,
+    "all_turns_tool_parentage_verified": null,
+    "rejected_turn_count": 3,
+    "rejected_answer_release_count": 0,
+    "provider_output_stored_in_receipt": false
+  },
+  "created_at": "2026-08-06T23:31:59.057022+00:00"
+}

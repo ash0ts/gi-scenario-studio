@@ -1,0 +1,58 @@
+1
+00:00:00,500 --> 00:00:09,781
+Inside the app, open ALT-017 and ask for the
+built-in explanation. It does something
+
+2
+00:00:09,781 --> 00:00:19,503
+deliberately unglamorous: it copies both
+recorded peak failures from local evidence. The
+
+3
+00:00:19,503 --> 00:00:28,342
+long event rises from 3.14 to 3.21 cubic feet
+per second; the stress event rises
+
+4
+00:00:28,342 --> 00:00:37,622
+from 13.33 to 13.34. These are not values
+remembered by a language model. Just below
+
+5
+00:00:37,622 --> 00:00:48,008
+them, the model-backed Evidence Guide is held
+behind its release gate. The evaluation selected
+
+6
+00:00:48,008 --> 00:00:57,730
+no model, so the interface makes no inference
+call and substitutes no plausible-sounding
+
+7
+00:00:57,730 --> 00:01:07,232
+answer. That is what fail closed means: the
+optional explanation disappears, while the
+
+8
+00:01:07,232 --> 00:01:17,396
+evidence stays useful. Now move to ALT-207. It
+passes the four synthetic teaching rules, but
+
+9
+00:01:17,396 --> 00:01:27,119
+hydrology is not ecology. These runs do not
+measure water quality, groundwater recharge,
+
+10
+00:01:27,119 --> 00:01:37,725
+habitat, heat, actual flooding, maintenance, or
+lifecycle effects. The rail keeps what the model
+
+11
+00:01:37,725 --> 00:01:46,785
+supports beside what remains unknown.
+Computation can organize evidence; it cannot
+
+12
+00:01:46,785 --> 00:01:48,000
+enlarge it.

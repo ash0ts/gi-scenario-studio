@@ -143,10 +143,12 @@ status, or browser-download completion. The browser learning summary is local
 and is not logged as an output artifact.
 
 After a verified binding, an offline walkthrough may continue and queue the
-implemented open-time snapshot for synchronization. The source MVP provides deterministic guided copy
-and Evidence Rail navigation; its read-only explanation endpoint additionally
-requires a confirmed Weave call. A provider-backed assistant is not implemented
-yet. No untraced answer is substituted.
+implemented open-time snapshot for synchronization. The source MVP provides
+deterministic guided copy and Evidence Rail navigation. Its optional,
+provider-backed Evidence Guide remains online-only: each question makes two
+pinned W&B Inference calls, may select one to four of six capability-gated read
+tools, and must finish as a flushed, read-back Weave Agents turn. No untraced or
+unvalidated answer is substituted.
 
 ## Evidence Rail requirements
 

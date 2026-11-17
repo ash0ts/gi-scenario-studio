@@ -1,0 +1,243 @@
+{
+  "execution_ledger": {
+    "ambiguous_ledger_states": 0,
+    "attempt_records_sha256": "0773bbff23b6eba210a31ba8c55651b85c41296f09e4a73b47c844869a96f789",
+    "attempt_rows": 272,
+    "campaign_meta_sha256": "a94df3282b959d2f20dbdbcf821d497385c9bd4a9daa327906258ff4eda34232",
+    "ledger_rows_sha256": "21e79af72d61e013ad64d46f5b068d758d7d667b6550ec610885755b98bc4a9e",
+    "outcome_hash_mismatches": 0,
+    "running_or_uncertain_attempts": 0,
+    "sqlite_integrity_check": "ok",
+    "sqlite_user_version": 0,
+    "stage_sessions": [
+      {
+        "complete": true,
+        "stage": "grounding",
+        "time_block": "block-1"
+      },
+      {
+        "complete": true,
+        "stage": "prose_diagnosis",
+        "time_block": "block-1"
+      },
+      {
+        "complete": false,
+        "stage": "grounding",
+        "time_block": "block-2"
+      },
+      {
+        "complete": false,
+        "stage": "prose_diagnosis",
+        "time_block": "block-2"
+      }
+    ],
+    "stage_sessions_sha256": "08dc45728c36e4096abef577281872253f6ca5c5966f8aae6b4ea82d409216af",
+    "state_counts": {
+      "completed": 272,
+      "planned": 400
+    }
+  },
+  "incident_id": "gi-evidence-guide-r4b-input-cap-incident-2026-08-07",
+  "incident_summary": {
+    "accepted_traced_responses": 238,
+    "block_1_attempts": 224,
+    "configured_input_token_cap": 2048,
+    "interrupted_block_2_attempts": 48,
+    "post_response_input_cap_rejections": 34,
+    "provider_invocations": 272,
+    "r4b_cells_reused_by_r4c": 0,
+    "transport_attempts": 272
+  },
+  "outcomes_by_model": {
+    "Qwen/Qwen3-30B-A3B-Instruct-2507": {
+      "accepted_traced": 119,
+      "attempts": 137,
+      "post_response_cap_rejections": 18
+    },
+    "ibm-granite/granite-4.1-8b": {
+      "accepted_traced": 119,
+      "attempts": 135,
+      "post_response_cap_rejections": 16
+    }
+  },
+  "outcomes_by_stage_and_block": {
+    "block-1/grounding": {
+      "accepted_traced": 111,
+      "attempts": 128,
+      "post_response_cap_rejections": 17,
+      "provider_invocations": 128,
+      "transport_attempts": 128
+    },
+    "block-1/prose_diagnosis": {
+      "accepted_traced": 86,
+      "attempts": 96,
+      "post_response_cap_rejections": 10,
+      "provider_invocations": 96,
+      "transport_attempts": 96
+    },
+    "block-2/grounding": {
+      "accepted_traced": 23,
+      "attempts": 26,
+      "post_response_cap_rejections": 3,
+      "provider_invocations": 26,
+      "transport_attempts": 26
+    },
+    "block-2/prose_diagnosis": {
+      "accepted_traced": 18,
+      "attempts": 22,
+      "post_response_cap_rejections": 4,
+      "provider_invocations": 22,
+      "transport_attempts": 22
+    }
+  },
+  "post_response_classification": {
+    "classification": "provider response received, then rejected by local resource guard",
+    "error_code_persisted_by_r4b": "R2_PROVIDER_INPUT_TOKEN_CAP_EXCEEDED",
+    "evidence": "All 34 rows retain nonzero provider-reported input/output usage, one logical call, and one transport. The R4b meter appended the completion before raising; the outer executor then persisted these rows as failed_closed without response content or trace acknowledgement.",
+    "r4b_persisted_provider_response_received": false,
+    "r4c_required_semantics": "retain and trace the completion; report a distinct post-receipt resource-policy violation; keep end-to-end conformance false"
+  },
+  "receipt_state": {
+    "block_2_receipt_exists": false,
+    "completed_block_1_receipt_sha256": "727fdf43ccf113248015338bb086be75b0ce4a9be562664bbb8d2d0cbed4518b",
+    "completed_receipts": [
+      "block-block-1"
+    ],
+    "stale_execution_receipt": {
+      "attempt_count": 224,
+      "caveat": "The runner writes execution-receipt.json only after a requested block exits. It therefore describes completed block 1 and omits the 48 locally committed block-2 attempts saved before interruption.",
+      "completed_all": false,
+      "database_attempt_count": 272,
+      "receipt_sha256": "60930166bad773c068d054227f33a0101a6db9e3119214bfd1a983f85388e85b",
+      "unrepresented_saved_attempts": 48
+    }
+  },
+  "resource_ledger": {
+    "conservative_prior_entering_r4b": {
+      "amendment_source_sha256": "3d979d9abc7ad23e7486f038e57cb065c4c8f761a6a6ed0ead1a0dc211ccee55",
+      "components": {
+        "all_schema_diagnostics": {
+          "basis": "Successful calls use provider-reported tokens. Each HTTP 400 call reserves 2,048 input and 64 output tokens because no usage was reported. Costs use the pinned 2026-08-06 per-model pricing snapshot.",
+          "conservative_envelope_cost_usd": "0.0003783",
+          "failed_call_envelope_by_model": {
+            "Qwen/Qwen3-30B-A3B-Instruct-2507": {
+              "input_tokens": 2048,
+              "output_tokens": 64
+            },
+            "ibm-granite/granite-4.1-8b": {
+              "input_tokens": 2048,
+              "output_tokens": 64
+            }
+          },
+          "failed_calls": 2,
+          "input_token_envelope": 4320,
+          "output_token_envelope": 279,
+          "provider_invocations": 10,
+          "successful_calls": 8,
+          "successful_reported_usage_by_model": {
+            "Qwen/Qwen3-30B-A3B-Instruct-2507": {
+              "input_tokens": 112,
+              "output_tokens": 68
+            },
+            "ibm-granite/granite-4.1-8b": {
+              "input_tokens": 112,
+              "output_tokens": 83
+            }
+          },
+          "transport_attempts": 10,
+          "verified_observed_cost_usd": "0.0000455"
+        },
+        "failed_r4_block_at_risk": {
+          "attempt_count": 224,
+          "basis": "Sum of per-attempt pricing-snapshot token envelopes retained by the failed R4 block. This is a cap reservation, not observed provider billing.",
+          "conservative_at_risk_cost_usd": "0.041520",
+          "verified_billed_cost_usd": "0"
+        },
+        "preserved_r4_execution_cumulative": {
+          "basis": "Preserved R4 execution receipt; cumulative through R3 and R4 block 1. Failed requests reported no provider tokens.",
+          "input_token_envelope": 1249661,
+          "output_token_envelope": 219528,
+          "provider_invocations": 1669,
+          "transport_attempts": 1668,
+          "verified_observed_cost_usd": "0.066883"
+        }
+      },
+      "cost_basis": "preserved verified cumulative + failed-R4 at-risk envelope + diagnostic conservative envelope",
+      "cost_usd": "0.1087813",
+      "input_tokens": 1253981,
+      "output_tokens": 219807,
+      "provider_invocations": 1679,
+      "source": "r4b-conservative-cumulative-prior-ledger",
+      "source_sha256": "6759b6a3a55531fadd4f06ee85fd9404b6629eaeddab0394b3c45f51621a063f",
+      "token_count_basis": "conservative token envelopes for cap enforcement",
+      "transport_attempts": 1678,
+      "verified_observed_cost_basis": "preserved verified cumulative + successful diagnostic provider-reported tokens",
+      "verified_observed_cost_usd": "0.0669285"
+    },
+    "cost_interpretation": "Verified observed cost uses provider-reported completion tokens. Conservative cost uses each completed call's pinned output envelope and is the cap basis.",
+    "r4b_observed_attempts": {
+      "conservative_at_risk_cost_usd": "0.043629",
+      "input_token_envelope": 461644,
+      "output_token_envelope": 43008,
+      "provider_invocations": 272,
+      "provider_reported_input_tokens": 461644,
+      "provider_reported_output_tokens": 23016,
+      "transport_attempts": 272,
+      "verified_observed_cost_usd": "0.039650"
+    },
+    "r4c_prior_for_cap_enforcement": {
+      "conservative_cumulative_cost_usd": "0.1524103",
+      "input_token_envelope": 1715625,
+      "output_token_envelope": 262815,
+      "provider_invocations": 1951,
+      "transport_attempts": 1950,
+      "verified_observed_cost_usd": "0.1065785"
+    }
+  },
+  "reuse_policy": {
+    "fresh_r4c_root_required": true,
+    "r4b_attempt_cells_reused": 0,
+    "r4b_responses_reused": 0,
+    "r4c_output_directory_name": "evidence-guide-r4c-grounding-final-r1"
+  },
+  "schema_version": "1.0",
+  "snapshot_sha256": "71c054a18ec537f0b54c17574edf6506b0950e45360575b6dfb34ed9febbdcc7",
+  "source_files": {
+    "campaign_sqlite": {
+      "filename": "campaign.sqlite",
+      "sha256": "cc4aa5660a05e8c2d39eebbc66c614ed8f35111431898f0aaae0baf7d58a8e59",
+      "utf8_bytes": 3969024
+    },
+    "campaign_sqlite_wal": {
+      "filename": "campaign.sqlite-wal",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "utf8_bytes": 0
+    },
+    "completed_block_1_receipt": {
+      "filename": "block-block-1-receipt.json",
+      "sha256": "6afd1376928e7220e3e187c871f9e4ea0fda551bb7697a4bc35df0d4864fc9e7",
+      "utf8_bytes": 15903
+    },
+    "preregistration": {
+      "filename": "preregistration.json",
+      "sha256": "80c8a6dc059740d0a42ab00e9a8d4ce3530e0cf2cedecd90d638423b02176ba1",
+      "utf8_bytes": 4111162
+    },
+    "stale_execution_receipt": {
+      "filename": "execution-receipt.json",
+      "sha256": "157e952493f796bd0b91115062f5afd66ac1eac3f5cd675da2137c14774ac2fe",
+      "utf8_bytes": 928
+    }
+  },
+  "source_preregistration_sha256": "1b7d59edada43fd8cb5ad742e2393a1c671e4c609dfc76a3e958686e86d40cd0",
+  "source_study_instance_sha256": "d54edae39ab6424f658ac8f75118edbfc61a4ad92da35de43a98127f9508e582",
+  "source_study_version": "gi-evidence-guide-grounding-r4b-final",
+  "termination_record": {
+    "event": "operator Ctrl-C during cloud scoring after local attempt save",
+    "event_source": "operator observation; not inferred from SQLite alone",
+    "local_state_evidence": "48 block-2 attempt outcomes and matching completed ledger rows exist; both block-2 stage sessions remain incomplete and no block-2 receipt exists."
+  },
+  "volatile_file_exclusions": {
+    "campaign_sqlite_shm": "SQLite shared-memory coordination state is volatile and is excluded from scientific identity; the database, WAL, canonical query projections, and integrity check are retained."
+  }
+}

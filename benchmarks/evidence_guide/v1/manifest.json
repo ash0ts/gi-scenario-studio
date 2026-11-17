@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "dataset_id": "gi-evidence-guide-evaluation",
+  "dataset_version": "v1",
+  "dataset_file": "dataset.json",
+  "dataset_sha256": "55e45cbc961673d015715c053486fc7af4ae2386a9c80f328eddbb3b0fbee035",
+  "release_gate_file": "release-gate.json",
+  "release_gate_sha256": "62ef84b78d6642f8014556513e623d05708cabef283362f0ebedc64a5c3eccf5",
+  "release_gate_decision": "DISABLE_LIVE_GUIDE",
+  "agents_integration_probe_file": "agents-integration-probe.json",
+  "agents_integration_probe_sha256": "988304b4157228142afab21c693bd9840e8d4a504f7b9b3948501b62fc5a1c27",
+  "row_count": 48,
+  "license": "CC0-1.0",
+  "source_counts": {
+    "synthetic": 48,
+    "public": 0
+  },
+  "intent_counts": {
+    "exact_run": 30,
+    "model_fitness": 10,
+    "unsupported": 8
+  },
+  "scorer_version": "evidence-guide-deterministic-v1",
+  "claim_boundary": "The corpus tests explanation fidelity only. It is not hydraulic, field, practitioner-usefulness, or live-service evidence."
+}

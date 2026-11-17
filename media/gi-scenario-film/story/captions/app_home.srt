@@ -1,0 +1,39 @@
+1
+00:00:00,500 --> 00:00:06,806
+This is what GI Scenario Studio is for:
+comparing ways to change how much runoff
+
+2
+00:00:06,806 --> 00:00:13,901
+reaches a drainage system, and how quickly it
+arrives. Engineers call these features green
+
+3
+00:00:13,901 --> 00:00:21,311
+infrastructure—rain gardens, porous pavement,
+planted basins, and rain barrels. If you already
+
+4
+00:00:21,311 --> 00:00:27,459
+have a drainage model, you can open it here. For
+this walkthrough, we will use
+
+5
+00:00:27,459 --> 00:00:34,081
+Cedar Trace, a tiny fictional neighborhood built
+for teaching. It is not a real town
+
+6
+00:00:34,081 --> 00:00:40,939
+or a design recommendation. It gives us
+something safer: a complete example we can take
+
+7
+00:00:40,939 --> 00:00:47,640
+apart. The demo stays on this computer; cloud
+sharing is off. Our question is simple:
+
+8
+00:00:47,640 --> 00:00:53,000
+which plan, if any, deserves the cost of a real
+field investigation?

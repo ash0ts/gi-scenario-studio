@@ -1,0 +1,131 @@
+{
+  "$defs": {
+    "AssistantEvidenceAnchor": {
+      "additionalProperties": false,
+      "properties": {
+        "identifier": {
+          "title": "Identifier",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "project",
+            "model_fitness",
+            "alternative",
+            "exact_run",
+            "export"
+          ],
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "identifier"
+      ],
+      "title": "AssistantEvidenceAnchor",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "anchor": {
+      "$ref": "#/$defs/AssistantEvidenceAnchor"
+    },
+    "answer_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Answer Id"
+    },
+    "completed_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Completed At"
+    },
+    "conversation_id": {
+      "title": "Conversation Id",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "error_code": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error Code"
+    },
+    "evidence_packet_id": {
+      "title": "Evidence Packet Id",
+      "type": "string"
+    },
+    "evidence_packet_sha256": {
+      "title": "Evidence Packet Sha256",
+      "type": "string"
+    },
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    },
+    "sequence": {
+      "minimum": 0,
+      "title": "Sequence",
+      "type": "integer"
+    },
+    "state": {
+      "default": "pending",
+      "enum": [
+        "pending",
+        "completed",
+        "blocked",
+        "failed"
+      ],
+      "title": "State",
+      "type": "string"
+    },
+    "turn_id": {
+      "title": "Turn Id",
+      "type": "string"
+    },
+    "user_message": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "title": "User Message",
+      "type": "string"
+    }
+  },
+  "required": [
+    "conversation_id",
+    "project_id",
+    "sequence",
+    "user_message",
+    "anchor",
+    "evidence_packet_id",
+    "evidence_packet_sha256"
+  ],
+  "title": "AssistantTurn",
+  "type": "object"
+}

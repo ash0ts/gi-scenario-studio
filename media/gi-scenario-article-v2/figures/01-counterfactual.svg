@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="746" viewBox="0 0 1200 746" role="img" aria-labelledby="title desc">
+  <title id="title">The value crossed the limit; the selected plan stayed the same.</title>
+  <desc id="desc">One representative synthetic validation case uses the identifier C-19. Its capacity ratio changes from 0.79, which meets the fixed less-than-or-equal-to 0.85 rule, to 0.91, which fails it. The selected predefined answer structure did not change. Both Weave traces were acknowledged. No answer was released. These are prepared test records from a separate project family, not SWMM results or field measurements.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke"/></marker>
+    <style>
+      @font-face { font-family: Atkinson; src: url('../../gi-scenario-film/assets/fonts/AtkinsonHyperlegible-Regular.ttf'); }
+      @font-face { font-family: Atkinson; src: url('../../gi-scenario-film/assets/fonts/AtkinsonHyperlegible-Bold.ttf'); font-weight: 700; }
+      @font-face { font-family: PlexCondensed; src: url('../../gi-scenario-film/assets/fonts/IBMPlexSansCondensed-SemiBold.ttf'); font-weight: 600; }
+      @font-face { font-family: PlexMono; src: url('../../gi-scenario-film/assets/fonts/IBMPlexMono-Regular.ttf'); }
+      .eyebrow { font: 700 24px Atkinson, sans-serif; letter-spacing: 1.2px; fill: #08766F; }
+      .headline { font: 600 48px PlexCondensed, Atkinson, sans-serif; fill: #17313A; }
+      .subhead { font: 400 25px Atkinson, sans-serif; fill: #48616B; }
+      .section { font: 700 29px Atkinson, sans-serif; fill: #17313A; }
+      .body { font: 400 24px Atkinson, sans-serif; fill: #17313A; }
+      .small { font: 400 20px Atkinson, sans-serif; fill: #48616B; }
+      .label { font: 700 21px Atkinson, sans-serif; letter-spacing: .6px; fill: #17313A; }
+      .tinyLabel { font: 700 17px Atkinson, sans-serif; letter-spacing: .35px; fill: #17313A; }
+      .tableBody { font: 400 21px Atkinson, sans-serif; fill: #17313A; }
+      .mono { font: 400 24px PlexMono, monospace; fill: #17313A; }
+      .number { font: 600 64px PlexCondensed, Atkinson, sans-serif; fill: #17313A; }
+      .numberSmall { font: 600 44px PlexCondensed, Atkinson, sans-serif; fill: #17313A; }
+      .whiteLabel { font: 700 21px Atkinson, sans-serif; letter-spacing: .6px; fill: white; }
+      .whiteBody { font: 400 24px Atkinson, sans-serif; fill: white; }
+    </style>
+  </defs>
+  <rect width="1200" height="746" fill="#F5F7F6"/>
+  <text x="68" y="58" class="eyebrow" text-anchor="start">ONE SYNTHETIC VALIDATION CASE</text>
+<text x="68" y="118" class="headline" text-anchor="start">The value crossed the limit.</text>
+<text x="68" y="172" class="headline" text-anchor="start">The selected plan stayed the same.</text>
+<text x="68" y="214" class="subhead" text-anchor="start">Capacity ratio for C-19 · fixed rule: ratio ≤ 0.85 · same question</text>
+<rect x="68" y="250" width="506" height="276" rx="26" fill="#FFFFFF" stroke="#08766F" stroke-width="3"/>
+<text x="98" y="292" class="label" text-anchor="start" style="fill:#08766F">ORIGINAL EVIDENCE</text>
+<text x="98" y="356" class="number" text-anchor="start">C-19 = 0.79</text>
+<text x="98" y="402" class="mono" text-anchor="start">declared rule  ≤  0.85</text>
+<rect x="98" y="432" width="196" height="62" rx="14" fill="#08766F" stroke="#08766F" stroke-width="2"/>
+<text x="196" y="471" class="whiteLabel" text-anchor="middle">RULE MET</text>
+<rect x="318" y="432" width="226" height="62" rx="14" fill="#E4EFF6" stroke="#2F6F9F" stroke-width="2"/>
+<text x="431" y="458" class="small" text-anchor="middle" style="fill:#2F6F9F"><tspan x="431" dy="0">Trace</tspan><tspan x="431" dy="24">acknowledged</tspan></text>
+<line x1="321" y1="530" x2="321" y2="562" stroke="#08766F" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+<rect x="626" y="250" width="506" height="276" rx="26" fill="#FFFFFF" stroke="#B43D47" stroke-width="3"/>
+<text x="656" y="292" class="label" text-anchor="start" style="fill:#B43D47">CHANGED EVIDENCE</text>
+<text x="656" y="356" class="number" text-anchor="start">C-19 = 0.91</text>
+<text x="656" y="402" class="mono" text-anchor="start">declared rule  ≤  0.85</text>
+<rect x="656" y="432" width="196" height="62" rx="14" fill="#B43D47" stroke="#B43D47" stroke-width="2"/>
+<text x="754" y="471" class="whiteLabel" text-anchor="middle">RULE FAILED</text>
+<rect x="876" y="432" width="226" height="62" rx="14" fill="#E4EFF6" stroke="#2F6F9F" stroke-width="2"/>
+<text x="989" y="458" class="small" text-anchor="middle" style="fill:#2F6F9F"><tspan x="989" dy="0">Trace</tspan><tspan x="989" dy="24">acknowledged</tspan></text>
+<line x1="879" y1="530" x2="879" y2="562" stroke="#B43D47" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+<rect x="246" y="574" width="708" height="88" rx="20" fill="#F6E9D8" stroke="#A96315" stroke-width="3"/>
+<text x="600" y="609" class="section" text-anchor="middle" style="fill:#A96315">Same predefined answer structure selected</text>
+<text x="600" y="643" class="body" text-anchor="middle">The test required a different plan. No answer was released.</text>
+<text x="68" y="710" class="small" text-anchor="start">Prepared synthetic evidence · C-19 is a test identifier, not a surveyed asset</text>
+</svg>

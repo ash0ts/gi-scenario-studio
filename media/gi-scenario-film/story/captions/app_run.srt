@@ -1,0 +1,49 @@
+1
+00:00:00,500 --> 00:00:09,779
+This screen is showing receipts, not pretending
+to run a simulation. The 884 jobs were
+
+2
+00:00:09,779 --> 00:00:18,842
+completed earlier and stored in a manifest—a
+list of what ran and which files belong
+
+3
+00:00:18,842 --> 00:00:27,473
+to each result. It names the fixed SWMM version,
+the 220 plans, the four storms,
+
+4
+00:00:27,473 --> 00:00:36,212
+and the numerical check for every job. The plans
+were ordered in a repeatable way
+
+5
+00:00:36,212 --> 00:00:45,599
+chosen in advance; machine learning did not
+select this guided set. A local rerun would
+
+6
+00:00:45,599 --> 00:00:54,877
+be different: the app would launch SWMM again,
+show real progress, and compare the new
+
+7
+00:00:54,877 --> 00:01:03,832
+answers with the stored ones. That control
+appears only when the expected engine is
+
+8
+00:01:03,832 --> 00:01:12,787
+actually available. It is not available in this
+recording, so the app does not fake
+
+9
+00:01:12,787 --> 00:01:22,066
+it. Replay lets us inspect what happened. Rerun
+lets us test whether it happens again.
+
+10
+00:01:22,066 --> 00:01:28,000
+Neither should be confused with work currently
+running.

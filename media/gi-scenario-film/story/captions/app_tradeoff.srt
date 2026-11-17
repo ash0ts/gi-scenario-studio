@@ -1,0 +1,43 @@
+1
+00:00:00,500 --> 00:00:12,061
+Now the plot has a proper job: exploration. The
+teal edge shows the cost-versus-volume tradeoff
+
+2
+00:00:12,061 --> 00:00:20,823
+we just named. Each gray dot has a tested
+competitor that is at least as
+
+3
+00:00:20,823 --> 00:00:30,559
+cheap and effective, and better on one of those
+measures. The ochre dots are our
+
+4
+00:00:30,559 --> 00:00:41,755
+four teaching plans with complete files ready to
+inspect. Select ALT-017 beside ALT-207. The
+
+5
+00:00:41,755 --> 00:00:52,221
+first is cheaper. The second clears the full
+brief. Neither fact cancels the other. We
+
+6
+00:00:52,221 --> 00:01:03,174
+can change the vertical measure, open the four
+storm results, or read the accessible table
+
+7
+00:01:03,174 --> 00:01:14,248
+instead of the chart. Each view opens another
+window onto the same stored simulations; none
+
+8
+00:01:14,248 --> 00:01:23,132
+creates a new run. Use the plot to decide where
+to look. Use the declared
+
+9
+00:01:23,132 --> 00:01:28,000
+rules to decide what passes this screen.

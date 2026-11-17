@@ -1,0 +1,260 @@
+{
+  "additionalProperties": false,
+  "description": "Secret-free, per-project policy for W&B Inference and Weave Agents.",
+  "properties": {
+    "agent_variant_id": {
+      "default": "A0",
+      "enum": [
+        "A0",
+        "A1",
+        "A2",
+        "A3",
+        "A4"
+      ],
+      "title": "Agent Variant Id",
+      "type": "string"
+    },
+    "allowed_data_categories": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Allowed Data Categories",
+      "type": "array"
+    },
+    "consent_actor": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Consent Actor"
+    },
+    "consented_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Consented At"
+    },
+    "content_logging_consent": {
+      "default": false,
+      "title": "Content Logging Consent",
+      "type": "boolean"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "critical_infrastructure_prohibited": {
+      "const": true,
+      "default": true,
+      "title": "Critical Infrastructure Prohibited",
+      "type": "boolean"
+    },
+    "enabled": {
+      "default": false,
+      "title": "Enabled",
+      "type": "boolean"
+    },
+    "explanation_plan_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Explanation Plan Id"
+    },
+    "external_project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "External Project Id"
+    },
+    "inference_consent": {
+      "default": false,
+      "title": "Inference Consent",
+      "type": "boolean"
+    },
+    "max_tool_calls": {
+      "default": 6,
+      "maximum": 12,
+      "minimum": 1,
+      "title": "Max Tool Calls",
+      "type": "integer"
+    },
+    "max_turn_seconds": {
+      "default": 60,
+      "maximum": 300,
+      "minimum": 5,
+      "title": "Max Turn Seconds",
+      "type": "integer"
+    },
+    "model_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Model Id"
+    },
+    "observability_binding_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Observability Binding Id"
+    },
+    "policy_id": {
+      "title": "Policy Id",
+      "type": "string"
+    },
+    "practitioner_usefulness_status": {
+      "const": "not_measured",
+      "default": "not_measured",
+      "title": "Practitioner Usefulness Status",
+      "type": "string"
+    },
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    },
+    "prompt_version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Prompt Version"
+    },
+    "provider": {
+      "const": "wandb_inference",
+      "default": "wandb_inference",
+      "title": "Provider",
+      "type": "string"
+    },
+    "provider_call_count": {
+      "anyOf": [
+        {
+          "maximum": 2,
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Provider Call Count"
+    },
+    "release_basis": {
+      "const": "automated_conformance",
+      "default": "automated_conformance",
+      "title": "Release Basis",
+      "type": "string"
+    },
+    "release_gate_digest": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Release Gate Digest"
+    },
+    "response_schema_sha256": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Response Schema Sha256"
+    },
+    "response_schema_version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Response Schema Version"
+    },
+    "tool_contract_version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Tool Contract Version"
+    },
+    "updated_at": {
+      "format": "date-time",
+      "title": "Updated At",
+      "type": "string"
+    },
+    "validator_version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Validator Version"
+    }
+  },
+  "required": [
+    "project_id"
+  ],
+  "title": "AssistantProviderPolicy",
+  "type": "object"
+}

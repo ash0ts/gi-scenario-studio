@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="830" viewBox="0 0 1200 830" role="img" aria-labelledby="title desc">
+  <title id="title">Every call returned. The behavior did not.</title>
+  <desc id="desc">The operational ledger shows 672 of 672 provider responses and 672 of 672 trace acknowledgements. The held-out behavior ledger shows Granite passing all three grounding mechanisms in zero of twelve scenarios and Qwen in three of twelve. A separately labeled deterministic control passes 192 of 192 cells.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke"/></marker>
+    <style>
+      @font-face { font-family: Atkinson; src: url('../../gi-scenario-film/assets/fonts/AtkinsonHyperlegible-Regular.ttf'); }
+      @font-face { font-family: Atkinson; src: url('../../gi-scenario-film/assets/fonts/AtkinsonHyperlegible-Bold.ttf'); font-weight: 700; }
+      @font-face { font-family: PlexCondensed; src: url('../../gi-scenario-film/assets/fonts/IBMPlexSansCondensed-SemiBold.ttf'); font-weight: 600; }
+      @font-face { font-family: PlexMono; src: url('../../gi-scenario-film/assets/fonts/IBMPlexMono-Regular.ttf'); }
+      .eyebrow { font: 700 24px Atkinson, sans-serif; letter-spacing: 1.2px; fill: #08766F; }
+      .headline { font: 600 48px PlexCondensed, Atkinson, sans-serif; fill: #17313A; }
+      .subhead { font: 400 25px Atkinson, sans-serif; fill: #48616B; }
+      .section { font: 700 29px Atkinson, sans-serif; fill: #17313A; }
+      .body { font: 400 24px Atkinson, sans-serif; fill: #17313A; }
+      .small { font: 400 20px Atkinson, sans-serif; fill: #48616B; }
+      .label { font: 700 21px Atkinson, sans-serif; letter-spacing: .6px; fill: #17313A; }
+      .tinyLabel { font: 700 17px Atkinson, sans-serif; letter-spacing: .35px; fill: #17313A; }
+      .tableBody { font: 400 21px Atkinson, sans-serif; fill: #17313A; }
+      .mono { font: 400 24px PlexMono, monospace; fill: #17313A; }
+      .number { font: 600 64px PlexCondensed, Atkinson, sans-serif; fill: #17313A; }
+      .numberSmall { font: 600 44px PlexCondensed, Atkinson, sans-serif; fill: #17313A; }
+      .whiteLabel { font: 700 21px Atkinson, sans-serif; letter-spacing: .6px; fill: white; }
+      .whiteBody { font: 400 24px Atkinson, sans-serif; fill: white; }
+    </style>
+  </defs>
+  <rect width="1200" height="830" fill="#F5F7F6"/>
+  <text x="68" y="58" class="eyebrow" text-anchor="start">TWO LEDGERS</text>
+<text x="68" y="118" class="headline" text-anchor="start">Every call returned. The behavior didn&#x27;t.</text>
+<text x="68" y="158" class="subhead" text-anchor="start">A complete call record and evidence-following are different results.</text>
+<rect x="68" y="204" width="442" height="352" rx="26" fill="#DCEFED" stroke="#08766F" stroke-width="3"/>
+<text x="100" y="250" class="label" text-anchor="start" fill="#08766F">OPERATIONAL LEDGER</text>
+<text x="100" y="326" class="number" text-anchor="start" fill="#17313A">672 / 672</text>
+<text x="100" y="364" class="body" text-anchor="start">provider responses</text>
+<text x="100" y="438" class="numberSmall" text-anchor="start" fill="#17313A">672 / 672</text>
+<text x="100" y="474" class="body" text-anchor="start">Weave trace acknowledgements</text>
+<rect x="100" y="500" width="378" height="34" rx="10" fill="#08766F" stroke="#08766F" stroke-width="2"/>
+<text x="289" y="525" class="whiteLabel" text-anchor="middle">NO RUNTIME RETRIES</text>
+<rect x="538" y="204" width="594" height="352" rx="26" fill="#FFFFFF" stroke="#B43D47" stroke-width="3"/>
+<text x="570" y="250" class="label" text-anchor="start" fill="#B43D47">HELD-OUT BEHAVIOR LEDGER</text>
+<text x="920" y="294" class="label" text-anchor="middle">Granite</text>
+<text x="1060" y="294" class="label" text-anchor="middle">Qwen</text>
+<text x="570" y="334" class="tableBody" text-anchor="start" fill="#17313A">Target crosses rule</text>
+<text x="920" y="334" class="mono" text-anchor="middle" fill="#17313A">1/12</text>
+<text x="1060" y="334" class="mono" text-anchor="middle" fill="#17313A">5/12</text>
+<line x1="570" y1="350" x2="1098" y2="350" stroke="#CBD8D8" stroke-width="2" stroke-linecap="round"/>
+<text x="570" y="384" class="tableBody" text-anchor="start" fill="#17313A">Distractor stays irrelevant</text>
+<text x="920" y="384" class="mono" text-anchor="middle" fill="#17313A">6/12</text>
+<text x="1060" y="384" class="mono" text-anchor="middle" fill="#17313A">7/12</text>
+<line x1="570" y1="400" x2="1098" y2="400" stroke="#CBD8D8" stroke-width="2" stroke-linecap="round"/>
+<text x="570" y="434" class="tableBody" text-anchor="start" fill="#17313A">Missing target → abstain</text>
+<text x="920" y="434" class="mono" text-anchor="middle" fill="#17313A">10/12</text>
+<text x="1060" y="434" class="mono" text-anchor="middle" fill="#17313A">10/12</text>
+<line x1="570" y1="450" x2="1098" y2="450" stroke="#CBD8D8" stroke-width="2" stroke-linecap="round"/>
+<text x="570" y="500" class="label" text-anchor="start" fill="#B43D47">All three</text>
+<text x="920" y="500" class="mono" text-anchor="middle" fill="#B43D47">0/12</text>
+<text x="1060" y="500" class="mono" text-anchor="middle" fill="#B43D47">3/12</text>
+<rect x="68" y="584" width="1064" height="54" rx="14" fill="#17313A" stroke="#17313A" stroke-width="2"/>
+<text x="90" y="619" class="whiteLabel" text-anchor="start">DETERMINISTIC POSITIVE CONTROL</text>
+<text x="1108" y="619" class="whiteLabel" text-anchor="end">192/192 protocol cells</text>
+<text x="68" y="674" class="small" text-anchor="start">Control checks protocol machinery; it does not measure practitioner usefulness.</text>
+<rect x="68" y="700" width="1064" height="70" rx="16" fill="#F6E3E5" stroke="#B43D47" stroke-width="3"/>
+<text x="96" y="744" class="label" text-anchor="start" fill="#B43D47">DISABLE LIVE GUIDE</text>
+<text x="1104" y="744" class="label" text-anchor="end" fill="#B43D47">0 answers released</text>
+<text x="68" y="806" class="small" text-anchor="start">Synthetic post-retrieval evidence · 672 is a call count, not a scenario count.</text>
+</svg>

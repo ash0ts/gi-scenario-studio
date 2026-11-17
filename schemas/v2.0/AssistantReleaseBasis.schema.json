@@ -1,0 +1,158 @@
+{
+  "additionalProperties": false,
+  "description": "Immutable automated-conformance basis for one production assistant release.\n\nThis record deliberately does not claim practitioner usefulness.  It binds the\nfinite explanation architecture and every repository-controlled component used\nto make an automated release decision.",
+  "properties": {
+    "agent_variant_id": {
+      "enum": [
+        "D1",
+        "A1",
+        "A2",
+        "A3"
+      ],
+      "title": "Agent Variant Id",
+      "type": "string"
+    },
+    "automated_gate_results": {
+      "additionalProperties": {
+        "type": "boolean"
+      },
+      "title": "Automated Gate Results",
+      "type": "object"
+    },
+    "basis_id": {
+      "title": "Basis Id",
+      "type": "string"
+    },
+    "critical_infrastructure_prohibited": {
+      "const": true,
+      "default": true,
+      "title": "Critical Infrastructure Prohibited",
+      "type": "boolean"
+    },
+    "dataset_sha256": {
+      "title": "Dataset Sha256",
+      "type": "string"
+    },
+    "decision": {
+      "enum": [
+        "ENABLE_LIVE_GUIDE",
+        "DISABLE_LIVE_GUIDE"
+      ],
+      "title": "Decision",
+      "type": "string"
+    },
+    "expires_at": {
+      "format": "date-time",
+      "title": "Expires At",
+      "type": "string"
+    },
+    "issued_at": {
+      "format": "date-time",
+      "title": "Issued At",
+      "type": "string"
+    },
+    "judge_config_sha256": {
+      "title": "Judge Config Sha256",
+      "type": "string"
+    },
+    "model_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Model Id"
+    },
+    "plan_registry_sha256": {
+      "title": "Plan Registry Sha256",
+      "type": "string"
+    },
+    "practitioner_usefulness_status": {
+      "const": "not_measured",
+      "default": "not_measured",
+      "title": "Practitioner Usefulness Status",
+      "type": "string"
+    },
+    "production_scope": {
+      "items": {
+        "enum": [
+          "demo",
+          "standard_engineering"
+        ],
+        "type": "string"
+      },
+      "title": "Production Scope",
+      "type": "array"
+    },
+    "prompt_sha256": {
+      "title": "Prompt Sha256",
+      "type": "string"
+    },
+    "protocol_amendment_sha256": {
+      "title": "Protocol Amendment Sha256",
+      "type": "string"
+    },
+    "provider_call_count": {
+      "maximum": 2,
+      "minimum": 0,
+      "title": "Provider Call Count",
+      "type": "integer"
+    },
+    "receipt_sha256": {
+      "title": "Receipt Sha256",
+      "type": "string"
+    },
+    "release_basis": {
+      "const": "automated_conformance",
+      "default": "automated_conformance",
+      "title": "Release Basis",
+      "type": "string"
+    },
+    "release_gate_digest": {
+      "title": "Release Gate Digest",
+      "type": "string"
+    },
+    "renderer_sha256": {
+      "title": "Renderer Sha256",
+      "type": "string"
+    },
+    "response_schema_sha256": {
+      "title": "Response Schema Sha256",
+      "type": "string"
+    },
+    "tool_contract_sha256": {
+      "title": "Tool Contract Sha256",
+      "type": "string"
+    },
+    "validator_sha256": {
+      "title": "Validator Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "release_gate_digest",
+    "decision",
+    "agent_variant_id",
+    "provider_call_count",
+    "prompt_sha256",
+    "response_schema_sha256",
+    "tool_contract_sha256",
+    "plan_registry_sha256",
+    "renderer_sha256",
+    "validator_sha256",
+    "dataset_sha256",
+    "judge_config_sha256",
+    "receipt_sha256",
+    "protocol_amendment_sha256",
+    "automated_gate_results",
+    "production_scope",
+    "issued_at",
+    "expires_at"
+  ],
+  "title": "AssistantReleaseBasis",
+  "type": "object"
+}

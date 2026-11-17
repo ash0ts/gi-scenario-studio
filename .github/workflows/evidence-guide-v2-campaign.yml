@@ -1,0 +1,296 @@
+name: Evidence Guide v2 campaign
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Visible stage block or protected hidden finalization
+        type: choice
+        required: true
+        options:
+          - visible_block
+          - hidden_finalize
+      stage:
+        description: Visible stage (ignored by hidden_finalize)
+        type: choice
+        required: true
+        options:
+          - capability
+          - architecture
+          - prompt_config
+          - validation
+          - judge_comparison
+      time_block:
+        description: Visible attempt block (ignored by hidden_finalize)
+        type: choice
+        required: true
+        options:
+          - block-1
+          - block-2
+          - block-3
+      resume_run_id:
+        description: Prior workflow run containing evidence-guide-v2-state; omit only for capability block-1
+        type: string
+        required: false
+      confirm_cost_cap_usd:
+        description: Must remain exactly 300.00
+        type: string
+        required: true
+        default: "300.00"
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: evidence-guide-v2-${{ inputs.mode }}-${{ inputs.stage }}-${{ inputs.time_block }}
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: "3.12"
+  CAMPAIGN_DIR: ${{ github.workspace }}/dist/evidence-guide-v2-campaign
+  WANDB_ENTITY: ${{ vars.WANDB_AGENT_EVAL_ENTITY }}
+  WANDB_PROJECT: gi-scenario-studio-agent-evals
+  WANDB_BASE_URL: ${{ vars.WANDB_BASE_URL || 'https://api.wandb.ai' }}
+  WANDB_CONSOLE: "off"
+  WANDB_DISABLE_CODE: "true"
+  WANDB_DISABLE_GIT: "true"
+  WANDB_ERROR_REPORTING: "false"
+  WANDB_SHOW_RUN: "false"
+  WANDB_MODE: online
+  WANDB_DIR: ${{ runner.temp }}/wandb/run
+  WANDB_CACHE_DIR: ${{ runner.temp }}/wandb/cache
+  WANDB_ARTIFACT_DIR: ${{ runner.temp }}/wandb/artifacts
+
+jobs:
+  visible-block:
+    if: inputs.mode == 'visible_block'
+    name: ${{ inputs.stage }} · ${{ inputs.time_block }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    environment:
+      name: evidence-guide-v2-campaign
+    env:
+      WANDB_API_KEY: ${{ secrets.WANDB_SERVICE_ACCOUNT_API_KEY }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python and uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install locked campaign dependencies
+        run: uv sync --locked --extra observability
+
+      - name: Validate protected inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ inputs.confirm_cost_cap_usd }}" = "300.00"
+          test -n "${WANDB_API_KEY:-}"
+          test -n "${WANDB_ENTITY:-}"
+          if [[ "${{ inputs.stage }}" == "capability" && "${{ inputs.time_block }}" == "block-1" ]]; then
+            test -z "${{ inputs.resume_run_id }}" || {
+              echo "::error::The first block must not import mutable campaign state."
+              exit 1
+            }
+          else
+            test -n "${{ inputs.resume_run_id }}" || {
+              echo "::error::A prior state run ID is required after capability block-1."
+              exit 1
+            }
+          fi
+
+      - name: Restore prior campaign state
+        if: inputs.resume_run_id != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${CAMPAIGN_DIR}"
+          gh run download "${{ inputs.resume_run_id }}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --name evidence-guide-v2-state \
+            --dir "${CAMPAIGN_DIR}"
+          test -f "${CAMPAIGN_DIR}/campaign.sqlite"
+          if find "${CAMPAIGN_DIR}" -type l -print -quit | grep -q .; then
+            echo "::error::Restored campaign state contains a symlink."
+            exit 1
+          fi
+
+      - name: Execute one preregistered block
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --no-sync python scripts/run_evidence_guide_v2_campaign.py \
+            --execute \
+            --stage "${{ inputs.stage }}" \
+            --time-block "${{ inputs.time_block }}" \
+            --entity "${WANDB_ENTITY}" \
+            --project "${WANDB_PROJECT}" \
+            --confirm-cost-cap-usd "${{ inputs.confirm_cost_cap_usd }}" \
+            --output-dir "${CAMPAIGN_DIR}"
+
+      - name: Audit resumable state
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "${CAMPAIGN_DIR}/campaign.sqlite"
+          test ! -e "${CAMPAIGN_DIR}/hidden.json"
+          test ! -e "${CAMPAIGN_DIR}/.env"
+          if find "${CAMPAIGN_DIR}" -type l -print -quit | grep -q .; then
+            echo "::error::Campaign state contains a symlink."
+            exit 1
+          fi
+          if rg -l --hidden --glob '!campaign.sqlite*' \
+            '(WANDB_API_KEY|WANDB_LOCKBOX_API_KEY|/home/runner/|egv2-hidden-)' \
+            "${CAMPAIGN_DIR}"; then
+            echo "::error::Campaign state failed the prohibited-content audit."
+            exit 1
+          fi
+
+      - name: Save resumable visible state
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: evidence-guide-v2-state
+          path: ${{ env.CAMPAIGN_DIR }}/
+          if-no-files-found: error
+          include-hidden-files: false
+          retention-days: 30
+
+  hidden-finalize:
+    if: inputs.mode == 'hidden_finalize'
+    name: Protected hidden test, soak, and public receipt
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    environment:
+      name: evidence-guide-v2-lockbox
+    env:
+      WANDB_API_KEY: ${{ secrets.WANDB_SERVICE_ACCOUNT_API_KEY }}
+      WANDB_LOCKBOX_API_KEY: ${{ secrets.WANDB_LOCKBOX_API_KEY }}
+      WANDB_LOCKBOX_PROJECT: ${{ vars.WANDB_AGENT_LOCKBOX_PROJECT }}
+      EVIDENCE_GUIDE_LOCKBOX_USERNAME: ${{ vars.EVIDENCE_GUIDE_LOCKBOX_USERNAME }}
+      WANDB_HIDDEN_ARTIFACT_REF: ${{ vars.WANDB_HIDDEN_ARTIFACT_REF }}
+      HIDDEN_ROOT: ${{ runner.temp }}/evidence-guide-hidden
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python and uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install locked campaign dependencies
+        run: uv sync --locked --extra observability
+
+      - name: Validate protected configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ inputs.confirm_cost_cap_usd }}" = "300.00"
+          test -n "${{ inputs.resume_run_id }}"
+          test -n "${WANDB_API_KEY:-}"
+          test -n "${WANDB_LOCKBOX_API_KEY:-}"
+          test "${WANDB_API_KEY}" != "${WANDB_LOCKBOX_API_KEY}"
+          test -n "${WANDB_LOCKBOX_PROJECT:-}"
+          test "${WANDB_LOCKBOX_PROJECT}" != "${WANDB_PROJECT}"
+          test -n "${EVIDENCE_GUIDE_LOCKBOX_USERNAME:-}"
+          test -n "${WANDB_HIDDEN_ARTIFACT_REF:-}"
+
+      - name: Restore sealed visible state
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${CAMPAIGN_DIR}"
+          gh run download "${{ inputs.resume_run_id }}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --name evidence-guide-v2-state \
+            --dir "${CAMPAIGN_DIR}"
+          test -f "${CAMPAIGN_DIR}/campaign.sqlite"
+          test ! -e "${CAMPAIGN_DIR}/hidden.json"
+
+      - name: Download service-account-only lockbox
+        env:
+          WANDB_API_KEY: ${{ secrets.WANDB_LOCKBOX_API_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${HIDDEN_ROOT}"
+          uv run --no-sync python - <<'PY'
+          import os
+          from pathlib import Path
+
+          import wandb
+
+          root = Path(os.environ["HIDDEN_ROOT"]).resolve()
+          artifact = wandb.Api().artifact(os.environ["WANDB_HIDDEN_ARTIFACT_REF"])
+          downloaded = Path(artifact.download(root=root)).resolve()
+          hidden = downloaded / "hidden.json"
+          if not hidden.is_file() or hidden.is_symlink():
+              raise SystemExit("lockbox artifact must contain one regular hidden.json")
+          if root not in hidden.parents:
+              raise SystemExit("lockbox artifact escaped the protected download root")
+          print("Protected lockbox downloaded and structurally checked.")
+          PY
+
+      - name: Run sealed hidden blocks and production fault soak
+        shell: bash
+        run: |
+          set -euo pipefail
+          hidden_path="${HIDDEN_ROOT}/hidden.json"
+          for stage in hidden soak; do
+            for block in block-1 block-2 block-3; do
+              uv run --no-sync python scripts/run_evidence_guide_v2_campaign.py \
+                --execute \
+                --stage "${stage}" \
+                --time-block "${block}" \
+                --entity "${WANDB_ENTITY}" \
+                --project "${WANDB_PROJECT}" \
+                --hidden-lockbox "${hidden_path}" \
+                --lockbox-project "${WANDB_LOCKBOX_PROJECT}" \
+                --lockbox-service-account "${EVIDENCE_GUIDE_LOCKBOX_USERNAME}" \
+                --confirm-cost-cap-usd "${{ inputs.confirm_cost_cap_usd }}" \
+                --output-dir "${CAMPAIGN_DIR}"
+            done
+          done
+
+      - name: Audit aggregate-only publication package
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "${CAMPAIGN_DIR}/release-gate.json"
+          test -f "${CAMPAIGN_DIR}/article-summary.json"
+          test -d "${CAMPAIGN_DIR}/tables"
+          if rg -l '(egv2-hidden-|claim:egv2-hidden|/home/runner/|WANDB_(?:API|LOCKBOX_API)_KEY)' \
+            "${CAMPAIGN_DIR}/release-gate.json" \
+            "${CAMPAIGN_DIR}/article-summary.json" \
+            "${CAMPAIGN_DIR}/tables"; then
+            echo "::error::Public release files contain hidden-case material."
+            exit 1
+          fi
+
+      - name: Save aggregate-only release evidence
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: evidence-guide-v2-public-release
+          path: |
+            ${{ env.CAMPAIGN_DIR }}/release-gate.json
+            ${{ env.CAMPAIGN_DIR }}/article-summary.json
+            ${{ env.CAMPAIGN_DIR }}/tables/
+          if-no-files-found: error
+          include-hidden-files: false
+          retention-days: 90

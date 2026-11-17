@@ -129,16 +129,68 @@ def test_nondominated_set_respects_maximize_and_minimize():
 
 
 def test_adaptive_count_one_returns_exactly_one_without_sklearn_dependency(approved_slots):
+    observations = []
     candidates, diagnostics = propose_adaptive(
         approved_slots,
         [{"vector": [0, 0], "metrics": {"flood": 10}}],
         objective_directions={"flood": "minimize"},
         count=1,
         seed=5,
+        scientific_observer=lambda operation, inputs, output: observations.append(
+            (operation, inputs, output)
+        ),
     )
     assert len(candidates) == 1
     assert diagnostics["method"] == "qmc_production_gate"
     assert diagnostics["ml_eligible"] is False
+    assert observations == [
+        (
+            "adaptive_search_batch_proposal",
+            {
+                "candidate_slot_count": 2,
+                "observed_exact_design_count": 1,
+                "requested_candidate_count": 1,
+                "objective_count": 1,
+                "seed": 5,
+                "exploration_fraction": 0.25,
+                "benchmark_approved": False,
+            },
+            {
+                "method": "qmc_production_gate",
+                "proposed_candidate_count": 1,
+                "ml_eligible": False,
+                "training_rows": 0,
+                "candidate_pool": 0,
+                "exploration_count": 0,
+                "model_hash": None,
+            },
+        )
+    ]
+
+
+def test_adaptive_observability_failure_does_not_change_candidate_order(approved_slots):
+    expected, expected_diagnostics = propose_adaptive(
+        approved_slots,
+        [{"vector": [0, 0], "metrics": {"flood": 10}}],
+        objective_directions={"flood": "minimize"},
+        count=2,
+        seed=17,
+    )
+
+    def unavailable(_operation, _inputs, _output):
+        raise RuntimeError("Weave unavailable")
+
+    actual, actual_diagnostics = propose_adaptive(
+        approved_slots,
+        [{"vector": [0, 0], "metrics": {"flood": 10}}],
+        objective_directions={"flood": "minimize"},
+        count=2,
+        seed=17,
+        scientific_observer=unavailable,
+    )
+
+    assert [item.vector for item in actual] == [item.vector for item in expected]
+    assert actual_diagnostics == expected_diagnostics
 
 
 def test_present_value_cost_requires_confirmed_complete_cost_basis(approved_slots):

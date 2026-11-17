@@ -1,0 +1,38 @@
+1
+00:00:00,500 --> 00:00:07,452
+The product's value is not an automatic winner.
+It is the ability to say: here
+
+2
+00:00:07,452 --> 00:00:14,761
+are the plans, the rules we chose first, the
+reason each example passed or failed,
+
+3
+00:00:14,761 --> 00:00:22,873
+and the model runs behind those statements. A
+practitioner can repeat this with an existing
+
+4
+00:00:22,873 --> 00:00:30,627
+SWMM project, locally appropriate storm
+definitions, engineer-predefined locations, and
+
+5
+00:00:30,627 --> 00:00:38,025
+local costs. The result will still depend on
+that model and its assumptions. But it
+
+6
+00:00:38,025 --> 00:00:45,245
+is no longer a mysterious dot. It is a claim
+another engineer can open, question,
+
+7
+00:00:45,245 --> 00:00:52,198
+and trace. That is the difference between trust
+this result and here is how to
+
+8
+00:00:52,198 --> 00:00:53,000
+check it.

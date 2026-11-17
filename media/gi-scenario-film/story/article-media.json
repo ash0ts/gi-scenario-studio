@@ -1,0 +1,89 @@
+{
+  "schema_version": "2.0",
+  "media_kind": "guided_application_walkthrough",
+  "article": "story/article.md",
+  "capture": {
+    "surface": "browser-preview",
+    "viewport_width": 1440,
+    "viewport_height": 900,
+    "fps": 30,
+    "authority_notice": "Interface-only guided replay of the exact checked-in fixture; not a packaged desktop execution or a live SWMM run."
+  },
+  "report": {
+    "title": "The Stormwater Plan That Looked Like a Bargain—Until We Asked One More Question",
+    "description": "How direct drainage-model runs, bounded search, and traceable evidence can help engineers narrow hundreds of green-infrastructure ideas without mistaking a clean calculation for field truth.",
+    "width": "fluid"
+  },
+  "clips": [
+    {
+      "key": "app/storm_scope",
+      "marker": "storm_scope",
+      "section": "One plan must face more than one kind of rain",
+      "output": "dist/article-clips/01_storm_scope.mp4",
+      "poster": "dist/article-clips/posters/01_storm_scope.png",
+      "layout": "side_by_side",
+      "report_copy": "Use the Storms screen to confirm the questions being asked of every alternative. Depth, duration, temporal pattern, and authority remain visible; opening the long event shows that it is synthetic and user-defined. The adjacent article explains why volume and peak must be interpreted separately.",
+      "caption": "The real guided interface keeps all four synthetic rain patterns and their authority status visible. This is an interface replay of stored evidence, not a live simulation."
+    },
+    {
+      "key": "app/model_fitness",
+      "marker": "model_fitness",
+      "section": "A clean run and a fit model are different achievements",
+      "output": "dist/article-clips/02_model_fitness.mp4",
+      "poster": "dist/article-clips/posters/02_model_fitness.png",
+      "layout": "side_by_side",
+      "report_copy": "Read the Model screen as two columns of evidence. The 0.079% continuity result says the stored baseline calculations stayed within the fixture policy. The unsupplied reference comparison says something different: real-world model fitness has not been assessed.",
+      "caption": "A clean numerical run and a model fit for a real decision are separate achievements."
+    },
+    {
+      "key": "app/bounded_opportunities",
+      "marker": "bounded_opportunities",
+      "section": "Give automation a bounded question",
+      "output": "dist/article-clips/03_bounded_opportunities.mp4",
+      "poster": "dist/article-clips/posters/03_bounded_opportunities.png",
+      "layout": "side_by_side",
+      "report_copy": "Select each approved GI slot and watch only its bounded integer count change. The inspector keeps the fixed control, footprint, drainage destination, and feasibility basis visible. Search may choose among these declared combinations; it may not invent engineering parameters.",
+      "caption": "The application limits automation to four engineer-bounded placement counts; direct SWMM runs remain the source of hydraulics."
+    },
+    {
+      "key": "app/verified_replay",
+      "marker": "verified_replay",
+      "section": "Why the guided study contains 884 runs",
+      "output": "dist/article-clips/04_verified_replay.mp4",
+      "poster": "dist/article-clips/posters/04_verified_replay.png",
+      "layout": "side_by_side",
+      "report_copy": "The Run screen makes the arithmetic explicit: four storms times 220 designs, plus four baseline runs, equals 884 recorded jobs. The replay badge and availability notice matter—these are inspectable prior executions, not fake live progress.",
+      "caption": "The verified replay is a receipt for 884 prior direct SWMM jobs; no solver is running during this walkthrough."
+    },
+    {
+      "key": "app/frontier_guardrail",
+      "marker": "frontier_guardrail",
+      "section": "Why an attractive frontier can still contain a failure",
+      "output": "dist/article-clips/05_frontier_guardrail.mp4",
+      "poster": "dist/article-clips/posters/05_frontier_guardrail.png",
+      "layout": "full_width",
+      "report_copy": "Begin with the acceptance matrix, where ALT-017 visibly fails the volume target and peak guardrail. Then inspect the tradeoff plot and change the displayed metric. The point can look attractive on cost and aggregate volume while the long-event peak still rises from 3.14 to 3.21 cfs.",
+      "caption": "Changing the plot changes the projection, not the engineering rules: nondominated among evaluated points does not mean acceptable."
+    },
+    {
+      "key": "app/evidence_rail",
+      "marker": "evidence_rail",
+      "section": "Turn a number into a receipt",
+      "output": "dist/article-clips/06_evidence_rail.mp4",
+      "poster": "dist/article-clips/posters/06_evidence_rail.png",
+      "layout": "full_width",
+      "report_copy": "This labeled interface replay opens ALT-017's deterministic local explanation, which names both selected-storm peak increases: 3.14→3.21 cfs and 13.33→13.34 cfs. The adjacent Evidence Guide fails closed because the checked W&B Inference campaign selected no model; no model call or synthetic answer is shown. The replay then opens ALT-207's local ecological boundary: its exact hydraulic screen does not establish water quality, recharge, habitat, heat, real flooding, maintenance, or lifecycle benefit.",
+      "caption": "Local evidence remains useful while the model-backed Guide is held behind its failed release gate; ALT-207's modeled hydraulic signal is not ecological proof."
+    },
+    {
+      "key": "app/engineer_handoff",
+      "marker": "engineer_handoff",
+      "section": "The deliverable is a question someone else can inspect",
+      "output": "dist/article-clips/07_engineer_handoff.mp4",
+      "poster": "dist/article-clips/posters/07_engineer_handoff.png",
+      "layout": "full_width",
+      "report_copy": "The Export screen computes its evidence gates from the repository and keeps the teaching limitation attached. The walkthrough ends on the work that remains: drainage confirmation, field reconnaissance, utilities, soils, maintenance, constructability, and model-fitness review.",
+      "caption": "ALT-207 advances only to site and feasibility review; the application does not turn screening evidence into design approval."
+    }
+  ]
+}

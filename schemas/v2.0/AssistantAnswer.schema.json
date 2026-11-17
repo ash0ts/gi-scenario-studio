@@ -10,9 +10,15 @@
         "kind": {
           "enum": [
             "project",
+            "model_fitness",
+            "alternative",
             "exact_run",
             "exact_metric",
+            "derived_metric",
+            "decision_rule",
+            "cost_basis",
             "qa",
+            "limitation",
             "artifact",
             "documentation"
           ],
@@ -40,12 +46,27 @@
     "AssistantNumericClaim": {
       "additionalProperties": false,
       "properties": {
+        "authority": {
+          "$ref": "#/$defs/EvidenceAuthority",
+          "default": "exact_swmm"
+        },
+        "derivation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Derivation"
+        },
         "evidence_id": {
           "title": "Evidence Id",
           "type": "string"
         },
         "exact": {
-          "const": true,
           "default": true,
           "title": "Exact",
           "type": "boolean"
@@ -55,8 +76,16 @@
           "type": "string"
         },
         "metric_id": {
-          "title": "Metric Id",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Metric Id"
         },
         "object_id": {
           "default": "",
@@ -64,8 +93,30 @@
           "type": "string"
         },
         "run_id": {
-          "title": "Run Id",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Run Id"
+        },
+        "run_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Run Ids",
+          "type": "array"
+        },
+        "source_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Source Ids",
+          "type": "array"
         },
         "units": {
           "title": "Units",
@@ -80,9 +131,7 @@
         "label",
         "value",
         "units",
-        "evidence_id",
-        "run_id",
-        "metric_id"
+        "evidence_id"
       ],
       "title": "AssistantNumericClaim",
       "type": "object"
@@ -124,6 +173,90 @@
         "reason"
       ],
       "title": "AssistantProposedAction",
+      "type": "object"
+    },
+    "EvidenceAuthority": {
+      "description": "Authority carried by a claim without implying that every value is hydraulic truth.",
+      "enum": [
+        "exact_swmm",
+        "derived_exact",
+        "sourced_input",
+        "decision_rule",
+        "qa_record",
+        "model_fitness",
+        "project_record",
+        "documentation"
+      ],
+      "title": "EvidenceAuthority",
+      "type": "string"
+    },
+    "WeaveConversationReference": {
+      "additionalProperties": false,
+      "description": "Acknowledged Weave Agents turn associated with one local assistant turn.",
+      "properties": {
+        "agent_id": {
+          "title": "Agent Id",
+          "type": "string"
+        },
+        "agent_version": {
+          "title": "Agent Version",
+          "type": "string"
+        },
+        "conversation_id": {
+          "title": "Conversation Id",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "entity": {
+          "title": "Entity",
+          "type": "string"
+        },
+        "external_project": {
+          "title": "External Project",
+          "type": "string"
+        },
+        "project_id": {
+          "title": "Project Id",
+          "type": "string"
+        },
+        "reference_id": {
+          "title": "Reference Id",
+          "type": "string"
+        },
+        "root_span_id": {
+          "title": "Root Span Id",
+          "type": "string"
+        },
+        "trace_id": {
+          "title": "Trace Id",
+          "type": "string"
+        },
+        "turn_id": {
+          "title": "Turn Id",
+          "type": "string"
+        },
+        "url": {
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "conversation_id",
+        "turn_id",
+        "entity",
+        "external_project",
+        "trace_id",
+        "root_span_id",
+        "url",
+        "agent_id",
+        "agent_version"
+      ],
+      "title": "WeaveConversationReference",
       "type": "object"
     },
     "WeaveTraceReference": {
@@ -182,6 +315,18 @@
   },
   "additionalProperties": false,
   "properties": {
+    "agent_variant_id": {
+      "default": "A0",
+      "enum": [
+        "A0",
+        "A1",
+        "A2",
+        "A3",
+        "A4"
+      ],
+      "title": "Agent Variant Id",
+      "type": "string"
+    },
     "answer": {
       "title": "Answer",
       "type": "string"
@@ -201,10 +346,46 @@
       "title": "Call Id",
       "type": "string"
     },
+    "conversation_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Conversation Id"
+    },
     "created_at": {
       "format": "date-time",
       "title": "Created At",
       "type": "string"
+    },
+    "evidence_packet_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Evidence Packet Id"
+    },
+    "evidence_packet_sha256": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Evidence Packet Sha256"
     },
     "evidence_references": {
       "items": {
@@ -212,6 +393,25 @@
       },
       "title": "Evidence References",
       "type": "array"
+    },
+    "evidence_tool_calls": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Evidence Tool Calls",
+      "type": "array"
+    },
+    "explanation_plan_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Explanation Plan Id"
     },
     "intent": {
       "title": "Intent",
@@ -231,9 +431,27 @@
       "title": "Numeric Claims",
       "type": "array"
     },
+    "practitioner_usefulness_status": {
+      "const": "not_measured",
+      "default": "not_measured",
+      "title": "Practitioner Usefulness Status",
+      "type": "string"
+    },
     "project_id": {
       "title": "Project Id",
       "type": "string"
+    },
+    "prompt_version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Prompt Version"
     },
     "proposed_actions": {
       "items": {
@@ -242,11 +460,92 @@
       "title": "Proposed Actions",
       "type": "array"
     },
+    "provider_call_count": {
+      "anyOf": [
+        {
+          "maximum": 2,
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Provider Call Count"
+    },
+    "provider_call_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Provider Call Ids",
+      "type": "array"
+    },
+    "provider_input_tokens": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Provider Input Tokens",
+      "type": "integer"
+    },
+    "provider_latency_ms": {
+      "default": 0.0,
+      "minimum": 0,
+      "title": "Provider Latency Ms",
+      "type": "number"
+    },
+    "provider_model_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Provider Model Id"
+    },
+    "provider_output_tokens": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Provider Output Tokens",
+      "type": "integer"
+    },
+    "provider_total_tokens": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Provider Total Tokens",
+      "type": "integer"
+    },
+    "provider_transport_attempts": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Provider Transport Attempts",
+      "type": "integer"
+    },
     "read_only": {
       "const": true,
       "default": true,
       "title": "Read Only",
       "type": "boolean"
+    },
+    "release_basis": {
+      "const": "automated_conformance",
+      "default": "automated_conformance",
+      "title": "Release Basis",
+      "type": "string"
+    },
+    "release_gate_digest": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Release Gate Digest"
     },
     "requires_engineer_confirmation": {
       "const": true,
@@ -254,16 +553,94 @@
       "title": "Requires Engineer Confirmation",
       "type": "boolean"
     },
+    "response_schema_sha256": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Response Schema Sha256"
+    },
+    "response_schema_version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Response Schema Version"
+    },
+    "tool_contract_version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Tool Contract Version"
+    },
+    "turn_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Turn Id"
+    },
+    "validator_version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Validator Version"
+    },
+    "weave_conversation": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WeaveConversationReference"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "weave_trace": {
-      "$ref": "#/$defs/WeaveTraceReference"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WeaveTraceReference"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     }
   },
   "required": [
     "call_id",
     "project_id",
     "intent",
-    "answer",
-    "weave_trace"
+    "answer"
   ],
   "title": "AssistantAnswer",
   "type": "object"

@@ -1,0 +1,43 @@
+1
+00:00:00,500 --> 00:00:10,026
+The final product is not a winning dot. It is a
+handoff another engineer can
+
+2
+00:00:10,026 --> 00:00:20,930
+question. The package carries the original
+question, the rules, the plans compared, the
+
+3
+00:00:20,930 --> 00:00:32,211
+results, the model runs behind them, and the
+limitations that still matter. The app checks
+
+4
+00:00:32,211 --> 00:00:42,488
+those pieces before enabling the learning
+export, then records which cases include
+
+5
+00:00:42,488 --> 00:00:54,020
+complete input, report, and detailed output
+files. For this recording, we download a compact
+
+6
+00:00:54,020 --> 00:01:04,423
+local summary. W&B can mirror the evidence for
+private collaboration only after the
+
+7
+00:01:04,423 --> 00:01:16,330
+destination's access policy is verified. It is
+not verified here, so nothing uploads. The local
+
+8
+00:01:16,330 --> 00:01:27,610
+receipt remains available. A good export does
+not make the conclusion larger. It makes the
+
+9
+00:01:27,610 --> 00:01:33,000
+work easier for the next person to inspect.

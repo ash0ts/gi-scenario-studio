@@ -1,0 +1,129 @@
+{
+  "schema_version": "1.0",
+  "amendment_id": "gi-evidence-guide-r4c-publication-only-recovery-2026-08-07",
+  "amendment_kind": "publication_only_operational_recovery",
+  "study_version": "gi-evidence-guide-grounding-r4c-final",
+  "recovery_version": "gi-evidence-guide-r4c-publication-recovery-v1",
+  "recorded_at": "2026-08-07",
+  "destination": {
+    "entity": "wandb",
+    "project": "gi-scenario-studio-agent-evals",
+    "required_access": "Restricted"
+  },
+  "failure": {
+    "exception_type": "TypeError",
+    "operation": "wandb.Table.add_data",
+    "package_file": "attempt-diagnostics.json",
+    "offending_key": "error_codes",
+    "first_inferred_mapping_keys": [
+      "decision_plan_mismatch",
+      "evidence_binding_mismatch"
+    ],
+    "incoming_extra_mapping_keys": [
+      "limitation_ids_mismatch",
+      "prose_quantity_unsupported",
+      "response_not_json"
+    ],
+    "reason": "W&B inferred a fixed mapping schema from an earlier row, then rejected a later row whose error_codes mapping had additional keys.",
+    "runner_callsite": "scripts/run_evidence_guide_r4_grounding.py:880",
+    "publisher_callsite": "python/gi_scenario_core/evidence_guide_v2_cloud.py:1420",
+    "wandb_callsite": "wandb/sdk/data_types/table.py:645",
+    "normalized_failure_sha256": "0e5ca84d6b774ab08cf4a1d8914518a6d55a0a08fc80857d0d6579c8bce579d7",
+    "offending_row": {
+      "attempt_count": 144,
+      "end_to_end_conformant_attempts": 25,
+      "error_codes": {
+        "decision_plan_mismatch": 97,
+        "evidence_binding_mismatch": 86,
+        "limitation_ids_mismatch": 27,
+        "prose_quantity_unsupported": 34,
+        "response_not_json": 68
+      },
+      "input_tokens": 240068,
+      "model_id": "ibm-granite/granite-4.1-8b",
+      "output_tokens": 20551,
+      "projected_cost_usd": "0.014125",
+      "protocol_valid_attempts": 76,
+      "provider_responses": 144,
+      "stage": "prose_diagnosis",
+      "trace_acknowledged_attempts": 144
+    },
+    "failure_boundary": "The exception occurred after all 672 provider attempts and analyses were durably recorded, during W&B Table projection before the publication receipt was written.",
+    "scientific_result_changed": false,
+    "provider_call_failed": false,
+    "trace_failed": false,
+    "answer_released": false
+  },
+  "original_publication": {
+    "package_sha256": "3cdc6dff42de94add910bed5db4f464882497c18e66ad398826123de797e74d5",
+    "analysis_file_sha256": "0ac1ca755c6f3e43f48e6b51ab6df4eedad2d462f5e25fcad8a044b0512cd09a",
+    "analysis_sha256": "7625c4e5fe5b5da460798f93068d1e79b437d0dde63a1ce519fe601533b4bddd",
+    "files": {
+      "analysis.json": "0ac1ca755c6f3e43f48e6b51ab6df4eedad2d462f5e25fcad8a044b0512cd09a",
+      "attempt-diagnostics.json": "92f6c268f2a1ddc66d6a67b5995cb1cfa04532faaade2fc91ee300746e3b2716",
+      "attempts.json": "87c230a9d8dec2ab45ffcb0c323595cec3aaa8043b96dbb90d3825d2e5f7f2af",
+      "grounding-mechanisms.json": "1718439d694eae91d6b0fee87821800ef356bd513cfce67206a449052cdb842b",
+      "grounding-primary.json": "640ded019e51e99e9f24f4777edb4397d73e6ceb6cfc2a8c864cf06fea699cc9",
+      "prose-cap-mcnemar.json": "744a65a3a34baa4a11f0c84fd84671ce945d16a3c7f6894776460df52e8f6e31",
+      "prose-cap-primary.json": "4c3406dd9643a7d1e1170bc454d1372b7b0e8f636089d9d63192571eec20279a"
+    },
+    "file_count": 7,
+    "files_must_be_uploaded_byte_for_byte": true,
+    "analysis_must_not_be_recomputed": true
+  },
+  "pre_recovery_execution_receipt": {
+    "file_sha256": "11e339e52bc34fe5e554143f223bf4f2bf8055d0ca35c42526fd16d0cd2fcfed",
+    "receipt_sha256": "cbd562a65422247aed2d39e0c3aa8b6fbbf37d68dfa842b4d27bb56364bde78b",
+    "attempt_count": 448,
+    "completed_all": false,
+    "actual_answers_released": 0,
+    "interpretation": "This receipt was last written after block 2. The runner writes its final execution receipt after cloud publication; therefore the Table exception left it stale even though the immutable database, three block receipts, attempts package, and analysis package contain all 672 completed attempts. Recovery validates but does not alter this receipt."
+  },
+  "prior_frozen_sources": {
+    "cloud_publisher": {
+      "relative_path": "python/gi_scenario_core/evidence_guide_v2_cloud.py",
+      "sha256": "58fe396004b90b923194aed22a857510860e1ee634f13cf86d293e70a82135b1"
+    },
+    "r4c_runner": {
+      "relative_path": "scripts/run_evidence_guide_r4_grounding.py",
+      "sha256": "c3d176540aeeefdba2e14313e009a78a19f85fcd2bece1bb3db6058e53421856"
+    }
+  },
+  "recovery_sources": {
+    "recovery_module": {
+      "relative_path": "python/gi_scenario_core/evidence_guide_r4c_publication_recovery.py",
+      "sha256": "95f1d3e622e497b2e4726adcf3d1685910c34fba88d887d1401e839f3c07f7c4"
+    },
+    "recovery_script": {
+      "relative_path": "scripts/recover_evidence_guide_r4c_publication.py",
+      "sha256": "398e39d2cb112225d8ea9637f6b25dbff349fb543542a0093bda49eb84cea17a"
+    }
+  },
+  "recovery_method": {
+    "scope": "publication_only",
+    "inference_reexecution_permitted": false,
+    "campaign_database_mutation_permitted": false,
+    "preregistration_mutation_permitted": false,
+    "block_receipt_mutation_permitted": false,
+    "analysis_recomputation_permitted": false,
+    "reuse_existing_preregistration_artifact": true,
+    "validate_attempts": 672,
+    "validate_provider_responses": 672,
+    "validate_trace_acknowledgements": 672,
+    "validate_block_receipts": 3,
+    "validate_actual_answers_released": 0,
+    "table_projection": "Every W&B Table cell is a canonical JSON string, including mappings, lists, nulls, booleans, numbers, and ordinary strings; this yields one stable W&B type per column.",
+    "table_projection_version": "canonical-json-string-per-cell-v1",
+    "artifact_payload": "The original seven publication JSON files are uploaded unchanged with per-file SHA-256 readback verification.",
+    "idempotency": "The recovery run ID and artifact collection name are deterministic functions of the frozen study identity, preregistration, amendment hash, original package hash, table projection version, and exact destination.",
+    "failure_policy": "Any source, evidence, policy, artifact, hash, response, trace, or receipt mismatch fails closed without a provider call or released answer."
+  },
+  "claim_boundary": {
+    "production_state": "DISABLE_LIVE_GUIDE",
+    "production_release_eligible": false,
+    "actual_answers_released": 0,
+    "practitioner_usefulness_status": "not_measured",
+    "hydraulic_or_ecological_claim_added": false,
+    "publication_recovery_is_scientific_reanalysis": false
+  }
+}

@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import evidenceGuideReleaseGate from "../../../../benchmarks/evidence_guide/v1/release-gate.json";
 import { demoProject } from "../data/guidedSummary";
 import type { ObservabilityState, ProjectKind, ProjectSummary, RpcTransport } from "../types";
 
@@ -104,6 +105,29 @@ export class BrowserDemoTransport implements RpcTransport {
         message: "Browser preview only: links were validated locally, but no authenticated cloud connection was attempted.",
       };
       return { ...this.observability } as T;
+    }
+
+    if (method === "assistant.get_capabilities") {
+      const selectedModel = typeof evidenceGuideReleaseGate.selected_model === "string"
+        ? evidenceGuideReleaseGate.selected_model
+        : null;
+      const gateEnabled = evidenceGuideReleaseGate.enabled === true && selectedModel !== null;
+      return {
+        available: false,
+        state: gateEnabled ? "BROWSER_PREVIEW_NO_TRACE" : "MODEL_NOT_RELEASE_GATED",
+        reason: gateEnabled
+          ? "The browser replay cannot create the required Weave trace, so it cannot make a model call."
+          : `The checked Evidence Guide campaign decision is ${evidenceGuideReleaseGate.decision}: ${evidenceGuideReleaseGate.reasons.join("; ")}.`,
+        requires_consent: false,
+        requires_content_logging_consent: false,
+        inference_consent: false,
+        content_logging_consent: false,
+        provider: "W&B Inference",
+        model: gateEnabled ? selectedModel : null,
+        suggested_questions: [],
+        read_only: true,
+        local_evidence_available: true,
+      } as T;
     }
 
     return { ok: true, method, params } as T;

@@ -18,8 +18,9 @@ projection are not complete yet.
 ## Optional W&B project binding
 
 A production project may remain local and enter Home without W&B. Cloud sync
-and the Evidence Assistant stay disabled until the project is bound to a W&B
-project with visibility verified exactly as `Restricted`. Restricted access
+and the Evidence Guide stay disabled until the project is bound to a W&B
+project with visibility verified exactly as `Restricted`; the Guide also
+requires its own inference and trace-content consent. Restricted access
 limits a project to explicitly invited team members; a public or merely
 discoverable project is not an acceptable destination. See W&B's
 [restricted-project guidance](https://docs.wandb.ai/guides/hosting/iam/access-management/restricted-projects/).
@@ -97,6 +98,15 @@ Credentials must be treated as passwords and must never be committed or
 hard-coded, consistent with the
 [W&B API-key guidance](https://docs.wandb.ai/models/track/public-api-guide).
 
+Disabling W&B code and Git capture is not sufficient by itself. The pinned SDK
+can otherwise create `wandb-metadata.json`, `requirements.txt`, system metrics,
+and console files containing host or environment details. Every application and
+publication adapter therefore sets `x_disable_meta`,
+`x_disable_machine_info`, `x_disable_stats`, and `x_save_requirements=False`,
+in addition to disabling code, Git, and console capture. Release publication
+enumerates each run's current cloud file inventory and fails if
+`wandb-metadata.json`, `requirements.txt`, or `output.log` is present.
+
 ## Credential boundary
 
 The desktop host owns credential entry and persistence. The renderer can ask
@@ -173,24 +183,55 @@ rewrite prior W&B history.
 
 ## Weave explanation governance
 
-The current source MVP creates a deterministic, read-only evidence explanation
-and acknowledges it with one Weave call. It cannot mutate a model, accept QA,
-attest fitness, change search bounds, select a preferred alternative, or invent
-an engineering value. It does not call a language-model provider.
+The source MVP includes a provider-backed, read-only Evidence Guide. Each turn
+uses the one- or two-call finite-plan architecture pinned by an unexpired v2
+release receipt. A provider call may choose an allowlisted intent, bounded read
+tool, or finite explanation-plan ID; it never authors the engineering answer.
+The provider receives no write tool and cannot mutate a model, accept QA,
+attest fitness, change search bounds, select a preferred alternative, or author
+an engineering value. Values, units, citations, limitations, boundary language,
+and proposed review actions are materialized and checked locally.
 
-Every explanation request must create a confirmed Weave call in the same W&B
-project. The planned provider-backed assistant must additionally nest
-authorization, local evidence resolution, context construction, provider call,
-numeric-claim extraction, evidence validation, limitation validation, response
-formatting, and feedback. Until that exists, the UI offers only deterministic
-guided copy. If Weave is unavailable, the endpoint is disabled; the Evidence
-Rail remains available. An untraced fallback answer is prohibited.
+Conversations are multi-turn and evidence-packet-pinned. Each question creates
+a new OpenTelemetry-backed Weave Agents turn under the same logical
+conversation, with the selected architecture's actual LLM and tool spans plus
+deterministic validation. The worker flushes the trace and reads the turn back
+by trace ID before it stores or returns an answer. If the packet changes or any
+policy, provider, tool, validator, flush, acknowledgement, campaign-expiry, or
+circuit-breaker check fails, the turn fails closed. The Evidence Rail remains
+available, and an untraced fallback answer is prohibited. See the
+[Weave Agents tracing guide](https://docs.wandb.ai/weave/guides/tracking/trace-agents).
 
-Selected evidence context may contain project data because full synchronization
-was explicitly accepted. Before any trace leaves the worker, Python-side PII and
-sensitive-key redaction removes credentials, authorization material, internal
-credential IDs, and local paths. W&B documents this pre-send behavior in the
-[Weave redaction guide](https://docs.wandb.ai/weave/guides/tracking/redact-pii).
+Inference and trace consent are explicit and separate from general W&B
+synchronization. Engineering projects require trace-content consent; the
+Evidence Guide is disabled for critical-infrastructure projects and unless its
+online binding is verified as exactly `RESTRICTED`. The raw free-form question
+and prior message text remain local. Before transport, the worker maps the
+question to an allowlisted intent and safe canonical prompt, builds an immutable
+structured-evidence packet, restricts tool arguments to its selected anchor,
+recursively excludes prohibited keys and file/path data from tool results,
+hashes or omits non-demo identifiers, and audits the complete provider and trace
+payloads. Credentials are supplied only in the HTTPS authorization header and
+are never part of those payloads or stored policy records.
+
+A deterministic local trace filter removes prohibited-key fields and local
+paths and redacts common credential, bearer, email, government-ID, and
+labelled-phone patterns before the SDK sees content. Standard-project inference
+is disabled unless both inference and trace-content consent are explicit; full
+synthetic fixture traces still pass through the same filter. This release uses
+the public W&B Serverless Inference origin only for W&B Cloud bindings and does
+not forward Dedicated Cloud or Self-Managed credentials to that origin. Weave's sensitive-key
+sanitizer remains enabled as defense in depth.
+
+The optional Presidio-backed Weave PII setting is disabled because it can
+attempt a runtime language-model download, which is incompatible with the
+packaged application's offline and locked-supply-chain boundary. The local
+filter is intentionally not described as removing all PII: it does not classify
+every piece of domain-specific engineering data and does not sanitize the
+separate W&B Inference request. Local normalization, allowlisting, and provider
+payload audits are the mandatory pre-transport controls. See the
+[Weave redaction guide](https://docs.wandb.ai/weave/guides/tracking/redact-pii)
+for the separate SDK feature.
 
 ## Source data and licensing
 

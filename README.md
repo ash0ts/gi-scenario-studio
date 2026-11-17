@@ -25,6 +25,16 @@ The core engineering invariant is strict:
 > worker/SWMM packaging, release credentials, cross-platform integration gates,
 > and installer signing remain release work.
 
+The Evidence Guide release gate separates automated conformance from real-world
+usefulness. The v1 provider campaign remains immutable historical failure
+evidence. The architecture-first v2 campaign also stopped safely: its fresh
+R2b trace canary reached W&B Inference and Weave, but Granite selected the wrong
+finite explanation plan for a safety-critical unsupported question. The local
+validator withheld the answer, the deterministic `D1` guide passed the same
+case, and the recorded decision is `DISABLE_LIVE_GUIDE`. Practitioner
+usefulness remains `not_measured`. No language-model explanation can be enabled
+without a complete, unexpired, hash-pinned passing campaign receipt.
+
 ## What the application helps decide
 
 The primary user already has a SWMM model suitable for alternatives screening.
@@ -78,11 +88,12 @@ Credentials, environment dumps, local absolute paths, and raw console logs are
 always excluded.
 
 The pinned W&B `0.28.1` [documented Project API](https://docs.wandb.ai/models/ref/python/public-api/project)
-can confirm project identity and caller access, but it does not expose an exact
-project-visibility scope.
-`PRIVATE` is not treated as `Restricted`; connection and upload fail closed
-until a supported resolver returns exactly `RESTRICTED`. A successful access or
-upload probe is not used as a privacy substitute.
+can confirm project identity and caller access, but does not currently expose
+an exact project-visibility scope. The worker therefore checks supported exact
+visibility fields first, then uses one isolated, narrow W&B GraphQL policy query
+as an interim resolver. Any missing field, schema drift, or identity mismatch
+fails closed. `PRIVATE` is never treated as `Restricted`, and a successful
+access or upload probe is not used as a privacy substitute.
 
 The local SQLite database and content-addressed artifact store remain
 authoritative, and the application can be used entirely in `LOCAL_ONLY` mode.
@@ -98,13 +109,76 @@ the authoritative commit. After an initial verified binding, work may continue
 offline and synchronize later using W&B's
 [offline support](https://docs.wandb.ai/models/track/environment-variables).
 
-The source MVP contains a read-only, deterministic evidence-explanation path
-that is returned only after a [Weave trace](https://docs.wandb.ai/weave/guides/tracking/tracing)
-has been flushed and read back. It does not yet call a user-configured model
-provider or emit the planned nested operation trace. That provider-backed
-Evidence Assistant remains disabled until those pieces and their evaluation
-gate ship. The deterministic Evidence Rail works without it, and an untraced
-answer is never substituted as engineering evidence.
+The source MVP contains an opt-in, provider-backed Evidence Guide, but no
+provider-backed architecture is currently released: v2 stopped at its mandatory
+canary and retained deterministic `D1`. Any production-eligible arm would never
+ask a model to write engineering facts. Depending on a future selected arm, the
+provider would make one or two bounded calls to choose an intent, a read-only
+tool route, or one finite explanation-plan ID. Repository code then supplies
+every value, unit, citation, limitation, boundary statement, and allowed next
+action.
+Multiple questions can share one evidence-packet-pinned conversation, while
+each question is a new
+[Weave Agents turn](https://docs.wandb.ai/weave/guides/tracking/trace-agents)
+with the actual LLM and tool spans. The worker flushes and reads the turn back
+before returning an answer. Provider and trace inputs are normalized and
+allowlisted locally. A deterministic local filter redacts sensitive fields,
+paths, and common credential/PII patterns before tracing; standard projects use
+no provider or trace content without explicit inference and content-logging
+consent. Serverless Inference additionally requires a verified W&B Cloud
+binding. The deterministic Evidence Rail works without the Guide, and an
+untraced, expired, or unvalidated answer is never substituted as engineering
+evidence.
+
+The original
+[`gi-evidence-guide-evaluation:v1`](benchmarks/evidence_guide/v1/README.md)
+dataset and its failed campaign are retained unchanged as protocol-regression
+evidence. They are not a release benchmark: v1 exposed trusted answer hints,
+did not causally test tool use, and did not reliably detect spelled-out numeric
+hallucinations.
+
+The architecture-first v2 protocol provides 120 development scenarios and 120
+project-family-separated validation scenarios. It reserves a 300-scenario
+hidden-test design, but no access-controlled hidden corpus is currently
+available or sealed: the checked-in hidden receipt is explicitly unsealed and
+release-ineligible. Evidence IDs and claim order are remapped per attempt;
+causal targets remain unavailable until the required tool executes. The
+deterministic scorer is mutation-tested before provider calls. Run the
+credential-free controls with:
+
+```bash
+PYTHONPATH=python .venv/bin/python scripts/build_evidence_guide_v2_corpus.py \
+  --build-public
+PYTHONPATH=python .venv/bin/python scripts/mutation_test_evidence_guide_v2.py \
+  --split development
+PYTHONPATH=python .venv/bin/python scripts/mutation_test_evidence_guide_v2.py \
+  --split validation
+```
+
+The checked-in hidden file is a public status receipt, not evidence that hidden
+rows exist elsewhere. Paid execution is stage-at-a-time, preregistered before
+the first call, capped at $300 and the declared token/call ceilings, and spread
+across three time blocks. W&B stores one Run per variant/model/replicate block;
+Weave records component evaluations and model, tool, and validation spans.
+Failed and incomplete arms are retained.
+
+The completed R2b launch inherited a hash-pinned 160-attempt capability screen
+from R1. Earlier preflights and 18 R1 architecture rows were invalidated and do
+not enter any scientific denominator. A separate R2 Weave-readback incident
+made zero provider calls and is retained only as operational evidence. The
+fresh R2b canary then completed its observability path, including trace
+acknowledgement, but `ibm-granite/granite-4.1-8b` chose
+`recorded_rules_fail_v1` instead of the required `authority_boundary_v1` plan.
+The deterministic validator blocked release; `D1` passed the same unsupported
+case. Because the preregistration required a passing canary before architecture,
+no architecture, prompt/configuration, validation, judge, hidden, or soak stage
+ran, and the architecture/scientific denominator is zero. Cumulative
+conservative accounting is 291 provider calls, 243,928 input tokens, 37,248
+output tokens, and $0.013704. The one fresh canary call reported 302 input
+tokens, 25 output tokens, and $0.000018. The result is
+`DISABLE_LIVE_GUIDE`; deterministic `D1` remains active. See the
+[v2 study protocol and result](docs/evidence-guide-v2-study.md) for the exact
+architectures, stopping rules, receipts, and claim boundaries.
 
 See [data governance](docs/data-governance.md) for the complete policy.
 
@@ -137,7 +211,7 @@ acceptable engineering option:
 
 | Role | Alternative | Outcome |
 |---|---|---|
-| Low-cost caution | `ALT-017 [0,0,1,6]` | $54.99k; 4.14% reduction; misses the target and raises the long-event peak from 3.14 to 3.21 cfs |
+| Low-cost caution | `ALT-017 [0,0,1,6]` | $54.99k; 4.14% reduction; misses the target and raises two selected-storm peaks, with the worst response in the long event at 3.14→3.21 cfs |
 | Carry-forward candidate | `ALT-207 [0,3,2,6]` | $190.25k; 6.42% reduction; meets all four teaching rules |
 | Stronger, over budget | `ALT-109 [1,3,2,6]` | $222.01k; 6.95% reduction; exceeds the cost cap |
 | Observed performance extreme | `ALT-014 [4,3,4,5]` | $361.86k; 8.82% reduction; strongest observed volume result but poor cost fit |
@@ -155,6 +229,66 @@ metric-specific tolerances.
 
 Read [the guided example specification](docs/guided-example.md) or inspect the
 [exact manifest](benchmarks/guided_exact/manifest.json).
+
+### Evidence-grounded report media
+
+The companion article,
+[The Stormwater Plan That Looked Like a Bargain](media/gi-scenario-film/story/article.md),
+pairs seven recordings of the real guided React interface with five short
+[deterministic Canvas films](media/gi-scenario-report-films/README.md). The
+application clips demonstrate Storms, Model, Opportunities, Run, Compare,
+Evidence Rail, and Export. The Canvas films explain the decision logic using
+values projected from the checked-in guided fixture, exact 700-vector dataset,
+search campaign, publication tables, and retained SWMM reports.
+
+The active analytical films are silent-first, locally rendered, and published
+to the existing Restricted W&B report with source hashes and artifact lineage.
+They show modeled runoff-accounting and hydraulic signals, not measured field
+or ecological outcomes. In particular, SWMM `Infiltration Loss` is not treated
+as groundwater recharge, and the films make no claim about avoided flooding,
+water quality, habitat, annual benefit, energy, or carbon.
+
+Build and inspect the active report-film package from the repository root:
+
+```bash
+uv sync --locked --extra dev --extra science
+pnpm install --frozen-lockfile
+pnpm build:report-films:campaign
+pnpm build:report-films:tables
+pnpm build:report-films:data
+pnpm test:report-films:node
+pnpm render:report-films:stills
+pnpm check:report-films:stills
+pnpm render:report-films
+pnpm check:report-films
+pnpm publish:report-films:dry-run
+```
+
+The three build commands deterministically replay the frozen search benchmark,
+rebuild its publication tables, and then project the film data; they do not run
+new hydraulics. Rendering requires local Chrome, FFmpeg, and FFprobe. The final
+command performs hash and lineage validation for the pinned
+`wandb/gi-scenario-studio-article` destination but makes no W&B write. Actual
+publication remains a separate explicit `--publish` operation after the target
+is independently verified as exactly `RESTRICTED`.
+
+The earlier [Manim project](media/gi-scenario-film/README.md) is preserved as
+legacy source and historical review material. It is not part of the active W&B
+report, rendering commands, artifacts, or CI pipeline.
+
+An automated Playwright walkthrough records the seven interface views from the
+deterministic browser preview, and the W&B publisher places application and
+Canvas media beside the relevant article copy.
+
+The seven article clips are truthful **interface-only verified replays**. They
+inspect the checked-in exact fixture; they do not launch SWMM, show fake live
+progress, create an export, or exercise native desktop/keychain behavior. A new
+884-job execution remains a separate, optional desktop action that requires the
+approved packaged SWMM executable. See the
+[legacy film README](media/gi-scenario-film/README.md) for the exact preview,
+recording, extraction, and validation commands; use the
+[active report-film README](media/gi-scenario-report-films/README.md) for the
+Canvas render and Restricted W&B publication workflow.
 
 ## 2,800-job hidden-oracle benchmark
 
@@ -186,13 +320,71 @@ The benchmark does not enable ML by itself. Production remains on Sobol unless
 the declared public-network, multi-seed release gates are met. Predicted
 hydraulic values and unsupported “carbon saved” claims are excluded.
 
+### Completed Cedar Trace campaign
+
+The checked-in campaign runner replayed four methods at 64, 128, and 256
+requested designs over the same ten seeds: 120 controlled runs in total. Each
+design request was charged as four exact-SWMM-job equivalents because every
+candidate has four storm responses in the frozen oracle. The campaign performed
+no new hydraulic executions and did not measure energy.
+
+| Design budget | Job equivalents | Random median HV | Sobol median HV | NSGA-II median HV | Sobol + ExtraTrees median HV |
+|---:|---:|---:|---:|---:|---:|
+| 64 | 256 | 0.100 | 0.190 | 0.190 | 0.190 |
+| 128 | 512 | 0.357 | 0.501 | 0.679 | 0.399 |
+| 256 | 1,024 | 0.616 | 0.570 | 1.000 | 1.000 |
+
+At the largest budget, ExtraTrees recovered a median 83.3% of the twelve
+complete-rule alternatives and 46.2% of the 421 alternatives with a modeled
+peak increase. It nevertheless failed four of five declared release checks:
+the median-hypervolume improvement occurred at only one budget, its worst
+10th-percentile hypervolume gap to Sobol was -0.052, adverse recall was below
+the declared threshold, and only one synthetic network was tested. The 95%
+adverse-recall threshold is itself impossible at this budget: 256 requests can
+recover at most 60.8% of 421 adverse alternatives. That gate must be replaced
+before a new multi-network campaign is examined. Sobol therefore remains the
+production search and adaptive ML remains experimental.
+
+Build the local campaign, reviewed figures, W&B publication plan, and companion
+article with:
+
+```bash
+uv sync --extra science --extra dev --extra observability
+PYTHONPATH=python .venv/bin/python scripts/run_search_benchmark_campaign.py --workers 1
+PYTHONPATH=python .venv/bin/python scripts/build_benchmark_publication.py
+PYTHONPATH=python .venv/bin/python scripts/publish_benchmark_study.py \
+  --entity "$WANDB_REPORT_ENTITY" \
+  --project "$WANDB_REPORT_PROJECT"
+```
+
+The last command is a hash-validating dry run. Add `--publish` only after the
+destination is independently verified as exactly `RESTRICTED`. Publication
+uses deterministic W&B run IDs, a pinned dataset artifact, typed Tables,
+per-run search traces, and a hash-verified campaign artifact. Read the
+[research basis](docs/research-basis.md) for scientific context and explicit
+claim boundaries.
+
+After publication, verify the actual cloud file inventories and record the
+result in the local receipt:
+
+```bash
+PYTHONPATH=python .venv/bin/python scripts/publish_benchmark_study.py \
+  --entity "$WANDB_REPORT_ENTITY" \
+  --project "$WANDB_REPORT_PROJECT" \
+  --audit-only
+```
+
+The audit fails if W&B automatic metadata, requirements, or console files are
+present. This matters because disabling code and Git capture alone does not
+remove host paths and machine details from every SDK-generated file.
+
 ## Source MVP capability map
 
 | Area | Present in source | Release claim not made yet |
 |---|---|---|
 | Guided workflow | Cedar Trace overview, decision rules, acceptance matrix, adverse-result lesson, Evidence Rail, 884-job verified replay, and 20 retained run sets | A calibrated or real municipal model |
 | Scientific core | Pydantic schema 2.0 contracts, secure bundle/parser/mutation services, SQLite state, revision-pinned analyses, exact solver runner, search, metric/QA records bound to retained RPT hashes and extractor versions, repository-recorded learning exports, and guided/benchmark generators | Universal compatibility with every SWMM or PCSWMM extension |
-| W&B/Weave boundary | Restricted-project policy contracts, fail-closed exact-scope gate, content-hash manifests, durable outbox, exact-version artifact verification, typed Tables, SDK adapters, host-owned masked credential prompt and keychain storage, confirmed single-call Weave traces, safe browser preview, and a protected integration workflow | An authoritative Restricted-scope resolver for the pinned Public API, a provider-backed nested Evidence Assistant, or cloud authority over engineering results |
+| W&B/Weave boundary | Restricted-project policy contracts, fail-closed exact-scope gate, content-hash manifests, durable outbox, exact-version artifact verification, typed Tables, SDK adapters, host-owned masked credential prompt and keychain storage, one- or two-call finite-plan W&B Inference arms recorded through Weave Agents, ordinary Run-linked scientific operation calls, deterministic local trace redaction, six read-only evidence tools, immutable v1 failure evidence, separated v2 development/validation corpora with an explicitly unsealed hidden-test receipt, mutation-tested scorers, causal tool ablations, automated judge gates, budgeted campaign orchestration, safe browser preview, and protected integration workflows | An authoritative Restricted-scope resolver for the pinned Public API, an available sealed hidden lockbox, a completed passing v2 architecture/validation/judge/hidden/soak receipt, measured practitioner usefulness, or cloud authority over engineering results |
 | Search evaluation | Finite-universe generator and hidden-oracle Random/Sobol/NSGA-II/ExtraTrees replay | A globally optimal design or approved ML proposer |
 | Desktop distribution | React/Tauri/Python source and target packaging contract | Signed/notarized macOS or signed Windows installer in this repository |
 | Professional workflow | Secure portable-bundle import, parsed preflight, versioned unassessed passport and constrained engineer attestation, explicit storm and LID-slot setup, direct run arithmetic, durable exact execution controls, complete-ensemble comparison, adverse-peak scan, run-level Evidence Rail, and repository-gated learning export | Cost/criterion authoring, accepted Decision Brief authoring, reference reproduction UI, or a completed calibration, survey, geotechnical, utility, permitting, and construction workflow |
@@ -223,11 +415,21 @@ The following boundaries are intentionally visible rather than papered over:
   storm-only differences. Restart recovery still needs a dedicated analysis-
   status read RPC; the current UI derives live job progress from the durable
   result ledger.
-- W&B `0.28.1` does not expose an authoritative exact project-visibility scope;
-  `PRIVATE` is never inferred to mean `Restricted`, so production binding and
-  upload remain blocked until a supported resolver is available.
-- Provider-backed nested assistant traces and Weave Dataset evaluations are not
-  implemented; only deterministic, Weave-acknowledged explanations exist.
+- W&B `0.28.1` does not expose an authoritative exact project-visibility scope
+  through its documented Project object. The current interim resolver is one
+  isolated, narrow GraphQL policy query that must return exact `RESTRICTED`
+  identity; `PRIVATE`, missing fields, and schema drift all fail closed.
+- The provider-backed Evidence Guide and its Weave Agents turns are implemented.
+  Both v1 real candidate evaluations failed and remain immutable historical
+  evidence. The v2 runtime limits production-eligible models to selecting finite
+  interpretation plans. R2b inherited the valid 160-attempt capability screen,
+  then stopped at its preregistered trace canary when Granite selected
+  `recorded_rules_fail_v1` instead of `authority_boundary_v1` for a
+  safety-critical unsupported case. The validator released no model answer;
+  deterministic `D1` passed the same case and remains active. No architecture,
+  validation, judge, hidden, or soak denominator was opened, and the hidden
+  lockbox remains unavailable and unsealed. The checked decision is
+  `DISABLE_LIVE_GUIDE` and practitioner usefulness is `not_measured`.
 - Search replays report decision quality and exact-job-equivalent budgets, but
   campaign timing, peak memory, and measured-or-estimated energy collection are
   not yet implemented.

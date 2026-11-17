@@ -8,17 +8,19 @@ reportable hydraulic value must resolve to a direct SWMM job. Search and ML may
 choose a candidate to evaluate; they never supply a hydraulic result.
 
 The local project database and content-addressed artifacts are authoritative.
-W&B Models mirrors computation, lineage, and engineering evidence. The source
-MVP uses Weave to acknowledge a deterministic read-only evidence explanation;
-the provider-backed nested Evidence Assistant shown below remains target
-architecture. Neither cloud service is a hydraulic, model-fitness, or
-regulatory authority.
+W&B Models mirrors computation, lineage, and engineering evidence. The optional
+Evidence Guide uses the one- or two-call finite-plan architecture pinned by its
+v2 release receipt and records routing, selected read tools, plan selection,
+and deterministic validation as an acknowledged Weave Agents turn. Neither
+cloud service is a hydraulic, model-fitness, or regulatory authority.
 
 This is the target staff-engineer architecture. The source MVP implements the
 authoritative worker, exact guided evidence, durable solver state, four automatic
-W&B producer projections, and a single-call Weave gate. Full conceptual-data
-provenance/projection, producer-atomic outbox insertion, a host-owned credential
-prompt, and provider-backed nested assistant traces remain release gates.
+W&B producer projections, and the provider-backed, locally validated Evidence
+Guide with Weave Agents traces. Full conceptual-data provenance/projection,
+producer-atomic outbox insertion, a host-owned credential prompt, and signed
+installer publication remain release gates. Real provider evaluation evidence is
+published, and its checked decision is to keep the live Guide disabled.
 
 ```mermaid
 flowchart LR
@@ -30,7 +32,7 @@ flowchart LR
     RUNNER --> SWMM["Pinned SWMM 5.2.4 subprocesses"]
     WORKER --> OUTBOX["Transactional cloud outbox"]
     OUTBOX --> WB["W&B Runs, Tables, Artifacts, Registry"]
-    WORKER --> ASSIST["Evidence Assistant"]
+    WORKER --> ASSIST["Evidence Guide"]
     ASSIST --> WEAVE["Weave traces and evaluations"]
 ```
 
@@ -95,9 +97,11 @@ a stored credential. The production target for an observability connection is:
 5. The worker authenticates, verifies project policy, and discards the secret.
 
 The secret is not inherited by the worker process, placed in a process argument,
-written to SQLite, returned in JSON-RPC, or included in diagnostics. A future
-provider-backed Evidence Assistant must use a distinct keychain identity; that
-provider credential path is not implemented in the source MVP.
+written to SQLite, returned in JSON-RPC, or included in diagnostics. The
+provider-backed Evidence Guide reuses the verified in-memory W&B credential only
+for the W&B Inference HTTPS authorization header. It does not create a second
+provider secret, expose that credential to the renderer, or place it in a
+provider or Weave payload.
 
 Initial entry uses a host-owned masked password dialog. The resulting buffer is
 length-checked, written directly to the OS keychain, and zeroized by Rust. The
@@ -267,38 +271,50 @@ W&B run, Table, Artifact, lineage, dashboard, Registry, and Weave-trace links ar
 useful cross-references. They supplement the local Evidence Rail and cannot
 replace its deterministic resolution.
 
-## Evidence Assistant target and current Weave gate
+## Evidence Guide provider boundary and Weave Agents trace
 
-The current worker constructs and validates a deterministic local explanation,
-records one Weave call, flushes it, and reads it back before returning the
-answer. It does not call a model provider or produce nested operations.
+The current worker constructs an immutable evidence packet and maps each raw
+question to an allowlisted engineering intent before transport. The provider
+gets a canonical safe question rather than unrestricted project data. The v2
+release receipt pins one production-eligible architecture:
 
-A provider-backed assistant must remain read-only and nest these operations:
+- `A1`: deterministic intent and tools, followed by one finite-plan call;
+- `A2`: one intent-selection call, deterministic tools, and one finite-plan
+  call; or
+- `A3`: one bounded tool-routing call with target evidence withheld until the
+  selected tool executes, followed by one finite-plan call.
+
+Repository code supplies every numeric value, unit, evidence reference,
+limitation, boundary statement, and next action. It rejects unrecognized tools,
+plans, IDs, claims, actions, and any tool result that is not bound to the same
+packet, subject, and local-authority receipt.
+
+One evidence-packet-pinned conversation may contain multiple turns. The actual
+trace shape for each question is:
 
 ```text
-assistant.request
-  -> authorize_project
-  -> resolve_local_evidence
-  -> construct_context
-  -> call_provider
-  -> extract_numeric_claims
-  -> validate_evidence_references
-  -> validate_units_and_limitations
-  -> format_response
-  -> record_feedback
+Conversation (logical grouping)
+  Turn (one trace)
+    LLM: optional intent or bounded tool routing
+    Tool: selected read-only calls
+    LLM: finite explanation-plan selection
+    Local: deterministic rendering and validation
 ```
 
-Weave initializes against the same entity/project as the current W&B analysis.
-Shared local analysis and run IDs associate trace evidence with exact
-computation. See W&B's guidance for
-[linking W&B runs and Weave traces](https://docs.wandb.ai/weave/guides/tracking/trace-to-run).
+Weave initializes against the same verified `entity/project` as the current W&B
+analysis. The worker requires real trace/span IDs, flushes the OpenTelemetry
+provider, and reads the turn back by trace ID before returning an answer. Any
+provider, validation, flush, or acknowledgement failure produces a failed local
+turn and no generated fallback. See W&B's
+[Weave Agents tracing guidance](https://docs.wandb.ai/weave/guides/tracking/trace-agents).
 
 A deterministic validator checks evidence IDs, stored values, units, required
-limitations, prohibited actions, and unsupported prose numbers. Today, the
-local explanation is not shown unless its single trace is confirmed and the
-validator passes. A future provider response must satisfy the same gate. If
-Weave is unavailable, no explanation is generated; Evidence Rail navigation
-still works.
+limitations, allowed actions, source binding, and authority boundaries. The
+rendered answer is not shown unless the selected architecture's exact provider
+call count is satisfied, the Weave Agents turn is confirmed, and validation
+passes. Three provider, evidence, validation, or trace failures within ten
+minutes open a session circuit breaker. If W&B Inference or Weave is unavailable,
+no generated answer is returned; Evidence Rail navigation still works.
 
 ## Guided replay and rerun
 

@@ -1,0 +1,38 @@
+1
+00:00:00,500 --> 00:00:06,592
+Here is where 884 comes from. Put the four
+storms across the top. The unchanged
+
+2
+00:00:06,592 --> 00:00:12,144
+model fills the first four squares. Then each of
+220 plans gets a row of
+
+3
+00:00:12,144 --> 00:00:18,544
+four more squares—one real SWMM run per storm.
+Four plus 220 times four equals 884.
+
+4
+00:00:18,544 --> 00:00:25,407
+Each square keeps the result, the numerical
+check, and digital fingerprints of its files.
+
+5
+00:00:25,407 --> 00:00:32,347
+The project also keeps complete input, report,
+and output files for the four baseline runs
+
+6
+00:00:32,347 --> 00:00:39,441
+and for four teaching plans under four storms:
+20 full evidence sets. Opening those finished
+
+7
+00:00:39,441 --> 00:00:45,455
+records is a replay. Running all 884 again would
+be a new experiment. A replay
+
+8
+00:00:45,455 --> 00:00:48,000
+is a receipt, not a progress bar.

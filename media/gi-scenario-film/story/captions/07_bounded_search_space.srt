@@ -1,0 +1,48 @@
+1
+00:00:00,500 --> 00:00:08,910
+Those four additional-unit counts work like four
+dials. The first has five settings, the second
+
+2
+00:00:08,910 --> 00:00:16,080
+four, the third five, and the fourth seven.
+Multiply them and we get 700 possible
+
+3
+00:00:16,080 --> 00:00:24,136
+combinations, including the unchanged baseline.
+Testing every combination under four storms
+
+4
+00:00:24,136 --> 00:00:32,103
+would require 2,800 SWMM runs. That complete
+study exists as a benchmark. The guided story
+
+5
+00:00:32,103 --> 00:00:40,512
+is smaller: 220 chosen combinations, four storms
+each, plus four baseline runs—884 runs in all.
+
+6
+00:00:40,512 --> 00:00:48,125
+It is not every possibility, and it is not a
+demonstration that machine learning found
+
+7
+00:00:48,125 --> 00:00:55,738
+a better answer. Imagine the untested
+combinations as face-down cards. A search method
+
+8
+00:00:55,738 --> 00:01:02,289
+may choose which card to turn over next. That
+choice is a question, not an
+
+9
+00:01:02,289 --> 00:01:10,167
+answer. Only a direct SWMM run can reveal the
+modeled hydraulics. Search decides where to
+
+10
+00:01:10,167 --> 00:01:13,000
+look. SWMM supplies what we see.

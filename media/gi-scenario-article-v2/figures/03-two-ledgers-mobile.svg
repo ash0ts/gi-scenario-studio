@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="540" height="1240" viewBox="0 0 540 1240" role="img" aria-labelledby="title desc">
+  <title id="title">Every call returned. The behavior did not.</title>
+  <desc id="desc">A mobile two-ledger view shows 672 of 672 responses and trace acknowledgements, held-out mechanism counts for Granite and Qwen, a separate 192 of 192 deterministic control, and the decision to disable the live Guide.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke"/></marker>
+    <style>
+      @font-face { font-family: Atkinson; src: url('../../gi-scenario-film/assets/fonts/AtkinsonHyperlegible-Regular.ttf'); }
+      @font-face { font-family: Atkinson; src: url('../../gi-scenario-film/assets/fonts/AtkinsonHyperlegible-Bold.ttf'); font-weight: 700; }
+      @font-face { font-family: PlexCondensed; src: url('../../gi-scenario-film/assets/fonts/IBMPlexSansCondensed-SemiBold.ttf'); font-weight: 600; }
+      @font-face { font-family: PlexMono; src: url('../../gi-scenario-film/assets/fonts/IBMPlexMono-Regular.ttf'); }
+      .eyebrow { font: 700 21px Atkinson, sans-serif; letter-spacing: 1px; fill: #08766F; }
+      .headline { font: 600 46px PlexCondensed, Atkinson, sans-serif; fill: #17313A; }
+      .subhead { font: 400 24px Atkinson, sans-serif; fill: #48616B; }
+      .section { font: 700 30px Atkinson, sans-serif; fill: #17313A; }
+      .body { font: 400 26px Atkinson, sans-serif; fill: #17313A; }
+      .small { font: 400 21px Atkinson, sans-serif; fill: #48616B; }
+      .label { font: 700 24px Atkinson, sans-serif; letter-spacing: .4px; fill: #17313A; }
+      .tinyLabel { font: 700 18px Atkinson, sans-serif; letter-spacing: .25px; fill: #17313A; }
+      .mono { font: 400 27px PlexMono, monospace; fill: #17313A; }
+      .number { font: 600 62px PlexCondensed, Atkinson, sans-serif; fill: #17313A; }
+      .numberSmall { font: 600 46px PlexCondensed, Atkinson, sans-serif; fill: #17313A; }
+      .whiteLabel { font: 700 23px Atkinson, sans-serif; fill: white; }
+      .whiteBody { font: 400 24px Atkinson, sans-serif; fill: white; }
+    </style>
+  </defs>
+  <rect width="540" height="1240" fill="#F5F7F6"/>
+  <text x="30" y="46" class="eyebrow" text-anchor="start">TWO LEDGERS</text>
+<text x="30" y="102" class="headline" text-anchor="start">Every call returned.</text>
+<text x="30" y="152" class="headline" text-anchor="start">The behavior didn&#x27;t.</text>
+<rect x="30" y="204" width="480" height="260" rx="24" fill="#DCEFED" stroke="#08766F" stroke-width="3"/>
+<text x="56" y="246" class="label" text-anchor="start" fill="#08766F">OPERATIONAL LEDGER</text>
+<text x="56" y="316" class="number" text-anchor="start">672/672</text>
+<text x="56" y="350" class="body" text-anchor="start">provider responses</text>
+<text x="56" y="406" class="section" text-anchor="start">672/672 traces acknowledged</text>
+<rect x="30" y="494" width="480" height="478" rx="24" fill="#FFFFFF" stroke="#B43D47" stroke-width="3"/>
+<text x="56" y="538" class="label" text-anchor="start" fill="#B43D47">HELD-OUT BEHAVIOR</text>
+<text x="360" y="584" class="tinyLabel" text-anchor="middle">Granite</text>
+<text x="458" y="584" class="tinyLabel" text-anchor="middle">Qwen</text>
+<text x="56" y="628" class="body" text-anchor="start" fill="#17313A">Target crosses rule</text>
+<text x="360" y="628" class="mono" text-anchor="middle" fill="#17313A">1/12</text>
+<text x="458" y="628" class="mono" text-anchor="middle" fill="#17313A">5/12</text>
+<line x1="56" y1="648" x2="484" y2="648" stroke="#CBD8D8" stroke-width="2" stroke-linecap="round"/>
+<text x="56" y="696" class="body" text-anchor="start" fill="#17313A">Distractor only</text>
+<text x="360" y="696" class="mono" text-anchor="middle" fill="#17313A">6/12</text>
+<text x="458" y="696" class="mono" text-anchor="middle" fill="#17313A">7/12</text>
+<line x1="56" y1="716" x2="484" y2="716" stroke="#CBD8D8" stroke-width="2" stroke-linecap="round"/>
+<text x="56" y="764" class="body" text-anchor="start" fill="#17313A">Evidence withheld</text>
+<text x="360" y="764" class="mono" text-anchor="middle" fill="#17313A">10/12</text>
+<text x="458" y="764" class="mono" text-anchor="middle" fill="#17313A">10/12</text>
+<line x1="56" y1="784" x2="484" y2="784" stroke="#CBD8D8" stroke-width="2" stroke-linecap="round"/>
+<text x="56" y="852" class="label" text-anchor="start" fill="#B43D47">All three</text>
+<text x="360" y="852" class="mono" text-anchor="middle" fill="#B43D47">0/12</text>
+<text x="458" y="852" class="mono" text-anchor="middle" fill="#B43D47">3/12</text>
+<rect x="56" y="898" width="428" height="50" rx="12" fill="#17313A" stroke="#17313A" stroke-width="2"/>
+<text x="270" y="931" class="whiteLabel" text-anchor="middle">D1 control  192/192 cells</text>
+<rect x="30" y="1006" width="480" height="104" rx="18" fill="#F6E3E5" stroke="#B43D47" stroke-width="3"/>
+<text x="270" y="1048" class="label" text-anchor="middle" fill="#B43D47">DISABLE LIVE GUIDE</text>
+<text x="270" y="1082" class="small" text-anchor="middle">Practitioner usefulness not measured</text>
+<text x="30" y="1162" class="small" text-anchor="start"><tspan x="30" dy="0">672 is a call count, not a scenario count.</tspan><tspan x="30" dy="30">The control checks machinery — not model usefulness.</tspan></text>
+</svg>

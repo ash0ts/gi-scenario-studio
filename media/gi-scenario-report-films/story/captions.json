@@ -1,0 +1,100 @@
+{
+  "schema_version": "1.0",
+  "films": {
+    "incomplete-plot": [
+      {
+        "start": 0,
+        "end": 12,
+        "text": "Among 220 directly simulated alternatives, ALT-017 looks inexpensive on a cost-versus-volume plot."
+      },
+      {
+        "start": 12,
+        "end": 25,
+        "text": "But $54.99k and a 4.14% modeled volume reduction do not satisfy the 6% target. Its selected-storm peak guardrail also fails."
+      },
+      {
+        "start": 25,
+        "end": 34,
+        "text": "The plot was honest. It was incomplete. An attractive projection is not the same as an acceptable alternative."
+      }
+    ],
+    "modeled-water-ledger": [
+      {
+        "start": 0,
+        "end": 12,
+        "text": "Hold the long synthetic storm fixed at 0.937 acre-feet of modeled precipitation."
+      },
+      {
+        "start": 12,
+        "end": 32,
+        "text": "Compared with baseline, ALT-207 changes SWMM's runoff-accounting ledger: infiltration loss, surface runoff, final storage, and LID drainage."
+      },
+      {
+        "start": 32,
+        "end": 43,
+        "text": "For this event, modeled OUT1 volume changes from 0.167 to 0.150 million gallons. Across four separate events, it changes from 0.748 to 0.700 million gallons."
+      },
+      {
+        "start": 43,
+        "end": 50,
+        "text": "That is about 48,000 fewer modeled gallons at OUT1—not measured recharge, water quality, habitat, or avoided flooding."
+      }
+    ],
+    "storm-reveals": [
+      {
+        "start": 0,
+        "end": 15,
+        "text": "All 699 exact alternatives face four selected synthetic rainfall patterns."
+      },
+      {
+        "start": 15,
+        "end": 28,
+        "text": "Peak-flow increases appear for 1, 0, 420, and 47 alternatives by storm. Reconciliation leaves 421 unique adverse alternatives, with 47 failing twice."
+      },
+      {
+        "start": 28,
+        "end": 36,
+        "text": "The deeper stress storm was not the most revealing test here. Depth, duration, and shape changed together, so this is not a universal storm rule."
+      }
+    ],
+    "decision-funnel": [
+      {
+        "start": 0,
+        "end": 14,
+        "text": "Start with 699 directly simulated alternatives. All 699 pass execution QA."
+      },
+      {
+        "start": 14,
+        "end": 30,
+        "text": "The declared rules narrow them to 297 volume passes, 46 volume-and-cost passes, 12 complete-rule passes, and 4 exact feasible-frontier points."
+      },
+      {
+        "start": 30,
+        "end": 38,
+        "text": "The model focuses field investigation. It does not finish site feasibility, constructability, maintenance, or model review."
+      }
+    ],
+    "search-release-gate": [
+      {
+        "start": 0,
+        "end": 14,
+        "text": "Search chooses a candidate question. Four direct SWMM jobs supply that candidate's hydraulic answers."
+      },
+      {
+        "start": 14,
+        "end": 25,
+        "text": "Four search methods take the same controlled exam across three budgets and ten seeds: 120 benchmark replays."
+      },
+      {
+        "start": 25,
+        "end": 38,
+        "text": "At 256 requests, ExtraTrees reaches 1.000 median hypervolume, 83.3% feasible recall, and 46.2% adverse recall—but passes only one of five release gates."
+      },
+      {
+        "start": 38,
+        "end": 46,
+        "text": "Adaptive ML remains experimental. Production uses scrambled Sobol. Computational energy and carbon were not measured."
+      }
+    ]
+  }
+}

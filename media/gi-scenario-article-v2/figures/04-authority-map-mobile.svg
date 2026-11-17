@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="540" height="1370" viewBox="0 0 540 1370" role="img" aria-labelledby="title desc">
+  <title id="title">Authority map for the Evidence Guide</title>
+  <desc id="desc">A mobile vertical intended architecture shows SWMM results, repository facts and rules, read-only tools, a study boundary noting retrieval was not tested, one finite model plan, repository rendering and validation, and exclusive release and stop branches. Weave is a separate observation layer.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke"/></marker>
+    <style>
+      @font-face { font-family: Atkinson; src: url('../../gi-scenario-film/assets/fonts/AtkinsonHyperlegible-Regular.ttf'); }
+      @font-face { font-family: Atkinson; src: url('../../gi-scenario-film/assets/fonts/AtkinsonHyperlegible-Bold.ttf'); font-weight: 700; }
+      @font-face { font-family: PlexCondensed; src: url('../../gi-scenario-film/assets/fonts/IBMPlexSansCondensed-SemiBold.ttf'); font-weight: 600; }
+      @font-face { font-family: PlexMono; src: url('../../gi-scenario-film/assets/fonts/IBMPlexMono-Regular.ttf'); }
+      .eyebrow { font: 700 21px Atkinson, sans-serif; letter-spacing: 1px; fill: #08766F; }
+      .headline { font: 600 46px PlexCondensed, Atkinson, sans-serif; fill: #17313A; }
+      .subhead { font: 400 24px Atkinson, sans-serif; fill: #48616B; }
+      .section { font: 700 30px Atkinson, sans-serif; fill: #17313A; }
+      .body { font: 400 26px Atkinson, sans-serif; fill: #17313A; }
+      .small { font: 400 21px Atkinson, sans-serif; fill: #48616B; }
+      .label { font: 700 24px Atkinson, sans-serif; letter-spacing: .4px; fill: #17313A; }
+      .tinyLabel { font: 700 18px Atkinson, sans-serif; letter-spacing: .25px; fill: #17313A; }
+      .mono { font: 400 27px PlexMono, monospace; fill: #17313A; }
+      .number { font: 600 62px PlexCondensed, Atkinson, sans-serif; fill: #17313A; }
+      .numberSmall { font: 600 46px PlexCondensed, Atkinson, sans-serif; fill: #17313A; }
+      .whiteLabel { font: 700 23px Atkinson, sans-serif; fill: white; }
+      .whiteBody { font: 400 24px Atkinson, sans-serif; fill: white; }
+    </style>
+  </defs>
+  <rect width="540" height="1370" fill="#F5F7F6"/>
+  <text x="30" y="46" class="eyebrow" text-anchor="start">INTENDED PRODUCT ARCHITECTURE</text>
+<text x="30" y="102" class="headline" text-anchor="start">The model gets</text>
+<text x="30" y="152" class="headline" text-anchor="start">one small job.</text>
+<rect x="30" y="198" width="480" height="82" rx="16" fill="#F5F7F6" stroke="#08766F" stroke-width="2" stroke-dasharray="8 8"/>
+<text x="270" y="232" class="tinyLabel" text-anchor="middle" fill="#08766F">WEAVE RECORDS THE INVESTIGATION</text>
+<text x="270" y="260" class="tinyLabel" text-anchor="middle" fill="#08766F">IT DOES NOT CERTIFY THE CHOICE</text>
+<rect x="50" y="310" width="440" height="102" rx="20" fill="#E4EFF6" stroke="#2F6F9F" stroke-width="3"/>
+<text x="78" y="350" class="label" text-anchor="start" fill="#2F6F9F">1 · SWMM RESULT</text>
+<text x="78" y="386" class="body" text-anchor="start">modeled flow and volume</text>
+<line x1="270" y1="414" x2="270" y2="434" stroke="#17313A" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+<rect x="50" y="442" width="440" height="102" rx="20" fill="#DCEFED" stroke="#08766F" stroke-width="3"/>
+<text x="78" y="482" class="label" text-anchor="start" fill="#08766F">2 · REPOSITORY</text>
+<text x="78" y="518" class="body" text-anchor="start">facts · units · rules · limits</text>
+<line x1="270" y1="546" x2="270" y2="566" stroke="#17313A" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+<rect x="50" y="574" width="440" height="102" rx="20" fill="#FFFFFF" stroke="#17313A" stroke-width="3"/>
+<text x="78" y="614" class="label" text-anchor="start" fill="#17313A">3 · READ-ONLY TOOLS</text>
+<text x="78" y="650" class="body" text-anchor="start">retrieve bounded evidence</text>
+<rect x="50" y="790" width="440" height="102" rx="20" fill="#F6E9D8" stroke="#A96315" stroke-width="3"/>
+<text x="78" y="830" class="label" text-anchor="start" fill="#A96315">4 · MODEL</text>
+<text x="78" y="866" class="body" text-anchor="start">select one explanation plan</text>
+<line x1="270" y1="894" x2="270" y2="914" stroke="#17313A" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+<rect x="50" y="922" width="440" height="102" rx="20" fill="#FFFFFF" stroke="#17313A" stroke-width="3"/>
+<text x="78" y="962" class="label" text-anchor="start" fill="#17313A">5 · RENDER + VALIDATE</text>
+<text x="78" y="998" class="body" text-anchor="start">insert exact facts · check plan</text>
+<rect x="50" y="696" width="440" height="62" rx="14" fill="#F6E9D8" stroke="#A96315" stroke-width="2"/>
+<text x="270" y="722" class="tinyLabel" text-anchor="middle" fill="#A96315">R4c STARTS WITH A PREPARED PACKET</text>
+<text x="270" y="748" class="tinyLabel" text-anchor="middle" fill="#A96315">RETRIEVAL NOT TESTED</text>
+<line x1="270" y1="678" x2="270" y2="690" stroke="#17313A" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+<line x1="270" y1="758" x2="270" y2="778" stroke="#17313A" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+<line x1="270" y1="1026" x2="270" y2="1042" stroke="#17313A" stroke-width="4" stroke-linecap="round"/>
+<polygon points="270,1042 284,1056 270,1070 256,1056" fill="#17313A"/>
+<line x1="256" y1="1056" x2="142" y2="1056" stroke="#08766F" stroke-width="4" stroke-linecap="round"/>
+<line x1="142" y1="1056" x2="142" y2="1080" stroke="#08766F" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+<line x1="284" y1="1056" x2="398" y2="1056" stroke="#B43D47" stroke-width="5" stroke-linecap="round"/>
+<line x1="398" y1="1056" x2="398" y2="1080" stroke="#B43D47" stroke-width="5" stroke-linecap="round" marker-end="url(#arrow)"/>
+<rect x="30" y="1096" width="224" height="92" rx="16" fill="#DCEFED" stroke="#08766F" stroke-width="3"/>
+<text x="142" y="1132" class="label" text-anchor="middle" fill="#08766F">RELEASE</text>
+<text x="142" y="1164" class="small" text-anchor="middle">all checks pass</text>
+<rect x="286" y="1096" width="224" height="92" rx="16" fill="#F6E3E5" stroke="#B43D47" stroke-width="4"/>
+<text x="398" y="1132" class="label" text-anchor="middle" fill="#B43D47">STOP</text>
+<text x="398" y="1164" class="small" text-anchor="middle">any check fails</text>
+<rect x="30" y="1224" width="480" height="110" rx="16" fill="#17313A" stroke="#17313A" stroke-width="2"/>
+<text x="56" y="1262" class="whiteLabel" text-anchor="start">HYDRAULICS</text>
+<text x="252" y="1262" class="whiteBody" text-anchor="start">SWMM</text>
+<text x="56" y="1297" class="whiteLabel" text-anchor="start">VALUES</text>
+<text x="252" y="1297" class="whiteBody" text-anchor="start">repository</text>
+<text x="56" y="1328" class="whiteLabel" text-anchor="start">DECISION</text>
+<text x="252" y="1328" class="whiteBody" text-anchor="start">engineer</text>
+</svg>

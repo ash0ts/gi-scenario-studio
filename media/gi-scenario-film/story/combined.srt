@@ -1,0 +1,1026 @@
+1
+00:00:00,500 --> 00:00:07,977
+Imagine you are responsible for a neighborhood
+where hard rain can overwhelm the drains. You
+
+2
+00:00:07,977 --> 00:00:13,909
+have 220 improvement plans and no budget to
+build them all. So you draw a
+
+3
+00:00:13,909 --> 00:00:20,411
+map: cost along the bottom, and how much less
+water reaches the outlet along the
+
+4
+00:00:20,411 --> 00:00:26,994
+side. One plan looks like a bargain. It costs
+about 55 thousand dollars and sends
+
+5
+00:00:26,994 --> 00:00:33,577
+a little less water out. But the picture has
+hidden something. In the long storm,
+
+6
+00:00:33,577 --> 00:00:39,834
+the highest flow rate rises from 3.14 to 3.21
+cubic feet per second. A second
+
+7
+00:00:39,834 --> 00:00:46,580
+storm rises too. And the plan still misses our 6
+percent reduction target. The plot
+
+8
+00:00:46,580 --> 00:00:53,000
+did not lie. It answered a smaller question. A
+good decision must ask the rest.
+
+9
+00:00:55,500 --> 00:01:01,806
+This is what GI Scenario Studio is for:
+comparing ways to change how much runoff
+
+10
+00:01:01,806 --> 00:01:08,901
+reaches a drainage system, and how quickly it
+arrives. Engineers call these features green
+
+11
+00:01:08,901 --> 00:01:16,311
+infrastructure—rain gardens, porous pavement,
+planted basins, and rain barrels. If you already
+
+12
+00:01:16,311 --> 00:01:22,459
+have a drainage model, you can open it here. For
+this walkthrough, we will use
+
+13
+00:01:22,459 --> 00:01:29,081
+Cedar Trace, a tiny fictional neighborhood built
+for teaching. It is not a real town
+
+14
+00:01:29,081 --> 00:01:35,939
+or a design recommendation. It gives us
+something safer: a complete example we can take
+
+15
+00:01:35,939 --> 00:01:42,640
+apart. The demo stays on this computer; cloud
+sharing is off. Our question is simple:
+
+16
+00:01:42,640 --> 00:01:48,000
+which plan, if any, deserves the cost of a real
+field investigation?
+
+17
+00:01:50,500 --> 00:01:56,689
+Before we use any software, follow the water.
+Rain lands on an area that drains
+
+18
+00:01:56,689 --> 00:02:03,582
+to the same place—engineers call that area a
+catchment. Some water soaks into soil. Some
+
+19
+00:02:03,582 --> 00:02:09,614
+waits in a shallow basin or rain garden. The
+rest runs across the surface and
+
+20
+00:02:09,614 --> 00:02:16,978
+into pipes. Eventually it reaches an outfall,
+simply the point where water leaves the drainage
+
+21
+00:02:16,978 --> 00:02:23,167
+model. The flow there rises and falls during a
+storm. The total area under this
+
+22
+00:02:23,167 --> 00:02:29,512
+curve is event volume: all the water that
+passed. The highest point is peak flow:
+
+23
+00:02:29,512 --> 00:02:36,406
+the highest modeled flow rate during the storm.
+A project can lower one without lowering
+
+24
+00:02:36,406 --> 00:02:42,516
+the other. A different rain pattern can change
+both. That is why one plan must
+
+25
+00:02:42,516 --> 00:02:48,000
+face more than one storm. These drawings are
+conceptual, not measured.
+
+26
+00:02:50,500 --> 00:02:56,898
+Now we can introduce SWMM, the EPA's Storm Water
+Management Model. Think of it as
+
+27
+00:02:56,898 --> 00:03:03,690
+a calculator for a simplified drainage world.
+The engineer supplies a map of the land,
+
+28
+00:03:03,690 --> 00:03:11,036
+junctions, pipes, and outlet; a rain pattern;
+and the green-infrastructure plan to test. SWMM
+
+29
+00:03:11,036 --> 00:03:17,907
+follows those declared rules and produces
+modeled flows and water levels. The app reads
+
+30
+00:03:17,907 --> 00:03:25,332
+the output, checks that the run completed and
+its numerical balance stayed within the declared
+
+31
+00:03:25,332 --> 00:03:32,282
+limit, and gives each file a digital fingerprint
+for later. But a careful calculation is
+
+32
+00:03:32,282 --> 00:03:38,127
+still only as good as the world described to it.
+SWMM cannot see a missing
+
+33
+00:03:38,127 --> 00:03:44,604
+pipe, test the soil, or tell us whether the
+chosen storm represents reality. Exact
+
+34
+00:03:44,604 --> 00:03:48,000
+calculation is not the same as field truth.
+
+35
+00:03:50,500 --> 00:03:58,559
+Before looking at answers, we write down what
+good enough means. This matters: if we
+
+36
+00:03:58,559 --> 00:04:07,098
+invent the rules after seeing a favorite, the
+analysis becomes a story we tell ourselves.
+
+37
+00:04:07,098 --> 00:04:16,117
+Our fictional engineer sets four rules. First,
+across four practice storms, at least 6 percent
+
+38
+00:04:16,117 --> 00:04:24,752
+less water must reach the model's outlet than in
+the unchanged model. That unchanged model
+
+39
+00:04:24,752 --> 00:04:33,003
+is our baseline. Second, the 30-year screening
+cost must stay at or below 200 thousand
+
+40
+00:04:33,003 --> 00:04:40,582
+dollars. Third, no storm is allowed to create a
+higher peak flow at the outlet.
+
+41
+00:04:40,582 --> 00:04:49,313
+A good total cannot excuse one sharper surge.
+Fourth, every simulation used in the decision
+
+42
+00:04:49,313 --> 00:04:57,756
+must pass basic numerical checks. The storms and
+costs are invented for this lesson. And
+
+43
+00:04:57,756 --> 00:05:05,911
+verified replay means the saved files still
+match the recorded runs. It does not mean
+
+44
+00:05:05,911 --> 00:05:14,066
+the model matches a real neighborhood. With the
+question and rules fixed, we can look
+
+45
+00:05:14,066 --> 00:05:18,000
+at evidence without moving the goalposts.
+
+46
+00:05:20,500 --> 00:05:27,599
+Picture four lights wired together. Under this
+teaching brief, a plan advances only when all
+
+47
+00:05:27,599 --> 00:05:34,157
+four are green: enough volume reduction,
+acceptable cost, no peak increase, and clean
+
+48
+00:05:34,157 --> 00:05:41,179
+runs. ALT-207 turns on all four: more than 6
+percent reduction, under 200 thousand dollars,
+
+49
+00:05:41,179 --> 00:05:47,429
+no higher peak, and four clean runs. ALT-017 is
+cheaper, but two lights stay red.
+
+50
+00:05:47,429 --> 00:05:53,370
+It misses the volume target and raises two storm
+peaks. We do not average red
+
+51
+00:05:53,370 --> 00:05:58,000
+lights into green ones. One required failure
+stops the plan.
+
+52
+00:06:00,500 --> 00:06:10,138
+Before comparing plans, the app checks the
+unchanged model and the saved study. It
+
+53
+00:06:10,138 --> 00:06:21,186
+identifies the exact software version, confirms
+that every required file is present, opens the
+
+54
+00:06:21,186 --> 00:06:30,236
+model, and confirms that the four stored
+starting runs completed. The largest
+
+55
+00:06:30,236 --> 00:06:41,637
+water-accounting mismatch is less than one tenth
+of one percent, comfortably inside this lesson's
+
+56
+00:06:41,637 --> 00:06:51,275
+warning limit. So the saved calculation
+completed cleanly. One caution remains. No
+
+57
+00:06:51,275 --> 00:07:02,206
+observed storm and no trusted prior result were
+supplied for comparison. The screen therefore
+
+58
+00:07:02,206 --> 00:07:11,139
+says model fitness: not assessed. That label is
+not a failure, and it is not
+
+59
+00:07:11,139 --> 00:07:20,894
+permission. It tells us that the saved
+calculation is inspectable while the model's
+
+60
+00:07:20,894 --> 00:07:31,942
+connection to a real place remains unknown. The
+acknowledgment simply records that we saw this
+
+61
+00:07:31,942 --> 00:07:33,000
+boundary.
+
+62
+00:07:35,500 --> 00:07:41,621
+A navigation app can follow its map perfectly
+even when a real road has closed.
+
+63
+00:07:41,621 --> 00:07:48,517
+Drainage models have the same two questions. Did
+the software run cleanly and account for
+
+64
+00:07:48,517 --> 00:07:55,335
+the water? For Cedar Trace, yes. Does this
+simplified model describe a real neighborhood
+
+65
+00:07:55,335 --> 00:08:02,075
+well enough for this decision? We do not know.
+No observed events or approved reference
+
+66
+00:08:02,075 --> 00:08:09,126
+result were supplied. Clean execution earns
+confidence in the calculation. It does not earn
+
+67
+00:08:09,126 --> 00:08:13,000
+confidence in the world the calculation
+describes.
+
+68
+00:08:15,500 --> 00:08:25,220
+Rainfall is not just a depth; timing matters. An
+inch falling gradually can interact with
+
+69
+00:08:25,220 --> 00:08:34,612
+storage very differently from two inches
+arriving mostly at the beginning. Cedar Trace
+
+70
+00:08:34,612 --> 00:08:43,676
+uses four artificial rain patterns so we can see
+that difference. One inch over one
+
+71
+00:08:43,676 --> 00:08:52,413
+hour. Two inches over one hour, weighted toward
+the front. Two and a half inches
+
+72
+00:08:52,413 --> 00:09:01,914
+spread over four hours. And a four-inch,
+two-hour stress test. These are not historical
+
+73
+00:09:01,914 --> 00:09:11,852
+storms or official design events. They are
+practice questions. Everything else in the model
+
+74
+00:09:11,852 --> 00:09:21,135
+stays the same while the rain changes, so the
+comparison is fair inside this example.
+
+75
+00:09:21,135 --> 00:09:30,963
+One surprising lesson will come from the long,
+four-hour event: it creates ALT-017's worst
+
+76
+00:09:30,963 --> 00:09:40,137
+increase at the outlet even though another storm
+has a much larger overall peak. The
+
+77
+00:09:40,137 --> 00:09:48,000
+biggest storm is not automatically the one that
+controls every decision.
+
+78
+00:09:50,500 --> 00:09:56,336
+Now take one plan and run it through all four
+rain patterns. We get four
+
+79
+00:09:56,336 --> 00:10:03,307
+answers, not one. For total volume, adding the
+four storm totals is useful because our
+
+80
+00:10:03,307 --> 00:10:10,197
+teaching rule asks about their combined
+reduction. For peak flow, adding or averaging
+
+81
+00:10:10,197 --> 00:10:16,763
+would destroy the question we care about: did
+any single storm get worse? So each
+
+82
+00:10:16,763 --> 00:10:24,301
+peak keeps its own before-and-after comparison.
+ALT-017 lowers two peaks, but raises two. The
+
+83
+00:10:24,301 --> 00:10:30,786
+long storm is worst, up 0.07 cubic feet per
+second. If we squash everything into
+
+84
+00:10:30,786 --> 00:10:37,433
+one score, that red warning can disappear. Every
+summary is a choice about what to
+
+85
+00:10:37,433 --> 00:10:38,000
+forget.
+
+86
+00:10:40,500 --> 00:10:48,543
+Now we decide what the software is allowed to
+change. Not pipe sizes. Not soil
+
+87
+00:10:48,543 --> 00:10:57,618
+properties. Not the design of a rain garden.
+Only four whole-number counts of additional
+
+88
+00:10:57,618 --> 00:11:06,796
+units at four teaching locations: planted
+bioretention, areas of permeable pavement, rain
+
+89
+00:11:06,796 --> 00:11:15,355
+gardens, and groups of rain barrels. Each
+location has a maximum count and a stated
+
+90
+00:11:15,355 --> 00:11:24,945
+drainage destination. The map is a diagram, not
+surveyed geometry. The engineering details of
+
+91
+00:11:24,945 --> 00:11:34,123
+each practice stay fixed. The search can ask,
+for example, what happens after adding zero
+
+92
+00:11:34,123 --> 00:11:43,713
+bioretention units, three pavement units, two
+rain-garden units, and six barrel groups to the
+
+93
+00:11:43,713 --> 00:11:52,273
+unchanged model? It cannot invent a new soil mix
+or pretend a utility conflict does
+
+94
+00:11:52,273 --> 00:12:02,069
+not exist. Automation is useful when it explores
+choices an engineer has deliberately admitted.
+
+95
+00:12:02,069 --> 00:12:11,350
+Here, demo approved means allowed into the
+lesson—not feasible, constructible, or approved
+
+96
+00:12:11,350 --> 00:12:13,000
+for a real site.
+
+97
+00:12:15,500 --> 00:12:23,910
+Those four additional-unit counts work like four
+dials. The first has five settings, the second
+
+98
+00:12:23,910 --> 00:12:31,080
+four, the third five, and the fourth seven.
+Multiply them and we get 700 possible
+
+99
+00:12:31,080 --> 00:12:39,136
+combinations, including the unchanged baseline.
+Testing every combination under four storms
+
+100
+00:12:39,136 --> 00:12:47,103
+would require 2,800 SWMM runs. That complete
+study exists as a benchmark. The guided story
+
+101
+00:12:47,103 --> 00:12:55,512
+is smaller: 220 chosen combinations, four storms
+each, plus four baseline runs—884 runs in all.
+
+102
+00:12:55,512 --> 00:13:03,125
+It is not every possibility, and it is not a
+demonstration that machine learning found
+
+103
+00:13:03,125 --> 00:13:10,738
+a better answer. Imagine the untested
+combinations as face-down cards. A search method
+
+104
+00:13:10,738 --> 00:13:17,289
+may choose which card to turn over next. That
+choice is a question, not an
+
+105
+00:13:17,289 --> 00:13:25,167
+answer. Only a direct SWMM run can reveal the
+modeled hydraulics. Search decides where to
+
+106
+00:13:25,167 --> 00:13:28,000
+look. SWMM supplies what we see.
+
+107
+00:13:30,500 --> 00:13:39,618
+The four plain-language rules now become checks
+the computer can apply consistently. Water
+
+108
+00:13:39,618 --> 00:13:48,330
+volume is measured at the same outlet and
+compared with the same unchanged model. Peak
+
+109
+00:13:48,330 --> 00:13:58,056
+flow is checked separately for every storm. The
+teaching cost rolls installation, future upkeep,
+
+110
+00:13:58,056 --> 00:14:06,565
+and replacement over 30 years into one
+today-dollar screening estimate. It keeps the
+
+111
+00:14:06,565 --> 00:14:15,278
+lesson consistent; it is not a contractor's
+price or a local budget. Every option also
+
+112
+00:14:15,278 --> 00:14:23,889
+needs four completed SWMM runs and clean
+numerical checks. If this tiny model reports
+
+113
+00:14:23,889 --> 00:14:32,399
+zero for a flooding measure, that remains a
+modeled result—not a promise that a real
+
+114
+00:14:32,399 --> 00:14:39,794
+street stays dry. The point of this screen is
+not to add more numbers. It
+
+115
+00:14:39,794 --> 00:14:48,000
+is to stop the meaning of success from changing
+after an attractive plan appears.
+
+116
+00:14:50,500 --> 00:14:56,592
+Here is where 884 comes from. Put the four
+storms across the top. The unchanged
+
+117
+00:14:56,592 --> 00:15:02,144
+model fills the first four squares. Then each of
+220 plans gets a row of
+
+118
+00:15:02,144 --> 00:15:08,544
+four more squares—one real SWMM run per storm.
+Four plus 220 times four equals 884.
+
+119
+00:15:08,544 --> 00:15:15,407
+Each square keeps the result, the numerical
+check, and digital fingerprints of its files.
+
+120
+00:15:15,407 --> 00:15:22,347
+The project also keeps complete input, report,
+and output files for the four baseline runs
+
+121
+00:15:22,347 --> 00:15:29,441
+and for four teaching plans under four storms:
+20 full evidence sets. Opening those finished
+
+122
+00:15:29,441 --> 00:15:35,455
+records is a replay. Running all 884 again would
+be a new experiment. A replay
+
+123
+00:15:35,455 --> 00:15:38,000
+is a receipt, not a progress bar.
+
+124
+00:15:40,500 --> 00:15:49,779
+This screen is showing receipts, not pretending
+to run a simulation. The 884 jobs were
+
+125
+00:15:49,779 --> 00:15:58,842
+completed earlier and stored in a manifest—a
+list of what ran and which files belong
+
+126
+00:15:58,842 --> 00:16:07,473
+to each result. It names the fixed SWMM version,
+the 220 plans, the four storms,
+
+127
+00:16:07,473 --> 00:16:16,212
+and the numerical check for every job. The plans
+were ordered in a repeatable way
+
+128
+00:16:16,212 --> 00:16:25,599
+chosen in advance; machine learning did not
+select this guided set. A local rerun would
+
+129
+00:16:25,599 --> 00:16:34,877
+be different: the app would launch SWMM again,
+show real progress, and compare the new
+
+130
+00:16:34,877 --> 00:16:43,832
+answers with the stored ones. That control
+appears only when the expected engine is
+
+131
+00:16:43,832 --> 00:16:52,787
+actually available. It is not available in this
+recording, so the app does not fake
+
+132
+00:16:52,787 --> 00:17:02,066
+it. Replay lets us inspect what happened. Rerun
+lets us test whether it happens again.
+
+133
+00:17:02,066 --> 00:17:08,000
+Neither should be confused with work currently
+running.
+
+134
+00:17:10,500 --> 00:17:20,575
+Now the plans become characters rather than
+dots. First is the bargain-looking plan,
+
+135
+00:17:20,575 --> 00:17:31,130
+ALT-017: about 55 thousand dollars and just over
+4 percent less total water. That misses
+
+136
+00:17:31,130 --> 00:17:40,966
+our target, and its long-storm peak rises from
+3.14 to 3.21 cubic feet per second.
+
+137
+00:17:40,966 --> 00:17:50,801
+Cheap is not the same as acceptable. Next is
+ALT-207: about 6.4 percent less water
+
+138
+00:17:50,801 --> 00:18:00,397
+for 190 thousand dollars. None of its four peaks
+rises, and every run passes its
+
+139
+00:18:00,397 --> 00:18:10,112
+checks. It clears this teaching screen, so it is
+a candidate to carry forward for
+
+140
+00:18:10,112 --> 00:18:20,427
+site and feasibility review—a question to
+investigate, not an approval. ALT-109 offers
+
+141
+00:18:20,427 --> 00:18:29,543
+about 7 percent reduction, but its
+222-thousand-dollar cost crosses the cap.
+
+142
+00:18:29,543 --> 00:18:39,978
+ALT-014 gives the strongest volume reduction
+seen among all 220 guided plans, about 8.8
+
+143
+00:18:39,978 --> 00:18:51,253
+percent, but costs roughly 362 thousand dollars.
+More hydraulic benefit can still be the wrong
+
+144
+00:18:51,253 --> 00:19:01,328
+fit for the brief. The detailed values remain on
+screen, while the app evaluates the
+
+145
+00:19:01,328 --> 00:19:12,123
+unrounded stored numbers. Among these four
+examples, one clears every rule. We have earned
+
+146
+00:19:12,123 --> 00:19:18,000
+a smaller set of questions, not a design
+verdict.
+
+147
+00:19:20,500 --> 00:19:26,062
+Why did ALT-017 look so good at the beginning?
+Because a flat plot is a
+
+148
+00:19:26,062 --> 00:19:33,269
+shadow. Here, better means farther left for
+lower cost and higher for more volume reduction.
+
+149
+00:19:33,269 --> 00:19:38,909
+Along the visible edge, no other tested plan is
+at least as cheap and at
+
+150
+00:19:38,909 --> 00:19:45,960
+least as effective while improving one of those
+measures. Engineers call a point like that
+
+151
+00:19:45,960 --> 00:19:52,697
+nondominated, and the edge a Pareto frontier.
+The names sound like verdicts. They only
+
+152
+00:19:52,697 --> 00:20:00,217
+describe this two-number picture. Bring back the
+6 percent target and ALT-017 falls short. Bring
+
+153
+00:20:00,217 --> 00:20:06,719
+back each storm's peak and two red increases
+appear. Then remember that the model's
+
+154
+00:20:06,719 --> 00:20:13,535
+real-world fitness is still unknown. A Pareto
+frontier is a useful map of one tradeoff.
+
+155
+00:20:13,535 --> 00:20:18,000
+It is not the border between acceptable and
+unacceptable.
+
+156
+00:20:20,500 --> 00:20:32,061
+Now the plot has a proper job: exploration. The
+teal edge shows the cost-versus-volume tradeoff
+
+157
+00:20:32,061 --> 00:20:40,823
+we just named. Each gray dot has a tested
+competitor that is at least as
+
+158
+00:20:40,823 --> 00:20:50,559
+cheap and effective, and better on one of those
+measures. The ochre dots are our
+
+159
+00:20:50,559 --> 00:21:01,755
+four teaching plans with complete files ready to
+inspect. Select ALT-017 beside ALT-207. The
+
+160
+00:21:01,755 --> 00:21:12,221
+first is cheaper. The second clears the full
+brief. Neither fact cancels the other. We
+
+161
+00:21:12,221 --> 00:21:23,174
+can change the vertical measure, open the four
+storm results, or read the accessible table
+
+162
+00:21:23,174 --> 00:21:34,248
+instead of the chart. Each view opens another
+window onto the same stored simulations; none
+
+163
+00:21:34,248 --> 00:21:43,132
+creates a new run. Use the plot to decide where
+to look. Use the declared
+
+164
+00:21:43,132 --> 00:21:48,000
+rules to decide what passes this screen.
+
+165
+00:21:50,500 --> 00:21:57,212
+Take one red number: plus 0.07 cubic feet per
+second. Imagine handing it to another
+
+166
+00:21:57,212 --> 00:22:04,006
+engineer. Their first question should be,
+compared with what? The answer is the long
+
+167
+00:22:04,006 --> 00:22:10,961
+storm: 3.14 in the unchanged model, 3.21 in
+ALT-017. Then comes the receipt. This plan
+
+168
+00:22:10,961 --> 00:22:18,239
+added one rain-garden unit and six rain-barrel
+units. The project stores that compactly as
+
+169
+00:22:18,239 --> 00:22:24,305
+zero, zero, one, six. It wrote the change into
+an input file, ran the fixed
+
+170
+00:22:24,305 --> 00:22:31,098
+SWMM version, kept the report and detailed
+output, identified the files with digital
+
+171
+00:22:31,098 --> 00:22:38,700
+fingerprints, and recorded the numerical check.
+That chain is called provenance: a path from a
+
+172
+00:22:38,700 --> 00:22:44,523
+claim back to what created it. It shows how the
+number was made. It does
+
+173
+00:22:44,523 --> 00:22:48,000
+not prove the model matches the real world.
+
+174
+00:22:50,500 --> 00:22:59,781
+Inside the app, open ALT-017 and ask for the
+built-in explanation. It does something
+
+175
+00:22:59,781 --> 00:23:09,503
+deliberately unglamorous: it copies both
+recorded peak failures from local evidence. The
+
+176
+00:23:09,503 --> 00:23:18,342
+long event rises from 3.14 to 3.21 cubic feet
+per second; the stress event rises
+
+177
+00:23:18,342 --> 00:23:27,622
+from 13.33 to 13.34. These are not values
+remembered by a language model. Just below
+
+178
+00:23:27,622 --> 00:23:38,008
+them, the model-backed Evidence Guide is held
+behind its release gate. The evaluation selected
+
+179
+00:23:38,008 --> 00:23:47,730
+no model, so the interface makes no inference
+call and substitutes no plausible-sounding
+
+180
+00:23:47,730 --> 00:23:57,232
+answer. That is what fail closed means: the
+optional explanation disappears, while the
+
+181
+00:23:57,232 --> 00:24:07,396
+evidence stays useful. Now move to ALT-207. It
+passes the four synthetic teaching rules, but
+
+182
+00:24:07,396 --> 00:24:17,119
+hydrology is not ecology. These runs do not
+measure water quality, groundwater recharge,
+
+183
+00:24:17,119 --> 00:24:27,725
+habitat, heat, actual flooding, maintenance, or
+lifecycle effects. The rail keeps what the model
+
+184
+00:24:27,725 --> 00:24:36,785
+supports beside what remains unknown.
+Computation can organize evidence; it cannot
+
+185
+00:24:36,785 --> 00:24:38,000
+enlarge it.
+
+186
+00:24:40,500 --> 00:24:50,026
+The final product is not a winning dot. It is a
+handoff another engineer can
+
+187
+00:24:50,026 --> 00:25:00,930
+question. The package carries the original
+question, the rules, the plans compared, the
+
+188
+00:25:00,930 --> 00:25:12,211
+results, the model runs behind them, and the
+limitations that still matter. The app checks
+
+189
+00:25:12,211 --> 00:25:22,488
+those pieces before enabling the learning
+export, then records which cases include
+
+190
+00:25:22,488 --> 00:25:34,020
+complete input, report, and detailed output
+files. For this recording, we download a compact
+
+191
+00:25:34,020 --> 00:25:44,423
+local summary. W&B can mirror the evidence for
+private collaboration only after the
+
+192
+00:25:44,423 --> 00:25:56,330
+destination's access policy is verified. It is
+not verified here, so nothing uploads. The local
+
+193
+00:25:56,330 --> 00:26:07,610
+receipt remains available. A good export does
+not make the conclusion larger. It makes the
+
+194
+00:26:07,610 --> 00:26:13,000
+work easier for the next person to inspect.
+
+195
+00:26:15,500 --> 00:26:22,482
+ALT-207 passes the teaching screen. Now the
+question moves outside the computer. Is there
+
+196
+00:26:22,482 --> 00:26:28,915
+space? Where are the utilities? Will the soil
+soak up water? Who maintains it? Can
+
+197
+00:26:28,915 --> 00:26:36,290
+it be built? Are the storms, costs, and model
+appropriate? Good screening does not manufacture
+
+198
+00:26:36,290 --> 00:26:43,507
+certainty. It focuses expensive field work.
+ALT-207 is only a candidate to carry forward for
+
+199
+00:26:43,507 --> 00:26:50,568
+site and feasibility review. SWMM computes.
+Search allocates attention. Evidence preserves
+
+200
+00:26:50,568 --> 00:26:53,000
+the path. The engineer decides.
+
+201
+00:26:55,500 --> 00:27:02,452
+The product's value is not an automatic winner.
+It is the ability to say: here
+
+202
+00:27:02,452 --> 00:27:09,761
+are the plans, the rules we chose first, the
+reason each example passed or failed,
+
+203
+00:27:09,761 --> 00:27:17,873
+and the model runs behind those statements. A
+practitioner can repeat this with an existing
+
+204
+00:27:17,873 --> 00:27:25,627
+SWMM project, locally appropriate storm
+definitions, engineer-predefined locations, and
+
+205
+00:27:25,627 --> 00:27:33,025
+local costs. The result will still depend on
+that model and its assumptions. But it
+
+206
+00:27:33,025 --> 00:27:40,245
+is no longer a mysterious dot. It is a claim
+another engineer can open, question,
+
+207
+00:27:40,245 --> 00:27:47,198
+and trace. That is the difference between trust
+this result and here is how to
+
+208
+00:27:47,198 --> 00:27:48,000
+check it.

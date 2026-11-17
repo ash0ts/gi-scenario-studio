@@ -14,7 +14,7 @@ import math
 import types
 import urllib.parse
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from pathlib import Path
 from typing import Any, ClassVar, Literal, Union, get_args, get_origin, get_type_hints
@@ -689,6 +689,19 @@ class ExportManifest(ContractModel):
     fitness_notice: str | None = None
 
 
+class EvidenceAuthority(str, Enum):
+    """Authority carried by a claim without implying that every value is hydraulic truth."""
+
+    EXACT_SWMM = "exact_swmm"
+    DERIVED_EXACT = "derived_exact"
+    SOURCED_INPUT = "sourced_input"
+    DECISION_RULE = "decision_rule"
+    QA_RECORD = "qa_record"
+    MODEL_FITNESS = "model_fitness"
+    PROJECT_RECORD = "project_record"
+    DOCUMENTATION = "documentation"
+
+
 class EvidenceClaim(ContractModel):
     claim_id: str = Field(default_factory=lambda: new_id("claim"))
     project_id: str
@@ -700,24 +713,68 @@ class EvidenceClaim(ContractModel):
         "provenance",
         "fitness",
         "reference_comparison",
+        "derived_metric",
+        "decision_rule",
+        "limitation",
     ]
     statement: str
     evidence_ids: list[str] = Field(min_length=1)
+    authority: EvidenceAuthority = EvidenceAuthority.PROJECT_RECORD
+    source_ids: list[str] = Field(default_factory=list)
     value: float | None = None
     units: str | None = None
     run_id: str | None = None
+    run_ids: list[str] = Field(default_factory=list)
     metric_id: str | None = None
     object_id: str = ""
+    derivation: str | None = None
     exact: bool = False
     created_at: datetime = Field(default_factory=utc_now)
 
     def _validate_contract(self) -> None:
+        if not self.statement.strip():
+            raise ValueError("evidence claim statement cannot be empty")
+        if any(not item.strip() for item in (*self.evidence_ids, *self.source_ids, *self.run_ids)):
+            raise ValueError("evidence claim identifiers cannot be empty")
+        if len(set(self.evidence_ids)) != len(self.evidence_ids):
+            raise ValueError("evidence claim evidence IDs must be unique")
+        if len(set(self.source_ids)) != len(self.source_ids):
+            raise ValueError("evidence claim source IDs must be unique")
+        if len(set(self.run_ids)) != len(self.run_ids):
+            raise ValueError("evidence claim run IDs must be unique")
         if (self.value is None) != (self.units is None):
             raise ValueError("numeric evidence claims require both value and units")
         if self.value is not None and not math.isfinite(self.value):
             raise ValueError("evidence claim values must be finite")
-        if self.exact and (self.run_id is None or self.metric_id is None or self.value is None):
+        if (
+            self.exact
+            and (self.run_id is None or self.metric_id is None or self.value is None)
+            and self.authority != EvidenceAuthority.DERIVED_EXACT
+        ):
             raise ValueError("exact evidence claims require run, metric, value, and units")
+        if self.authority == EvidenceAuthority.EXACT_SWMM and (
+            not self.exact or self.run_id is None or self.metric_id is None
+        ):
+            raise ValueError("exact SWMM authority requires one exact run and metric")
+        if self.authority == EvidenceAuthority.DERIVED_EXACT and (
+            not self.exact or not self.run_ids or not self.derivation or self.value is None
+        ):
+            raise ValueError(
+                "derived exact authority requires exact source runs, a derivation, and a value"
+            )
+        if (
+            self.authority
+            in {
+                EvidenceAuthority.SOURCED_INPUT,
+                EvidenceAuthority.DECISION_RULE,
+                EvidenceAuthority.QA_RECORD,
+                EvidenceAuthority.MODEL_FITNESS,
+                EvidenceAuthority.PROJECT_RECORD,
+                EvidenceAuthority.DOCUMENTATION,
+            }
+            and self.exact
+        ):
+            raise ValueError("non-SWMM evidence authority cannot claim exact hydraulic status")
 
 
 class ModelFitnessCriterion(ContractModel):
@@ -1090,6 +1147,41 @@ class WeaveTraceReference(ContractModel):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+class WeaveConversationReference(ContractModel):
+    """Acknowledged Weave Agents turn associated with one local assistant turn."""
+
+    reference_id: str = Field(default_factory=lambda: new_id("weaveconversation"))
+    project_id: str
+    conversation_id: str
+    turn_id: str
+    entity: str
+    external_project: str
+    trace_id: str
+    root_span_id: str
+    url: str
+    agent_id: str
+    agent_version: str
+    created_at: datetime = Field(default_factory=utc_now)
+
+    def _validate_contract(self) -> None:
+        for label, value in (
+            ("project", self.project_id),
+            ("conversation", self.conversation_id),
+            ("turn", self.turn_id),
+            ("entity", self.entity),
+            ("external project", self.external_project),
+            ("trace", self.trace_id),
+            ("root span", self.root_span_id),
+            ("agent", self.agent_id),
+            ("agent version", self.agent_version),
+        ):
+            if not value.strip():
+                raise ValueError(f"Weave {label} identifier cannot be empty")
+        parsed = urllib.parse.urlparse(self.url)
+        if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
+            raise ValueError("Weave conversation URL must be a credential-free HTTPS URL")
+
+
 class CloudSyncState(ContractModel):
     project_id: str
     state: Literal[
@@ -1199,7 +1291,20 @@ class BenchmarkRunEnvelope(ContractModel):
 
 class AssistantEvidenceReference(ContractModel):
     evidence_id: str
-    kind: Literal["project", "exact_run", "exact_metric", "qa", "artifact", "documentation"]
+    kind: Literal[
+        "project",
+        "model_fitness",
+        "alternative",
+        "exact_run",
+        "exact_metric",
+        "derived_metric",
+        "decision_rule",
+        "cost_basis",
+        "qa",
+        "limitation",
+        "artifact",
+        "documentation",
+    ]
     label: str
     source_id: str
 
@@ -1209,14 +1314,34 @@ class AssistantNumericClaim(ContractModel):
     value: float
     units: str
     evidence_id: str
-    run_id: str
-    metric_id: str
+    authority: EvidenceAuthority = EvidenceAuthority.EXACT_SWMM
+    source_ids: list[str] = Field(default_factory=list)
+    run_id: str | None = None
+    run_ids: list[str] = Field(default_factory=list)
+    metric_id: str | None = None
     object_id: str = ""
-    exact: Literal[True] = True
+    derivation: str | None = None
+    exact: bool = True
 
     def _validate_contract(self) -> None:
         if not math.isfinite(self.value):
             raise ValueError("assistant numeric claims must be finite")
+        if not self.evidence_id.strip():
+            raise ValueError("assistant numeric claims require an evidence ID")
+        if len(set(self.source_ids)) != len(self.source_ids) or len(set(self.run_ids)) != len(
+            self.run_ids
+        ):
+            raise ValueError("assistant numeric claim source IDs must be unique")
+        if self.authority == EvidenceAuthority.EXACT_SWMM:
+            if not self.exact or self.run_id is None or self.metric_id is None:
+                raise ValueError("exact SWMM numeric claims require one exact run and metric")
+        elif self.authority == EvidenceAuthority.DERIVED_EXACT:
+            if not self.exact or not self.run_ids or not self.derivation:
+                raise ValueError(
+                    "derived exact numeric claims require source runs and a derivation"
+                )
+        elif self.exact:
+            raise ValueError("sourced inputs and decision rules cannot claim exact SWMM status")
 
 
 class AssistantProposedAction(ContractModel):
@@ -1226,10 +1351,316 @@ class AssistantProposedAction(ContractModel):
     object_ids: list[str] = Field(default_factory=list)
 
 
+class AssistantEvidenceAnchor(ContractModel):
+    kind: Literal["project", "model_fitness", "alternative", "exact_run", "export"]
+    identifier: str
+
+    def _validate_contract(self) -> None:
+        if not self.identifier.strip():
+            raise ValueError("assistant evidence anchor identifier cannot be empty")
+
+
+class AssistantEvidencePacket(ContractModel):
+    packet_id: str
+    project_id: str
+    analysis_id: str | None = None
+    model_revision_id: str | None = None
+    anchor: AssistantEvidenceAnchor
+    project_kind: Literal["demo", "conceptual", "existing"]
+    evidence_references: list[AssistantEvidenceReference] = Field(default_factory=list)
+    claims: list[EvidenceClaim] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    source_hashes: dict[str, str] = Field(default_factory=dict)
+    capability_names: list[str] = Field(default_factory=list)
+    packet_sha256: str
+    local_authority: Literal[True] = True
+
+    def _validate_contract(self) -> None:
+        _require_sha256(self.packet_sha256, label="assistant evidence packet")
+        for label, digest in self.source_hashes.items():
+            if not label.strip():
+                raise ValueError("assistant evidence source-hash labels cannot be empty")
+            _require_sha256(digest, label=f"assistant evidence source {label!r}")
+        evidence_ids = [item.evidence_id for item in self.evidence_references]
+        if len(evidence_ids) != len(set(evidence_ids)):
+            raise ValueError("assistant evidence packet references must be unique")
+        claim_ids = [item.claim_id for item in self.claims]
+        if len(claim_ids) != len(set(claim_ids)):
+            raise ValueError("assistant evidence packet claim IDs must be unique")
+        if len(self.capability_names) != len(set(self.capability_names)):
+            raise ValueError("assistant evidence packet capabilities must be unique")
+
+
+class AssistantProviderPolicy(ContractModel):
+    """Secret-free, per-project policy for W&B Inference and Weave Agents."""
+
+    policy_id: str = Field(default_factory=lambda: new_id("providerpolicy"))
+    project_id: str
+    provider: Literal["wandb_inference"] = "wandb_inference"
+    enabled: bool = False
+    observability_binding_id: str | None = None
+    external_project_id: str | None = None
+    model_id: str | None = None
+    prompt_version: str | None = None
+    response_schema_version: str | None = None
+    response_schema_sha256: str | None = None
+    tool_contract_version: str | None = None
+    validator_version: str | None = None
+    agent_variant_id: Literal["A0", "A1", "A2", "A3", "A4"] = "A0"
+    # A policy is created before any turn, so this field pins the finite plan
+    # registry identifier. AssistantAnswer uses the same public field for the
+    # specific plan selected for that turn.
+    explanation_plan_id: str | None = None
+    provider_call_count: int | None = Field(default=None, ge=1, le=2)
+    release_gate_digest: str | None = None
+    release_basis: Literal["automated_conformance"] = "automated_conformance"
+    practitioner_usefulness_status: Literal["not_measured"] = "not_measured"
+    inference_consent: bool = False
+    content_logging_consent: bool = False
+    consent_actor: str | None = None
+    consented_at: datetime | None = None
+    critical_infrastructure_prohibited: Literal[True] = True
+    allowed_data_categories: list[str] = Field(default_factory=lambda: ["structured_evidence"])
+    max_tool_calls: int = Field(default=6, ge=1, le=12)
+    max_turn_seconds: int = Field(default=60, ge=5, le=300)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+    def _validate_contract(self) -> None:
+        if len(set(self.allowed_data_categories)) != len(self.allowed_data_categories):
+            raise ValueError("assistant provider data categories must be unique")
+        if any(not item.strip() for item in self.allowed_data_categories):
+            raise ValueError("assistant provider data categories cannot be empty")
+        if self.content_logging_consent and not self.inference_consent:
+            raise ValueError("content logging consent requires inference consent")
+        if not self.enabled:
+            if self.inference_consent or self.content_logging_consent:
+                raise ValueError("disabled assistant policy cannot retain active consent")
+            if self.consent_actor is not None or self.consented_at is not None:
+                raise ValueError("disabled assistant policy cannot claim a consent record")
+            return
+        if not self.inference_consent or not all(
+            (
+                self.model_id,
+                self.observability_binding_id,
+                self.external_project_id,
+                self.prompt_version,
+                self.response_schema_version,
+                self.response_schema_sha256,
+                self.tool_contract_version,
+                self.validator_version,
+                self.consent_actor,
+                self.consented_at,
+            )
+        ):
+            raise ValueError(
+                "enabled W&B Inference policy requires a pinned model, prompt/tool/validator "
+                "schema/tool/validator versions, and an acknowledged inference-consent record"
+            )
+        if "structured_evidence" not in self.allowed_data_categories:
+            raise ValueError("assistant provider policy must allow structured evidence")
+        for label, value in (
+            ("observability binding", self.observability_binding_id),
+            ("external project", self.external_project_id),
+            ("model", self.model_id),
+            ("prompt", self.prompt_version),
+            ("response schema", self.response_schema_version),
+            ("tool contract", self.tool_contract_version),
+            ("validator", self.validator_version),
+            ("consent actor", self.consent_actor),
+        ):
+            if value is None or not value.strip():
+                raise ValueError(f"assistant provider {label} cannot be empty")
+        if self.response_schema_sha256 is None:
+            raise ValueError("assistant provider response schema hash cannot be empty")
+        _require_sha256(
+            self.response_schema_sha256,
+            label="assistant provider response schema",
+        )
+        if self.agent_variant_id in {"A1", "A2", "A3"}:
+            expected_calls = {"A1": 1, "A2": 2, "A3": 2}[self.agent_variant_id]
+            if self.provider_call_count != expected_calls:
+                raise ValueError(
+                    f"assistant provider variant {self.agent_variant_id} requires "
+                    f"{expected_calls} logical provider call(s)"
+                )
+            if self.explanation_plan_id is None or not self.explanation_plan_id.strip():
+                raise ValueError(
+                    "production Evidence Guide policies require a finite explanation-plan registry"
+                )
+            if self.release_gate_digest is None:
+                raise ValueError("production Evidence Guide policies require a release-gate digest")
+            _require_sha256(
+                self.release_gate_digest,
+                label="assistant provider release gate",
+            )
+
+
+class AssistantReleaseBasis(ContractModel):
+    """Immutable automated-conformance basis for one production assistant release.
+
+    This record deliberately does not claim practitioner usefulness.  It binds the
+    finite explanation architecture and every repository-controlled component used
+    to make an automated release decision.
+    """
+
+    basis_id: str = Field(default_factory=lambda: new_id("assistantreleasebasis"))
+    release_gate_digest: str
+    decision: Literal["ENABLE_LIVE_GUIDE", "DISABLE_LIVE_GUIDE"]
+    agent_variant_id: Literal["D1", "A1", "A2", "A3"]
+    model_id: str | None = None
+    provider_call_count: int = Field(ge=0, le=2)
+    prompt_sha256: str
+    response_schema_sha256: str
+    tool_contract_sha256: str
+    plan_registry_sha256: str
+    renderer_sha256: str
+    validator_sha256: str
+    dataset_sha256: str
+    judge_config_sha256: str
+    receipt_sha256: str
+    protocol_amendment_sha256: str
+    automated_gate_results: dict[str, bool]
+    production_scope: list[Literal["demo", "standard_engineering"]]
+    release_basis: Literal["automated_conformance"] = "automated_conformance"
+    practitioner_usefulness_status: Literal["not_measured"] = "not_measured"
+    critical_infrastructure_prohibited: Literal[True] = True
+    issued_at: datetime
+    expires_at: datetime
+
+    def _validate_contract(self) -> None:
+        for label, digest in (
+            ("release gate", self.release_gate_digest),
+            ("prompt", self.prompt_sha256),
+            ("response schema", self.response_schema_sha256),
+            ("tool contract", self.tool_contract_sha256),
+            ("plan registry", self.plan_registry_sha256),
+            ("renderer", self.renderer_sha256),
+            ("validator", self.validator_sha256),
+            ("dataset", self.dataset_sha256),
+            ("judge config", self.judge_config_sha256),
+            ("receipt", self.receipt_sha256),
+            ("protocol amendment", self.protocol_amendment_sha256),
+        ):
+            _require_sha256(digest, label=f"assistant release {label}")
+        expected_calls = {"D1": 0, "A1": 1, "A2": 2, "A3": 2}[self.agent_variant_id]
+        if self.provider_call_count != expected_calls:
+            raise ValueError(
+                f"assistant release variant {self.agent_variant_id} requires "
+                f"{expected_calls} logical provider call(s)"
+            )
+        if self.agent_variant_id == "D1":
+            if self.model_id is not None:
+                raise ValueError("deterministic D1 release basis cannot pin a provider model")
+        elif self.model_id is None or not self.model_id.strip():
+            raise ValueError("LLM Evidence Guide release basis requires a pinned model")
+        if not self.automated_gate_results or any(
+            not key.strip() for key in self.automated_gate_results
+        ):
+            raise ValueError("assistant release basis requires named automated gates")
+        if self.decision == "ENABLE_LIVE_GUIDE" and not all(self.automated_gate_results.values()):
+            raise ValueError("an enabled assistant release requires every automated gate")
+        if len(self.production_scope) != len(set(self.production_scope)):
+            raise ValueError("assistant release production scope must be unique")
+        if self.decision == "ENABLE_LIVE_GUIDE":
+            if self.agent_variant_id == "D1":
+                raise ValueError("deterministic D1 cannot enable the live LLM guide")
+            if set(self.production_scope) != {"demo", "standard_engineering"}:
+                raise ValueError(
+                    "enabled assistant release scope must be demo and standard_engineering"
+                )
+        elif self.production_scope:
+            raise ValueError("disabled assistant release basis cannot claim production scope")
+        if (
+            self.issued_at.tzinfo is None
+            or self.issued_at.utcoffset() is None
+            or self.expires_at.tzinfo is None
+            or self.expires_at.utcoffset() is None
+        ):
+            raise ValueError("assistant release timestamps must include a UTC offset")
+        if self.expires_at <= self.issued_at:
+            raise ValueError("assistant release expiry must follow issuance")
+        if self.expires_at - self.issued_at > timedelta(days=90):
+            raise ValueError("assistant release basis cannot remain valid for more than 90 days")
+
+
+# Internal compatibility alias while the unreleased public schema moves to the
+# more explicit contract name requested for schema 2.0.
+ProviderPolicy = AssistantProviderPolicy
+
+
+class AssistantConversation(ContractModel):
+    conversation_id: str = Field(default_factory=lambda: new_id("assistantconversation"))
+    project_id: str
+    analysis_id: str | None = None
+    model_revision_id: str | None = None
+    provider_policy_id: str
+    packet_id: str
+    packet_sha256: str
+    anchor: AssistantEvidenceAnchor
+    title: str
+    status: Literal["active", "closed"] = "active"
+    weave_reference_id: str | None = None
+    weave_url: str | None = None
+    next_turn_sequence: int = Field(default=0, ge=0)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+    def _validate_contract(self) -> None:
+        if not self.title.strip():
+            raise ValueError("assistant conversation title cannot be empty")
+        if not self.packet_id.strip():
+            raise ValueError("assistant conversation packet ID cannot be empty")
+        _require_sha256(self.packet_sha256, label="assistant conversation evidence packet")
+        if (self.weave_reference_id is None) != (self.weave_url is None):
+            raise ValueError(
+                "assistant conversation Weave reference and URL must be stored together"
+            )
+        if self.weave_url is not None:
+            parsed = urllib.parse.urlparse(self.weave_url)
+            if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
+                raise ValueError("assistant conversation Weave URL must be credential-free HTTPS")
+
+
+class AssistantTurn(ContractModel):
+    turn_id: str = Field(default_factory=lambda: new_id("assistantturn"))
+    conversation_id: str
+    project_id: str
+    sequence: int = Field(ge=0)
+    user_message: str = Field(min_length=1, max_length=2_000)
+    anchor: AssistantEvidenceAnchor
+    evidence_packet_id: str
+    evidence_packet_sha256: str
+    state: Literal["pending", "completed", "blocked", "failed"] = "pending"
+    answer_id: str | None = None
+    error_code: str | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+    completed_at: datetime | None = None
+
+    def _validate_contract(self) -> None:
+        if not self.evidence_packet_id.strip():
+            raise ValueError("assistant turn evidence packet ID cannot be empty")
+        _require_sha256(self.evidence_packet_sha256, label="assistant turn evidence packet")
+        if self.state == "completed" and (self.answer_id is None or self.completed_at is None):
+            raise ValueError("completed assistant turns require an answer and completion time")
+        if self.state in {"blocked", "failed"} and (
+            self.error_code is None or self.completed_at is None
+        ):
+            raise ValueError(
+                "blocked or failed assistant turns require an error and completion time"
+            )
+        if self.state == "pending" and any((self.answer_id, self.error_code, self.completed_at)):
+            raise ValueError("pending assistant turns cannot contain a terminal result")
+
+
 class AssistantAnswer(ContractModel):
     answer_id: str = Field(default_factory=lambda: new_id("answer"))
     call_id: str
     project_id: str
+    conversation_id: str | None = None
+    turn_id: str | None = None
+    evidence_packet_id: str | None = None
+    evidence_packet_sha256: str | None = None
     intent: str
     answer: str
     evidence_references: list[AssistantEvidenceReference] = Field(default_factory=list)
@@ -1237,10 +1668,124 @@ class AssistantAnswer(ContractModel):
     assumptions_used: list[str] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
     proposed_actions: list[AssistantProposedAction] = Field(default_factory=list)
-    weave_trace: WeaveTraceReference
+    weave_trace: WeaveTraceReference | None = None
+    weave_conversation: WeaveConversationReference | None = None
+    provider_model_id: str | None = None
+    provider_call_ids: list[str] = Field(default_factory=list)
+    provider_input_tokens: int = Field(default=0, ge=0)
+    provider_output_tokens: int = Field(default=0, ge=0)
+    provider_total_tokens: int = Field(default=0, ge=0)
+    provider_transport_attempts: int = Field(default=0, ge=0)
+    provider_latency_ms: float = Field(default=0.0, ge=0)
+    evidence_tool_calls: list[str] = Field(default_factory=list)
+    agent_variant_id: Literal["A0", "A1", "A2", "A3", "A4"] = "A0"
+    explanation_plan_id: str | None = None
+    provider_call_count: int | None = Field(default=None, ge=1, le=2)
+    release_gate_digest: str | None = None
+    release_basis: Literal["automated_conformance"] = "automated_conformance"
+    practitioner_usefulness_status: Literal["not_measured"] = "not_measured"
+    prompt_version: str | None = None
+    response_schema_version: str | None = None
+    response_schema_sha256: str | None = None
+    tool_contract_version: str | None = None
+    validator_version: str | None = None
     requires_engineer_confirmation: Literal[True] = True
     read_only: Literal[True] = True
     created_at: datetime = Field(default_factory=utc_now)
+
+    def _validate_contract(self) -> None:
+        if (self.weave_trace is None) == (self.weave_conversation is None):
+            raise ValueError("assistant answers require exactly one acknowledged Weave reference")
+        if any(
+            (
+                self.conversation_id,
+                self.turn_id,
+                self.evidence_packet_id,
+                self.evidence_packet_sha256,
+            )
+        ) and not all(
+            (
+                self.conversation_id,
+                self.turn_id,
+                self.evidence_packet_id,
+                self.evidence_packet_sha256,
+            )
+        ):
+            raise ValueError(
+                "conversation-backed assistant answers require turn, packet ID, and packet hash"
+            )
+        if self.evidence_packet_id is not None and not self.evidence_packet_id.strip():
+            raise ValueError("assistant answer evidence packet ID cannot be empty")
+        if self.evidence_packet_sha256 is not None:
+            _require_sha256(self.evidence_packet_sha256, label="assistant answer evidence packet")
+        if self.weave_conversation is not None and (
+            self.conversation_id != self.weave_conversation.conversation_id
+            or self.turn_id != self.weave_conversation.turn_id
+        ):
+            raise ValueError("assistant answer and Weave conversation identifiers must match")
+        if self.provider_total_tokens != (self.provider_input_tokens + self.provider_output_tokens):
+            raise ValueError("assistant provider total tokens must equal input plus output tokens")
+        if len(set(self.provider_call_ids)) != len(self.provider_call_ids):
+            raise ValueError("assistant provider call IDs must be unique")
+        if self.weave_conversation is not None:
+            actual_call_count = len(self.provider_call_ids)
+            expected_call_count = {
+                "A0": 2,
+                "A1": 1,
+                "A2": 2,
+                "A3": 2,
+                "A4": 2,
+            }[self.agent_variant_id]
+            if actual_call_count != expected_call_count:
+                raise ValueError(
+                    f"conversation-backed {self.agent_variant_id} answers require "
+                    f"{expected_call_count} logical provider call(s)"
+                )
+            if (
+                self.provider_call_count is not None
+                and self.provider_call_count != actual_call_count
+            ):
+                raise ValueError("assistant provider call count must match the recorded call IDs")
+            if not actual_call_count <= self.provider_transport_attempts <= (actual_call_count * 2):
+                raise ValueError(
+                    "conversation-backed answers allow at most one transient retry per call"
+                )
+            if not 1 <= len(self.evidence_tool_calls) <= 4:
+                raise ValueError(
+                    "conversation-backed answers require one to four evidence tool calls"
+                )
+            for label, value in (
+                ("provider model", self.provider_model_id),
+                ("prompt version", self.prompt_version),
+                ("response schema version", self.response_schema_version),
+                ("tool contract version", self.tool_contract_version),
+                ("validator version", self.validator_version),
+            ):
+                if value is None or not value.strip():
+                    raise ValueError(f"conversation-backed answer {label} cannot be empty")
+            if self.response_schema_sha256 is None:
+                raise ValueError("conversation-backed answer response schema hash cannot be empty")
+            _require_sha256(
+                self.response_schema_sha256,
+                label="assistant answer response schema",
+            )
+            if self.agent_variant_id in {"A1", "A2", "A3"}:
+                if self.explanation_plan_id is None or not self.explanation_plan_id.strip():
+                    raise ValueError(
+                        "production Evidence Guide answers require a finite explanation plan"
+                    )
+                if self.provider_call_count is None:
+                    raise ValueError(
+                        "production Evidence Guide answers require a provider call count"
+                    )
+                if self.release_gate_digest is None:
+                    raise ValueError(
+                        "production Evidence Guide answers require a release-gate digest"
+                    )
+                _require_sha256(
+                    self.release_gate_digest,
+                    label="assistant answer release gate",
+                )
 
 
 class AssistantEvaluationRecord(ContractModel):
@@ -1449,7 +1994,14 @@ PUBLIC_CONTRACTS: dict[str, type[ContractModel]] = {
         CloudArtifactManifest,
         WandbRunReference,
         WeaveTraceReference,
+        WeaveConversationReference,
         BenchmarkRunEnvelope,
+        AssistantEvidenceAnchor,
+        AssistantEvidencePacket,
+        AssistantReleaseBasis,
+        ProviderPolicy,
+        AssistantConversation,
+        AssistantTurn,
         AssistantAnswer,
         AssistantEvaluationRecord,
         GuidedCheckpoint,

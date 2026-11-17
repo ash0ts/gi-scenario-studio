@@ -9,6 +9,7 @@ import re
 import sqlite3
 import tempfile
 import threading
+import urllib.parse
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -18,7 +19,9 @@ from typing import Any
 from .contracts import (
     AnalysisState,
     AssistantAnswer,
+    AssistantConversation,
     AssistantEvaluationRecord,
+    AssistantTurn,
     DecisionBrief,
     ExportManifest,
     ExternalReference,
@@ -29,11 +32,13 @@ from .contracts import (
     ObservabilityProvider,
     ProjectDataPolicy,
     ProjectKind,
+    ProviderPolicy,
     SolverJobState,
     TelemetryEnvelope,
     TelemetryEvent,
     TelemetryState,
     WandbRunReference,
+    WeaveConversationReference,
     WeaveTraceReference,
     new_id,
 )
@@ -415,6 +420,58 @@ ALTER TABLE model_revisions_v3 RENAME TO model_revisions;
 """
 
 
+MIGRATION_4 = """
+CREATE TABLE IF NOT EXISTS assistant_provider_policies (
+    policy_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS assistant_conversations (
+    conversation_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
+    analysis_id TEXT REFERENCES analyses(analysis_id) ON DELETE CASCADE,
+    model_revision_id TEXT REFERENCES model_revisions(revision_id),
+    provider_policy_id TEXT NOT NULL REFERENCES assistant_provider_policies(policy_id),
+    status TEXT NOT NULL CHECK(status IN ('active','closed')),
+    next_turn_sequence INTEGER NOT NULL DEFAULT 0 CHECK(next_turn_sequence >= 0),
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS assistant_conversations_project_status
+    ON assistant_conversations(project_id, status, updated_at);
+CREATE TABLE IF NOT EXISTS assistant_turns (
+    turn_id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES assistant_conversations(conversation_id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
+    sequence INTEGER NOT NULL CHECK(sequence >= 0),
+    state TEXT NOT NULL CHECK(state IN ('pending','completed','blocked','failed')),
+    answer_id TEXT REFERENCES assistant_answers(answer_id) ON DELETE SET NULL,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    completed_at TEXT,
+    UNIQUE(conversation_id, sequence)
+);
+CREATE INDEX IF NOT EXISTS assistant_turns_project_created
+    ON assistant_turns(project_id, created_at);
+CREATE TABLE IF NOT EXISTS weave_conversation_references (
+    reference_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
+    conversation_id TEXT NOT NULL REFERENCES assistant_conversations(conversation_id) ON DELETE CASCADE,
+    turn_id TEXT NOT NULL REFERENCES assistant_turns(turn_id) ON DELETE CASCADE,
+    trace_id TEXT NOT NULL,
+    root_span_id TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(project_id, turn_id),
+    UNIQUE(trace_id),
+    UNIQUE(root_span_id)
+);
+"""
+
+
 class ProjectRepository:
     def __init__(self, project_directory: str | Path) -> None:
         self.root = Path(project_directory).resolve()
@@ -447,6 +504,11 @@ class ProjectRepository:
         self._lock = threading.RLock()
         self._configure()
         self._migrate()
+        # A live Evidence Guide turn is bounded to 60 seconds. Any turn that is
+        # still pending after twice that budget belongs to a worker that exited
+        # before it could persist a terminal state. Recover it on the next
+        # project open without disturbing an in-flight turn in another RPC.
+        self.recover_abandoned_assistant_turns(older_than_seconds=120)
 
     def _configure(self) -> None:
         self._connection.execute("PRAGMA foreign_keys=ON")
@@ -480,12 +542,28 @@ class ProjectRepository:
                     raise RuntimeError("schema migration found a foreign-key violation")
                 self._connection.execute("PRAGMA user_version=3")
                 self._connection.execute("COMMIT")
+                version = 3
             except BaseException:
                 if self._connection.in_transaction:
                     self._connection.execute("ROLLBACK")
                 raise
             finally:
                 self._connection.execute("PRAGMA foreign_keys=ON")
+        if version < 4:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                for statement in MIGRATION_4.split(";"):
+                    if statement.strip():
+                        self._connection.execute(statement)
+                violations = self._connection.execute("PRAGMA foreign_key_check").fetchall()
+                if violations:
+                    raise RuntimeError("schema migration found a foreign-key violation")
+                self._connection.execute("PRAGMA user_version=4")
+                self._connection.execute("COMMIT")
+            except BaseException:
+                if self._connection.in_transaction:
+                    self._connection.execute("ROLLBACK")
+                raise
         violations = self._connection.execute("PRAGMA foreign_key_check").fetchall()
         if violations:
             raise RuntimeError("project database contains a foreign-key violation")
@@ -1864,6 +1942,431 @@ class ProjectRepository:
         ).fetchone()
         return json.loads(row["payload_json"]) if row else None
 
+    def get_wandb_run_reference_for_analysis(
+        self,
+        analysis_id: str,
+    ) -> dict[str, Any] | None:
+        """Return the first confirmed W&B run associated with an analysis."""
+
+        row = self._connection.execute(
+            "SELECT w.payload_json FROM wandb_run_references w "
+            "JOIN telemetry_outbox t ON t.envelope_id=w.envelope_id "
+            "WHERE t.analysis_id=? ORDER BY t.created_at,w.created_at LIMIT 1",
+            (analysis_id,),
+        ).fetchone()
+        return json.loads(row["payload_json"]) if row else None
+
+    def store_provider_policy(
+        self,
+        policy: ProviderPolicy | dict[str, Any],
+    ) -> dict[str, Any]:
+        """Persist an immutable, secret-free provider-policy version."""
+
+        validated = ProviderPolicy.model_validate(policy)
+        payload = validated.model_dump(mode="json")
+        _assert_no_secret_material(payload, context="assistant provider policy")
+        with self.transaction() as connection:
+            if connection.execute(
+                "SELECT 1 FROM projects WHERE project_id=?", (payload["project_id"],)
+            ).fetchone() is None:
+                raise KeyError(f"project {payload['project_id']!r} was not found")
+            existing = connection.execute(
+                "SELECT project_id,payload_json FROM assistant_provider_policies WHERE policy_id=?",
+                (payload["policy_id"],),
+            ).fetchone()
+            if existing is not None:
+                if existing["project_id"] != payload["project_id"]:
+                    raise ValueError("assistant provider policy belongs to another project")
+                prior = json.loads(existing["payload_json"])
+                if prior != payload:
+                    raise ValueError("assistant provider policy versions are immutable")
+                return prior
+            if payload["enabled"]:
+                data_policy = connection.execute(
+                    "SELECT payload_json FROM project_data_policies WHERE project_id=?",
+                    (payload["project_id"],),
+                ).fetchone()
+                if data_policy is None:
+                    raise ValueError("enabled assistant policy requires a project data policy")
+                classification = json.loads(data_policy["payload_json"])["classification"]
+                if classification == "critical_infrastructure":
+                    raise ValueError(
+                        "W&B Inference is prohibited for critical-infrastructure projects"
+                    )
+                binding = connection.execute(
+                    "SELECT binding_id,external_project_id,deployment,verified,mode "
+                    "FROM observability_bindings WHERE project_id=? AND active=1",
+                    (payload["project_id"],),
+                ).fetchone()
+                if (
+                    binding is None
+                    or binding["binding_id"] != payload["observability_binding_id"]
+                    or binding["external_project_id"] != payload["external_project_id"]
+                    or not bool(binding["verified"])
+                    or binding["mode"] != "online"
+                    or binding["deployment"] != "wandb_cloud"
+                ):
+                    raise ValueError(
+                        "enabled assistant policy requires the current verified W&B Cloud binding"
+                    )
+            connection.execute(
+                "INSERT INTO assistant_provider_policies(policy_id,project_id,payload_json,"
+                "created_at,updated_at) VALUES(?,?,?,?,?)",
+                (
+                    payload["policy_id"],
+                    payload["project_id"],
+                    _json(payload),
+                    payload["created_at"],
+                    payload["updated_at"],
+                ),
+            )
+        return payload
+
+    def get_provider_policy(self, project_id: str) -> dict[str, Any] | None:
+        row = self._connection.execute(
+            "SELECT payload_json FROM assistant_provider_policies WHERE project_id=? "
+            "ORDER BY updated_at DESC,policy_id DESC LIMIT 1",
+            (project_id,),
+        ).fetchone()
+        return json.loads(row["payload_json"]) if row else None
+
+    def get_provider_policy_by_id(self, project_id: str, policy_id: str) -> dict[str, Any]:
+        row = self._connection.execute(
+            "SELECT payload_json FROM assistant_provider_policies "
+            "WHERE project_id=? AND policy_id=?",
+            (project_id, policy_id),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"assistant provider policy {policy_id!r} was not found")
+        return json.loads(row["payload_json"])
+
+    def create_assistant_conversation(
+        self,
+        conversation: AssistantConversation | dict[str, Any],
+    ) -> dict[str, Any]:
+        validated = AssistantConversation.model_validate(conversation)
+        payload = validated.model_dump(mode="json")
+        with self.transaction() as connection:
+            policy_row = connection.execute(
+                "SELECT project_id,payload_json FROM assistant_provider_policies WHERE policy_id=?",
+                (payload["provider_policy_id"],),
+            ).fetchone()
+            if policy_row is None or policy_row["project_id"] != payload["project_id"]:
+                raise ValueError("assistant conversation provider policy belongs to another project")
+            if not ProviderPolicy.model_validate(json.loads(policy_row["payload_json"])).enabled:
+                raise ValueError("assistant conversation requires an enabled provider policy")
+            data_policy = connection.execute(
+                "SELECT payload_json FROM project_data_policies WHERE project_id=?",
+                (payload["project_id"],),
+            ).fetchone()
+            if data_policy is None:
+                raise ValueError("assistant conversation requires a project data policy")
+            if json.loads(data_policy["payload_json"])["classification"] == "critical_infrastructure":
+                raise ValueError(
+                    "W&B Inference is prohibited for critical-infrastructure projects"
+                )
+            if payload["status"] != "active":
+                raise ValueError("new assistant conversations must start active")
+            if payload["analysis_id"] is not None:
+                analysis = connection.execute(
+                    "SELECT project_id FROM analyses WHERE analysis_id=?",
+                    (payload["analysis_id"],),
+                ).fetchone()
+                if analysis is None or analysis["project_id"] != payload["project_id"]:
+                    raise ValueError("assistant conversation analysis belongs to another project")
+            if payload["model_revision_id"] is not None:
+                revision = connection.execute(
+                    "SELECT project_id FROM model_revisions WHERE revision_id=?",
+                    (payload["model_revision_id"],),
+                ).fetchone()
+                if revision is None or revision["project_id"] != payload["project_id"]:
+                    raise ValueError("assistant conversation revision belongs to another project")
+            connection.execute(
+                "INSERT INTO assistant_conversations(conversation_id,project_id,analysis_id,"
+                "model_revision_id,provider_policy_id,status,next_turn_sequence,payload_json,"
+                "created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (
+                    payload["conversation_id"],
+                    payload["project_id"],
+                    payload["analysis_id"],
+                    payload["model_revision_id"],
+                    payload["provider_policy_id"],
+                    payload["status"],
+                    payload["next_turn_sequence"],
+                    _json(payload),
+                    payload["created_at"],
+                    payload["updated_at"],
+                ),
+            )
+        return payload
+
+    def get_assistant_conversation(self, project_id: str, conversation_id: str) -> dict[str, Any]:
+        row = self._connection.execute(
+            "SELECT payload_json FROM assistant_conversations "
+            "WHERE project_id=? AND conversation_id=?",
+            (project_id, conversation_id),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"assistant conversation {conversation_id!r} was not found")
+        return json.loads(row["payload_json"])
+
+    def list_assistant_conversations(self, project_id: str) -> list[dict[str, Any]]:
+        rows = self._connection.execute(
+            "SELECT payload_json FROM assistant_conversations WHERE project_id=? "
+            "ORDER BY created_at,conversation_id",
+            (project_id,),
+        ).fetchall()
+        return [json.loads(row["payload_json"]) for row in rows]
+
+    def close_assistant_conversation(self, project_id: str, conversation_id: str) -> dict[str, Any]:
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT payload_json FROM assistant_conversations "
+                "WHERE project_id=? AND conversation_id=?",
+                (project_id, conversation_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"assistant conversation {conversation_id!r} was not found")
+            payload = json.loads(row["payload_json"])
+            payload.update({"status": "closed", "updated_at": _now()})
+            validated = AssistantConversation.model_validate(payload).model_dump(mode="json")
+            connection.execute(
+                "UPDATE assistant_conversations SET status='closed',payload_json=?,updated_at=? "
+                "WHERE conversation_id=?",
+                (_json(validated), validated["updated_at"], conversation_id),
+            )
+        return validated
+
+    def store_assistant_turn(self, turn: AssistantTurn | dict[str, Any]) -> dict[str, Any]:
+        validated = AssistantTurn.model_validate(turn)
+        payload = validated.model_dump(mode="json")
+        if payload["state"] != "pending":
+            raise ValueError("new assistant turns must start pending")
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT project_id,status,next_turn_sequence,payload_json "
+                "FROM assistant_conversations WHERE conversation_id=?",
+                (payload["conversation_id"],),
+            ).fetchone()
+            if row is None or row["project_id"] != payload["project_id"]:
+                raise ValueError("assistant turn conversation belongs to another project")
+            if row["status"] != "active":
+                raise ValueError("assistant turn cannot be added to a closed conversation")
+            if int(row["next_turn_sequence"]) != payload["sequence"]:
+                raise ValueError("assistant turn sequence is not the next reserved sequence")
+            conversation = AssistantConversation.model_validate(
+                json.loads(row["payload_json"])
+            )
+            if (
+                payload["evidence_packet_id"] != conversation.packet_id
+                or payload["evidence_packet_sha256"] != conversation.packet_sha256
+                or payload["anchor"] != conversation.anchor.model_dump(mode="json")
+            ):
+                raise ValueError("assistant turn does not match its conversation evidence scope")
+            connection.execute(
+                "INSERT INTO assistant_turns(turn_id,conversation_id,project_id,sequence,state,"
+                "answer_id,payload_json,created_at,completed_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                (
+                    payload["turn_id"],
+                    payload["conversation_id"],
+                    payload["project_id"],
+                    payload["sequence"],
+                    payload["state"],
+                    payload["answer_id"],
+                    _json(payload),
+                    payload["created_at"],
+                    payload["completed_at"],
+                ),
+            )
+            conversation_payload = conversation.model_dump(mode="json")
+            conversation_payload.update(
+                {"next_turn_sequence": payload["sequence"] + 1, "updated_at": _now()}
+            )
+            conversation_payload = AssistantConversation.model_validate(
+                conversation_payload
+            ).model_dump(mode="json")
+            connection.execute(
+                "UPDATE assistant_conversations SET next_turn_sequence=?,payload_json=?,updated_at=? "
+                "WHERE conversation_id=?",
+                (
+                    conversation_payload["next_turn_sequence"],
+                    _json(conversation_payload),
+                    conversation_payload["updated_at"],
+                    payload["conversation_id"],
+                ),
+            )
+        return payload
+
+    def get_assistant_turn(self, project_id: str, turn_id: str) -> dict[str, Any]:
+        row = self._connection.execute(
+            "SELECT payload_json FROM assistant_turns WHERE project_id=? AND turn_id=?",
+            (project_id, turn_id),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"assistant turn {turn_id!r} was not found")
+        return json.loads(row["payload_json"])
+
+    def list_assistant_turns(self, project_id: str, conversation_id: str) -> list[dict[str, Any]]:
+        rows = self._connection.execute(
+            "SELECT payload_json FROM assistant_turns WHERE project_id=? AND conversation_id=? "
+            "ORDER BY sequence",
+            (project_id, conversation_id),
+        ).fetchall()
+        return [json.loads(row["payload_json"]) for row in rows]
+
+    def finish_assistant_turn(self, turn: AssistantTurn | dict[str, Any]) -> dict[str, Any]:
+        validated = AssistantTurn.model_validate(turn)
+        payload = validated.model_dump(mode="json")
+        if payload["state"] == "pending":
+            raise ValueError("assistant turn finish requires a terminal state")
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT project_id,conversation_id,state FROM assistant_turns WHERE turn_id=?",
+                (payload["turn_id"],),
+            ).fetchone()
+            if (
+                row is None
+                or row["project_id"] != payload["project_id"]
+                or row["conversation_id"] != payload["conversation_id"]
+            ):
+                raise ValueError("assistant turn identity does not match the repository")
+            if row["state"] != "pending":
+                raise ValueError("assistant turn is already terminal")
+            if payload["answer_id"] is not None and connection.execute(
+                "SELECT 1 FROM assistant_answers WHERE answer_id=? AND project_id=?",
+                (payload["answer_id"], payload["project_id"]),
+            ).fetchone() is None:
+                raise ValueError("assistant turn answer does not exist in this project")
+            connection.execute(
+                "UPDATE assistant_turns SET state=?,answer_id=?,payload_json=?,completed_at=? "
+                "WHERE turn_id=?",
+                (
+                    payload["state"],
+                    payload["answer_id"],
+                    _json(payload),
+                    payload["completed_at"],
+                    payload["turn_id"],
+                ),
+            )
+        return payload
+
+    def add_weave_conversation_reference(
+        self,
+        reference: WeaveConversationReference | dict[str, Any],
+    ) -> dict[str, Any]:
+        validated = WeaveConversationReference.model_validate(reference)
+        payload = validated.model_dump(mode="json")
+        with self.transaction() as connection:
+            turn = connection.execute(
+                "SELECT project_id,conversation_id,state FROM assistant_turns WHERE turn_id=?",
+                (payload["turn_id"],),
+            ).fetchone()
+            if (
+                turn is None
+                or turn["project_id"] != payload["project_id"]
+                or turn["conversation_id"] != payload["conversation_id"]
+            ):
+                raise ValueError("Weave conversation reference does not match its assistant turn")
+            if turn["state"] != "pending":
+                raise ValueError("Weave conversation references require a pending assistant turn")
+            binding = connection.execute(
+                "SELECT entity,external_project,payload_json FROM observability_bindings "
+                "WHERE project_id=? AND active=1",
+                (payload["project_id"],),
+            ).fetchone()
+            if (
+                binding is None
+                or payload["entity"] != binding["entity"]
+                or payload["external_project"] != binding["external_project"]
+            ):
+                raise ValueError(
+                    "Weave conversation reference does not match the active W&B binding"
+                )
+            binding_payload = json.loads(binding["payload_json"])
+            expected_origin = urllib.parse.urlsplit(binding_payload["web_base_url"])
+            actual_url = urllib.parse.urlsplit(payload["url"])
+            expected_prefix = "/".join(
+                (
+                    expected_origin.path.rstrip("/"),
+                    urllib.parse.quote(payload["entity"], safe=""),
+                    urllib.parse.quote(payload["external_project"], safe=""),
+                    "weave/agents/conversations",
+                    urllib.parse.quote(payload["conversation_id"], safe=""),
+                )
+            )
+            if (
+                actual_url.scheme != expected_origin.scheme
+                or actual_url.netloc != expected_origin.netloc
+                or actual_url.path.rstrip("/") != expected_prefix.rstrip("/")
+                or actual_url.query
+                or actual_url.fragment
+            ):
+                raise ValueError(
+                    "Weave conversation URL does not match the active W&B destination"
+                )
+            existing = connection.execute(
+                "SELECT payload_json FROM weave_conversation_references "
+                "WHERE project_id=? AND turn_id=?",
+                (payload["project_id"], payload["turn_id"]),
+            ).fetchone()
+            if existing is not None:
+                prior = json.loads(existing["payload_json"])
+                if prior != payload:
+                    raise ValueError("assistant turn already has a different Weave reference")
+                return prior
+            connection.execute(
+                "INSERT INTO weave_conversation_references(reference_id,project_id,"
+                "conversation_id,turn_id,trace_id,root_span_id,payload_json,created_at) "
+                "VALUES(?,?,?,?,?,?,?,?)",
+                (
+                    payload["reference_id"],
+                    payload["project_id"],
+                    payload["conversation_id"],
+                    payload["turn_id"],
+                    payload["trace_id"],
+                    payload["root_span_id"],
+                    _json(payload),
+                    payload["created_at"],
+                ),
+            )
+            conversation = connection.execute(
+                "SELECT payload_json FROM assistant_conversations WHERE conversation_id=?",
+                (payload["conversation_id"],),
+            ).fetchone()
+            if conversation is None:  # pragma: no cover - protected by foreign keys
+                raise RuntimeError("assistant conversation disappeared during trace persistence")
+            conversation_payload = json.loads(conversation["payload_json"])
+            conversation_payload.update(
+                {
+                    "weave_reference_id": payload["reference_id"],
+                    "weave_url": payload["url"],
+                    "updated_at": _now(),
+                }
+            )
+            conversation_payload = AssistantConversation.model_validate(
+                conversation_payload
+            ).model_dump(mode="json")
+            connection.execute(
+                "UPDATE assistant_conversations SET payload_json=?,updated_at=? "
+                "WHERE conversation_id=?",
+                (
+                    _json(conversation_payload),
+                    conversation_payload["updated_at"],
+                    payload["conversation_id"],
+                ),
+            )
+        return payload
+
+    def get_weave_conversation_reference(
+        self, project_id: str, turn_id: str
+    ) -> dict[str, Any] | None:
+        row = self._connection.execute(
+            "SELECT payload_json FROM weave_conversation_references "
+            "WHERE project_id=? AND turn_id=?",
+            (project_id, turn_id),
+        ).fetchone()
+        return json.loads(row["payload_json"]) if row else None
+
     def add_weave_trace_reference(
         self,
         reference: WeaveTraceReference | dict[str, Any],
@@ -1900,6 +2403,38 @@ class ProjectRepository:
         validated = AssistantAnswer.model_validate(answer)
         payload = validated.model_dump(mode="json")
         with self.transaction() as connection:
+            turn_payload: dict[str, Any] | None = None
+            if payload["conversation_id"] is not None:
+                turn = connection.execute(
+                    "SELECT project_id,conversation_id,state,payload_json FROM assistant_turns "
+                    "WHERE turn_id=?",
+                    (payload["turn_id"],),
+                ).fetchone()
+                if (
+                    turn is None
+                    or turn["project_id"] != payload["project_id"]
+                    or turn["conversation_id"] != payload["conversation_id"]
+                    or turn["state"] != "pending"
+                ):
+                    raise ValueError("conversation-backed answer does not match a pending turn")
+                trace = connection.execute(
+                    "SELECT payload_json FROM weave_conversation_references "
+                    "WHERE project_id=? AND turn_id=?",
+                    (payload["project_id"], payload["turn_id"]),
+                ).fetchone()
+                if (
+                    trace is None
+                    or payload["weave_conversation"] is None
+                    or json.loads(trace["payload_json"]) != payload["weave_conversation"]
+                ):
+                    raise ValueError("conversation-backed answer requires its acknowledged Weave turn")
+                turn_payload = json.loads(turn["payload_json"])
+                if (
+                    payload["evidence_packet_id"] != turn_payload["evidence_packet_id"]
+                    or payload["evidence_packet_sha256"]
+                    != turn_payload["evidence_packet_sha256"]
+                ):
+                    raise ValueError("assistant answer does not match its turn evidence packet")
             connection.execute(
                 "INSERT INTO assistant_answers(answer_id,project_id,call_id,payload_json,created_at) "
                 "VALUES(?,?,?,?,?)",
@@ -1911,6 +2446,25 @@ class ProjectRepository:
                     payload["created_at"],
                 ),
             )
+            if turn_payload is not None:
+                turn_payload.update(
+                    {
+                        "state": "completed",
+                        "answer_id": payload["answer_id"],
+                        "completed_at": payload["created_at"],
+                    }
+                )
+                completed = AssistantTurn.model_validate(turn_payload).model_dump(mode="json")
+                connection.execute(
+                    "UPDATE assistant_turns SET state='completed',answer_id=?,payload_json=?,"
+                    "completed_at=? WHERE turn_id=?",
+                    (
+                        payload["answer_id"],
+                        _json(completed),
+                        completed["completed_at"],
+                        payload["turn_id"],
+                    ),
+                )
         return payload
 
     def store_assistant_evaluation(
@@ -1932,6 +2486,153 @@ class ProjectRepository:
                 ),
             )
         return payload
+
+    def store_validated_assistant_result(
+        self,
+        answer: AssistantAnswer | dict[str, Any],
+        evaluation: AssistantEvaluationRecord | dict[str, Any],
+    ) -> dict[str, dict[str, Any]]:
+        """Atomically persist a validated answer, its evaluation, and turn state.
+
+        A generated answer is not a durable product result until its deterministic
+        evaluation and acknowledged Weave turn are committed in the same SQLite
+        transaction. This prevents a crash between separate writes from leaving a
+        completed-looking answer without its release-authority validation record.
+        """
+
+        validated_answer = AssistantAnswer.model_validate(answer)
+        validated_evaluation = AssistantEvaluationRecord.model_validate(evaluation)
+        answer_payload = validated_answer.model_dump(mode="json")
+        evaluation_payload = validated_evaluation.model_dump(mode="json")
+        if (
+            not validated_evaluation.valid
+            or validated_evaluation.answer_id != validated_answer.answer_id
+            or validated_evaluation.project_id != validated_answer.project_id
+            or validated_answer.weave_conversation is None
+            or validated_evaluation.trace_id
+            != validated_answer.weave_conversation.trace_id
+            or validated_answer.conversation_id is None
+            or validated_answer.turn_id is None
+        ):
+            raise ValueError(
+                "validated assistant persistence requires one valid evaluation for "
+                "the same answer, project, and acknowledged Weave turn"
+            )
+
+        with self.transaction() as connection:
+            turn = connection.execute(
+                "SELECT project_id,conversation_id,state,payload_json FROM assistant_turns "
+                "WHERE turn_id=?",
+                (validated_answer.turn_id,),
+            ).fetchone()
+            if (
+                turn is None
+                or turn["project_id"] != validated_answer.project_id
+                or turn["conversation_id"] != validated_answer.conversation_id
+                or turn["state"] != "pending"
+            ):
+                raise ValueError("validated assistant answer does not match a pending turn")
+            turn_payload = json.loads(turn["payload_json"])
+            if (
+                answer_payload["evidence_packet_id"]
+                != turn_payload["evidence_packet_id"]
+                or answer_payload["evidence_packet_sha256"]
+                != turn_payload["evidence_packet_sha256"]
+            ):
+                raise ValueError("validated assistant answer does not match its evidence packet")
+            trace = connection.execute(
+                "SELECT payload_json FROM weave_conversation_references "
+                "WHERE project_id=? AND turn_id=?",
+                (validated_answer.project_id, validated_answer.turn_id),
+            ).fetchone()
+            if trace is None or json.loads(trace["payload_json"]) != answer_payload[
+                "weave_conversation"
+            ]:
+                raise ValueError(
+                    "validated assistant answer requires its acknowledged Weave turn"
+                )
+
+            connection.execute(
+                "INSERT INTO assistant_answers(answer_id,project_id,call_id,payload_json,created_at) "
+                "VALUES(?,?,?,?,?)",
+                (
+                    answer_payload["answer_id"],
+                    answer_payload["project_id"],
+                    answer_payload["call_id"],
+                    _json(answer_payload),
+                    answer_payload["created_at"],
+                ),
+            )
+            connection.execute(
+                "INSERT INTO assistant_evaluations(evaluation_id,project_id,answer_id,payload_json,"
+                "created_at) VALUES(?,?,?,?,?)",
+                (
+                    evaluation_payload["evaluation_id"],
+                    evaluation_payload["project_id"],
+                    evaluation_payload["answer_id"],
+                    _json(evaluation_payload),
+                    evaluation_payload["created_at"],
+                ),
+            )
+            turn_payload.update(
+                {
+                    "state": "completed",
+                    "answer_id": answer_payload["answer_id"],
+                    "completed_at": answer_payload["created_at"],
+                }
+            )
+            completed = AssistantTurn.model_validate(turn_payload).model_dump(mode="json")
+            connection.execute(
+                "UPDATE assistant_turns SET state='completed',answer_id=?,payload_json=?,"
+                "completed_at=? WHERE turn_id=?",
+                (
+                    answer_payload["answer_id"],
+                    _json(completed),
+                    completed["completed_at"],
+                    validated_answer.turn_id,
+                ),
+            )
+        return {"answer": answer_payload, "evaluation": evaluation_payload}
+
+    def recover_abandoned_assistant_turns(
+        self,
+        *,
+        older_than_seconds: int = 120,
+    ) -> int:
+        """Fail stale pending assistant turns after an interrupted worker process."""
+
+        if older_than_seconds < 60:
+            raise ValueError("assistant turn recovery grace period must be at least 60 seconds")
+        tables = self._connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='assistant_turns'"
+        ).fetchone()
+        if tables is None:
+            return 0
+        cutoff = (datetime.now(UTC) - timedelta(seconds=older_than_seconds)).isoformat()
+        recovered = 0
+        with self.transaction() as connection:
+            rows = connection.execute(
+                "SELECT turn_id,payload_json FROM assistant_turns "
+                "WHERE state='pending' AND created_at<? ORDER BY created_at",
+                (cutoff,),
+            ).fetchall()
+            for row in rows:
+                payload = json.loads(row["payload_json"])
+                payload.update(
+                    {
+                        "state": "failed",
+                        "error_code": "ASSISTANT_WORKER_RESTARTED",
+                        "completed_at": _now(),
+                    }
+                )
+                failed = AssistantTurn.model_validate(payload).model_dump(mode="json")
+                connection.execute(
+                    "UPDATE assistant_turns SET state='failed',payload_json=?,completed_at=? "
+                    "WHERE turn_id=? AND state='pending'",
+                    (_json(failed), failed["completed_at"], row["turn_id"]),
+                )
+                recovered += 1
+        return recovered
 
     def get_assistant_answer(self, project_id: str, answer_id: str) -> dict[str, Any]:
         row = self._connection.execute(

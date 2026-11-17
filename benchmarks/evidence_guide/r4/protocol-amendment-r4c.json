@@ -1,0 +1,65 @@
+{
+  "schema_version": "1.0",
+  "amendment_id": "gi-evidence-guide-r4c-input-cap-amendment-2026-08-07",
+  "recorded_at": "2026-08-07",
+  "superseded_study_version": "gi-evidence-guide-grounding-r4b-final",
+  "replacement_study_version": "gi-evidence-guide-grounding-r4c-final",
+  "disposition": "R4b is preserved as an operational incident. R4c starts from a new preregistration, study instance, schedule identities, SQLite database, and output root; no R4b cell or response is reused.",
+  "incident_snapshot": {
+    "logical_name": "r4b_incident_snapshot",
+    "filename": "r4b-incident-snapshot.json",
+    "file_sha256": "7529716f603cf51927818de4e589f9e5f30355dcd23c344a5b492d0c04c2c8ad",
+    "snapshot_sha256": "71c054a18ec537f0b54c17574edf6506b0950e45360575b6dfb34ed9febbdcc7",
+    "attempts_observed": 272,
+    "accepted_traced_responses": 238,
+    "post_response_cap_rejections": 34,
+    "ambiguous_ledger_states": 0
+  },
+  "r4c_protocol_change": {
+    "maximum_provider_input_tokens_per_transport": 8192,
+    "request_payload_count": 672,
+    "maximum_normalized_request_utf8_bytes": 8017,
+    "minimum_headroom_bytes_under_cap": 175,
+    "rationale": "Every normalized R4b transport request was at most 8,017 UTF-8 bytes, yet both providers reported more than 2,048 input tokens for 34 completed calls. R4c reserves 8,192 input tokens per transport, a conservative ceiling above the entire normalized request byte length even under a one-byte-per-token upper-bound thought experiment. UTF-8 bytes remain a transport diagnostic and are not relabelled as measured tokens; actual usage continues to come from the provider response.",
+    "post_receipt_resource_policy": "A response received above a local cap is retained, traced, parsed, and scored. It is reported separately as a post-receipt resource-policy violation and cannot pass end-to-end conformance.",
+    "new_output_root": "dist/evidence-guide-r4c-grounding-final-r1",
+    "new_schema_ids": [
+      "r4c-plan-and-evidence-v1",
+      "r4c-full-prose-v1"
+    ],
+    "state_reuse_permitted": false,
+    "r4_or_r4b_outputs_deleted_or_rewritten": false
+  },
+  "resource_ledger": {
+    "policy": "R4c cap enforcement carries forward the complete conservative prior entering R4b, every observed R4b call and transport, every provider-reported R4b token, every relevant R4b output envelope, and the conservative R4b cost projection.",
+    "r4b_prior_for_cap_enforcement": {
+      "provider_invocations": 1951,
+      "transport_attempts": 1950,
+      "input_token_envelope": 1715625,
+      "output_token_envelope": 262815,
+      "conservative_cumulative_cost_usd": "0.1524103",
+      "verified_observed_cost_usd": "0.1065785"
+    },
+    "components": {
+      "conservative_prior_entering_r4b": {
+        "provider_invocations": 1679,
+        "transport_attempts": 1678,
+        "input_token_envelope": 1253981,
+        "output_token_envelope": 219807,
+        "conservative_cumulative_cost_usd": "0.1087813",
+        "verified_observed_cost_usd": "0.0669285"
+      },
+      "r4b_observed_calls": {
+        "provider_invocations": 272,
+        "transport_attempts": 272,
+        "provider_reported_input_tokens": 461644,
+        "provider_reported_output_tokens": 23016,
+        "input_token_envelope": 461644,
+        "output_token_envelope": 43008,
+        "conservative_at_risk_cost_usd": "0.043629",
+        "verified_observed_cost_usd": "0.039650"
+      }
+    }
+  },
+  "claim_boundary": "R4c measures synthetic evidence binding, one-rule decision fidelity, response-contract reliability, and trace acknowledgement under the amended resource envelope. It does not measure hydraulic validity, ecological benefit, field performance, practitioner usefulness, prompt-injection resistance, broad production safety, or production release readiness."
+}

@@ -1,0 +1,29 @@
+1
+00:00:00,500 --> 00:00:06,621
+A navigation app can follow its map perfectly
+even when a real road has closed.
+
+2
+00:00:06,621 --> 00:00:13,517
+Drainage models have the same two questions. Did
+the software run cleanly and account for
+
+3
+00:00:13,517 --> 00:00:20,335
+the water? For Cedar Trace, yes. Does this
+simplified model describe a real neighborhood
+
+4
+00:00:20,335 --> 00:00:27,075
+well enough for this decision? We do not know.
+No observed events or approved reference
+
+5
+00:00:27,075 --> 00:00:34,126
+result were supplied. Clean execution earns
+confidence in the calculation. It does not earn
+
+6
+00:00:34,126 --> 00:00:38,000
+confidence in the world the calculation
+describes.

@@ -1,0 +1,44 @@
+1
+00:00:00,500 --> 00:00:06,062
+Why did ALT-017 look so good at the beginning?
+Because a flat plot is a
+
+2
+00:00:06,062 --> 00:00:13,269
+shadow. Here, better means farther left for
+lower cost and higher for more volume reduction.
+
+3
+00:00:13,269 --> 00:00:18,909
+Along the visible edge, no other tested plan is
+at least as cheap and at
+
+4
+00:00:18,909 --> 00:00:25,960
+least as effective while improving one of those
+measures. Engineers call a point like that
+
+5
+00:00:25,960 --> 00:00:32,697
+nondominated, and the edge a Pareto frontier.
+The names sound like verdicts. They only
+
+6
+00:00:32,697 --> 00:00:40,217
+describe this two-number picture. Bring back the
+6 percent target and ALT-017 falls short. Bring
+
+7
+00:00:40,217 --> 00:00:46,719
+back each storm's peak and two red increases
+appear. Then remember that the model's
+
+8
+00:00:46,719 --> 00:00:53,535
+real-world fitness is still unknown. A Pareto
+frontier is a useful map of one tradeoff.
+
+9
+00:00:53,535 --> 00:00:58,000
+It is not the border between acceptable and
+unacceptable.

@@ -32,6 +32,10 @@ _CONTINUITY_RE = re.compile(
     r"([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[Ee][-+]?\d+)?)",
     re.IGNORECASE,
 )
+_CONTINUITY_ROW_RE = re.compile(
+    r"^\s*(?P<label>[A-Za-z][A-Za-z0-9 ()/%\-]*?)\s*\.{2,}\s*"
+    rf"(?P<primary>{_FLOAT_RE.pattern})(?:\s+(?P<secondary>{_FLOAT_RE.pattern}))?\s*$"
+)
 
 
 class AnalysisOrchestrationError(RuntimeError):
@@ -87,9 +91,85 @@ class ExtractedMetric:
             raise ValueError(f"metric {self.metric_id!r} is not finite")
 
 
+@dataclass(frozen=True, slots=True)
+class SwmmReportedQuantity:
+    """One numeric value exactly as rounded in a SWMM report."""
+
+    value: float
+    units: str
+
+    def __post_init__(self) -> None:
+        if not self.units.strip():
+            raise ValueError("a reported SWMM quantity requires units")
+        if not math.isfinite(self.value):
+            raise ValueError("a reported SWMM quantity must be finite")
+
+
+@dataclass(frozen=True, slots=True)
+class SwmmReportedQuantityPair:
+    """The two unit columns printed for one SWMM continuity-table row."""
+
+    primary: SwmmReportedQuantity
+    secondary: SwmmReportedQuantity
+
+
+@dataclass(frozen=True, slots=True)
+class RunoffQuantityLedger:
+    """Typed quantities projected from SWMM's runoff and routing ledgers.
+
+    ``infiltration_loss`` deliberately retains SWMM's runoff-accounting term.
+    It is not evidence of measured groundwater recharge.
+    """
+
+    initial_lid_storage: SwmmReportedQuantityPair
+    total_precipitation: SwmmReportedQuantityPair
+    evaporation_loss: SwmmReportedQuantityPair
+    infiltration_loss: SwmmReportedQuantityPair
+    surface_runoff: SwmmReportedQuantityPair
+    lid_drainage: SwmmReportedQuantityPair | None
+    final_storage: SwmmReportedQuantityPair
+    runoff_continuity_error: SwmmReportedQuantity
+    wet_weather_inflow: SwmmReportedQuantityPair
+    external_outflow: SwmmReportedQuantityPair
+    routing_continuity_error: SwmmReportedQuantity
+
+    def rounded_runoff_balance_residual(self) -> SwmmReportedQuantity:
+        """Return input minus output using only the report's rounded primary values.
+
+        This is a display-table reconciliation aid, not a replacement for SWMM's
+        full-precision continuity error.  A small nonzero residual is expected
+        when independently rounded rows are added or subtracted.
+        """
+
+        quantities = (
+            self.initial_lid_storage,
+            self.total_precipitation,
+            self.evaporation_loss,
+            self.infiltration_loss,
+            self.surface_runoff,
+            self.final_storage,
+            *((self.lid_drainage,) if self.lid_drainage is not None else ()),
+        )
+        primary_units = {quantity.primary.units for quantity in quantities}
+        if len(primary_units) != 1:
+            raise MetricExtractionError(
+                "runoff continuity rows use inconsistent primary volume units"
+            )
+        inputs = self.initial_lid_storage.primary.value + self.total_precipitation.primary.value
+        outputs = (
+            self.evaporation_loss.primary.value
+            + self.infiltration_loss.primary.value
+            + self.surface_runoff.primary.value
+            + self.final_storage.primary.value
+            + (self.lid_drainage.primary.value if self.lid_drainage is not None else 0.0)
+        )
+        return SwmmReportedQuantity(inputs - outputs, primary_units.pop())
+
+
 MetricExtractor = Callable[[str, SwmmDocument], Sequence[ExtractedMetric]]
 ModelMaterializer = Callable[[StormModel, Sequence[CandidateSlot], Sequence[int]], bytes]
 ProgressCallback = Callable[[dict[str, Any]], None]
+ScientificObserver = Callable[[str, dict[str, Any], dict[str, Any]], None]
 
 
 class _CallbackCancelEvent:
@@ -219,6 +299,167 @@ def _continuity_values(report_text: str) -> dict[str, float]:
         if match and section in {"runoff", "flow"}:
             values[section] = float(match.group(1))
     return values
+
+
+def _continuity_table(
+    report_text: str,
+    heading: str,
+) -> tuple[tuple[str, str], dict[str, tuple[float, ...]]]:
+    """Parse one standard SWMM continuity table and its reported unit columns."""
+
+    lines = report_text.splitlines()
+    matches = [
+        index
+        for index, line in enumerate(lines)
+        if re.match(rf"^\s*{re.escape(heading)}(?:\s|$)", line, re.IGNORECASE)
+    ]
+    if len(matches) != 1:
+        disposition = "absent" if not matches else "ambiguous"
+        raise MetricExtractionError(f"{heading} table is {disposition} in the SWMM report")
+
+    start = matches[0]
+    header = re.split(r"\s{2,}", lines[start].strip())
+    if len(header) != 3 or header[0].casefold() != heading.casefold():
+        raise MetricExtractionError(f"{heading} unit columns are absent or malformed")
+    units = (header[1], header[2])
+    if not all(unit.strip() for unit in units):
+        raise MetricExtractionError(f"{heading} unit columns are absent or malformed")
+
+    rows: dict[str, tuple[float, ...]] = {}
+    row_started = False
+    for line in lines[start + 1 :]:
+        match = _CONTINUITY_ROW_RE.match(line)
+        if match:
+            row_started = True
+            label = " ".join(match.group("label").split()).casefold()
+            if label in rows:
+                raise MetricExtractionError(f"{heading} row {label!r} is duplicated")
+            values = [float(match.group("primary"))]
+            if match.group("secondary") is not None:
+                values.append(float(match.group("secondary")))
+            rows[label] = tuple(values)
+            continue
+        if row_started and (not line.strip() or re.match(r"^\s*\*{5,}", line)):
+            break
+    if not rows:
+        raise MetricExtractionError(f"{heading} contains no quantity rows")
+    return units, rows
+
+
+def _reported_pair(
+    rows: Mapping[str, tuple[float, ...]],
+    units: tuple[str, str],
+    label: str,
+    *,
+    heading: str,
+) -> SwmmReportedQuantityPair:
+    values = rows.get(label.casefold())
+    if values is None:
+        raise MetricExtractionError(f"{heading} required row is absent: {label}")
+    if len(values) != 2:
+        raise MetricExtractionError(f"{heading} row has malformed quantity columns: {label}")
+    return SwmmReportedQuantityPair(
+        primary=SwmmReportedQuantity(values[0], units[0]),
+        secondary=SwmmReportedQuantity(values[1], units[1]),
+    )
+
+
+def _reported_continuity_error(
+    rows: Mapping[str, tuple[float, ...]],
+    *,
+    heading: str,
+) -> SwmmReportedQuantity:
+    label = "continuity error (%)"
+    values = rows.get(label)
+    if values is None:
+        raise MetricExtractionError(f"{heading} required row is absent: Continuity Error (%)")
+    if len(values) != 1:
+        raise MetricExtractionError(f"{heading} continuity error row is malformed")
+    return SwmmReportedQuantity(values[0], "percent")
+
+
+def extract_runoff_quantity_ledger(report_text: str) -> RunoffQuantityLedger:
+    """Extract typed runoff-accounting quantities from a direct SWMM report.
+
+    All values remain exactly as rounded by SWMM.  Required rows fail closed;
+    ``LID Drainage`` alone is optional because SWMM omits it when no drainage is
+    present.  The infiltration value is an accounting loss, not an observed
+    environmental outcome.
+    """
+
+    runoff_heading = "Runoff Quantity Continuity"
+    routing_heading = "Flow Routing Continuity"
+    runoff_units, runoff_rows = _continuity_table(report_text, runoff_heading)
+    routing_units, routing_rows = _continuity_table(report_text, routing_heading)
+
+    lid_drainage = None
+    if "lid drainage" in runoff_rows:
+        lid_drainage = _reported_pair(
+            runoff_rows,
+            runoff_units,
+            "LID Drainage",
+            heading=runoff_heading,
+        )
+
+    return RunoffQuantityLedger(
+        initial_lid_storage=_reported_pair(
+            runoff_rows,
+            runoff_units,
+            "Initial LID Storage",
+            heading=runoff_heading,
+        ),
+        total_precipitation=_reported_pair(
+            runoff_rows,
+            runoff_units,
+            "Total Precipitation",
+            heading=runoff_heading,
+        ),
+        evaporation_loss=_reported_pair(
+            runoff_rows,
+            runoff_units,
+            "Evaporation Loss",
+            heading=runoff_heading,
+        ),
+        infiltration_loss=_reported_pair(
+            runoff_rows,
+            runoff_units,
+            "Infiltration Loss",
+            heading=runoff_heading,
+        ),
+        surface_runoff=_reported_pair(
+            runoff_rows,
+            runoff_units,
+            "Surface Runoff",
+            heading=runoff_heading,
+        ),
+        lid_drainage=lid_drainage,
+        final_storage=_reported_pair(
+            runoff_rows,
+            runoff_units,
+            "Final Storage",
+            heading=runoff_heading,
+        ),
+        runoff_continuity_error=_reported_continuity_error(
+            runoff_rows,
+            heading=runoff_heading,
+        ),
+        wet_weather_inflow=_reported_pair(
+            routing_rows,
+            routing_units,
+            "Wet Weather Inflow",
+            heading=routing_heading,
+        ),
+        external_outflow=_reported_pair(
+            routing_rows,
+            routing_units,
+            "External Outflow",
+            heading=routing_heading,
+        ),
+        routing_continuity_error=_reported_continuity_error(
+            routing_rows,
+            heading=routing_heading,
+        ),
+    )
 
 
 def _flooding_loss(report_text: str) -> float | None:
@@ -474,12 +715,14 @@ class AnalysisOrchestrator:
         metric_extractor: MetricExtractor = extract_required_report_metrics,
         materializer: ModelMaterializer = materialize_lid_design,
         qa_policy: QAPolicy | dict[str, Any] | None = None,
+        scientific_observer: ScientificObserver | None = None,
     ) -> None:
         self.repository = repository
         self.solver = solver
         self.metric_extractor = metric_extractor
         self.materializer = materializer
         self.qa_policy = QAPolicy.model_validate(qa_policy or {})
+        self.scientific_observer = scientific_observer
 
     def _require_solver(self) -> ExactSolver:
         if self.solver is None:
@@ -675,6 +918,7 @@ class AnalysisOrchestrator:
             elif not remaining:
                 self.repository.transition_analysis(analysis_id, AnalysisState.COMPLETED)
                 self._emit(on_progress, analysis_id, "analysis.completed")
+                self._observe_exact_result_ingestion(analysis_id, cache_hits=cache_hits)
         return self.status(
             analysis_id,
             cache_hits=cache_hits,
@@ -916,7 +1160,7 @@ class AnalysisOrchestrator:
                     adverse_tolerance,
                 )
                 alternatives.append(design)
-        return {
+        board = {
             "analysis_id": analysis_id,
             "exact_only": True,
             "storm_ids": storms,
@@ -925,6 +1169,28 @@ class AnalysisOrchestrator:
             "excluded_designs": excluded,
             "blockers": blockers,
         }
+        adverse_changes = [
+            change
+            for alternative in alternatives
+            for change in alternative["adverse_peak_changes"]
+        ]
+        self._observe_scientific(
+            "adverse_effect_evaluation",
+            {
+                "storm_count": len(storms),
+                "complete_alternative_count": len(alternatives),
+                "adverse_tolerance": adverse_tolerance,
+            },
+            {
+                "baseline_available": baseline is not None,
+                "adverse_alternative_count": sum(
+                    bool(item["adverse_peak_changes"]) for item in alternatives
+                ),
+                "adverse_change_count": len(adverse_changes),
+                "excluded_design_count": len(excluded),
+            },
+        )
+        return board
 
     def status(self, analysis_id: str, *, cache_hits: int = 0) -> dict[str, Any]:
         jobs = self._jobs(analysis_id)
@@ -1014,6 +1280,58 @@ class AnalysisOrchestrator:
         return sum(
             job["state"] == SolverJobState.SUCCEEDED.value for job in self._jobs(analysis_id)
         )
+
+    def _observe_exact_result_ingestion(self, analysis_id: str, *, cache_hits: int) -> None:
+        jobs = self._jobs(analysis_id)
+        designs = {job["design_id"] for job in jobs}
+        storms = {job["storm_id"] for job in jobs}
+        state_counts: dict[str, int] = {}
+        for job in jobs:
+            state_counts[job["state"]] = state_counts.get(job["state"], 0) + 1
+        metric_count = int(
+            self.repository._connection.execute(
+                "SELECT count(*) FROM run_metrics m JOIN solver_jobs j ON j.job_id=m.job_id "
+                "WHERE j.analysis_id=?",
+                (analysis_id,),
+            ).fetchone()[0]
+        )
+        analysis = self.repository.get_analysis(analysis_id)
+        self._observe_scientific(
+            "exact_result_ingestion",
+            {
+                "planned_job_count": len(jobs),
+                "design_count": len(designs),
+                "storm_count": len(storms),
+                "metric_extractor_version": analysis["payload"].get(
+                    "metric_extractor_version", "not_recorded"
+                ),
+            },
+            {
+                "ingested_exact_job_count": state_counts.get(
+                    SolverJobState.SUCCEEDED.value, 0
+                ),
+                "qa_rejected_job_count": state_counts.get(
+                    SolverJobState.QA_REJECTED.value, 0
+                ),
+                "failed_job_count": state_counts.get(SolverJobState.FAILED.value, 0),
+                "cancelled_job_count": state_counts.get(SolverJobState.CANCELLED.value, 0),
+                "metric_count": metric_count,
+                "cache_hit_count": cache_hits,
+            },
+        )
+
+    def _observe_scientific(
+        self,
+        operation: str,
+        inputs: dict[str, Any],
+        output: dict[str, Any],
+    ) -> None:
+        if self.scientific_observer is None:
+            return
+        try:
+            self.scientific_observer(operation, inputs, output)
+        except Exception:  # noqa: BLE001 - observation must never affect exact engineering work
+            return
 
     def _cancel_analysis(self, analysis_id: str) -> None:
         for job in self._jobs(analysis_id):

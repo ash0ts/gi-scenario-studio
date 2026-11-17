@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "gi-scenario-film"
+version = "0.1.0"
+description = "Evidence-grounded Manim inserts for the GI Scenario Studio walkthrough"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "manim==0.20.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3,<9",
+  "ruff==0.16.1",
+]
+publish = [
+  "wandb==0.28.1",
+  "wandb-workspaces==0.4.4",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/gi_story"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
