@@ -48,6 +48,20 @@ def _report(license_expression: str = "MIT") -> dict[str, object]:
                 },
                 "packages": [],
             },
+            {
+                "source": {
+                    "path": "/workspace/crates/scenario-host/Cargo.lock",
+                    "type": "lockfile",
+                },
+                "packages": [],
+            },
+            {
+                "source": {
+                    "path": "/workspace/apps/ecocorridor-desktop/src-tauri/Cargo.lock",
+                    "type": "lockfile",
+                },
+                "packages": [],
+            },
         ],
     }
 

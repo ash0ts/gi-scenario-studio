@@ -1,0 +1,148 @@
+{
+  "$defs": {
+    "ActionCellReplacement": {
+      "additionalProperties": false,
+      "properties": {
+        "column": {
+          "minimum": 0,
+          "title": "Column",
+          "type": "integer"
+        },
+        "resistance": {
+          "exclusiveMinimum": 0,
+          "title": "Resistance",
+          "type": "number"
+        },
+        "row": {
+          "minimum": 0,
+          "title": "Row",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "row",
+        "column",
+        "resistance"
+      ],
+      "title": "ActionCellReplacement",
+      "type": "object"
+    },
+    "ActionEffectBasis": {
+      "additionalProperties": false,
+      "properties": {
+        "assumptions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Assumptions",
+          "type": "array"
+        },
+        "basis_id": {
+          "title": "Basis Id",
+          "type": "string"
+        },
+        "citation": {
+          "title": "Citation",
+          "type": "string"
+        },
+        "confidence": {
+          "$ref": "#/$defs/EvidenceConfidence"
+        },
+        "evidence_source": {
+          "title": "Evidence Source",
+          "type": "string"
+        },
+        "limitations": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Limitations",
+          "type": "array"
+        },
+        "purpose": {
+          "title": "Purpose",
+          "type": "string"
+        },
+        "reviewed_at": {
+          "format": "date-time",
+          "title": "Reviewed At",
+          "type": "string"
+        },
+        "reviewer": {
+          "title": "Reviewer",
+          "type": "string"
+        }
+      },
+      "required": [
+        "basis_id",
+        "purpose",
+        "evidence_source",
+        "citation",
+        "reviewer",
+        "reviewed_at",
+        "confidence"
+      ],
+      "title": "ActionEffectBasis",
+      "type": "object"
+    },
+    "EvidenceConfidence": {
+      "enum": [
+        "CONFIRMED",
+        "INFERRED",
+        "ASSUMED"
+      ],
+      "title": "EvidenceConfidence",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.ecocorridor.local/1.0/ActionEffectRaster.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "basis": {
+      "$ref": "#/$defs/ActionEffectBasis"
+    },
+    "cells": {
+      "items": {
+        "$ref": "#/$defs/ActionCellReplacement"
+      },
+      "minItems": 1,
+      "title": "Cells",
+      "type": "array"
+    },
+    "effect_id": {
+      "title": "Effect Id",
+      "type": "string"
+    },
+    "footprint_asset_id": {
+      "title": "Footprint Asset Id",
+      "type": "string"
+    },
+    "grid_id": {
+      "title": "Grid Id",
+      "type": "string"
+    },
+    "scenario_id": {
+      "title": "Scenario Id",
+      "type": "string"
+    },
+    "sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "effect_id",
+    "scenario_id",
+    "grid_id",
+    "footprint_asset_id",
+    "cells",
+    "basis",
+    "sha256"
+  ],
+  "title": "ActionEffectRaster",
+  "type": "object"
+}

@@ -1,0 +1,265 @@
+{
+  "contracts": [
+    {
+      "file": "ConnectivityProjectBundle.schema.json",
+      "name": "ConnectivityProjectBundle"
+    },
+    {
+      "file": "ConnectivityDecisionBrief.schema.json",
+      "name": "ConnectivityDecisionBrief"
+    },
+    {
+      "file": "ConnectivityModelFitness.schema.json",
+      "name": "ConnectivityModelFitness"
+    },
+    {
+      "file": "ResistanceHypothesis.schema.json",
+      "name": "ResistanceHypothesis"
+    },
+    {
+      "file": "FocalAreaSet.schema.json",
+      "name": "FocalAreaSet"
+    },
+    {
+      "file": "ConnectivityScenario.schema.json",
+      "name": "ConnectivityScenario"
+    },
+    {
+      "file": "ReferenceMetricTolerance.schema.json",
+      "name": "ReferenceMetricTolerance"
+    },
+    {
+      "file": "ReferenceScenarioBinding.schema.json",
+      "name": "ReferenceScenarioBinding"
+    },
+    {
+      "file": "InterventionSite.schema.json",
+      "name": "InterventionSite"
+    },
+    {
+      "file": "InterventionOption.schema.json",
+      "name": "InterventionOption"
+    },
+    {
+      "file": "ConnectivityCostBasis.schema.json",
+      "name": "ConnectivityCostBasis"
+    },
+    {
+      "file": "ActionEffectRaster.schema.json",
+      "name": "ActionEffectRaster"
+    },
+    {
+      "file": "ActionEffectBasis.schema.json",
+      "name": "ActionEffectBasis"
+    },
+    {
+      "file": "SafeguardRecord.schema.json",
+      "name": "SafeguardRecord"
+    },
+    {
+      "file": "RiskReviewMask.schema.json",
+      "name": "RiskReviewMask"
+    },
+    {
+      "file": "ConnectivityDecisionRule.schema.json",
+      "name": "ConnectivityDecisionRule"
+    },
+    {
+      "file": "ConnectivityRunPlan.schema.json",
+      "name": "ConnectivityRunPlan"
+    },
+    {
+      "file": "ReferencePairComparison.schema.json",
+      "name": "ReferencePairComparison"
+    },
+    {
+      "file": "ReferenceScenarioComparison.schema.json",
+      "name": "ReferenceScenarioComparison"
+    },
+    {
+      "file": "ReferenceComparisonPlan.schema.json",
+      "name": "ReferenceComparisonPlan"
+    },
+    {
+      "file": "ReferenceEvidenceClaimLink.schema.json",
+      "name": "ReferenceEvidenceClaimLink"
+    },
+    {
+      "file": "ReferenceComparisonResult.schema.json",
+      "name": "ReferenceComparisonResult"
+    },
+    {
+      "file": "DirectConnectivityRun.schema.json",
+      "name": "DirectConnectivityRun"
+    },
+    {
+      "file": "PortfolioDecisionSummary.schema.json",
+      "name": "PortfolioDecisionSummary"
+    },
+    {
+      "file": "ConnectivityEvidenceClaim.schema.json",
+      "name": "ConnectivityEvidenceClaim"
+    },
+    {
+      "file": "GridAlignmentPlan.schema.json",
+      "name": "GridAlignmentPlan"
+    },
+    {
+      "file": "GridAlignmentApproval.schema.json",
+      "name": "GridAlignmentApproval"
+    },
+    {
+      "file": "SensitiveDataAuthorization.schema.json",
+      "name": "SensitiveDataAuthorization"
+    },
+    {
+      "file": "EngineManifest.schema.json",
+      "name": "EngineManifest"
+    },
+    {
+      "file": "ResourcePolicy.schema.json",
+      "name": "ResourcePolicy"
+    },
+    {
+      "file": "OversizeSyncApproval.schema.json",
+      "name": "OversizeSyncApproval"
+    },
+    {
+      "file": "ConnectivityExportEligibility.schema.json",
+      "name": "ConnectivityExportEligibility"
+    },
+    {
+      "file": "ModelRevision.schema.json",
+      "name": "ModelRevision"
+    },
+    {
+      "file": "SemanticModelDiff.schema.json",
+      "name": "SemanticModelDiff"
+    },
+    {
+      "file": "ReviewBriefRequest.schema.json",
+      "name": "ReviewBriefRequest"
+    },
+    {
+      "file": "AuthorizedReviewSnapshot.schema.json",
+      "name": "AuthorizedReviewSnapshot"
+    },
+    {
+      "file": "ReviewBriefAgentOutput.schema.json",
+      "name": "ReviewBriefAgentOutput"
+    },
+    {
+      "file": "ReviewBriefDraft.schema.json",
+      "name": "ReviewBriefDraft"
+    },
+    {
+      "file": "ReviewBriefItem.schema.json",
+      "name": "ReviewBriefItem"
+    },
+    {
+      "file": "ReviewBriefPreflight.schema.json",
+      "name": "ReviewBriefPreflight"
+    },
+    {
+      "file": "ReviewBriefTraceReceipt.schema.json",
+      "name": "ReviewBriefTraceReceipt"
+    },
+    {
+      "file": "ReviewBriefValidation.schema.json",
+      "name": "ReviewBriefValidation"
+    },
+    {
+      "file": "ReviewBriefAttestation.schema.json",
+      "name": "ReviewBriefAttestation"
+    },
+    {
+      "file": "UsefulnessStudyProtocol.schema.json",
+      "name": "UsefulnessStudyProtocol"
+    },
+    {
+      "file": "StudyCaseManifest.schema.json",
+      "name": "StudyCaseManifest"
+    },
+    {
+      "file": "StudyMethodArm.schema.json",
+      "name": "StudyMethodArm"
+    },
+    {
+      "file": "AgentRetrievalObservation.schema.json",
+      "name": "AgentRetrievalObservation"
+    },
+    {
+      "file": "PractitionerSession.schema.json",
+      "name": "PractitionerSession"
+    },
+    {
+      "file": "ConventionalPackEquivalenceReceipt.schema.json",
+      "name": "ConventionalPackEquivalenceReceipt"
+    },
+    {
+      "file": "RetainedReadbackBlob.schema.json",
+      "name": "RetainedReadbackBlob"
+    },
+    {
+      "file": "ReadbackVerifierProvenance.schema.json",
+      "name": "ReadbackVerifierProvenance"
+    },
+    {
+      "file": "WandbCampaignReadback.schema.json",
+      "name": "WandbCampaignReadback"
+    },
+    {
+      "file": "WeaveTraceReadback.schema.json",
+      "name": "WeaveTraceReadback"
+    },
+    {
+      "file": "PreregistrationPublicationReceipt.schema.json",
+      "name": "PreregistrationPublicationReceipt"
+    },
+    {
+      "file": "CampaignEvidenceArtifact.schema.json",
+      "name": "CampaignEvidenceArtifact"
+    },
+    {
+      "file": "CampaignArtifactReceipt.schema.json",
+      "name": "CampaignArtifactReceipt"
+    },
+    {
+      "file": "VerifiedCampaignEvidence.schema.json",
+      "name": "VerifiedCampaignEvidence"
+    },
+    {
+      "file": "ReviewerHandoffRecord.schema.json",
+      "name": "ReviewerHandoffRecord"
+    },
+    {
+      "file": "PractitionerPublicProjection.schema.json",
+      "name": "PractitionerPublicProjection"
+    },
+    {
+      "file": "ReviewerHandoffPublicProjection.schema.json",
+      "name": "ReviewerHandoffPublicProjection"
+    },
+    {
+      "file": "ShadowProjectPublicProjection.schema.json",
+      "name": "ShadowProjectPublicProjection"
+    },
+    {
+      "file": "AdjudicatedOutcome.schema.json",
+      "name": "AdjudicatedOutcome"
+    },
+    {
+      "file": "PairedEffectEstimate.schema.json",
+      "name": "PairedEffectEstimate"
+    },
+    {
+      "file": "ShadowProjectRecord.schema.json",
+      "name": "ShadowProjectRecord"
+    },
+    {
+      "file": "ExperimentClaimLedger.schema.json",
+      "name": "ExperimentClaimLedger"
+    }
+  ],
+  "schema_version": "1.0"
+}

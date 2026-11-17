@@ -5,11 +5,17 @@
   "packageManager": "pnpm@11.9.0",
   "scripts": {
     "dev": "pnpm --dir apps/desktop dev",
+    "dev:eco": "pnpm --dir apps/ecocorridor-desktop dev",
+    "dev:eco-replay": "pnpm --dir apps/ecocorridor-replay dev",
     "build": "pnpm --dir apps/desktop build",
+    "build:eco": "pnpm --dir apps/ecocorridor-desktop build && pnpm --dir apps/ecocorridor-replay build",
     "test": "pnpm test:frontend && pnpm test:python",
     "test:frontend": "pnpm --dir apps/desktop test",
+    "test:eco": "pnpm --dir apps/ecocorridor-desktop test",
     "test:python": "python3 -m pytest tests/python",
     "check": "pnpm --dir apps/desktop check && python3 -m pytest tests/python",
-    "desktop": "pnpm --dir apps/desktop tauri dev"
+    "check:eco": "pnpm --dir apps/ecocorridor-desktop check && pnpm --dir apps/ecocorridor-replay check",
+    "desktop": "pnpm --dir apps/desktop tauri dev",
+    "desktop:eco": "pnpm --dir apps/ecocorridor-desktop tauri dev"
   }
 }

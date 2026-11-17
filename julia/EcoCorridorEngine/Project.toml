@@ -1,0 +1,22 @@
+name = "EcoCorridorEngine"
+uuid = "971d8f64-4aef-4f6c-8b67-c2d83bb10bf1"
+authors = ["EcoCorridor Scenario Studio contributors"]
+version = "0.1.0"
+
+[deps]
+Circuitscape = "2b7a1792-8151-5239-925d-e2b8fdfa3201"
+JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+PackageCompiler = "9b87118b-4619-50d2-8e1e-99f35a4d4d9d"
+
+[compat]
+Circuitscape = "=5.17.1"
+JSON3 = "1"
+PackageCompiler = "2"
+julia = "1.12.6"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]

@@ -1,0 +1,1910 @@
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import io
+import json
+import os
+import re
+import signal
+import subprocess
+import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
+from agents.models.interface import Model
+from ecocorridor_core.assistants import AssistantRunAssociation
+from ecocorridor_core.contracts import canonical_sha256
+from ecocorridor_core.review_brief import (
+    ReviewBriefAuthorizedSnapshot,
+    ReviewBriefFindingContext,
+    ReviewBriefFindingKind,
+    ReviewBriefFindingSelection,
+    ReviewBriefRetrievalObservation,
+    ReviewBriefRunnerRequest,
+    ReviewBriefRunnerResult,
+    ReviewBriefSafetyError,
+    ReviewBriefSourceMode,
+    ReviewBriefTopic,
+    ReviewBriefTrace,
+    _feasibility_topics,
+    required_review_brief_tools,
+    topic_permissions,
+    validate_selection_appropriateness,
+)
+from ecocorridor_core.review_brief_agent_process import (
+    _MODEL_BRANCH_TOPICS,
+    _OPTION_BRANCH_TOPICS,
+    _adaptive_available_tools,
+    _AgentSelectionOutput,
+    _associated_wandb_run,
+    _build_tools,
+    _evidence_payload,
+    _EvidenceQuery,
+    _execute,
+    _finding_payload,
+    _findings_payload,
+    _get_trace_call_with_retry,
+    _InvocationContext,
+    _is_exact_next_tool,
+    _model,
+    _raise_stage_failure,
+    _readback_generation_calls,
+    _readback_trace,
+    _ReceiptWeaveTracingProcessor,
+    _scope_payload,
+    _topic_branch_payload,
+    _usage,
+    _validate_trace_gate,
+    _validate_trace_url,
+    review_brief_model_visible_context,
+    review_brief_model_visible_context_bytes,
+)
+from ecocorridor_core.review_brief_agent_runtime import (
+    REVIEW_BRIEF_AGENT_TOOLS,
+    REVIEW_BRIEF_MAX_CONTEXT_BYTES,
+    REVIEW_BRIEF_MAX_TOOL_CALLS,
+    REVIEW_BRIEF_MAX_TURNS,
+    PopenReviewBriefAgentSubprocess,
+    ReviewBriefAgentBinding,
+    ReviewBriefAgentCapabilityReceipt,
+    ReviewBriefAgentChildRequest,
+    ReviewBriefAgentChildResponse,
+    ReviewBriefAgentCredentialLease,
+    ReviewBriefAgentProvider,
+    ReviewBriefAgentRuntimeError,
+    ReviewBriefAgentTraceControl,
+    ReviewBriefSubprocessRunner,
+    ReviewBriefWeaveTarget,
+    _communicate_with_deadline,
+    _configure_weave_pii_redaction,
+    _json_bytes,
+    _read_frame,
+    _trace_url_matches_target,
+    _write_frame,
+    safe_child_error_code,
+)
+
+
+def _sha(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _authorized_read_arguments_json() -> str:
+    return json.dumps({"request_token": "READ_AUTHORIZED_SNAPSHOT"})
+
+
+@pytest.mark.parametrize(
+    ("exception_name", "expected"),
+    [
+        ("BadRequestError", "REVIEW_BRIEF_PROVIDER_REQUEST_REJECTED"),
+        ("AuthenticationError", "REVIEW_BRIEF_PROVIDER_AUTHENTICATION_FAILED"),
+        ("PermissionDeniedError", "REVIEW_BRIEF_PROVIDER_ACCESS_DENIED"),
+        ("NotFoundError", "REVIEW_BRIEF_PROVIDER_MODEL_NOT_FOUND"),
+        ("RateLimitError", "REVIEW_BRIEF_PROVIDER_RATE_LIMITED"),
+        ("APIConnectionError", "REVIEW_BRIEF_PROVIDER_UNAVAILABLE"),
+        ("InternalServerError", "REVIEW_BRIEF_PROVIDER_FAILED"),
+        ("ModelBehaviorError", "REVIEW_BRIEF_PROVIDER_OUTPUT_INVALID"),
+    ],
+)
+def test_safe_child_error_code_classifies_provider_failures_without_message(
+    exception_name: str, expected: str
+) -> None:
+    error_type = type(exception_name, (Exception,), {})
+    error = error_type("credential-and-provider-payload-must-not-escape")
+
+    observed = safe_child_error_code(error)
+
+    assert observed == expected
+    assert "credential" not in observed.casefold()
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        (
+            "Invalid JSON input for tool review_brief_get_scope: secret payload",
+            "REVIEW_BRIEF_PROVIDER_TOOL_CALL_INVALID",
+        ),
+        (
+            "Invalid JSON while validating final output: secret payload",
+            "REVIEW_BRIEF_PROVIDER_STRUCTURED_OUTPUT_INVALID",
+        ),
+        (
+            "ChatCompletion response has no choices: secret payload",
+            "REVIEW_BRIEF_PROVIDER_EMPTY_RESPONSE",
+        ),
+    ],
+)
+def test_safe_child_error_code_refines_model_behavior_without_leaking_message(
+    message: str, expected: str
+) -> None:
+    error_type = type("ModelBehaviorError", (Exception,), {})
+
+    observed = safe_child_error_code(error_type(message))
+
+    assert observed == expected
+    assert "secret" not in observed.casefold()
+
+
+def test_safe_child_error_code_preserves_bounded_local_cause_through_sdk_wrapper() -> None:
+    local = ReviewBriefAgentRuntimeError("REVIEW_BRIEF_AGENT_TOOL_ARGUMENTS_INVALID")
+    wrapper_type = type("UserError", (Exception,), {})
+    wrapper = wrapper_type("provider content must not escape")
+    wrapper.__cause__ = local
+
+    observed = safe_child_error_code(wrapper)
+
+    assert observed == "REVIEW_BRIEF_AGENT_TOOL_ARGUMENTS_INVALID"
+    assert "provider" not in observed.casefold()
+
+
+def test_stage_failure_preserves_provider_classification_and_bounds_generic_error() -> None:
+    bad_request = type("BadRequestError", (Exception,), {})
+    with pytest.raises(
+        ReviewBriefAgentRuntimeError,
+        match="^REVIEW_BRIEF_PROVIDER_REQUEST_REJECTED$",
+    ):
+        _raise_stage_failure(
+            bad_request("provider payload must not escape"),
+            fallback_code="REVIEW_BRIEF_AGENT_EXECUTION_FAILED",
+        )
+
+    with pytest.raises(
+        ReviewBriefAgentRuntimeError,
+        match="^REVIEW_BRIEF_AGENT_CONFIGURATION_FAILED$",
+    ):
+        _raise_stage_failure(
+            TypeError("internal payload must not escape"),
+            fallback_code="REVIEW_BRIEF_AGENT_CONFIGURATION_FAILED",
+        )
+
+
+def test_weave_pii_redaction_uses_offline_cached_presidio_engine(tmp_path: Path) -> None:
+    import tldextract
+    import weave.utils.pii_redaction as weave_pii
+
+    _configure_weave_pii_redaction(tmp_path)
+    first = weave_pii._get_engines()
+    second = weave_pii._get_engines()
+    digest = "a8142d6da77747b58e57708edfeaa9d83e3d465cf3503f9636affa9ef169a919"
+    redacted = weave_pii.redact_pii_string(
+        f"Contact alice@example.com in Seattle. Evidence digest {digest}."
+    )
+    structured = weave_pii.redact_pii(
+        {
+            "snapshot_sha256": digest,
+            "contact": "Contact alice@example.com in Seattle.",
+            "api_key": "secret",
+        }
+    )
+
+    assert first is second
+    assert "alice@example.com" not in redacted
+    assert "Seattle" not in redacted
+    assert structured["snapshot_sha256"] == digest
+    assert "alice@example.com" not in structured["contact"]
+    assert "Seattle" not in structured["contact"]
+    assert structured["api_key"] == "REDACTED"
+    assert tuple(tldextract.extract.suffix_list_urls) == ()
+    assert (tmp_path / "tldextract-cache").is_dir()
+
+
+def _snapshot(*, evidence_aliases: list[str] | None = None) -> ReviewBriefAuthorizedSnapshot:
+    evidence = evidence_aliases or ["E1"]
+    finding = ReviewBriefFindingContext(
+        finding_alias="F1",
+        finding_kind="MODEL_FITNESS",
+        review_topic="MODEL_FITNESS_BASIS",
+        priority="BLOCKING",
+        evidence_aliases=evidence,
+        scenario_aliases=["S1"],
+        permitted_actions=["INSPECT_EVIDENCE", "REVISE_MODEL_AND_RERUN"],
+        permitted_disciplines=["ECOLOGY"],
+    )
+    return ReviewBriefAuthorizedSnapshot.create(
+        source_mode="RIDGEWAY_SYNTHETIC",
+        disposition="SURVEY_FIRST",
+        analysis_id_sha256=_sha("analysis-1"),
+        model_revision_id_sha256=_sha("revision-1"),
+        evidence_authorization_decision_id="evidence_auth_" + "a" * 24,
+        current_authorizations_sha256=_sha("authorizations-1"),
+        authorization_sha256=_sha("authorization-1"),
+        findings=[finding.model_dump(mode="json")],
+    )
+
+
+def _large_complex_snapshot() -> ReviewBriefAuthorizedSnapshot:
+    topic_matrix = (
+        (ReviewBriefFindingKind.MODEL_FITNESS, ReviewBriefTopic.MODEL_FITNESS_BASIS),
+        (
+            ReviewBriefFindingKind.FEASIBILITY_GAP,
+            ReviewBriefTopic.LAND_ACCESS_OR_OWNERSHIP,
+        ),
+        (ReviewBriefFindingKind.REFERENCE, ReviewBriefTopic.REFERENCE_COMPARISON),
+        (ReviewBriefFindingKind.AUTHORIZATION, ReviewBriefTopic.DATA_AUTHORIZATION),
+    )
+    scenarios = [f"S{index}" for index in range(1, 17)]
+    findings: list[ReviewBriefFindingContext] = []
+    for index in range(1, 65):
+        kind, topic = topic_matrix[(index - 1) % len(topic_matrix)]
+        actions, disciplines = topic_permissions(kind, topic)
+        findings.append(
+            ReviewBriefFindingContext(
+                finding_alias=f"F{index}",
+                finding_kind=kind,
+                review_topic=topic,
+                priority="BLOCKING",
+                evidence_aliases=[f"E{index}", f"E{(index % 64) + 1}"],
+                scenario_aliases=scenarios,
+                permitted_actions=actions,
+                permitted_disciplines=disciplines,
+            )
+        )
+    return ReviewBriefAuthorizedSnapshot.create(
+        source_mode="RIDGEWAY_SYNTHETIC",
+        disposition="SURVEY_FIRST",
+        analysis_id_sha256=_sha("analysis-1"),
+        model_revision_id_sha256=_sha("revision-1"),
+        evidence_authorization_decision_id="evidence_auth_" + "a" * 24,
+        current_authorizations_sha256=_sha("authorizations-1"),
+        authorization_sha256=_sha("authorization-1"),
+        findings=[item.model_dump(mode="json") for item in findings],
+    )
+
+
+def _adaptive_receipts(
+    snapshot: ReviewBriefAuthorizedSnapshot,
+) -> list[ReviewBriefRetrievalObservation]:
+    findings = [item.finding_alias for item in snapshot.findings]
+    evidence = list(
+        dict.fromkeys(alias for item in snapshot.findings for alias in item.evidence_aliases)
+    )
+    return [
+        ReviewBriefRetrievalObservation(
+            sequence=1,
+            tool_name="review_brief_get_scope",
+            output_bytes=2,
+            output_sha256=_sha("scope-output"),
+            cumulative_context_bytes=102,
+        ),
+        ReviewBriefRetrievalObservation(
+            sequence=2,
+            tool_name="review_brief_list_findings",
+            output_bytes=2,
+            output_sha256=_sha("finding-list-output"),
+            cumulative_context_bytes=104,
+        ),
+        ReviewBriefRetrievalObservation(
+            sequence=3,
+            tool_name="review_brief_get_findings",
+            requested_finding_aliases=findings,
+            returned_finding_aliases=findings,
+            returned_evidence_aliases=evidence,
+            new_finding_aliases=findings,
+            new_evidence_aliases=evidence,
+            output_bytes=2,
+            output_sha256=_sha("finding-detail-output"),
+            cumulative_context_bytes=106,
+        ),
+    ]
+
+
+def _complete_context_tool(
+    context: _InvocationContext,
+    *,
+    tool_name: str,
+    raw_arguments: str,
+) -> dict[str, Any]:
+    context.revalidate(tool_name=tool_name, raw_arguments=raw_arguments)
+    arguments = json.loads(raw_arguments)
+    if tool_name == "review_brief_get_scope":
+        payload = _scope_payload(context.snapshot)
+    elif tool_name == "review_brief_list_findings":
+        payload = {
+            "finding_count": len(context.snapshot.findings),
+            "listing_kind": "NEUTRAL_COUNT_ONLY",
+        }
+    elif tool_name == "review_brief_get_findings":
+        aliases = list(arguments["finding_aliases"])
+        payload = _findings_payload(context.snapshot, aliases)
+    elif tool_name == "review_brief_resolve_evidence_aliases":
+        payload = _evidence_payload(context.snapshot, list(arguments["evidence_aliases"]))
+    elif tool_name == "review_brief_list_option_constraints":
+        payload = _topic_branch_payload(context.snapshot, _OPTION_BRANCH_TOPICS)
+    elif tool_name == "review_brief_list_model_fitness_gaps":
+        payload = _topic_branch_payload(context.snapshot, _MODEL_BRANCH_TOPICS)
+    else:
+        payload = {}
+    return context.complete_tool(tool_name=tool_name, payload=payload)
+
+
+def _binding(snapshot: ReviewBriefAuthorizedSnapshot) -> ReviewBriefAgentBinding:
+    return ReviewBriefAgentBinding.from_authorized_snapshot(
+        project_id="project-1",
+        analysis_id="analysis-1",
+        portfolio_id="portfolio-1",
+        model_revision_id="revision-1",
+        decision_board_sha256=_sha("board-1"),
+        cloud_authorization_kind="RIDGEWAY_CC0_TRACE_ONLY",
+        cloud_authorization_sha256=_sha("ridgeway-trace-consent-1"),
+        snapshot=snapshot,
+    )
+
+
+def _provider() -> ReviewBriefAgentProvider:
+    return ReviewBriefAgentProvider(
+        base_url="https://api.openai.example/v1",
+        model="review-model-1",
+        mode="CHAT_COMPLETIONS",
+    )
+
+
+def _target() -> ReviewBriefWeaveTarget:
+    return ReviewBriefWeaveTarget(
+        entity="wandb",
+        project="ecocorridor-scenario-studio",
+        api_base_url="https://api.wandb.ai",
+        web_base_url="https://wandb.ai",
+        external_project_id_sha256=_sha("wandb-project-1"),
+    )
+
+
+def _association() -> AssistantRunAssociation:
+    return AssistantRunAssociation.create(
+        project_id="project-1",
+        wandb_external_project_id="wandb-project-1",
+        wandb_run_id="review-run-1",
+        wandb_run_kind="review_brief_evaluation",
+        run_subject_id="portfolio-1",
+        analysis_id="analysis-1",
+    )
+
+
+def _trace() -> ReviewBriefAgentTraceControl:
+    association = _association()
+    return ReviewBriefAgentTraceControl(
+        trace_id="trace_" + "c" * 32,
+        association_id=association.association_id,
+        association_id_sha256=_sha(association.association_id),
+        wandb_run_id=association.wandb_run_id,
+        wandb_run_id_sha256=_sha(association.wandb_run_id),
+    )
+
+
+def _child(*, action: str = "PREPARE") -> ReviewBriefAgentChildRequest:
+    snapshot = _snapshot()
+    return ReviewBriefAgentChildRequest(
+        action=action,
+        provider=_provider(),
+        weave_target=_target(),
+        trace=_trace(),
+        binding=_binding(snapshot),
+        runner_request=ReviewBriefRunnerRequest(snapshot=snapshot).model_dump(mode="json"),
+        provider_api_key="provider-test-key-123456",
+        wandb_api_key="not-a-secret-value",
+    )
+
+
+def test_provider_and_weave_targets_require_https_except_loopback() -> None:
+    with pytest.raises(ValueError, match="HTTPS"):
+        ReviewBriefAgentProvider(
+            base_url="http://provider.example/v1",
+            model="model-1",
+            mode="RESPONSES",
+        )
+    loopback = ReviewBriefAgentProvider(
+        base_url="http://127.0.0.1:11434/v1",
+        model="model-1",
+        mode="CHAT_COMPLETIONS",
+    )
+    assert loopback.base_url == "http://127.0.0.1:11434/v1"
+    with pytest.raises(ValueError, match="HTTPS"):
+        ReviewBriefWeaveTarget(
+            entity="wandb",
+            project="eco",
+            api_base_url="http://wandb.example",
+            web_base_url="https://wandb.example",
+            external_project_id_sha256=_sha("project"),
+        )
+
+
+def test_cloud_authorization_kind_is_discriminated_by_source_mode() -> None:
+    synthetic = _snapshot()
+    with pytest.raises(ValueError, match="cloud authorization kind"):
+        ReviewBriefAgentBinding.from_authorized_snapshot(
+            project_id="project-1",
+            analysis_id="analysis-1",
+            portfolio_id="portfolio-1",
+            model_revision_id="revision-1",
+            decision_board_sha256=_sha("board-1"),
+            cloud_authorization_kind="RESTRICTED_EXACT_SCOPE",
+            cloud_authorization_sha256=_sha("wrong-professional-scope"),
+            snapshot=synthetic,
+        )
+
+    professional = synthetic.model_copy(update={"source_mode": ReviewBriefSourceMode.PROFESSIONAL})
+    with pytest.raises(ValueError, match="cloud authorization kind"):
+        ReviewBriefAgentBinding.from_authorized_snapshot(
+            project_id="project-1",
+            analysis_id="analysis-1",
+            portfolio_id="portfolio-1",
+            model_revision_id="revision-1",
+            decision_board_sha256=_sha("board-1"),
+            cloud_authorization_kind="RIDGEWAY_CC0_TRACE_ONLY",
+            cloud_authorization_sha256=_sha("wrong-synthetic-consent"),
+            snapshot=professional,
+        )
+
+
+def test_ipc_serialization_reveals_secrets_only_in_explicit_frame() -> None:
+    child = _child()
+    provider_key = child.provider_api_key.get_secret_value()
+    wandb_key = child.wandb_api_key.get_secret_value()
+    assert provider_key not in repr(child)
+    assert wandb_key not in repr(child)
+    assert provider_key not in child.model_dump_json()
+    assert wandb_key not in child.model_dump_json()
+
+    payload = bytearray(_json_bytes(child.ipc_payload()))
+    try:
+        assert provider_key.encode() in payload
+        assert wandb_key.encode() in payload
+        decoded = ReviewBriefAgentChildRequest.model_validate_json(payload)
+        assert decoded.provider_api_key.get_secret_value() == provider_key
+        assert decoded.wandb_api_key.get_secret_value() == wandb_key
+    finally:
+        payload[:] = b"\0" * len(payload)
+    assert set(payload) == {0}
+
+
+def test_model_routes_only_wandb_inference_to_the_weave_project(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: list[dict[str, Any]] = []
+
+    class FakeAsyncOpenAI:
+        def __init__(self, **kwargs: Any) -> None:
+            requests.append(kwargs)
+
+    monkeypatch.setattr("openai.AsyncOpenAI", FakeAsyncOpenAI)
+    wandb_child = _child().model_copy(
+        update={
+            "provider": _provider().model_copy(
+                update={"base_url": "https://api.inference.wandb.ai/v1"}
+            )
+        }
+    )
+    _model(wandb_child)
+    _model(_child())
+
+    assert requests[0]["project"] == "wandb/ecocorridor-scenario-studio"
+    assert "project" not in requests[1]
+    routing_metadata = json.dumps(
+        {key: value for key, value in requests[0].items() if key != "api_key"},
+        sort_keys=True,
+    )
+    assert wandb_child.provider_api_key.get_secret_value() not in routing_metadata
+    assert wandb_child.wandb_api_key.get_secret_value() not in routing_metadata
+
+
+def test_owned_child_run_uses_hash_only_config_and_finishes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    child = _child()
+    child.trace.wandb_run_lifecycle = "CREATE_OR_RESUME_AND_FINISH"
+    calls: dict[str, Any] = {}
+
+    class Run:
+        id = child.trace.wandb_run_id
+
+        def finish(self, *, exit_code: int) -> None:
+            calls.setdefault("finish", []).append(exit_code)
+
+    def init(**kwargs: Any) -> Run:
+        calls["init"] = kwargs
+        return Run()
+
+    fake_wandb = SimpleNamespace(Settings=lambda **kwargs: kwargs, init=init)
+    monkeypatch.setitem(sys.modules, "wandb", fake_wandb)
+    with _associated_wandb_run(child) as run:
+        assert isinstance(run, Run)
+
+    init_args = calls["init"]
+    assert init_args["id"] == child.trace.wandb_run_id
+    assert init_args["resume"] == "allow"
+    assert init_args["save_code"] is False
+    assert all(re.fullmatch(r"[0-9a-f]{64}", value) for value in init_args["config"].values())
+    serialized_config = json.dumps(init_args["config"], sort_keys=True)
+    assert "project-1" not in serialized_config
+    assert "portfolio-1" not in serialized_config
+    assert calls["finish"] == [0]
+
+
+def test_frame_protocol_is_strict_and_bounded() -> None:
+    stream = io.BytesIO()
+    _write_frame(stream, b'{"ok":true}')
+    stream.seek(0)
+    assert _read_frame(stream) == b'{"ok":true}'
+    with pytest.raises(ReviewBriefAgentRuntimeError, match="FRAME_INVALID"):
+        _read_frame(io.BytesIO(b"not-frame\n"))
+    with pytest.raises(ReviewBriefAgentRuntimeError, match="FRAME_TRUNCATED"):
+        _read_frame(io.BytesIO(b"00000008\n{}"))
+
+
+def test_source_and_frozen_commands_never_contain_credentials(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    launcher = PopenReviewBriefAgentSubprocess(scratch_root=tmp_path)
+    monkeypatch.setattr(sys, "frozen", False, raising=False)
+    assert launcher.command() == [
+        sys.executable,
+        "-I",
+        "-m",
+        "ecocorridor_core.review_brief_agent_process",
+    ]
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    assert launcher.command() == [sys.executable, "--review-brief-agent-subprocess"]
+    assert "provider-test-key" not in json.dumps(launcher.command())
+    environment = launcher._environment(tmp_path)
+    assert "WANDB_API_KEY" not in environment
+    assert "OPENAI_API_KEY" not in environment
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX process-group assertion")
+def test_deadline_kills_the_isolated_process_group_and_reaps_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[object] = []
+
+    class Process:
+        pid = 9142
+        stdin = None
+        stdout = None
+        stderr = None
+
+        def poll(self) -> None:
+            return None
+
+        def communicate(self, *, timeout: float) -> tuple[bytes, bytes]:
+            calls.append(("communicate", timeout))
+            if timeout != 5:
+                raise subprocess.TimeoutExpired("agent", timeout)
+            return b"", b""
+
+        def kill(self) -> None:
+            calls.append("kill")
+
+        def wait(self, *, timeout: float) -> int:
+            calls.append(("wait", timeout))
+            return -signal.SIGKILL
+
+    monkeypatch.setattr(os, "getpgid", lambda pid: pid + 1)
+    monkeypatch.setattr(os, "killpg", lambda pgid, sig: calls.append(("killpg", pgid, sig)))
+    with pytest.raises(ReviewBriefAgentRuntimeError, match="DEADLINE_EXCEEDED"):
+        _communicate_with_deadline(
+            Process(),  # type: ignore[arg-type]
+            deadline_seconds=12,
+            deadline_error_code="REVIEW_BRIEF_AGENT_DEADLINE_EXCEEDED",
+        )
+    assert ("killpg", 9143, signal.SIGKILL) in calls
+    assert ("communicate", 5) in calls
+
+
+class _FakeSubprocess:
+    def __init__(self) -> None:
+        self.requests: list[ReviewBriefAgentChildRequest] = []
+
+    def invoke(
+        self, *, request: ReviewBriefAgentChildRequest, deadline_seconds: float
+    ) -> ReviewBriefAgentChildResponse:
+        assert deadline_seconds == 45
+        self.requests.append(request)
+        if request.action == "PREFLIGHT":
+            return ReviewBriefAgentChildResponse(
+                ok=True,
+                capability=ReviewBriefAgentCapabilityReceipt(
+                    provider_mode=request.provider.mode,
+                    trace_id=request.trace.trace_id,
+                    trace_url=(
+                        "https://wandb.ai/wandb/ecocorridor-scenario-studio/weave/traces/preflight"
+                    ),
+                ),
+            )
+        result = ReviewBriefRunnerResult(
+            snapshot_sha256=request.runner_request["snapshot"]["snapshot_sha256"],
+            selections=[
+                ReviewBriefFindingSelection(
+                    finding_alias="F1",
+                    action_kind="INSPECT_EVIDENCE",
+                    reviewer_disciplines=["ECOLOGY"],
+                )
+            ],
+            provider_call_id_sha256=_sha("provider-call-1"),
+            provider_call_identity_kind="PROVIDER_RESPONSE_ID",
+            provider_model=request.provider.model,
+            tool_calls=[
+                "review_brief_get_scope",
+                "review_brief_list_findings",
+                "review_brief_get_findings",
+            ],
+            traversal_mode=request.runner_request["traversal_mode"],
+            stop_reason="SELECTION_READY",
+            retrieval_observations=_adaptive_receipts(
+                ReviewBriefRunnerRequest.model_validate(request.runner_request).snapshot
+            ),
+            input_tokens=10,
+            output_tokens=4,
+            elapsed_ms=100,
+            trace=ReviewBriefTrace(
+                trace_id=request.trace.trace_id,
+                weave_call_id="weave-call-prepare",
+                association_id=request.trace.association_id,
+                wandb_run_id=request.trace.wandb_run_id,
+                trace_url=(
+                    "https://wandb.ai/wandb/ecocorridor-scenario-studio/weave/traces/prepare"
+                ),
+            ),
+        )
+        return ReviewBriefAgentChildResponse(ok=True, result=result.model_dump(mode="json"))
+
+
+def _runner(
+    tmp_path: Path,
+    fake: _FakeSubprocess,
+    snapshot: ReviewBriefAuthorizedSnapshot,
+) -> ReviewBriefSubprocessRunner:
+    @contextmanager
+    def credentials() -> Iterator[ReviewBriefAgentCredentialLease]:
+        lease = ReviewBriefAgentCredentialLease(
+            provider_api_key="provider-test-key-123456",
+            wandb_api_key="not-a-secret-value",
+        )
+        yield lease
+        lease.provider_api_key = ""
+        lease.wandb_api_key = ""
+
+    return ReviewBriefSubprocessRunner(
+        provider=_provider(),
+        weave_target=_target(),
+        association=_association(),
+        binding=_binding(snapshot),
+        credential_lease=credentials,
+        subprocess_client=fake,
+        deadline_seconds=45,
+    )
+
+
+def test_runner_preflight_and_prepare_use_predetermined_distinct_traces(
+    tmp_path: Path,
+) -> None:
+    snapshot = _snapshot()
+    request = ReviewBriefRunnerRequest(snapshot=snapshot)
+    subprocess_client = _FakeSubprocess()
+    runner = _runner(tmp_path, subprocess_client, snapshot)
+
+    capability = runner.preflight(request=request)
+    result = runner.prepare(request=request)
+
+    assert capability.trace_readback_verified is True
+    assert result.trace.readback_verified is True
+    assert len(subprocess_client.requests) == 2
+    assert subprocess_client.requests[0].trace.trace_id != (
+        subprocess_client.requests[1].trace.trace_id
+    )
+    assert all(
+        value.startswith("trace_")
+        for value in (
+            subprocess_client.requests[0].trace.trace_id,
+            subprocess_client.requests[1].trace.trace_id,
+        )
+    )
+    assert (
+        subprocess_client.requests[1]
+        .provider_api_key.get_secret_value()
+        .startswith("provider-test")
+    )
+
+
+def test_prepare_automatically_blocks_behind_real_capability_preflight(tmp_path: Path) -> None:
+    snapshot = _snapshot()
+    subprocess_client = _FakeSubprocess()
+    runner = _runner(tmp_path, subprocess_client, snapshot)
+    runner.prepare(request=ReviewBriefRunnerRequest(snapshot=snapshot))
+    assert [request.action for request in subprocess_client.requests] == [
+        "PREFLIGHT",
+        "PREPARE",
+    ]
+
+
+def test_runner_blocks_snapshot_authorization_drift_before_subprocess(tmp_path: Path) -> None:
+    snapshot = _snapshot()
+    subprocess_client = _FakeSubprocess()
+    runner = _runner(tmp_path, subprocess_client, snapshot)
+    object.__setattr__(runner.binding, "authorization_sha256", _sha("changed"))
+    request = ReviewBriefRunnerRequest(snapshot=snapshot)
+    with pytest.raises(ReviewBriefAgentRuntimeError, match="AUTHORIZATION_LEASE_CHANGED"):
+        runner.prepare(request=request)
+    assert subprocess_client.requests == []
+
+
+def test_runner_enforces_forced_exhaustive_context_before_credentials(tmp_path: Path) -> None:
+    snapshot = _large_complex_snapshot()
+    binding = _binding(snapshot)
+    accessed = False
+
+    def credentials() -> ReviewBriefAgentCredentialLease:
+        nonlocal accessed
+        accessed = True
+        return ReviewBriefAgentCredentialLease("p" * 20, "w" * 20)
+
+    runner = ReviewBriefSubprocessRunner(
+        provider=_provider(),
+        weave_target=_target(),
+        association=_association(),
+        binding=binding,
+        credential_lease=credentials,
+        subprocess_client=_FakeSubprocess(),
+    )
+    assert (
+        len(
+            review_brief_model_visible_context_bytes(
+                snapshot,
+                traversal_mode="FORCED_EXHAUSTIVE",
+            )
+        )
+        > REVIEW_BRIEF_MAX_CONTEXT_BYTES
+    )
+    with pytest.raises(ReviewBriefAgentRuntimeError, match="CONTEXT_TOO_LARGE"):
+        runner.prepare(
+            request=ReviewBriefRunnerRequest(
+                snapshot=snapshot,
+                traversal_mode="FORCED_EXHAUSTIVE",
+            )
+        )
+    assert accessed is False
+
+
+def test_adaptive_large_context_charges_only_actual_retrieval_while_forced_blocks() -> None:
+    snapshot = _large_complex_snapshot()
+    request = ReviewBriefRunnerRequest(snapshot=snapshot, traversal_mode="ADAPTIVE")
+    child = ReviewBriefAgentChildRequest(
+        action="PREPARE",
+        provider=_provider(),
+        weave_target=_target(),
+        trace=_trace(),
+        binding=_binding(snapshot),
+        runner_request=request.model_dump(mode="json"),
+        provider_api_key="provider-test-key-123456",
+        wandb_api_key="not-a-secret-value",
+    )
+    context = _InvocationContext(request=request, child=child)
+
+    assert context.initial_context_bytes < REVIEW_BRIEF_MAX_CONTEXT_BYTES
+    assert (
+        len(
+            review_brief_model_visible_context_bytes(
+                snapshot,
+                traversal_mode="FORCED_EXHAUSTIVE",
+            )
+        )
+        > REVIEW_BRIEF_MAX_CONTEXT_BYTES
+    )
+
+    calls = (
+        ("review_brief_get_scope", '{"request_token":"READ_AUTHORIZED_SNAPSHOT"}'),
+        ("review_brief_list_findings", '{"request_token":"READ_AUTHORIZED_SNAPSHOT"}'),
+        (
+            "review_brief_list_model_fitness_gaps",
+            '{"request_token":"READ_AUTHORIZED_SNAPSHOT"}',
+        ),
+        (
+            "review_brief_get_findings",
+            json.dumps({"finding_aliases": ["F1"]}, separators=(",", ":")),
+        ),
+    )
+    last_response: dict[str, Any] = {}
+    for tool_name, arguments in calls:
+        last_response = _complete_context_tool(
+            context,
+            tool_name=tool_name,
+            raw_arguments=arguments,
+        )
+        encoded = json.dumps(
+            last_response,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+        receipt = context.retrieval_observations[-1]
+        assert receipt.output_sha256 == hashlib.sha256(encoded).hexdigest()
+        assert receipt.cumulative_context_bytes <= REVIEW_BRIEF_MAX_CONTEXT_BYTES
+
+    assert last_response["selection_ready"] is True
+    assert context.cumulative_context_bytes < REVIEW_BRIEF_MAX_CONTEXT_BYTES
+    assert "review_brief_list_option_constraints" in _adaptive_available_tools(context)
+    assert len(context.retrieval_observations) == 4
+
+
+def test_runner_enforces_expanded_model_visible_context_before_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import ecocorridor_core.review_brief_agent_process as process_module
+
+    snapshot = _snapshot()
+    subprocess_client = _FakeSubprocess()
+    runner = _runner(tmp_path, subprocess_client, snapshot)
+    monkeypatch.setattr(
+        process_module,
+        "review_brief_model_visible_context_bytes",
+        lambda _snapshot, **_kwargs: b"x" * (REVIEW_BRIEF_MAX_CONTEXT_BYTES + 1),
+    )
+
+    with pytest.raises(ReviewBriefAgentRuntimeError, match="CONTEXT_TOO_LARGE"):
+        runner.prepare(request=ReviewBriefRunnerRequest(snapshot=snapshot))
+    assert subprocess_client.requests == []
+
+
+def test_all_and_only_eight_read_only_tools_are_registered() -> None:
+    child = _child()
+    request = ReviewBriefRunnerRequest.model_validate(child.runner_request)
+    context = _InvocationContext(request=request, child=child)
+    tools = _build_tools(context)
+    assert tuple(tool.name for tool in tools) == REVIEW_BRIEF_AGENT_TOOLS
+    assert len(tools) == 8
+    assert all(tool.strict_json_schema for tool in tools)
+    assert all(tool.timeout_seconds == 5.0 for tool in tools)
+    assert all(tool.timeout_behavior == "raise_exception" for tool in tools)
+
+
+def test_per_tool_revalidation_rejects_identity_alias_and_generic_arguments() -> None:
+    child = _child()
+    context = _InvocationContext(
+        request=ReviewBriefRunnerRequest.model_validate(child.runner_request), child=child
+    )
+    _complete_context_tool(
+        context,
+        tool_name="review_brief_get_scope",
+        raw_arguments=_authorized_read_arguments_json(),
+    )
+    _complete_context_tool(
+        context,
+        tool_name="review_brief_list_findings",
+        raw_arguments=_authorized_read_arguments_json(),
+    )
+    _complete_context_tool(
+        context,
+        tool_name="review_brief_list_model_fitness_gaps",
+        raw_arguments=_authorized_read_arguments_json(),
+    )
+    with pytest.raises(ReviewBriefAgentRuntimeError, match="TOOL_ALIAS_NOT_AUTHORIZED"):
+        context.revalidate(
+            tool_name="review_brief_get_findings",
+            raw_arguments=json.dumps({"finding_aliases": ["F9"]}),
+        )
+    assert context.inspected_finding_aliases == set()
+    assert context.tool_calls == [
+        "review_brief_get_scope",
+        "review_brief_list_findings",
+        "review_brief_list_model_fitness_gaps",
+    ]
+
+    generic_context = _InvocationContext(
+        request=ReviewBriefRunnerRequest.model_validate(child.runner_request), child=child
+    )
+    invalid_arguments = [
+        {},
+        {"": ""},
+        {"request_token": "WRONG"},
+        {"request_token": "READ_AUTHORIZED_SNAPSHOT", "extra": True},
+        {"project_id": "project-1"},
+    ]
+    for arguments in invalid_arguments:
+        with pytest.raises(ReviewBriefAgentRuntimeError, match="TOOL_ARGUMENTS_INVALID"):
+            generic_context.revalidate(
+                tool_name="review_brief_get_scope",
+                raw_arguments=json.dumps(arguments),
+            )
+    assert generic_context.tool_calls == []
+
+    changed_context = _InvocationContext(
+        request=ReviewBriefRunnerRequest.model_validate(child.runner_request), child=child
+    )
+    object.__setattr__(child.binding, "authorization_sha256", _sha("changed"))
+    with pytest.raises(ReviewBriefAgentRuntimeError, match="AUTHORIZATION_LEASE_CHANGED"):
+        changed_context.revalidate(
+            tool_name="review_brief_get_scope",
+            raw_arguments=_authorized_read_arguments_json(),
+        )
+
+
+def test_adaptive_discovery_is_neutral_until_the_model_selects_a_branch() -> None:
+    child = _child()
+    context = _InvocationContext(
+        request=ReviewBriefRunnerRequest.model_validate(child.runner_request), child=child
+    )
+    scope = _complete_context_tool(
+        context,
+        tool_name="review_brief_get_scope",
+        raw_arguments=_authorized_read_arguments_json(),
+    )
+    listing = _complete_context_tool(
+        context,
+        tool_name="review_brief_list_findings",
+        raw_arguments=_authorized_read_arguments_json(),
+    )
+
+    discovery = json.dumps({"scope": scope, "listing": listing}, sort_keys=True)
+    assert "F1" not in discovery
+    assert "E1" not in discovery
+    assert "BLOCKING" not in discovery
+    assert "MODEL_FITNESS_BASIS" not in discovery
+    assert "required_branch_tools" not in discovery
+    assert listing["finding_count"] == 1
+    assert listing["listing_kind"] == "NEUTRAL_COUNT_ONLY"
+
+    branch = _complete_context_tool(
+        context,
+        tool_name="review_brief_list_model_fitness_gaps",
+        raw_arguments=_authorized_read_arguments_json(),
+    )
+    assert branch["findings"][0]["finding_alias"] == "F1"
+
+
+def test_evidence_resolver_deduplicates_repeated_authorized_aliases_and_stays_complete() -> None:
+    snapshot = _snapshot(evidence_aliases=["E1", "E2"])
+    child = _child().model_copy(
+        update={
+            "binding": _binding(snapshot),
+            "runner_request": ReviewBriefRunnerRequest(snapshot=snapshot).model_dump(mode="json"),
+        }
+    )
+    context = _InvocationContext(
+        request=ReviewBriefRunnerRequest.model_validate(child.runner_request), child=child
+    )
+    for tool_name, raw_arguments in (
+        ("review_brief_get_scope", _authorized_read_arguments_json()),
+        ("review_brief_list_findings", _authorized_read_arguments_json()),
+        ("review_brief_list_model_fitness_gaps", _authorized_read_arguments_json()),
+        ("review_brief_get_findings", json.dumps({"finding_aliases": ["F1"]})),
+        (
+            "review_brief_resolve_evidence_aliases",
+            json.dumps({"evidence_aliases": ["E2", "E1", "E2", "E1"]}),
+        ),
+    ):
+        _complete_context_tool(
+            context,
+            tool_name=tool_name,
+            raw_arguments=raw_arguments,
+        )
+
+    query = _EvidenceQuery(evidence_aliases=["E2", "E1", "E2", "E1"])
+    assert query.evidence_aliases == ["E2", "E1"]
+    assert [
+        item["evidence_alias"]
+        for item in _evidence_payload(snapshot, query.evidence_aliases)["evidence"]
+    ] == ["E2", "E1"]
+    assert context.resolved_evidence_aliases == {"E1", "E2"}
+    context.validate_selection(
+        _AgentSelectionOutput(
+            snapshot_sha256=snapshot.snapshot_sha256,
+            selections=[
+                ReviewBriefFindingSelection(
+                    finding_alias="F1",
+                    action_kind="INSPECT_EVIDENCE",
+                    reviewer_disciplines=["ECOLOGY"],
+                )
+            ],
+        )
+    )
+
+
+def test_evidence_resolver_repeats_do_not_weaken_bounds_format_or_authorization() -> None:
+    with pytest.raises(ValueError, match="at most 64"):
+        _EvidenceQuery(evidence_aliases=["E1"] * 65)
+    with pytest.raises(ValueError, match="opaque aliases"):
+        _EvidenceQuery(evidence_aliases=["E1", "project-1", "E1"])
+
+    child = _child()
+    context = _InvocationContext(
+        request=ReviewBriefRunnerRequest.model_validate(child.runner_request), child=child
+    )
+    for tool_name, raw_arguments in (
+        ("review_brief_get_scope", _authorized_read_arguments_json()),
+        ("review_brief_list_findings", _authorized_read_arguments_json()),
+        ("review_brief_list_model_fitness_gaps", _authorized_read_arguments_json()),
+        ("review_brief_get_findings", json.dumps({"finding_aliases": ["F1"]})),
+    ):
+        _complete_context_tool(
+            context,
+            tool_name=tool_name,
+            raw_arguments=raw_arguments,
+        )
+    with pytest.raises(ReviewBriefAgentRuntimeError, match="TOOL_ALIAS_NOT_AUTHORIZED"):
+        context.revalidate(
+            tool_name="review_brief_resolve_evidence_aliases",
+            raw_arguments=json.dumps({"evidence_aliases": ["E1", "E9", "E1"]}),
+        )
+    assert context.resolved_evidence_aliases == set()
+    assert context.tool_calls == [
+        "review_brief_get_scope",
+        "review_brief_list_findings",
+        "review_brief_list_model_fitness_gaps",
+        "review_brief_get_findings",
+    ]
+
+
+def test_every_tool_call_rejects_an_expired_authorization_lease() -> None:
+    child = _child()
+    object.__setattr__(
+        child.binding,
+        "authorization_lease_expires_at",
+        datetime.now(UTC) - timedelta(seconds=1),
+    )
+    object.__setattr__(
+        child.binding,
+        "authorization_lease_issued_at",
+        datetime.now(UTC) - timedelta(seconds=2),
+    )
+    object.__setattr__(
+        child.binding,
+        "authorization_lease_sha256",
+        canonical_sha256(child.binding.authorization_lease_payload()),
+    )
+    context = _InvocationContext(
+        request=ReviewBriefRunnerRequest.model_validate(child.runner_request), child=child
+    )
+    with pytest.raises(ReviewBriefAgentRuntimeError, match="AUTHORIZATION_LEASE_EXPIRED"):
+        context.revalidate(
+            tool_name="review_brief_get_scope",
+            raw_arguments=_authorized_read_arguments_json(),
+        )
+
+
+def test_tool_order_and_model_turn_limits_leave_the_final_turn_for_output() -> None:
+    assert REVIEW_BRIEF_MAX_TOOL_CALLS == 8
+    assert REVIEW_BRIEF_MAX_TURNS == 8
+    child = _child()
+    context = _InvocationContext(
+        request=ReviewBriefRunnerRequest.model_validate(child.runner_request), child=child
+    )
+    with pytest.raises(ReviewBriefAgentRuntimeError, match="TOOL_NOT_AVAILABLE"):
+        context.revalidate(tool_name="review_brief_get_findings", raw_arguments="{}")
+    assert context.tool_calls == []
+
+    responses = [
+        SimpleNamespace(
+            usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+            response_id=f"response-{index}",
+            request_id=None,
+        )
+        for index in range(REVIEW_BRIEF_MAX_TURNS + 1)
+    ]
+    with pytest.raises(ReviewBriefAgentRuntimeError, match="MODEL_TURN_LIMIT_EXCEEDED"):
+        _usage(SimpleNamespace(raw_responses=responses))
+
+
+def test_selection_requires_full_recall_authorized_actions_and_required_traversal() -> None:
+    child = _child()
+    context = _InvocationContext(
+        request=ReviewBriefRunnerRequest.model_validate(child.runner_request), child=child
+    )
+    selection = _AgentSelectionOutput(
+        snapshot_sha256=context.snapshot.snapshot_sha256,
+        selections=[
+            ReviewBriefFindingSelection(
+                finding_alias="F1",
+                action_kind="INSPECT_EVIDENCE",
+                reviewer_disciplines=["ECOLOGY"],
+            )
+        ],
+    )
+    with pytest.raises(ReviewBriefAgentRuntimeError, match="REQUIRED_TRAVERSAL_MISSING"):
+        context.validate_selection(selection)
+    for tool_name, raw_arguments in (
+        ("review_brief_get_scope", _authorized_read_arguments_json()),
+        ("review_brief_list_findings", _authorized_read_arguments_json()),
+    ):
+        _complete_context_tool(
+            context,
+            tool_name=tool_name,
+            raw_arguments=raw_arguments,
+        )
+    with pytest.raises(ReviewBriefAgentRuntimeError, match="REQUIRED_TRAVERSAL_MISSING"):
+        context.validate_selection(selection)
+    _complete_context_tool(
+        context,
+        tool_name="review_brief_list_model_fitness_gaps",
+        raw_arguments=_authorized_read_arguments_json(),
+    )
+    _complete_context_tool(
+        context,
+        tool_name="review_brief_get_findings",
+        raw_arguments=json.dumps({"finding_aliases": ["F1"]}),
+    )
+    context.validate_selection(selection)
+    assert context.output_validated is True
+    assert context.resolved_evidence_aliases == set()
+    assert context.tool_calls == [
+        "review_brief_get_scope",
+        "review_brief_list_findings",
+        "review_brief_list_model_fitness_gaps",
+        "review_brief_get_findings",
+    ]
+    bad = selection.model_copy(
+        update={
+            "selections": [
+                ReviewBriefFindingSelection(
+                    finding_alias="F1",
+                    action_kind="FIELD_VERIFY",
+                    reviewer_disciplines=["ECOLOGY"],
+                )
+            ]
+        }
+    )
+    with pytest.raises(ReviewBriefAgentRuntimeError, match="ACTION_INAPPROPRIATE"):
+        context.validate_selection(bad)
+
+
+def test_adaptive_can_stop_at_validated_selection_while_forced_ablation_reads_every_branch() -> (
+    None
+):
+    snapshot = _snapshot()
+    selection = _AgentSelectionOutput(
+        snapshot_sha256=snapshot.snapshot_sha256,
+        selections=[
+            ReviewBriefFindingSelection(
+                finding_alias="F1",
+                action_kind="INSPECT_EVIDENCE",
+                reviewer_disciplines=["ECOLOGY"],
+            )
+        ],
+    )
+    adaptive_child = _child()
+    adaptive = _InvocationContext(
+        request=ReviewBriefRunnerRequest.model_validate(adaptive_child.runner_request),
+        child=adaptive_child,
+    )
+    for tool_name, arguments in (
+        ("review_brief_get_scope", _authorized_read_arguments_json()),
+        ("review_brief_list_findings", _authorized_read_arguments_json()),
+        ("review_brief_list_model_fitness_gaps", _authorized_read_arguments_json()),
+        ("review_brief_get_findings", json.dumps({"finding_aliases": ["F1"]})),
+    ):
+        _complete_context_tool(adaptive, tool_name=tool_name, raw_arguments=arguments)
+    assert set(_adaptive_available_tools(adaptive)) == {
+        "review_brief_list_option_constraints",
+        "review_brief_get_reference_status",
+        "review_brief_get_authorization_status",
+        "review_brief_resolve_evidence_aliases",
+    }
+    adaptive.validate_selection(selection)
+    assert adaptive.output_validated is True
+    assert adaptive.resolved_evidence_aliases == set()
+
+    forced_request = ReviewBriefRunnerRequest(
+        snapshot=snapshot,
+        traversal_mode="FORCED_EXHAUSTIVE",
+    )
+    forced_child = _child().model_copy(
+        update={"runner_request": forced_request.model_dump(mode="json")}
+    )
+    forced = _InvocationContext(request=forced_request, child=forced_child)
+    arguments_by_tool = {
+        "review_brief_get_scope": _authorized_read_arguments_json(),
+        "review_brief_list_findings": _authorized_read_arguments_json(),
+        "review_brief_get_findings": json.dumps({"finding_aliases": ["F1"]}),
+        "review_brief_list_model_fitness_gaps": _authorized_read_arguments_json(),
+        "review_brief_resolve_evidence_aliases": json.dumps({"evidence_aliases": ["E1"]}),
+    }
+    for tool_name in required_review_brief_tools(snapshot):
+        _complete_context_tool(
+            forced,
+            tool_name=tool_name,
+            raw_arguments=arguments_by_tool[tool_name],
+        )
+    forced.validate_selection(selection)
+    assert forced.tool_calls == list(required_review_brief_tools(snapshot))
+    assert forced.resolved_evidence_aliases == {"E1"}
+
+
+def test_adaptive_selection_can_leave_an_unopened_authorized_branch_out_of_output() -> None:
+    model_finding = _snapshot().findings[0]
+    option_finding = ReviewBriefFindingContext(
+        finding_alias="F2",
+        finding_kind="FEASIBILITY_GAP",
+        review_topic="LAND_ACCESS_OR_OWNERSHIP",
+        priority="FOLLOW_UP",
+        evidence_aliases=["E2"],
+        scenario_aliases=["S2"],
+        permitted_actions=["FIELD_VERIFY", "RESOLVE_LAND_OR_OWNERSHIP"],
+        permitted_disciplines=["FIELD", "LAND"],
+    )
+    snapshot = ReviewBriefAuthorizedSnapshot.create(
+        source_mode="RIDGEWAY_SYNTHETIC",
+        disposition="SURVEY_FIRST",
+        analysis_id_sha256=_sha("analysis-1"),
+        model_revision_id_sha256=_sha("revision-1"),
+        evidence_authorization_decision_id="evidence_auth_" + "a" * 24,
+        current_authorizations_sha256=_sha("authorizations-1"),
+        authorization_sha256=_sha("authorization-1"),
+        findings=[
+            model_finding.model_dump(mode="json"),
+            option_finding.model_dump(mode="json"),
+        ],
+    )
+    request = ReviewBriefRunnerRequest(snapshot=snapshot, traversal_mode="ADAPTIVE")
+    child = _child().model_copy(
+        update={
+            "binding": _binding(snapshot),
+            "runner_request": request.model_dump(mode="json"),
+        }
+    )
+    context = _InvocationContext(request=request, child=child)
+    for tool_name, arguments in (
+        ("review_brief_get_scope", _authorized_read_arguments_json()),
+        ("review_brief_list_findings", _authorized_read_arguments_json()),
+        ("review_brief_list_model_fitness_gaps", _authorized_read_arguments_json()),
+        ("review_brief_get_findings", json.dumps({"finding_aliases": ["F1"]})),
+    ):
+        _complete_context_tool(context, tool_name=tool_name, raw_arguments=arguments)
+
+    output = _AgentSelectionOutput(
+        snapshot_sha256=snapshot.snapshot_sha256,
+        selections=[
+            ReviewBriefFindingSelection(
+                finding_alias="F1",
+                action_kind="INSPECT_EVIDENCE",
+                reviewer_disciplines=["ECOLOGY"],
+            )
+        ],
+    )
+    context.validate_selection(output)
+
+    assert context.inspected_finding_aliases == {"F1"}
+    assert "F2" not in {
+        alias
+        for receipt in context.retrieval_observations
+        for alias in receipt.returned_finding_aliases
+    }
+    assert [item.finding_alias for item in output.selections] == ["F1"]
+    assert "review_brief_list_option_constraints" in _adaptive_available_tools(context)
+
+
+def test_closed_topics_drive_exact_conditional_traversal_within_turn_budget() -> None:
+    findings = [
+        ReviewBriefFindingContext(
+            finding_alias="F1",
+            finding_kind="FEASIBILITY_GAP",
+            review_topic="LAND_ACCESS_OR_OWNERSHIP",
+            priority="BEFORE_FEASIBILITY",
+            evidence_aliases=["E1"],
+            scenario_aliases=["S1"],
+            permitted_actions=["FIELD_VERIFY", "RESOLVE_LAND_OR_OWNERSHIP"],
+            permitted_disciplines=["FIELD", "LAND"],
+        ),
+        ReviewBriefFindingContext(
+            finding_alias="F2",
+            finding_kind="QA",
+            review_topic="DIRECT_RUN_QA",
+            priority="BEFORE_FEASIBILITY",
+            evidence_aliases=["E2"],
+            scenario_aliases=["S2"],
+            permitted_actions=["INSPECT_EVIDENCE", "REVISE_MODEL_AND_RERUN"],
+            permitted_disciplines=["ECOLOGY", "ENGINEERING"],
+        ),
+        ReviewBriefFindingContext(
+            finding_alias="F3",
+            finding_kind="REFERENCE",
+            review_topic="REFERENCE_COMPARISON",
+            priority="BEFORE_FEASIBILITY",
+            evidence_aliases=["E3"],
+            scenario_aliases=["S3"],
+            permitted_actions=["INSPECT_EVIDENCE"],
+            permitted_disciplines=["ECOLOGY"],
+        ),
+        ReviewBriefFindingContext(
+            finding_alias="F4",
+            finding_kind="AUTHORIZATION",
+            review_topic="DATA_AUTHORIZATION",
+            priority="BLOCKING",
+            evidence_aliases=["E4"],
+            scenario_aliases=["S4"],
+            permitted_actions=["INSPECT_EVIDENCE", "RESOLVE_AUTHORIZATION"],
+            permitted_disciplines=["LAND", "CULTURAL", "PERMITTING"],
+        ),
+    ]
+    snapshot = ReviewBriefAuthorizedSnapshot.create(
+        source_mode="RIDGEWAY_SYNTHETIC",
+        disposition="SURVEY_FIRST",
+        analysis_id_sha256=_sha("analysis-1"),
+        model_revision_id_sha256=_sha("revision-1"),
+        evidence_authorization_decision_id="evidence_auth_" + "a" * 24,
+        current_authorizations_sha256=_sha("authorizations-1"),
+        authorization_sha256=_sha("authorization-1"),
+        findings=[item.model_dump(mode="json") for item in findings],
+    )
+
+    assert required_review_brief_tools(snapshot) == (
+        "review_brief_get_scope",
+        "review_brief_list_findings",
+        "review_brief_get_findings",
+        "review_brief_list_option_constraints",
+        "review_brief_list_model_fitness_gaps",
+        "review_brief_get_reference_status",
+        "review_brief_get_authorization_status",
+        "review_brief_resolve_evidence_aliases",
+    )
+    assert len(required_review_brief_tools(snapshot)) == 8
+    assert required_review_brief_tools(snapshot)[0] == "review_brief_get_scope"
+    assert _finding_payload(snapshot.findings[0])["review_topic"] == (
+        ReviewBriefTopic.LAND_ACCESS_OR_OWNERSHIP.value
+    )
+
+
+def test_model_visible_context_is_incremental_closed_and_canonically_accounted() -> None:
+    snapshot = _snapshot()
+    scope = _scope_payload(snapshot)
+    serialized_scope = json.dumps(scope, sort_keys=True)
+    assert "F1" not in serialized_scope
+    assert "MODEL_FITNESS" not in serialized_scope
+    assert "MODEL_FITNESS_BASIS" not in serialized_scope
+    assert "MODEL_FITNESS_BASIS_INCOMPLETE" not in serialized_scope
+
+    detail = _finding_payload(snapshot.findings[0])
+    assert detail["reason_facets"] == ["MODEL_FITNESS_BASIS_INCOMPLETE"]
+    assert detail["scenario_breadth"] == "SINGLE_SCENARIO"
+    assert detail["evidence_count"] == 1
+    assert detail["scenario_count"] == 1
+    assert detail["direct_run_count"] == 0
+    resolved = _evidence_payload(snapshot, ["E1"])
+    assert resolved == {
+        "evidence": [
+            {
+                "evidence_alias": "E1",
+                "evidence_classes": ["RETAINED_MODEL_FITNESS"],
+                "finding_aliases": ["F1"],
+            }
+        ]
+    }
+
+    manifest = review_brief_model_visible_context(snapshot)
+    assert manifest["schema_version"] == "review-brief-model-visible-context/v9"
+    assert manifest["traversal_mode"] == "ADAPTIVE"
+    assert manifest["tool_exchange_mode"] == "ACTUAL_INCREMENTAL"
+    assert "choose only an action_kind" in manifest["instructions"]
+    assert "present in that finding's closed permitted lists" in manifest["instructions"]
+    assert "independently rechecks traversal and selection" in manifest["instructions"]
+    assert "choose which coarse review branches are useful" in manifest["instructions"]
+    assert "stop without opening other branches" in manifest["instructions"]
+    assert "ordered_tool_exchanges" not in manifest
+    expected_tools = list(required_review_brief_tools(snapshot))
+    forced = review_brief_model_visible_context(
+        snapshot,
+        traversal_mode="FORCED_EXHAUSTIVE",
+    )
+    assert forced["tool_exchange_mode"] == "FORCED_EXHAUSTIVE_MANIFEST"
+    assert [item["output"]["next_required_tool"] for item in forced["ordered_tool_exchanges"]] == [
+        *expected_tools[1:],
+        "RETURN_STRUCTURED_OUTPUT",
+    ]
+    assert [item["tool_name"] for item in forced["ordered_tool_exchanges"]] == expected_tools
+    assert manifest == review_brief_model_visible_context(snapshot)
+    assert forced["traversal_mode"] == "FORCED_EXHAUSTIVE"
+    assert "forced-exhaustive ablation" in forced["instructions"]
+    unsigned = {key: value for key, value in manifest.items() if key != "context_sha256"}
+    assert manifest["context_sha256"] == canonical_sha256(unsigned)
+    assert len(review_brief_model_visible_context_bytes(snapshot)) > 0
+    raw = json.dumps(manifest, sort_keys=True)
+    for forbidden in ("project-1", "analysis-1", "portfolio-1", "revision-1"):
+        assert forbidden not in raw
+
+
+def test_only_exact_next_required_tool_is_enabled_per_turn() -> None:
+    context = _InvocationContext(
+        request=ReviewBriefRunnerRequest.model_validate(_child().runner_request),
+        child=_child(),
+    )
+    required = list(required_review_brief_tools(context.snapshot))
+    for completed, expected in enumerate(required):
+        context.tool_calls = required[:completed]
+        assert _is_exact_next_tool(context, expected) is True
+        assert all(
+            not _is_exact_next_tool(context, candidate)
+            for candidate in REVIEW_BRIEF_AGENT_TOOLS
+            if candidate != expected
+        )
+    context.tool_calls = required
+    assert all(
+        not _is_exact_next_tool(context, candidate) for candidate in REVIEW_BRIEF_AGENT_TOOLS
+    )
+
+
+def test_snapshot_fails_closed_when_one_call_alias_coverage_is_impossible() -> None:
+    with pytest.raises(ValueError, match="at most 64"):
+        _snapshot(evidence_aliases=[f"E{index}" for index in range(1, 66)])
+
+
+def test_topic_validation_rejects_superficially_allowed_but_wrong_discipline() -> None:
+    context = ReviewBriefFindingContext(
+        finding_alias="F1",
+        finding_kind="QA",
+        review_topic="DIRECT_RUN_QA",
+        priority="BEFORE_FEASIBILITY",
+        evidence_aliases=["E1"],
+        permitted_actions=["INSPECT_EVIDENCE", "REVISE_MODEL_AND_RERUN"],
+        permitted_disciplines=["ECOLOGY", "ENGINEERING"],
+    )
+    selection = ReviewBriefFindingSelection(
+        finding_alias="F1",
+        action_kind="INSPECT_EVIDENCE",
+        reviewer_disciplines=["ECOLOGY"],
+    )
+    with pytest.raises(ReviewBriefSafetyError, match="DISCIPLINE_INAPPROPRIATE"):
+        validate_selection_appropriateness(context=context, selection=selection)
+
+
+def test_feasibility_topic_matching_uses_word_and_phrase_boundaries() -> None:
+    island_topics = _feasibility_topics("Island habitat uncertainty remains.")
+    assert ReviewBriefTopic.LAND_ACCESS_OR_OWNERSHIP not in island_topics
+    assert ReviewBriefTopic.ECOLOGICAL_FIELD_RISK in island_topics
+    assert ReviewBriefTopic.SURVEY_OR_FIELD_DATA in island_topics
+
+    bounded = _feasibility_topics(
+        "Land-access ownership and permitting require traffic engineering review."
+    )
+    assert ReviewBriefTopic.LAND_ACCESS_OR_OWNERSHIP in bounded
+    assert ReviewBriefTopic.PERMITTING_REVIEW in bounded
+    assert ReviewBriefTopic.TRAFFIC_OR_STRUCTURAL_FEASIBILITY in bounded
+
+
+class _FakeDelegate:
+    def __init__(self) -> None:
+        self._trace_data: dict[str, dict[str, Any]] = {}
+        self._trace_calls: dict[str, Any] = {}
+        self.finished_gate: dict[str, Any] | None = None
+
+    def on_trace_start(self, trace: Any) -> None:
+        self._trace_data[trace.trace_id] = {"metadata": {}, "metrics": {}}
+        self._trace_calls[trace.trace_id] = SimpleNamespace(id="weave-call-1")
+
+    def on_trace_end(self, trace: Any) -> None:
+        self.finished_gate = dict(self._trace_data[trace.trace_id]["metadata"])
+
+    def on_span_start(self, _span: Any) -> None:  # pragma: no cover - delegate contract
+        return
+
+    def on_span_end(self, _span: Any) -> None:  # pragma: no cover - delegate contract
+        return
+
+    def force_flush(self) -> None:
+        return
+
+    def shutdown(self) -> None:  # pragma: no cover - delegate contract
+        return
+
+
+def test_weave_processor_replaces_root_with_hash_only_gate_and_exact_readback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import weave.integrations.openai_agents.openai_agents as integration
+
+    monkeypatch.setattr(integration, "WeaveTracingProcessor", _FakeDelegate)
+    child = _child()
+    context = _InvocationContext(
+        request=ReviewBriefRunnerRequest.model_validate(child.runner_request),
+        child=child,
+        tool_calls=["review_brief_get_scope"],
+        output_validated=True,
+        output_sha256=_sha("validated-output"),
+    )
+    processor = _ReceiptWeaveTracingProcessor(context=context)
+    trace = SimpleNamespace(trace_id=child.trace.trace_id)
+    processor.on_trace_start(trace)
+    processor.on_trace_end(trace)
+    gate = processor._delegate.finished_gate["ecocorridor_trace_gate"]
+    serialized = json.dumps(gate)
+    assert "project-1" not in serialized
+    assert "portfolio-1" not in serialized
+    assert gate["project_id_sha256"] == _sha("project-1")
+    assert gate["output_sha256"] == _sha("validated-output")
+    assert gate["cloud_authorization_kind_sha256"] == _sha("RIDGEWAY_CC0_TRACE_ONLY")
+    assert gate["cloud_authorization_sha256"] == _sha("ridgeway-trace-consent-1")
+    assert all(key.endswith("_sha256") for key in gate)
+    assert all(re.fullmatch(r"[0-9a-f]{64}", str(value)) for value in gate.values())
+
+    record = SimpleNamespace(
+        attributes={"agent_trace_id": child.trace.trace_id},
+        wb_run_id=("wandb/ecocorridor-scenario-studio/" + child.trace.wandb_run_id),
+        output={"status": "completed", "metadata": {"ecocorridor_trace_gate": gate}},
+        ui_url=("https://wandb.ai/wandb/ecocorridor-scenario-studio/weave/traces/weave-call-1"),
+    )
+
+    class Client:
+        def __init__(self) -> None:
+            self.flush_count = 0
+
+        def flush(self) -> None:
+            self.flush_count += 1
+
+        def get_call(self, call_id: str) -> Any:
+            assert call_id == "weave-call-1"
+            return record
+
+    client = Client()
+    trace_id, weave_call_id, trace_url, generation_call_ids = _readback_trace(
+        client=client, processor=processor, context=context
+    )
+    assert trace_id == child.trace.trace_id
+    assert weave_call_id == "weave-call-1"
+    assert trace_url == record.ui_url
+    assert generation_call_ids == ()
+    assert client.flush_count == 1
+
+
+def test_trace_gate_failures_identify_only_the_bounded_field() -> None:
+    expected = {"snapshot_sha256": _sha("snapshot")}
+    with pytest.raises(
+        ReviewBriefAgentRuntimeError,
+        match="^REVIEW_BRIEF_AGENT_TRACE_GATE_SNAPSHOT_SHA256_MISMATCH$",
+    ):
+        _validate_trace_gate({"snapshot_sha256": _sha("changed")}, expected)
+    with pytest.raises(
+        ReviewBriefAgentRuntimeError,
+        match="^REVIEW_BRIEF_AGENT_TRACE_GATE_SCHEMA_MISMATCH$",
+    ):
+        _validate_trace_gate({"other_sha256": _sha("snapshot")}, expected)
+
+
+def test_trace_readback_retries_bounded_visibility_lag() -> None:
+    expected = object()
+
+    class Client:
+        def __init__(self) -> None:
+            self.attempts = 0
+
+        def get_call(self, call_id: str) -> object:
+            assert call_id == "call-1"
+            self.attempts += 1
+            if self.attempts < 3:
+                raise LookupError("not visible yet")
+            return expected
+
+    client = Client()
+    assert (
+        _get_trace_call_with_retry(
+            client,
+            "call-1",
+            timeout_seconds=0.1,
+            interval_seconds=0,
+        )
+        is expected
+    )
+    assert client.attempts == 3
+
+
+def test_trace_readback_visibility_timeout_is_content_free() -> None:
+    class Client:
+        def get_call(self, _call_id: str) -> object:
+            raise LookupError("sensitive trace response")
+
+    with pytest.raises(
+        ReviewBriefAgentRuntimeError,
+        match="^REVIEW_BRIEF_AGENT_TRACE_FETCH_FAILED$",
+    ):
+        _get_trace_call_with_retry(
+            Client(),
+            "call-1",
+            timeout_seconds=0,
+            interval_seconds=0,
+        )
+
+
+def test_usage_recovers_provider_data_id_and_labels_weave_fallback() -> None:
+    usage = SimpleNamespace(input_tokens=7, output_tokens=3)
+    provider_response = SimpleNamespace(
+        usage=usage,
+        response_id=None,
+        request_id=None,
+        output=[SimpleNamespace(provider_data={"response_id": "provider-response-1"})],
+    )
+    assert _usage(
+        SimpleNamespace(raw_responses=[provider_response]),
+        verified_generation_call_ids=("generation-1",),
+    ) == (7, 3, "provider-response-1", "PROVIDER_RESPONSE_ID")
+
+    fallback_response = SimpleNamespace(
+        usage=usage,
+        response_id=None,
+        request_id=None,
+        output=[SimpleNamespace(provider_data=None)],
+    )
+    assert _usage(
+        SimpleNamespace(raw_responses=[fallback_response]),
+        verified_generation_call_ids=("generation-1",),
+    ) == (7, 3, "weave-generation:generation-1", "WEAVE_GENERATION_CALL_ID")
+    with pytest.raises(ReviewBriefAgentRuntimeError, match="PROVIDER_CALL_ID_MISSING"):
+        _usage(SimpleNamespace(raw_responses=[fallback_response]))
+
+
+def test_generation_identity_requires_exact_read_back_span() -> None:
+    agent_trace_id = "trace_" + "a" * 32
+    run_id = "wandb/ecocorridor-scenario-studio/run-1"
+    root = SimpleNamespace(trace_id="weave-trace-1")
+    generation = SimpleNamespace(
+        id="generation-1",
+        trace_id="weave-trace-1",
+        parent_id="turn-1",
+        wb_run_id=run_id,
+        attributes={
+            "agent_trace_id": agent_trace_id,
+            "agent_span_id": "span-1",
+            "type": "generation",
+        },
+        op_name=(
+            "weave:///wandb/ecocorridor-scenario-studio/op/openai_agent_generation:" + "b" * 64
+        ),
+        ended_at="done",
+        exception=None,
+        output={"error": None},
+    )
+    client = SimpleNamespace(get_call=lambda call_id: generation)
+    processor = SimpleNamespace(generation_calls=[("span-1", "generation-1")])
+    assert _readback_generation_calls(
+        client=client,
+        processor=processor,
+        root_record=root,
+        expected_wandb_run_id=run_id,
+        expected_agent_trace_id=agent_trace_id,
+    ) == ("generation-1",)
+    generation.attributes["agent_span_id"] = "wrong-span"
+    with pytest.raises(ReviewBriefAgentRuntimeError, match="WEAVE_GENERATION_INVALID"):
+        _readback_generation_calls(
+            client=client,
+            processor=processor,
+            root_record=root,
+            expected_wandb_run_id=run_id,
+            expected_agent_trace_id=agent_trace_id,
+        )
+
+
+@pytest.mark.parametrize("suffix", ["?download=1", "#other-trace"])
+def test_review_brief_trace_receipt_rejects_query_and_fragment(suffix: str) -> None:
+    child = _child()
+    decorated = "https://wandb.ai/wandb/ecocorridor-scenario-studio/weave/traces/call-1" + suffix
+    assert _trace_url_matches_target(decorated, child.weave_target) is False
+    with pytest.raises(ReviewBriefAgentRuntimeError, match="TRACE_URL_INVALID"):
+        _validate_trace_url(decorated, child)
+
+
+def test_child_process_malformed_frame_returns_safe_framed_rejection(tmp_path: Path) -> None:
+    process = subprocess.Popen(
+        [sys.executable, "-I", "-m", "ecocorridor_core.review_brief_agent_process"],
+        cwd=tmp_path,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    stdout, stderr = process.communicate(b"00000002\n{}", timeout=20)
+    assert process.returncode == 0
+    response = ReviewBriefAgentChildResponse.model_validate_json(_read_frame(io.BytesIO(stdout)))
+    assert response.ok is False
+    assert response.error_code == "REVIEW_BRIEF_AGENT_INVOCATION_FAILED"
+    assert b"test-key" not in stderr
+
+
+class _ScriptedAgentsModel(Model):
+    """Pinned Agents SDK model seam that exercises real tool/structured-output turns."""
+
+    def __init__(self, snapshot_sha256: str) -> None:
+        self.snapshot_sha256 = snapshot_sha256
+        self.turn = 0
+
+    async def get_response(self, *args: Any, **kwargs: Any) -> Any:
+        from agents.items import ModelResponse
+        from agents.usage import Usage
+        from openai.types.responses import (
+            ResponseFunctionToolCall,
+            ResponseOutputMessage,
+            ResponseOutputText,
+        )
+
+        calls = [
+            (
+                "review_brief_get_scope",
+                {"request_token": "READ_AUTHORIZED_SNAPSHOT"},
+            ),
+            (
+                "review_brief_list_findings",
+                {"request_token": "READ_AUTHORIZED_SNAPSHOT"},
+            ),
+            (
+                "review_brief_list_model_fitness_gaps",
+                {"request_token": "READ_AUTHORIZED_SNAPSHOT"},
+            ),
+            (
+                "review_brief_get_findings",
+                {"finding_aliases": ["F1"]},
+            ),
+            (
+                "review_brief_resolve_evidence_aliases",
+                {"evidence_aliases": ["E1"]},
+            ),
+        ]
+        if self.turn < len(calls):
+            name, arguments = calls[self.turn]
+            output = [
+                ResponseFunctionToolCall(
+                    arguments=json.dumps(arguments),
+                    call_id=f"tool-call-{self.turn + 1}",
+                    name=name,
+                    type="function_call",
+                )
+            ]
+        else:
+            output = [
+                ResponseOutputMessage(
+                    id="message-1",
+                    role="assistant",
+                    status="completed",
+                    type="message",
+                    content=[
+                        ResponseOutputText(
+                            annotations=[],
+                            type="output_text",
+                            text=json.dumps(
+                                {
+                                    "snapshot_sha256": self.snapshot_sha256,
+                                    "selections": [
+                                        {
+                                            "finding_alias": "F1",
+                                            "action_kind": "INSPECT_EVIDENCE",
+                                            "reviewer_disciplines": ["ECOLOGY"],
+                                        }
+                                    ],
+                                }
+                            ),
+                        )
+                    ],
+                )
+            ]
+        self.turn += 1
+        return ModelResponse(
+            output=output,
+            usage=Usage(input_tokens=3, output_tokens=2, total_tokens=5, requests=1),
+            response_id=f"response-{self.turn}",
+        )
+
+    def stream_response(self, *args: Any, **kwargs: Any) -> Any:
+        async def never() -> Any:
+            if False:  # pragma: no cover - makes this an async generator
+                yield None
+
+        return never()
+
+
+class _FakeWeaveCall:
+    def __init__(self, *, call_id: str, attributes: dict[str, Any], wb_run_id: str | None) -> None:
+        self.id = call_id
+        self.trace_id = "weave-" + call_id
+        self.attributes = attributes
+        self.wb_run_id = wb_run_id
+        self.output: dict[str, Any] | None = None
+        self.ui_url = "https://wandb.ai/wandb/ecocorridor-scenario-studio/weave/traces/" + call_id
+        self.ended_at: str | None = None
+
+
+class _FakeNativeWeaveClient:
+    def __init__(self) -> None:
+        self.calls: dict[str, _FakeWeaveCall] = {}
+        self.counter = 0
+        self.run_id: str | None = None
+
+    def set_wandb_run_context(self, *, run_id: str, step: int | None = None) -> None:
+        self.run_id = run_id
+
+    def create_call(self, **kwargs: Any) -> _FakeWeaveCall:
+        self.counter += 1
+        call = _FakeWeaveCall(
+            call_id=f"call-{self.counter}",
+            attributes=dict(kwargs.get("attributes", {})),
+            wb_run_id=(
+                "wandb/ecocorridor-scenario-studio/" + self.run_id
+                if self.run_id is not None
+                else None
+            ),
+        )
+        self.calls[call.id] = call
+        return call
+
+    def finish_call(
+        self,
+        call: _FakeWeaveCall,
+        *,
+        output: dict[str, Any] | None = None,
+        exception: BaseException | None = None,
+        **kwargs: Any,
+    ) -> None:
+        call.output = output or {"error": type(exception).__name__ if exception else None}
+        call.ended_at = "done"
+
+    def flush(self) -> None:
+        return
+
+    def get_call(self, call_id: str) -> _FakeWeaveCall:
+        return self.calls[call_id]
+
+
+def test_pinned_agents_sdk_executes_real_bounded_tools_and_installs_only_weave_processor(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import agents
+    import ecocorridor_core.review_brief_agent_process as process_module
+    import weave
+    import weave.integrations.openai_agents.openai_agents as integration
+
+    child = _child()
+    client = _FakeNativeWeaveClient()
+    installed: list[list[Any]] = []
+    real_set = agents.set_trace_processors
+
+    def set_processors(processors: list[Any]) -> None:
+        installed.append(processors)
+        real_set(processors)
+
+    monkeypatch.setattr(agents, "set_trace_processors", set_processors)
+    monkeypatch.setattr(weave, "init", lambda *args, **kwargs: client)
+    monkeypatch.setattr(integration, "get_weave_client", lambda: client)
+    monkeypatch.setattr(
+        process_module,
+        "_model",
+        lambda _child: _ScriptedAgentsModel(_child.runner_request["snapshot"]["snapshot_sha256"]),
+    )
+    monkeypatch.setattr(process_module, "_configure_environment", lambda _child: None)
+    try:
+        response = asyncio.run(_execute(child))
+    finally:
+        real_set([])
+
+    assert response.ok is True
+    assert response.result is not None
+    result = ReviewBriefRunnerResult.model_validate(response.result)
+    assert result.trace.readback_verified is True
+    assert result.trace.flushed is True
+    assert result.selections[0].finding_alias == "F1"
+    assert client.run_id == child.trace.wandb_run_id
+    assert len(installed) == 1
+    assert len(installed[0]) == 1
+    assert isinstance(installed[0][0], _ReceiptWeaveTracingProcessor)
+    assert installed[0][0].context.tool_calls == [
+        "review_brief_get_scope",
+        "review_brief_list_findings",
+        "review_brief_list_model_fitness_gaps",
+        "review_brief_get_findings",
+        "review_brief_resolve_evidence_aliases",
+    ]

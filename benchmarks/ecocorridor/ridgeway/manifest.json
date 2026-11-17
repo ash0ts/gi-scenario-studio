@@ -1,0 +1,23 @@
+{
+  "baseline_portfolio_id": "portfolio_7c18e581b57ca9363bb7",
+  "assumption_ledger_sha256": "f589e24c238e298bfe1f3aec3aa2fdfc346d65dbd298a67dc37b0d823243e435",
+  "cost_basis_sha256": "7eaae1d47e6905fd126e73497534542b2de9a863d5f612e5f718c8b0910dd439",
+  "current_evidence_contract": "ridgeway-direct-evidence/v1.2",
+  "decision_snapshot_sha256": "95ec18ac16524f8d82d8b40128867ee0efdfde0e9776237c6a091d53b96045e7",
+  "direct_matrix_job_count": 1536,
+  "evidence_state": "VERIFIED_DIRECT_EVIDENCE",
+  "fixture_version": "1.2.0",
+  "license": "CC0-1.0",
+  "model_sha256": "ba5483e16c4a8c051ccdb7b2d28102631f518dec65d8c715d350115bc1be9351",
+  "notice": "Ridgeway Crossing is synthetic. It is not a real place, species assessment, wildlife-crossing design, collision analysis, or regulatory recommendation.",
+  "portfolio_count": 128,
+  "portfolio_ids_sha256": "200256fe92081d4feffb397be99090f3163e3e883288cceb43e3cc1e5119e010",
+  "project_id": "ridgeway_crossing",
+  "physics_model_sha256": "8981c2af8051c2cc19e130f181ff32569f4a55ebba2081340312eed96ba91cd3",
+  "release_replay_eligible": true,
+  "revision_id": "revision_ridgeway_v1",
+  "scenario_count": 12,
+  "scenario_ids_sha256": "2840cea6e0cc5a8b779031fe2fba24c9bdaecb7886d3805c2fefbafee03c3e3c",
+  "schema_version": "ecocorridor/v1.0",
+  "teaching_map_job_count": 60
+}

@@ -1,0 +1,198 @@
+{
+  "$defs": {
+    "RasterGrid": {
+      "additionalProperties": false,
+      "properties": {
+        "cell_area_m2": {
+          "exclusiveMinimum": 0,
+          "title": "Cell Area M2",
+          "type": "number"
+        },
+        "crs": {
+          "title": "Crs",
+          "type": "string"
+        },
+        "grid_id": {
+          "title": "Grid Id",
+          "type": "string"
+        },
+        "height": {
+          "exclusiveMinimum": 0,
+          "title": "Height",
+          "type": "integer"
+        },
+        "nodata": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Nodata"
+        },
+        "transform": {
+          "maxItems": 6,
+          "minItems": 6,
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Transform",
+          "type": "array"
+        },
+        "value_kind": {
+          "$ref": "#/$defs/RasterValueKind"
+        },
+        "width": {
+          "exclusiveMinimum": 0,
+          "title": "Width",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "grid_id",
+        "crs",
+        "width",
+        "height",
+        "transform",
+        "nodata",
+        "value_kind",
+        "cell_area_m2"
+      ],
+      "title": "RasterGrid",
+      "type": "object"
+    },
+    "RasterValueKind": {
+      "enum": [
+        "CONTINUOUS",
+        "CATEGORICAL",
+        "IDENTIFIER",
+        "MASK"
+      ],
+      "title": "RasterValueKind",
+      "type": "string"
+    },
+    "ResamplingMethod": {
+      "enum": [
+        "NONE",
+        "NEAREST",
+        "BILINEAR"
+      ],
+      "title": "ResamplingMethod",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.ecocorridor.local/1.0/GridAlignmentPlan.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "categorical_counts_after": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "title": "Categorical Counts After",
+      "type": "object"
+    },
+    "categorical_counts_before": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "title": "Categorical Counts Before",
+      "type": "object"
+    },
+    "estimated_target_nodata_count": {
+      "minimum": 0,
+      "title": "Estimated Target Nodata Count",
+      "type": "integer"
+    },
+    "method": {
+      "$ref": "#/$defs/ResamplingMethod"
+    },
+    "plan_id": {
+      "title": "Plan Id",
+      "type": "string"
+    },
+    "resulting_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Resulting Sha256",
+      "type": "string"
+    },
+    "source_asset_id": {
+      "title": "Source Asset Id",
+      "type": "string"
+    },
+    "source_cell_count": {
+      "exclusiveMinimum": 0,
+      "title": "Source Cell Count",
+      "type": "integer"
+    },
+    "source_grid": {
+      "$ref": "#/$defs/RasterGrid"
+    },
+    "source_nodata_count": {
+      "minimum": 0,
+      "title": "Source Nodata Count",
+      "type": "integer"
+    },
+    "source_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Source Sha256",
+      "type": "string"
+    },
+    "target_cell_count": {
+      "exclusiveMinimum": 0,
+      "title": "Target Cell Count",
+      "type": "integer"
+    },
+    "target_grid": {
+      "$ref": "#/$defs/RasterGrid"
+    },
+    "warnings": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+    }
+  },
+  "required": [
+    "plan_id",
+    "source_asset_id",
+    "source_sha256",
+    "source_grid",
+    "target_grid",
+    "method",
+    "source_cell_count",
+    "target_cell_count",
+    "source_nodata_count",
+    "estimated_target_nodata_count",
+    "resulting_sha256"
+  ],
+  "title": "GridAlignmentPlan",
+  "type": "object"
+}

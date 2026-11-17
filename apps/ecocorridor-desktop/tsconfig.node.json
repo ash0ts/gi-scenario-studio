@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "skipLibCheck": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "allowSyntheticDefaultImports": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "outDir": "node_modules/.cache/ecocorridor-tsconfig-node",
+    "tsBuildInfoFile": "node_modules/.cache/ecocorridor-tsconfig-node/tsconfig.tsbuildinfo"
+  },
+  "include": ["vite.config.ts", "playwright.config.ts"]
+}

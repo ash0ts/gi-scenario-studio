@@ -1,0 +1,157 @@
+{
+  "$id": "https://schemas.ecocorridor.local/1.0/ShadowProjectRecord.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "all_discrepancies_adjudicated": {
+      "title": "All Discrepancies Adjudicated",
+      "type": "boolean"
+    },
+    "approved_aggregate_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Approved Aggregate Sha256",
+      "type": "string"
+    },
+    "authorization_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Authorization Sha256",
+      "type": "string"
+    },
+    "completed_at": {
+      "format": "date-time",
+      "title": "Completed At",
+      "type": "string"
+    },
+    "consent_record_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Consent Record Sha256",
+      "type": "string"
+    },
+    "consent_to_approved_aggregate_export": {
+      "title": "Consent To Approved Aggregate Export",
+      "type": "boolean"
+    },
+    "data_classification": {
+      "const": "DEIDENTIFIED_AUTHORIZED",
+      "title": "Data Classification",
+      "type": "string"
+    },
+    "discrepancies": {
+      "minimum": 0,
+      "title": "Discrepancies",
+      "type": "integer"
+    },
+    "disposition_agreement": {
+      "title": "Disposition Agreement",
+      "type": "boolean"
+    },
+    "historical_review_record_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Historical Review Record Sha256",
+      "type": "string"
+    },
+    "independent_panel_record_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Independent Panel Record Sha256",
+      "type": "string"
+    },
+    "influenced_live_decision": {
+      "const": false,
+      "default": false,
+      "title": "Influenced Live Decision",
+      "type": "boolean"
+    },
+    "organizational_review_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Organizational Review Sha256",
+      "type": "string"
+    },
+    "partner_pseudonym_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Partner Pseudonym Sha256",
+      "type": "string"
+    },
+    "person_hours": {
+      "minimum": 0,
+      "title": "Person Hours",
+      "type": "number"
+    },
+    "project_pseudonym_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Project Pseudonym Sha256",
+      "type": "string"
+    },
+    "raw_partner_data_uploaded_to_synthetic_project": {
+      "const": false,
+      "default": false,
+      "title": "Raw Partner Data Uploaded To Synthetic Project",
+      "type": "boolean"
+    },
+    "retrospective_only": {
+      "const": true,
+      "default": true,
+      "title": "Retrospective Only",
+      "type": "boolean"
+    },
+    "review_cycles": {
+      "minimum": 0,
+      "title": "Review Cycles",
+      "type": "integer"
+    },
+    "schema_version": {
+      "const": "ecocorridor-usefulness-study/v1.0",
+      "default": "ecocorridor-usefulness-study/v1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "shadow_record_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Shadow Record Id",
+      "type": "string"
+    },
+    "surfaced_assumptions": {
+      "minimum": 0,
+      "title": "Surfaced Assumptions",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "shadow_record_id",
+    "partner_pseudonym_sha256",
+    "project_pseudonym_sha256",
+    "data_classification",
+    "authorization_sha256",
+    "consent_to_approved_aggregate_export",
+    "consent_record_sha256",
+    "organizational_review_sha256",
+    "independent_panel_record_sha256",
+    "historical_review_record_sha256",
+    "approved_aggregate_sha256",
+    "person_hours",
+    "review_cycles",
+    "discrepancies",
+    "surfaced_assumptions",
+    "disposition_agreement",
+    "all_discrepancies_adjudicated",
+    "completed_at"
+  ],
+  "title": "ShadowProjectRecord",
+  "type": "object"
+}

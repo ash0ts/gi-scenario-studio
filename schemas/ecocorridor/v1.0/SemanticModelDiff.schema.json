@@ -1,0 +1,116 @@
+{
+  "$defs": {
+    "SemanticChange": {
+      "additionalProperties": false,
+      "properties": {
+        "after": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "After"
+        },
+        "before": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Before"
+        },
+        "field": {
+          "title": "Field",
+          "type": "string"
+        },
+        "object_id": {
+          "title": "Object Id",
+          "type": "string"
+        },
+        "object_type": {
+          "title": "Object Type",
+          "type": "string"
+        },
+        "rationale": {
+          "title": "Rationale",
+          "type": "string"
+        }
+      },
+      "required": [
+        "object_type",
+        "object_id",
+        "field",
+        "before",
+        "after",
+        "rationale"
+      ],
+      "title": "SemanticChange",
+      "type": "object"
+    }
+  },
+  "$id": "https://schemas.ecocorridor.local/1.0/SemanticModelDiff.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "changes": {
+      "items": {
+        "$ref": "#/$defs/SemanticChange"
+      },
+      "minItems": 1,
+      "title": "Changes",
+      "type": "array"
+    },
+    "diff_id": {
+      "title": "Diff Id",
+      "type": "string"
+    },
+    "from_revision_id": {
+      "title": "From Revision Id",
+      "type": "string"
+    },
+    "sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Sha256",
+      "type": "string"
+    },
+    "to_revision_id": {
+      "title": "To Revision Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "diff_id",
+    "from_revision_id",
+    "to_revision_id",
+    "changes",
+    "sha256"
+  ],
+  "title": "SemanticModelDiff",
+  "type": "object"
+}

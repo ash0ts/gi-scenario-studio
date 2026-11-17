@@ -1,0 +1,1701 @@
+name: EcoCorridor protected signed release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: SemVer release tag matching the application version
+        required: true
+        default: v0.1.0
+        type: string
+      observability_gate_run_id:
+        description: Successful stage-two W&B/Weave finalization run ID for this commit
+        required: true
+        type: string
+      source_ci_run_id:
+        description: Successful same-commit EcoCorridor CI workflow run ID
+        required: true
+        type: string
+      general_ci_run_id:
+        description: Successful same-commit general CI run ID for dependency and license policy
+        required: true
+        type: string
+      pages_run_id:
+        description: Successful same-commit public replay deployment workflow run ID
+        required: true
+        type: string
+      ridgeway_evidence_run_id:
+        description: Successful same-commit protected Ridgeway producer run ID
+        required: true
+        type: string
+      acceptance_evidence_sha256:
+        description: Lowercase SHA-256 of the redacted practitioner acceptance JSON
+        required: true
+        type: string
+      acceptance_signature_sha256:
+        description: Lowercase SHA-256 of the detached practitioner-evidence signature
+        required: true
+        type: string
+      publish_release:
+        description: Explicitly authorize immutable publication; false fails closed
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ecocorridor-protected-release-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "22"
+  PNPM_VERSION: "11.9.0"
+  PYTHON_VERSION: "3.12"
+  RUST_VERSION: "1.88.0"
+  JULIA_VERSION: "1.12.6"
+
+jobs:
+  release-prerequisites:
+    name: External release evidence
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: ecocorridor-release
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Check out the exact release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up locked release-evidence validator
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install locked release-evidence dependencies
+        run: uv sync --locked --extra ecocorridor --extra release
+
+      - name: Prepare Julia vulnerability evidence directory
+        shell: bash
+        run: mkdir -p "${RUNNER_TEMP}/release-prerequisites/julia-security"
+
+      - name: Rescan only the committed Julia environment
+        id: release_julia_vulnerability_scan
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-db:2
+          TRIVY_DISABLE_TELEMETRY: "true"
+        with:
+          cache: "false"
+          exit-code: "0"
+          format: json
+          hide-progress: "true"
+          ignore-unfixed: "false"
+          list-all-pkgs: "true"
+          output: ${{ runner.temp }}/release-prerequisites/julia-security/report.json
+          scan-ref: julia/EcoCorridorEngine
+          scan-type: fs
+          scanners: vuln
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          timeout: 10m0s
+          version: v0.70.0
+          vuln-type: library
+
+      - name: Record release scanner and live database metadata
+        id: release_julia_vulnerability_metadata
+        if: always()
+        continue-on-error: true
+        shell: bash
+        env:
+          TRIVY_CACHE_DIR: ${{ github.workspace }}/.cache/trivy
+        run: >-
+          trivy --version
+          > "${RUNNER_TEMP}/release-prerequisites/julia-security/trivy-version.txt"
+
+      - name: Validate release scan target and enforce zero findings
+        id: release_julia_vulnerability_policy
+        if: always()
+        continue-on-error: true
+        run: >-
+          python3 scripts/validate_julia_vulnerability_report.py
+          "${RUNNER_TEMP}/release-prerequisites/julia-security/report.json"
+          --metadata
+          "${RUNNER_TEMP}/release-prerequisites/julia-security/trivy-version.txt"
+          --expected-scanner 0.70.0
+          --expected-artifact julia/EcoCorridorEngine
+
+      - name: Preserve protected-release Julia vulnerability evidence
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: ecocorridor-release-julia-vulnerability-evidence
+          path: ${{ runner.temp }}/release-prerequisites/julia-security
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Block release on scanner, metadata, or policy failure
+        if: always()
+        shell: bash
+        env:
+          METADATA_OUTCOME: ${{ steps.release_julia_vulnerability_metadata.outcome }}
+          POLICY_OUTCOME: ${{ steps.release_julia_vulnerability_policy.outcome }}
+          SCAN_OUTCOME: ${{ steps.release_julia_vulnerability_scan.outcome }}
+        run: |
+          if [[ "${SCAN_OUTCOME}" != "success" || \
+                "${METADATA_OUTCOME}" != "success" || \
+                "${POLICY_OUTCOME}" != "success" ]]; then
+            echo "::error::Protected release blocked by Julia dependency vulnerability policy."
+            exit 1
+          fi
+
+      - name: Validate release ref, tag, and external evidence locations
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          GATE_RUN_ID: ${{ inputs.observability_gate_run_id }}
+          SOURCE_CI_RUN_ID: ${{ inputs.source_ci_run_id }}
+          GENERAL_CI_RUN_ID: ${{ inputs.general_ci_run_id }}
+          PAGES_RUN_ID: ${{ inputs.pages_run_id }}
+          RIDGEWAY_EVIDENCE_RUN_ID: ${{ inputs.ridgeway_evidence_run_id }}
+          ACCEPTANCE_SHA256: ${{ inputs.acceptance_evidence_sha256 }}
+          ACCEPTANCE_SIGNATURE_SHA256: ${{ inputs.acceptance_signature_sha256 }}
+          PUBLISH_RELEASE: ${{ inputs.publish_release }}
+        run: |
+          test "${GITHUB_REF}" = "refs/heads/main" || {
+            echo "::error::Protected releases may be built only from main."
+            exit 1
+          }
+          test "${GITHUB_WORKFLOW_SHA}" = "${GITHUB_SHA}" || {
+            echo "::error::Release workflow source differs from the checked-out commit."
+            exit 1
+          }
+          [[ "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "::error::Release tag must be vMAJOR.MINOR.PATCH."
+            exit 1
+          }
+          [[ "${GATE_RUN_ID}" =~ ^[1-9][0-9]*$ ]] || {
+            echo "::error::Observability gate run ID must be a positive integer."
+            exit 1
+          }
+          [[ "${SOURCE_CI_RUN_ID}" =~ ^[1-9][0-9]*$ ]] || {
+            echo "::error::Source CI run ID must be a positive integer."
+            exit 1
+          }
+          [[ "${GENERAL_CI_RUN_ID}" =~ ^[1-9][0-9]*$ ]] || {
+            echo "::error::General CI run ID must be a positive integer."
+            exit 1
+          }
+          [[ "${PAGES_RUN_ID}" =~ ^[1-9][0-9]*$ ]] || {
+            echo "::error::Pages run ID must be a positive integer."
+            exit 1
+          }
+          [[ "${RIDGEWAY_EVIDENCE_RUN_ID}" =~ ^[1-9][0-9]*$ ]] || {
+            echo "::error::Protected Ridgeway producer run ID must be a positive integer."
+            exit 1
+          }
+          test "${RELEASE_TAG}" = "v$(python3 -c 'import json; print(json.load(open("apps/ecocorridor-desktop/src-tauri/tauri.conf.json"))["version"])')" || {
+            echo "::error::Release tag does not match the Eco application version."
+            exit 1
+          }
+          [[ "${ACCEPTANCE_SHA256}" =~ ^[0-9a-f]{64}$ ]] || {
+            echo "::error::Acceptance evidence SHA-256 is invalid."
+            exit 1
+          }
+          [[ "${ACCEPTANCE_SIGNATURE_SHA256}" =~ ^[0-9a-f]{64}$ ]] || {
+            echo "::error::Acceptance signature SHA-256 is invalid."
+            exit 1
+          }
+          test "${PUBLISH_RELEASE}" = "true" || {
+            echo "::error::This workflow may succeed only when immutable publication is explicitly authorized."
+            exit 1
+          }
+
+      - name: Resolve exact stage-two workflow run and immutable artifact
+        id: resolve_observability_gate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GATE_RUN_ID: ${{ inputs.observability_gate_run_id }}
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          api_root="${RUNNER_TEMP}/observability-actions-api"
+          mkdir -p "${api_root}" "${RUNNER_TEMP}/release-prerequisites/observability"
+          gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/repos/${GITHUB_REPOSITORY}/actions/runs/${GATE_RUN_ID}" \
+            > "${api_root}/run.json"
+          gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/repos/${GITHUB_REPOSITORY}/actions/runs/${GATE_RUN_ID}/artifacts?name=ecocorridor-observability-release-evidence" \
+            > "${api_root}/artifacts.json"
+          uv run --no-sync python scripts/resolve_github_actions_provenance.py \
+            --run-json "${api_root}/run.json" \
+            --artifacts-json "${api_root}/artifacts.json" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --expected-run-id "${GATE_RUN_ID}" \
+            --expected-sha "${EXPECTED_SHA}" \
+            --expected-workflow-path \
+            .github/workflows/ecocorridor-observability-integration.yml \
+            --expected-artifact-name ecocorridor-observability-release-evidence \
+            --output \
+            "${RUNNER_TEMP}/release-prerequisites/observability-finalization-provenance.json" \
+            --github-output "${GITHUB_OUTPUT}"
+
+      - name: Download the exact digest-verified stage-two artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ steps.resolve_observability_gate.outputs.artifact_id }}
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.observability_gate_run_id }}
+          path: ${{ runner.temp }}/release-prerequisites/observability
+          digest-mismatch: error
+
+      - name: Verify the stage-two producer attempt
+        shell: bash
+        run: |
+          python3 scripts/github_actions_producer_identity.py verify \
+            --identity \
+            "${RUNNER_TEMP}/release-prerequisites/observability/ecocorridor-observability-finalization-producer-identity.json" \
+            --provenance \
+            "${RUNNER_TEMP}/release-prerequisites/observability-finalization-provenance.json"
+
+      - name: Re-resolve and compare the nested stage-one provenance
+        id: recheck_assistant_candidate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          source_provenance="${RUNNER_TEMP}/release-prerequisites/observability/ecocorridor-assistant-evaluation-source-provenance.json"
+          test -f "${source_provenance}"
+          source_run_id="$(python3 -c \
+            'import json,sys; value=json.load(open(sys.argv[1], encoding="utf-8"))["run_id"]; assert isinstance(value, int) and value > 0; print(value)' \
+            "${source_provenance}")"
+          [[ "${source_run_id}" =~ ^[1-9][0-9]*$ ]]
+          api_root="${RUNNER_TEMP}/assistant-candidate-actions-api"
+          mkdir -p "${api_root}"
+          gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/repos/${GITHUB_REPOSITORY}/actions/runs/${source_run_id}" \
+            > "${api_root}/run.json"
+          gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/repos/${GITHUB_REPOSITORY}/actions/runs/${source_run_id}/artifacts?name=ecocorridor-assistant-evaluation-candidate" \
+            > "${api_root}/artifacts.json"
+          uv run --no-sync python scripts/resolve_github_actions_provenance.py \
+            --run-json "${api_root}/run.json" \
+            --artifacts-json "${api_root}/artifacts.json" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --expected-run-id "${source_run_id}" \
+            --expected-sha "${EXPECTED_SHA}" \
+            --expected-workflow-path \
+            .github/workflows/ecocorridor-assistant-evaluation.yml \
+            --expected-artifact-name ecocorridor-assistant-evaluation-candidate \
+            --compare "${source_provenance}" \
+            --output \
+            "${RUNNER_TEMP}/release-prerequisites/assistant-stage-one-recheck-provenance.json" \
+            --github-output "${GITHUB_OUTPUT}"
+          printf 'source_run_id=%s\n' "${source_run_id}" >> "${GITHUB_OUTPUT}"
+
+      - name: Download the independently resolved stage-one artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ steps.recheck_assistant_candidate.outputs.artifact_id }}
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.recheck_assistant_candidate.outputs.source_run_id }}
+          path: ${{ runner.temp }}/release-prerequisites/stage-one-recheck
+          digest-mismatch: error
+
+      - name: Compare stage-one bytes and observability disposition
+        shell: bash
+        run: |
+          for name in \
+            ecocorridor-assistant-evaluation-producer-identity.json \
+            ecocorridor-assistant-evaluation-pending.json \
+            ecocorridor-assistant-evaluation-cases.json \
+            ecocorridor-observability-release-gate.json
+          do
+            cmp \
+              "${RUNNER_TEMP}/release-prerequisites/stage-one-recheck/${name}" \
+              "${RUNNER_TEMP}/release-prerequisites/observability/${name}"
+          done
+          python3 scripts/github_actions_producer_identity.py verify \
+            --identity \
+            "${RUNNER_TEMP}/release-prerequisites/stage-one-recheck/ecocorridor-assistant-evaluation-producer-identity.json" \
+            --provenance \
+            "${RUNNER_TEMP}/release-prerequisites/assistant-stage-one-recheck-provenance.json"
+          python3 -c 'import json,os; p=json.load(open(os.environ["RUNNER_TEMP"]+"/release-prerequisites/observability/ecocorridor-observability-release-gate.json")); assert p["status"]=="PASSED" and p["trace_readback"] is True and p["artifact_count"] > 0, p'
+
+      - name: Verify same-commit EcoCorridor CI run identity
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_CI_RUN_ID: ${{ inputs.source_ci_run_id }}
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          mkdir -p "${RUNNER_TEMP}/release-prerequisites/source-ci"
+          gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_CI_RUN_ID}" \
+            > "${RUNNER_TEMP}/release-prerequisites/source-ci/run-api.json"
+          uv run --no-sync python scripts/resolve_github_actions_provenance.py \
+            --run-json "${RUNNER_TEMP}/release-prerequisites/source-ci/run-api.json" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --expected-run-id "${SOURCE_CI_RUN_ID}" \
+            --expected-sha "${EXPECTED_SHA}" \
+            --expected-workflow-path .github/workflows/ecocorridor-ci.yml \
+            --expected-event workflow_dispatch \
+            --run-only \
+            --output "${RUNNER_TEMP}/release-prerequisites/source-ci/provenance.json"
+
+      - name: Verify same-commit general CI and dependency-policy identity
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GENERAL_CI_RUN_ID: ${{ inputs.general_ci_run_id }}
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          mkdir -p "${RUNNER_TEMP}/release-prerequisites/general-ci"
+          gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/repos/${GITHUB_REPOSITORY}/actions/runs/${GENERAL_CI_RUN_ID}" \
+            > "${RUNNER_TEMP}/release-prerequisites/general-ci/run-api.json"
+          uv run --no-sync python scripts/resolve_github_actions_provenance.py \
+            --run-json "${RUNNER_TEMP}/release-prerequisites/general-ci/run-api.json" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --expected-run-id "${GENERAL_CI_RUN_ID}" \
+            --expected-sha "${EXPECTED_SHA}" \
+            --expected-workflow-path .github/workflows/ci.yml \
+            --expected-event push \
+            --expected-event workflow_dispatch \
+            --run-only \
+            --output "${RUNNER_TEMP}/release-prerequisites/general-ci/provenance.json"
+
+      - name: Resolve exact same-commit protected Ridgeway producer artifact
+        id: resolve_ridgeway_evidence
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RIDGEWAY_EVIDENCE_RUN_ID: ${{ inputs.ridgeway_evidence_run_id }}
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          ridgeway_root="${RUNNER_TEMP}/release-prerequisites/ridgeway-producer"
+          api_root="${RUNNER_TEMP}/ridgeway-producer-actions-api"
+          mkdir -p "${ridgeway_root}" "${api_root}"
+          gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/repos/${GITHUB_REPOSITORY}/actions/runs/${RIDGEWAY_EVIDENCE_RUN_ID}" \
+            > "${api_root}/run.json"
+          gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/repos/${GITHUB_REPOSITORY}/actions/runs/${RIDGEWAY_EVIDENCE_RUN_ID}/artifacts?name=ecocorridor-ridgeway-protected-evidence" \
+            > "${api_root}/artifacts.json"
+          uv run --no-sync python scripts/resolve_github_actions_provenance.py \
+            --run-json "${api_root}/run.json" \
+            --artifacts-json "${api_root}/artifacts.json" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --expected-run-id "${RIDGEWAY_EVIDENCE_RUN_ID}" \
+            --expected-sha "${EXPECTED_SHA}" \
+            --expected-workflow-path .github/workflows/ecocorridor-ridgeway-evidence.yml \
+            --expected-artifact-name ecocorridor-ridgeway-protected-evidence \
+            --output "${ridgeway_root}/provenance.json" \
+            --github-output "${GITHUB_OUTPUT}"
+
+      - name: Download exact protected Ridgeway producer bytes
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ steps.resolve_ridgeway_evidence.outputs.artifact_id }}
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.ridgeway_evidence_run_id }}
+          path: ${{ runner.temp }}/release-prerequisites/ridgeway-producer
+          digest-mismatch: error
+
+      - name: Independently verify protected Ridgeway producer and rerun
+        shell: bash
+        run: |
+          ridgeway_root="${RUNNER_TEMP}/release-prerequisites/ridgeway-producer"
+          python3 scripts/github_actions_producer_identity.py verify \
+            --identity "${ridgeway_root}/ridgeway-producer-identity.json" \
+            --provenance "${ridgeway_root}/provenance.json"
+          uv run --no-sync python scripts/verify_ridgeway_release_evidence.py \
+            --publish-directory "${ridgeway_root}/ridgeway" \
+            --desktop-fixture "${ridgeway_root}/desktop/ridgewayFixture.json"
+          uv run --no-sync python scripts/compare_ridgeway_protected_rerun.py \
+            --source-commit "${GITHUB_SHA}" \
+            --reference-directory benchmarks/ecocorridor/ridgeway \
+            --producer-directory "${ridgeway_root}/ridgeway" \
+            --compare "${ridgeway_root}/ridgeway-protected-rerun-differential.json" \
+            --output "${ridgeway_root}/differential-recomputed.json"
+          uv run --no-sync python scripts/validate_ridgeway_producer_attestation.py verify \
+            --source-commit "${GITHUB_SHA}" \
+            --publish-directory benchmarks/ecocorridor/ridgeway \
+            --desktop-fixture apps/ecocorridor-desktop/src/data/ridgewayFixture.json \
+            --producer-publish-directory "${ridgeway_root}/ridgeway" \
+            --differential-report \
+            "${ridgeway_root}/ridgeway-protected-rerun-differential.json" \
+            --attestation \
+            "${ridgeway_root}/ridgeway-protected-producer-attestation.json"
+
+      - name: Resolve same-commit public replay deployment and exact artifact
+        id: resolve_pages_artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PAGES_RUN_ID: ${{ inputs.pages_run_id }}
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          pages_root="${RUNNER_TEMP}/release-prerequisites/pages"
+          mkdir -p "${pages_root}/download"
+          gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/repos/${GITHUB_REPOSITORY}/actions/runs/${PAGES_RUN_ID}" \
+            > "${pages_root}/run-api.json"
+          gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/repos/${GITHUB_REPOSITORY}/actions/runs/${PAGES_RUN_ID}/artifacts?name=github-pages" \
+            > "${pages_root}/artifacts-api.json"
+          uv run --no-sync python scripts/resolve_github_actions_provenance.py \
+            --run-json "${pages_root}/run-api.json" \
+            --artifacts-json "${pages_root}/artifacts-api.json" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --expected-run-id "${PAGES_RUN_ID}" \
+            --expected-sha "${EXPECTED_SHA}" \
+            --expected-workflow-path .github/workflows/ecocorridor-pages.yml \
+            --expected-artifact-name github-pages \
+            --expected-event workflow_dispatch \
+            --output "${pages_root}/provenance.json" \
+            --github-output "${GITHUB_OUTPUT}"
+
+      - name: Download exact digest-verified public replay artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ steps.resolve_pages_artifact.outputs.artifact_id }}
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.pages_run_id }}
+          path: ${{ runner.temp }}/release-prerequisites/pages/download
+          merge-multiple: true
+          digest-mismatch: error
+
+      - name: Verify exact public replay payload identity
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          artifact_tar="${RUNNER_TEMP}/release-prerequisites/pages/download/artifact.tar"
+          test -f "${artifact_tar}" || {
+            echo "::error::Pages workflow did not retain its exact deployment artifact."
+            exit 1
+          }
+          ARTIFACT_TAR="${artifact_tar}" python3 - <<'PY'
+          import json
+          import os
+          import tarfile
+          from pathlib import Path, PurePosixPath
+
+          required = {
+              "public-replay-manifest.json",
+              "ecocorridor-pages-producer-identity.json",
+              "ridgeway-protected-producer-attestation.json",
+              "ridgeway-producer-identity.json",
+              "ridgeway-producer-provenance.json",
+              "ridgeway-protected-rerun-differential.json",
+          }
+          extracted = {}
+          with tarfile.open(os.environ["ARTIFACT_TAR"], mode="r:") as archive:
+              for member in archive.getmembers():
+                  path = PurePosixPath(member.name)
+                  if (
+                      member.isfile()
+                      and "\\" not in member.name
+                      and ".." not in path.parts
+                      and not path.is_absolute()
+                      and path.as_posix() in required
+                  ):
+                      assert path.as_posix() not in extracted, (
+                          f"Pages artifact repeats {path.as_posix()}"
+                      )
+                      stream = archive.extractfile(member)
+                      assert stream is not None
+                      extracted[path.as_posix()] = stream.read()
+          assert set(extracted) == required, "Pages artifact lacks required producer evidence"
+          manifest_bytes = extracted["public-replay-manifest.json"]
+          payload = json.loads(manifest_bytes)
+          assert payload["source_commit_sha"] == os.environ["EXPECTED_SHA"], payload
+          assert payload["artifact_kind"] == "CC0_SYNTHETIC_PUBLIC_REPLAY", payload
+          assert payload["verified_direct_evidence"] is True, payload
+          Path(
+              os.environ["RUNNER_TEMP"],
+              "release-prerequisites/pages/public-replay-manifest.json",
+          ).write_bytes(manifest_bytes)
+          Path(
+              os.environ["RUNNER_TEMP"],
+              "release-prerequisites/pages/ecocorridor-pages-producer-identity.json",
+          ).write_bytes(extracted["ecocorridor-pages-producer-identity.json"])
+          for name in (
+              "ridgeway-protected-producer-attestation.json",
+              "ridgeway-producer-identity.json",
+              "ridgeway-producer-provenance.json",
+              "ridgeway-protected-rerun-differential.json",
+          ):
+              Path(
+                  os.environ["RUNNER_TEMP"],
+                  "release-prerequisites/pages",
+                  name,
+              ).write_bytes(extracted[name])
+          PY
+          python3 scripts/github_actions_producer_identity.py verify \
+            --identity \
+            "${RUNNER_TEMP}/release-prerequisites/pages/ecocorridor-pages-producer-identity.json" \
+            --provenance \
+            "${RUNNER_TEMP}/release-prerequisites/pages/provenance.json"
+          ridgeway_root="${RUNNER_TEMP}/release-prerequisites/ridgeway-producer"
+          pages_root="${RUNNER_TEMP}/release-prerequisites/pages"
+          cmp "${pages_root}/ridgeway-protected-producer-attestation.json" \
+            "${ridgeway_root}/ridgeway-protected-producer-attestation.json"
+          cmp "${pages_root}/ridgeway-producer-identity.json" \
+            "${ridgeway_root}/ridgeway-producer-identity.json"
+          cmp "${pages_root}/ridgeway-producer-provenance.json" \
+            "${ridgeway_root}/provenance.json"
+          cmp "${pages_root}/ridgeway-protected-rerun-differential.json" \
+            "${ridgeway_root}/ridgeway-protected-rerun-differential.json"
+
+      - name: Recheck local source boundaries before release
+        run: |
+          python3 scripts/check_workflows.py
+          python3 scripts/check_gi_regression_lock.py
+          python3 scripts/check_repository_secrets.py
+          python3 scripts/check_ecological_data_manifest.py
+          python3 scripts/verify_ridgeway_release_evidence.py \
+            --publish-directory benchmarks/ecocorridor/ridgeway \
+            --desktop-fixture apps/ecocorridor-desktop/src/data/ridgewayFixture.json
+
+      - name: Download and validate redacted practitioner acceptance
+        shell: bash
+        env:
+          ACCEPTANCE_SHA256: ${{ inputs.acceptance_evidence_sha256 }}
+          ACCEPTANCE_SIGNATURE_SHA256: ${{ inputs.acceptance_signature_sha256 }}
+          ACCEPTANCE_EVIDENCE_B64: ${{ secrets.ECOCORRIDOR_PRACTITIONER_ACCEPTANCE_B64 }}
+          ACCEPTANCE_SIGNATURE_B64: ${{ secrets.ECOCORRIDOR_PRACTITIONER_ACCEPTANCE_SIGNATURE_B64 }}
+          COORDINATOR_PUBLIC_KEY_PEM: ${{ secrets.ECOCORRIDOR_PRACTITIONER_COORDINATOR_PUBLIC_KEY_PEM }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          test -n "${COORDINATOR_PUBLIC_KEY_PEM}" || {
+            echo "::error::The protected coordinator public-key anchor is unavailable."
+            exit 1
+          }
+          test -n "${ACCEPTANCE_EVIDENCE_B64:-}" || {
+            echo "::error::The protected practitioner acceptance payload is unavailable."
+            exit 1
+          }
+          test -n "${ACCEPTANCE_SIGNATURE_B64:-}" || {
+            echo "::error::The protected practitioner acceptance signature is unavailable."
+            exit 1
+          }
+          umask 077
+          printf '%s' "${COORDINATOR_PUBLIC_KEY_PEM}" \
+            > "${RUNNER_TEMP}/practitioner-coordinator-public-key.pem"
+          python3 - <<'PY'
+          import base64
+          import hashlib
+          import os
+          from pathlib import Path
+
+          evidence = base64.b64decode(os.environ["ACCEPTANCE_EVIDENCE_B64"], validate=True)
+          signature = base64.b64decode(
+              os.environ["ACCEPTANCE_SIGNATURE_B64"], validate=True
+          )
+          assert 1 <= len(evidence) <= 1024 * 1024
+          assert len(signature) == 64
+          assert hashlib.sha256(evidence).hexdigest() == os.environ["ACCEPTANCE_SHA256"]
+          assert (
+              hashlib.sha256(signature).hexdigest()
+              == os.environ["ACCEPTANCE_SIGNATURE_SHA256"]
+          )
+          root = Path(os.environ["RUNNER_TEMP"], "release-prerequisites")
+          root.joinpath("practitioner-acceptance.json").write_bytes(evidence)
+          root.joinpath("practitioner-acceptance.sig").write_bytes(signature)
+          PY
+          openssl pkeyutl -verify -pubin \
+            -inkey "${RUNNER_TEMP}/practitioner-coordinator-public-key.pem" \
+            -rawin \
+            -in "${RUNNER_TEMP}/release-prerequisites/practitioner-acceptance.json" \
+            -sigfile "${RUNNER_TEMP}/release-prerequisites/practitioner-acceptance.sig"
+          python3 scripts/validate_ecocorridor_acceptance.py \
+            "${RUNNER_TEMP}/release-prerequisites/practitioner-acceptance.json" \
+            --expected-commit "${GITHUB_SHA}" \
+            --expected-version "${RELEASE_TAG}" \
+            --approved-coordinator-public-key \
+            "${RUNNER_TEMP}/practitioner-coordinator-public-key.pem"
+
+      - name: Validate same-commit provider-backed assistant evaluation
+        shell: bash
+        env:
+          RATINGS_PUBLIC_KEY_B64: ${{ vars.ECOCORRIDOR_ASSISTANT_RATINGS_PUBLIC_KEY_B64 }}
+          RATINGS_PUBLIC_KEY_SHA256: ${{ vars.ECOCORRIDOR_ASSISTANT_RATINGS_PUBLIC_KEY_SHA256 }}
+        run: |
+          test -f "${RUNNER_TEMP}/release-prerequisites/observability/ecocorridor-assistant-evaluation.json"
+          test -f "${RUNNER_TEMP}/release-prerequisites/observability/ecocorridor-assistant-evaluation-pending.json"
+          test -f "${RUNNER_TEMP}/release-prerequisites/observability/ecocorridor-assistant-evaluation-cases.json"
+          test -f "${RUNNER_TEMP}/release-prerequisites/observability/ecocorridor-assistant-evaluation-source-provenance.json"
+          test -f "${RUNNER_TEMP}/release-prerequisites/observability/ecocorridor-assistant-evaluation-producer-identity.json"
+          test -f "${RUNNER_TEMP}/release-prerequisites/observability/ecocorridor-observability-finalization-producer-identity.json"
+          test -f "${RUNNER_TEMP}/release-prerequisites/observability-finalization-provenance.json"
+          test -f "${RUNNER_TEMP}/release-prerequisites/assistant-stage-one-recheck-provenance.json"
+          test -f "${RUNNER_TEMP}/release-prerequisites/observability/ecocorridor-assistant-ratings.json"
+          test -f "${RUNNER_TEMP}/release-prerequisites/observability/ecocorridor-assistant-ratings.sig"
+          test -f "${RUNNER_TEMP}/release-prerequisites/observability/ecocorridor-assistant-ratings-public-key.bin"
+          test -n "${RATINGS_PUBLIC_KEY_B64:-}"
+          [[ "${RATINGS_PUBLIC_KEY_SHA256:-}" =~ ^[0-9a-f]{64}$ ]]
+          PUBLIC_KEY_PATH="${RUNNER_TEMP}/release-prerequisites/observability/ecocorridor-assistant-ratings-public-key.bin" \
+          PUBLIC_KEY_B64="${RATINGS_PUBLIC_KEY_B64}" \
+          PUBLIC_KEY_SHA256="${RATINGS_PUBLIC_KEY_SHA256}" \
+          python3 - <<'PY'
+          import base64
+          import hashlib
+          import os
+          from pathlib import Path
+
+          expected_key = base64.b64decode(os.environ["PUBLIC_KEY_B64"], validate=True)
+          published_key = Path(os.environ["PUBLIC_KEY_PATH"]).read_bytes()
+          assert len(expected_key) == 32
+          assert published_key == expected_key
+          assert hashlib.sha256(published_key).hexdigest() == os.environ["PUBLIC_KEY_SHA256"]
+          PY
+          uv run --no-sync python scripts/validate_ecocorridor_assistant_evaluation.py \
+            "${RUNNER_TEMP}/release-prerequisites/observability/ecocorridor-assistant-evaluation.json" \
+            "${RUNNER_TEMP}/release-prerequisites/observability/ecocorridor-assistant-evaluation-cases.json" \
+            --ratings "${RUNNER_TEMP}/release-prerequisites/observability/ecocorridor-assistant-ratings.json" \
+            --ratings-signature "${RUNNER_TEMP}/release-prerequisites/observability/ecocorridor-assistant-ratings.sig" \
+            --ratings-public-key-b64 "${RATINGS_PUBLIC_KEY_B64}" \
+            --expected-ratings-key-sha256 "${RATINGS_PUBLIC_KEY_SHA256}" \
+            --expected-commit "${GITHUB_SHA}"
+          uv run --no-sync python scripts/validate_ecocorridor_assistant_evaluation.py \
+            "${RUNNER_TEMP}/release-prerequisites/stage-one-recheck/ecocorridor-assistant-evaluation-pending.json" \
+            "${RUNNER_TEMP}/release-prerequisites/stage-one-recheck/ecocorridor-assistant-evaluation-cases.json" \
+            --finalized-report \
+            "${RUNNER_TEMP}/release-prerequisites/assistant-evaluation-refinalized.json" \
+            --ratings "${RUNNER_TEMP}/release-prerequisites/observability/ecocorridor-assistant-ratings.json" \
+            --ratings-signature "${RUNNER_TEMP}/release-prerequisites/observability/ecocorridor-assistant-ratings.sig" \
+            --ratings-public-key-b64 "${RATINGS_PUBLIC_KEY_B64}" \
+            --expected-ratings-key-sha256 "${RATINGS_PUBLIC_KEY_SHA256}" \
+            --expected-commit "${GITHUB_SHA}"
+          cmp \
+            "${RUNNER_TEMP}/release-prerequisites/assistant-evaluation-refinalized.json" \
+            "${RUNNER_TEMP}/release-prerequisites/observability/ecocorridor-assistant-evaluation.json"
+
+      - name: Preserve verified external prerequisites
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: ecocorridor-release-prerequisites
+          path: ${{ runner.temp }}/release-prerequisites
+          if-no-files-found: error
+          retention-days: 30
+
+  build-signed-installers:
+    name: Signed ${{ matrix.target }} installer
+    needs: release-prerequisites
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: macos-arm64
+            runner: macos-15
+            bundles: app,dmg
+            executable_suffix: ""
+          - target: macos-x64
+            runner: macos-15-intel
+            bundles: app,dmg
+            executable_suffix: ""
+          - target: windows-x64
+            runner: windows-2025
+            bundles: msi,nsis
+            executable_suffix: .exe
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 150
+    environment:
+      name: ecocorridor-release
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python and uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Set up target-native Julia
+        uses: julia-actions/setup-julia@4c0cb0fce8556fdb04a90347310e5db8b1f98fb9 # v2
+        with:
+          version: ${{ env.JULIA_VERSION }}
+
+      - name: Install exact application dependencies
+        run: |
+          uv sync --locked --extra science --extra ecocorridor --extra ecocorridor-agents --extra ecocorridor-report --extra export --extra observability --extra release
+          uv run --no-sync python scripts/install_ecocorridor_geospatial_runtime.py
+          pnpm install --frozen-lockfile
+
+      - name: Instantiate pinned Circuitscape environment
+        shell: bash
+        env:
+          JULIA_DEPOT_PATH: ${{ runner.temp }}/julia-depot
+          JULIA_NUM_THREADS: "1"
+          JULIA_NUM_PRECOMPILE_TASKS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          OMP_NUM_THREADS: "1"
+        run: |
+          julia --project=julia/EcoCorridorEngine \
+            --startup-file=no --history-file=no \
+            -e 'using Pkg; Pkg.instantiate()'
+          julia --project=julia/EcoCorridorEngine \
+            --startup-file=no --history-file=no \
+            julia/EcoCorridorEngine/scripts/verify_manifest.jl
+          julia --project=julia/EcoCorridorEngine \
+            --startup-file=no --history-file=no \
+            -e 'using Pkg; Pkg.precompile()'
+
+      - name: Build relocatable Circuitscape application
+        shell: bash
+        env:
+          ECOCORRIDOR_ENGINE_OUTPUT: ${{ runner.temp }}/ecocorridor-engine
+          JULIA_DEPOT_PATH: ${{ runner.temp }}/julia-depot
+          JULIA_NUM_THREADS: "1"
+          JULIA_NUM_PRECOMPILE_TASKS: "1"
+          JULIA_IMAGE_THREADS: "2"
+          JULIA_IMAGE_TIMINGS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          OMP_NUM_THREADS: "1"
+        run: |
+          bash scripts/run_with_progress_heartbeat.sh \
+            --interval-seconds 60 \
+            --label "PackageCompiler application build" \
+            -- \
+            julia --project=julia/EcoCorridorEngine \
+            --startup-file=no --history-file=no \
+            scripts/build_ecocorridor_engine.jl
+
+      - name: Build self-contained scientific worker
+        shell: bash
+        run: >-
+          uv run --no-sync python scripts/build_ecocorridor_worker.py
+          --dist "${RUNNER_TEMP}/worker"
+          --work "${RUNNER_TEMP}/pyinstaller"
+
+      - name: Stage target resources
+        # GitHub's Windows runner defaults to PowerShell, which does not use
+        # backslash continuation or ${RUNNER_TEMP} shell expansion. Git Bash
+        # is present on the supported Windows runner and keeps this audited
+        # staging recipe identical across all three target builds.
+        shell: bash
+        env:
+          ECO_TARGET: ${{ matrix.target }}
+          EXECUTABLE_SUFFIX: ${{ matrix.executable_suffix }}
+          RELEASE_VERSION: ${{ inputs.release_tag }}
+        run: |
+          application_version="${RELEASE_VERSION}"
+          uv run --no-sync python scripts/stage_ecocorridor_release.py \
+            --stage apps/ecocorridor-desktop/src-tauri/release-generated \
+            --worker "${RUNNER_TEMP}/worker/ecocorridor-worker${EXECUTABLE_SUFFIX}" \
+            --engine-app "${RUNNER_TEMP}/ecocorridor-engine" \
+            --target "${ECO_TARGET}" \
+            --application-version "${application_version#v}" \
+            --source-commit "${GITHUB_SHA}"
+          uv run --no-sync python scripts/create_ecocorridor_engine_manifest.py \
+            --output apps/ecocorridor-desktop/src-tauri/release-generated/engine-manifest.json \
+            --manifest-id "ecocorridor-${RELEASE_VERSION}-${ECO_TARGET}" \
+            --julia-runtime apps/ecocorridor-desktop/src-tauri/release-generated/engine \
+            --julia-project julia/EcoCorridorEngine \
+            --native-artifacts apps/ecocorridor-desktop/src-tauri/release-generated/engine \
+            --wrapper julia/EcoCorridorEngine/src/EcoCorridorEngine.jl \
+            --parser python/ecocorridor_core/engine.py \
+            --metric-definitions python/ecocorridor_core/metrics.py \
+            --neighbor-rule EIGHT \
+            --resistance-average ARITHMETIC \
+            --platform "${ECO_TARGET}" \
+            --executable "apps/ecocorridor-desktop/src-tauri/release-generated/engine/bin/ecocorridor-engine${EXECUTABLE_SUFFIX}"
+
+      - name: Sign the exact native-resource inventory
+        shell: bash
+        env:
+          ECO_TARGET: ${{ matrix.target }}
+          EXECUTABLE_SUFFIX: ${{ matrix.executable_suffix }}
+          RESOURCE_SIGNING_SEED_HEX: ${{ secrets.ECOCORRIDOR_RESOURCE_SIGNING_SEED_HEX }}
+          RELEASE_VERSION: ${{ inputs.release_tag }}
+        run: |
+          if [[ ! "${RESOURCE_SIGNING_SEED_HEX:-}" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Protected Ed25519 resource signing seed must be exactly 64 lowercase hex characters."
+            exit 1
+          fi
+          seed_path="${RUNNER_TEMP}/ecocorridor-resource-signing-key.seed.hex"
+          cleanup_resource_seed() {
+            rm -f -- "${seed_path}"
+          }
+          trap cleanup_resource_seed EXIT HUP INT TERM
+          umask 077
+          application_version="${RELEASE_VERSION#v}"
+          printf '%s\n' "${RESOURCE_SIGNING_SEED_HEX}" \
+            > "${seed_path}"
+          unset RESOURCE_SIGNING_SEED_HEX
+          uv run --no-sync python scripts/create_ecocorridor_release_manifest.py \
+            --root apps/ecocorridor-desktop/src-tauri/release-generated \
+            --output apps/ecocorridor-desktop/src-tauri/release-generated/release-manifest.json \
+            --signature-output apps/ecocorridor-desktop/src-tauri/release-generated/release-manifest.sig \
+            --public-key-output "${RUNNER_TEMP}/ecocorridor-resource-public-key.hex" \
+            --signing-key "${seed_path}" \
+            --application-version "${application_version}" \
+            --source-commit "${GITHUB_SHA}" \
+            --target "${ECO_TARGET}" \
+            --executable "bin/ecocorridor-worker${EXECUTABLE_SUFFIX}" \
+            --executable "engine/bin/ecocorridor-engine${EXECUTABLE_SUFFIX}"
+          resource_public_key="$(tr -d '\r\n' < "${RUNNER_TEMP}/ecocorridor-resource-public-key.hex")"
+          printf 'ECOCORRIDOR_RELEASE_PUBLIC_KEY_HEX=%s\n' "${resource_public_key}" \
+            >> "${GITHUB_ENV}"
+          printf 'ECOCORRIDOR_RELEASE_SOURCE_SHA=%s\n' "${GITHUB_SHA}" \
+            >> "${GITHUB_ENV}"
+          cleanup_resource_seed
+          trap - EXIT HUP INT TERM
+
+      - name: Exercise packaged worker and direct engine offline
+        shell: bash
+        env:
+          ECO_TARGET: ${{ matrix.target }}
+          RELEASE_VERSION: ${{ inputs.release_tag }}
+        run: |
+          application_version="${RELEASE_VERSION#v}"
+          uv run --no-sync python scripts/smoke_ecocorridor_release_bundle.py \
+            --release-root apps/ecocorridor-desktop/src-tauri/release-generated \
+            --public-key "${RUNNER_TEMP}/ecocorridor-resource-public-key.hex" \
+            --expected-version "${application_version}" \
+            --expected-source-commit "${GITHUB_SHA}" \
+            --expected-target "${ECO_TARGET}" \
+            | tee "${RUNNER_TEMP}/ecocorridor-offline-smoke.txt"
+
+      - name: Generate exact packaged-engine conformance receipt
+        shell: bash
+        env:
+          ECO_TARGET: ${{ matrix.target }}
+          EXECUTABLE_SUFFIX: ${{ matrix.executable_suffix }}
+          RELEASE_VERSION: ${{ inputs.release_tag }}
+        run: |
+          circuitscape_root="$(julia --project=julia/EcoCorridorEngine \
+            --startup-file=no --history-file=no \
+            -e 'using Circuitscape; print(dirname(dirname(pathof(Circuitscape))))')"
+          fixture_root="${circuitscape_root}/test/input/raster/pairwise/4"
+          expected_matrix="${circuitscape_root}/test/output_verify/sgVerify4_resistances_3columns.out"
+          test -d "${fixture_root}" -a -f "${expected_matrix}" || {
+            echo "::error::Pinned Circuitscape official fixture is unavailable."
+            exit 1
+          }
+          uv run --no-sync python scripts/create_ecocorridor_engine_provenance.py \
+            --engine "apps/ecocorridor-desktop/src-tauri/release-generated/engine/bin/ecocorridor-engine${EXECUTABLE_SUFFIX}" \
+            --engine-manifest apps/ecocorridor-desktop/src-tauri/release-generated/engine-manifest.json \
+            --release-manifest apps/ecocorridor-desktop/src-tauri/release-generated/release-manifest.json \
+            --release-signature apps/ecocorridor-desktop/src-tauri/release-generated/release-manifest.sig \
+            --release-public-key "${RUNNER_TEMP}/ecocorridor-resource-public-key.hex" \
+            --official-fixture-root "${fixture_root}" \
+            --official-expected "${expected_matrix}" \
+            --source-commit "${GITHUB_SHA}" \
+            --producer-run-id "${GITHUB_RUN_ID}" \
+            --producer-run-attempt "${GITHUB_RUN_ATTEMPT}" \
+            --producer-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --release-version "${RELEASE_VERSION}" \
+            --target "${ECO_TARGET}" \
+            --output "${RUNNER_TEMP}/ecocorridor-engine-provenance.json"
+
+      - name: Capture Apple default keychain
+        id: capture_apple_default_keychain
+        if: startsWith(matrix.target, 'macos')
+        shell: bash
+        run: |
+          original_default_keychain_output="$(security default-keychain -d user)"
+          if [[ ! "${original_default_keychain_output}" =~ ^[[:space:]]*\"([^\"]+)\"[[:space:]]*$ ]]; then
+            echo "::error::The original user default keychain path has an unexpected format."
+            exit 1
+          fi
+          original_default_keychain="${BASH_REMATCH[1]}"
+          user_keychain_root="$(python3 -c 'from pathlib import Path; print(Path.home() / "Library" / "Keychains")')"
+          original_keychain_name="${original_default_keychain##*/}"
+          if [[ "${original_default_keychain}" != "${user_keychain_root}/${original_keychain_name}" \
+            || ! "${original_keychain_name}" =~ ^[A-Za-z0-9._-]+\.keychain(-db)?$ \
+            || ! -f "${original_default_keychain}" \
+            || -L "${original_default_keychain}" ]]; then
+            echo "::error::The original user default keychain is not an exact regular keychain file."
+            exit 1
+          fi
+          printf 'path=%s\n' "${original_default_keychain}" >> "${GITHUB_OUTPUT}"
+
+      - name: Import Apple signing identity
+        if: startsWith(matrix.target, 'macos')
+        shell: bash
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.APPLE_CI_KEYCHAIN_PASSWORD }}
+        run: |
+          test -n "${APPLE_CERTIFICATE_BASE64:-}" \
+            -a -n "${APPLE_CERTIFICATE_PASSWORD:-}" \
+            -a -n "${KEYCHAIN_PASSWORD:-}" || {
+              echo "::error::Apple signing secrets are incomplete."
+              exit 1
+            }
+          p12_path="${RUNNER_TEMP}/ecocorridor-signing.p12"
+          keychain_path="${RUNNER_TEMP}/ecocorridor-build.keychain-db"
+          cleanup_apple_certificate_file() {
+            rm -f -- "${p12_path}"
+          }
+          trap cleanup_apple_certificate_file EXIT HUP INT TERM
+          umask 077
+          ECOCORRIDOR_P12_PATH="${p12_path}" python3 -c 'import base64,os,pathlib; pathlib.Path(os.environ["ECOCORRIDOR_P12_PATH"]).write_bytes(base64.b64decode(os.environ["APPLE_CERTIFICATE_BASE64"], validate=True))'
+          security create-keychain -p "${KEYCHAIN_PASSWORD}" "${keychain_path}"
+          security default-keychain -d user -s "${keychain_path}"
+          security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${keychain_path}"
+          security import "${p12_path}" \
+            -k "${keychain_path}" \
+            -P "${APPLE_CERTIFICATE_PASSWORD}" \
+            -T /usr/bin/codesign
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -s \
+            -k "${KEYCHAIN_PASSWORD}" \
+            "${keychain_path}"
+          unset APPLE_CERTIFICATE_BASE64 APPLE_CERTIFICATE_PASSWORD KEYCHAIN_PASSWORD
+          cleanup_apple_certificate_file
+          trap - EXIT HUP INT TERM
+
+      - name: Import Windows signing identity
+        if: matrix.target == 'windows-x64'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          if (-not $env:WINDOWS_CERTIFICATE_BASE64 -or -not $env:WINDOWS_CERTIFICATE_PASSWORD) {
+            throw "Windows signing secrets are incomplete."
+          }
+          $certificatePath = Join-Path $env:RUNNER_TEMP "ecocorridor-signing.pfx"
+          $thumbprint = $null
+          $importedThumbprints = @()
+          try {
+            [IO.File]::WriteAllBytes(
+              $certificatePath,
+              [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64)
+            )
+            $password = ConvertTo-SecureString `
+              -String $env:WINDOWS_CERTIFICATE_PASSWORD `
+              -Force `
+              -AsPlainText
+            $certificates = @(Import-PfxCertificate `
+              -FilePath $certificatePath `
+              -CertStoreLocation Cert:\CurrentUser\My `
+              -Password $password)
+            foreach ($certificate in $certificates) {
+              $candidateThumbprint = ([string]$certificate.Thumbprint).ToUpperInvariant()
+              if ($candidateThumbprint -cnotmatch '^[0-9A-F]{40}$') {
+                throw "Windows signing certificate returned an invalid thumbprint."
+              }
+              $importedThumbprints += $candidateThumbprint
+            }
+            if ($importedThumbprints.Count -ne 1) {
+              throw "Windows signing PFX must contain exactly one imported certificate."
+            }
+            $thumbprint = $importedThumbprints[0]
+            "ECOCORRIDOR_WINDOWS_CERTIFICATE_THUMBPRINT=$thumbprint" | `
+              Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          }
+          catch {
+            foreach ($importedThumbprint in $importedThumbprints) {
+              Remove-Item -LiteralPath "Cert:\CurrentUser\My\$importedThumbprint" `
+                -Force `
+                -ErrorAction SilentlyContinue
+            }
+            throw
+          }
+          finally {
+            Remove-Item -LiteralPath $certificatePath -Force -ErrorAction SilentlyContinue
+            $password = $null
+            Remove-Item Env:WINDOWS_CERTIFICATE_BASE64 -ErrorAction SilentlyContinue
+            Remove-Item Env:WINDOWS_CERTIFICATE_PASSWORD -ErrorAction SilentlyContinue
+          }
+
+      - name: Write Apple notarization key
+        if: startsWith(matrix.target, 'macos')
+        shell: bash
+        env:
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+        run: |
+          test -n "${APPLE_API_PRIVATE_KEY:-}" || {
+            echo "::error::Apple notarization private key is missing."
+            exit 1
+          }
+          umask 077
+          printf '%s' "${APPLE_API_PRIVATE_KEY}" > "${RUNNER_TEMP}/AuthKey.p8"
+          unset APPLE_API_PRIVATE_KEY
+
+      - name: Generate macOS Tauri release configuration
+        if: startsWith(matrix.target, 'macos')
+        shell: bash
+        env:
+          ECO_UPDATE_PUBLIC_KEY: ${{ vars.ECOCORRIDOR_UPDATE_PUBLIC_KEY }}
+          ECO_UPDATE_ENDPOINT: ${{ vars.ECOCORRIDOR_UPDATE_ENDPOINT }}
+        run: >-
+          uv run --no-sync python scripts/configure_ecocorridor_tauri_release.py
+          --output apps/ecocorridor-desktop/src-tauri/tauri.release.generated.conf.json
+          --updater-public-key "${ECO_UPDATE_PUBLIC_KEY}"
+          --updater-endpoint "${ECO_UPDATE_ENDPOINT}"
+
+      - name: Generate Windows Tauri release configuration
+        if: matrix.target == 'windows-x64'
+        shell: pwsh
+        env:
+          ECO_UPDATE_PUBLIC_KEY: ${{ vars.ECOCORRIDOR_UPDATE_PUBLIC_KEY }}
+          ECO_UPDATE_ENDPOINT: ${{ vars.ECOCORRIDOR_UPDATE_ENDPOINT }}
+          WINDOWS_TIMESTAMP_URL: ${{ vars.WINDOWS_TIMESTAMP_URL }}
+        run: |
+          uv run --no-sync python scripts/configure_ecocorridor_tauri_release.py `
+            --output apps/ecocorridor-desktop/src-tauri/tauri.release.generated.conf.json `
+            --updater-public-key $env:ECO_UPDATE_PUBLIC_KEY `
+            --updater-endpoint $env:ECO_UPDATE_ENDPOINT `
+            --windows-thumbprint $env:ECOCORRIDOR_WINDOWS_CERTIFICATE_THUMBPRINT `
+            --windows-timestamp-url $env:WINDOWS_TIMESTAMP_URL
+
+      - name: Build signed and notarized macOS installer
+        if: startsWith(matrix.target, 'macos')
+        shell: bash
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_PATH: ${{ runner.temp }}/AuthKey.p8
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_UPDATER_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_UPDATER_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_BUNDLES: ${{ matrix.bundles }}
+        run: >-
+          pnpm --dir apps/ecocorridor-desktop tauri build
+          --config "${GITHUB_WORKSPACE}/apps/ecocorridor-desktop/src-tauri/tauri.release.generated.conf.json"
+          --bundles "${TAURI_BUNDLES}"
+
+      - name: Build signed Windows installers
+        if: matrix.target == 'windows-x64'
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_UPDATER_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_UPDATER_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_BUNDLES: ${{ matrix.bundles }}
+        run: |
+          pnpm --dir apps/ecocorridor-desktop tauri build `
+            --config "$env:GITHUB_WORKSPACE/apps/ecocorridor-desktop/src-tauri/tauri.release.generated.conf.json" `
+            --bundles "$env:TAURI_BUNDLES"
+
+      - name: Remove Apple signing material
+        if: always() && startsWith(matrix.target, 'macos')
+        shell: bash
+        env:
+          ECOCORRIDOR_ORIGINAL_DEFAULT_KEYCHAIN: ${{ steps.capture_apple_default_keychain.outputs.path }}
+        run: |
+          auth_key_path="${RUNNER_TEMP}/AuthKey.p8"
+          keychain_path="${RUNNER_TEMP}/ecocorridor-build.keychain-db"
+          rm -f -- "${auth_key_path}"
+          original_default_keychain="${ECOCORRIDOR_ORIGINAL_DEFAULT_KEYCHAIN:-}"
+          user_keychain_root="$(python3 -c 'from pathlib import Path; print(Path.home() / "Library" / "Keychains")')"
+          original_keychain_name="${original_default_keychain##*/}"
+          if [[ "${original_default_keychain}" != "${user_keychain_root}/${original_keychain_name}" \
+            || ! "${original_keychain_name}" =~ ^[A-Za-z0-9._-]+\.keychain(-db)?$ \
+            || ! -f "${original_default_keychain}" \
+            || -L "${original_default_keychain}" ]]; then
+            echo "::error::Refusing to restore an invalid original user default keychain path."
+            exit 1
+          fi
+          security default-keychain -d user -s "${original_default_keychain}"
+          restored_default_keychain_output="$(security default-keychain -d user)"
+          if [[ ! "${restored_default_keychain_output}" =~ ^[[:space:]]*\"([^\"]+)\"[[:space:]]*$ \
+            || "${BASH_REMATCH[1]}" != "${original_default_keychain}" ]]; then
+            echo "::error::The original user default keychain was not restored exactly."
+            exit 1
+          fi
+          if [[ -e "${keychain_path}" ]]; then
+            security delete-keychain "${keychain_path}"
+          fi
+          test ! -e "${auth_key_path}"
+          test ! -e "${keychain_path}"
+
+      - name: Remove Windows signing material
+        if: always() && matrix.target == 'windows-x64'
+        shell: pwsh
+        run: |
+          $thumbprint = $env:ECOCORRIDOR_WINDOWS_CERTIFICATE_THUMBPRINT
+          if ($thumbprint) {
+            if ($thumbprint -cnotmatch '^[0-9A-F]{40}$') {
+              throw "Refusing to remove a certificate with an invalid thumbprint."
+            }
+            $certificatePath = "Cert:\CurrentUser\My\$thumbprint"
+            if (Test-Path -LiteralPath $certificatePath) {
+              Remove-Item -LiteralPath $certificatePath -Force
+            }
+            if (Test-Path -LiteralPath $certificatePath) {
+              throw "Windows signing certificate cleanup did not complete."
+            }
+          }
+          $pfxPath = Join-Path $env:RUNNER_TEMP "ecocorridor-signing.pfx"
+          Remove-Item -LiteralPath $pfxPath -Force -ErrorAction SilentlyContinue
+          if (Test-Path -LiteralPath $pfxPath) {
+            throw "Windows signing PFX cleanup did not complete."
+          }
+
+      - name: Verify Apple signatures and notarization
+        if: startsWith(matrix.target, 'macos')
+        shell: bash
+        run: |
+          application="$(find apps/ecocorridor-desktop/src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' -type d -print -quit)"
+          test -n "${application}" || {
+            echo "::error::Signed macOS application bundle is absent."
+            exit 1
+          }
+          codesign --verify --deep --strict --verbose=2 "${application}"
+          spctl --assess --type execute --verbose=2 "${application}"
+          disk_image="$(find apps/ecocorridor-desktop/src-tauri/target/release/bundle/dmg -name '*.dmg' -type f -print -quit)"
+          xcrun stapler validate "${disk_image}"
+
+      - name: Verify Windows Authenticode signatures
+        if: matrix.target == 'windows-x64'
+        shell: pwsh
+        run: |
+          $installers = Get-ChildItem `
+            apps/ecocorridor-desktop/src-tauri/target/release/bundle `
+            -Recurse `
+            -File `
+            -Include *.msi,*-setup.exe
+          if ($installers.Count -lt 2) { throw "Signed Windows installers are incomplete." }
+          foreach ($installer in $installers) {
+            $signature = Get-AuthenticodeSignature $installer.FullName
+            if ($signature.Status -ne "Valid") {
+              throw "Invalid Authenticode signature: $($installer.Name)"
+            }
+            if (-not $signature.TimeStamperCertificate) {
+              throw "Authenticode timestamp is absent: $($installer.Name)"
+            }
+          }
+
+      - name: Install macOS disk image and rerun the scientific boundary offline
+        if: startsWith(matrix.target, 'macos')
+        shell: bash
+        env:
+          ECO_TARGET: ${{ matrix.target }}
+          RELEASE_VERSION: ${{ inputs.release_tag }}
+        run: |
+          application_version="${RELEASE_VERSION#v}"
+          disk_image_count="$(find apps/ecocorridor-desktop/src-tauri/target/release/bundle/dmg -maxdepth 1 -name '*.dmg' -type f | wc -l | tr -d ' ')"
+          test "${disk_image_count}" = "1" || {
+            echo "::error::Expected exactly one signed macOS disk image."
+            exit 1
+          }
+          disk_image="$(find apps/ecocorridor-desktop/src-tauri/target/release/bundle/dmg -maxdepth 1 -name '*.dmg' -type f -print -quit)"
+          mount_point="${RUNNER_TEMP}/ecocorridor-dmg"
+          install_root="${RUNNER_TEMP}/ecocorridor-installed"
+          mkdir -p "${mount_point}" "${install_root}"
+          hdiutil attach -readonly -nobrowse -mountpoint "${mount_point}" "${disk_image}"
+          cleanup() {
+            hdiutil detach "${mount_point}" >/dev/null
+          }
+          trap cleanup EXIT
+          application_count="$(find "${mount_point}" -maxdepth 2 -name '*.app' -type d | wc -l | tr -d ' ')"
+          test "${application_count}" = "1" || {
+            echo "::error::Expected exactly one application in the signed disk image."
+            exit 1
+          }
+          application="$(find "${mount_point}" -maxdepth 2 -name '*.app' -type d -print -quit)"
+          installed_application="${install_root}/EcoCorridor Scenario Studio.app"
+          ditto "${application}" "${installed_application}"
+          codesign --verify --deep --strict --verbose=2 "${installed_application}"
+          spctl --assess --type execute --verbose=2 "${installed_application}"
+          host_count="$(find "${installed_application}/Contents/MacOS" -maxdepth 1 -type f -perm -111 | wc -l | tr -d ' ')"
+          test "${host_count}" = "1" || {
+            echo "::error::Expected exactly one installed native application host."
+            exit 1
+          }
+          native_host="$(find "${installed_application}/Contents/MacOS" -maxdepth 1 -type f -perm -111 -print -quit)"
+          receipt_one="${RUNNER_TEMP}/ecocorridor-installed-health-1.json"
+          receipt_two="${RUNNER_TEMP}/ecocorridor-installed-health-2.json"
+          TMPDIR="${RUNNER_TEMP}" "${native_host}" --release-health-check "${receipt_one}"
+          TMPDIR="${RUNNER_TEMP}" "${native_host}" --release-health-check "${receipt_two}"
+          uv run --no-sync python scripts/validate_ecocorridor_installed_health.py \
+            --receipt "${receipt_one}" \
+            --receipt "${receipt_two}" \
+            --expected-version "${application_version}" \
+            --expected-source-commit "${GITHUB_SHA}" \
+            --expected-target "${ECO_TARGET}"
+          uv run --no-sync python scripts/smoke_ecocorridor_release_bundle.py \
+            --release-root "${installed_application}/Contents/Resources/release" \
+            --public-key "${RUNNER_TEMP}/ecocorridor-resource-public-key.hex" \
+            --expected-version "${application_version}" \
+            --expected-source-commit "${GITHUB_SHA}" \
+            --expected-target "${ECO_TARGET}" \
+            | tee "${RUNNER_TEMP}/ecocorridor-installed-offline-smoke.txt"
+
+      - name: Install Windows package and rerun the scientific boundary offline
+        if: matrix.target == 'windows-x64'
+        shell: pwsh
+        env:
+          ECO_TARGET: ${{ matrix.target }}
+          RELEASE_VERSION: ${{ inputs.release_tag }}
+        run: |
+          $installers = @(
+            Get-ChildItem `
+              apps/ecocorridor-desktop/src-tauri/target/release/bundle/nsis `
+              -File `
+              -Filter *-setup.exe
+          )
+          if ($installers.Count -ne 1) {
+            throw "Expected exactly one signed Windows NSIS installer."
+          }
+          $installRoot = Join-Path $env:RUNNER_TEMP "ecocorridor-installed"
+          New-Item -ItemType Directory -Path $installRoot -Force | Out-Null
+          $installation = Start-Process `
+            -FilePath $installers[0].FullName `
+            -ArgumentList @("/S", "/D=$installRoot") `
+            -Wait `
+            -PassThru
+          if ($installation.ExitCode -ne 0) {
+            throw "Silent installation failed with exit code $($installation.ExitCode)."
+          }
+          $manifests = @(
+            Get-ChildItem `
+              -LiteralPath $installRoot `
+              -Recurse `
+              -File `
+              -Filter release-manifest.json
+          )
+          if ($manifests.Count -ne 1) {
+            throw "Installed application has an ambiguous or absent resource manifest."
+          }
+          $releaseRoot = $manifests[0].Directory.FullName
+          $applicationVersion = $env:RELEASE_VERSION.TrimStart('v')
+          $nativeHosts = @(
+            Get-ChildItem -LiteralPath $installRoot -File -Filter *.exe |
+              Where-Object { $_.Name -notmatch '(?i)uninstall' }
+          )
+          if ($nativeHosts.Count -ne 1) {
+            throw "Expected exactly one installed native application host."
+          }
+          $hostSignature = Get-AuthenticodeSignature $nativeHosts[0].FullName
+          if ($hostSignature.Status -ne "Valid" -or -not $hostSignature.TimeStamperCertificate) {
+            throw "Installed native host lacks a valid timestamped Authenticode signature."
+          }
+          $receiptOne = Join-Path $env:RUNNER_TEMP "ecocorridor-installed-health-1.json"
+          $receiptTwo = Join-Path $env:RUNNER_TEMP "ecocorridor-installed-health-2.json"
+          $env:TEMP = $env:RUNNER_TEMP
+          $env:TMP = $env:RUNNER_TEMP
+          foreach ($receipt in @($receiptOne, $receiptTwo)) {
+            $health = Start-Process `
+              -FilePath $nativeHosts[0].FullName `
+              -ArgumentList @("--release-health-check", ('"{0}"' -f $receipt)) `
+              -Wait `
+              -PassThru
+            if ($health.ExitCode -ne 0) {
+              throw "Installed native host health check failed with exit code $($health.ExitCode)."
+            }
+          }
+          uv run --no-sync python scripts/validate_ecocorridor_installed_health.py `
+            --receipt $receiptOne `
+            --receipt $receiptTwo `
+            --expected-version $applicationVersion `
+            --expected-source-commit "$env:GITHUB_SHA" `
+            --expected-target "$env:ECO_TARGET"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Installed native host restart evidence failed validation."
+          }
+          uv run --no-sync python scripts/smoke_ecocorridor_release_bundle.py `
+            --release-root $releaseRoot `
+            --public-key "$env:RUNNER_TEMP/ecocorridor-resource-public-key.hex" `
+            --expected-version $applicationVersion `
+            --expected-source-commit "$env:GITHUB_SHA" `
+            --expected-target "$env:ECO_TARGET" |
+            Tee-Object -FilePath "$env:RUNNER_TEMP/ecocorridor-installed-offline-smoke.txt"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Installed Windows scientific boundary failed."
+          }
+
+      - name: Collect uniquely named target artifacts
+        shell: bash
+        env:
+          ECO_TARGET: ${{ matrix.target }}
+          RELEASE_VERSION: ${{ inputs.release_tag }}
+        run: >-
+          uv run --no-sync python scripts/collect_ecocorridor_release_assets.py
+          --bundle-root apps/ecocorridor-desktop/src-tauri/target/release/bundle
+          --release-root apps/ecocorridor-desktop/src-tauri/release-generated
+          --public-resource-key "${RUNNER_TEMP}/ecocorridor-resource-public-key.hex"
+          --smoke-report "${RUNNER_TEMP}/ecocorridor-installed-offline-smoke.txt"
+          --engine-provenance-receipt "${RUNNER_TEMP}/ecocorridor-engine-provenance.json"
+          --installed-health-receipt "${RUNNER_TEMP}/ecocorridor-installed-health-1.json"
+          --installed-health-receipt "${RUNNER_TEMP}/ecocorridor-installed-health-2.json"
+          --output "${RUNNER_TEMP}/release-assets"
+          --target "${ECO_TARGET}"
+          --version "${RELEASE_VERSION}"
+
+      - name: Attest target release assets
+        uses: actions/attest-build-provenance@78e6cbd37d0ac1a40113c04f2037dacf1ea3f12e # v4
+        with:
+          subject-path: ${{ runner.temp }}/release-assets/*
+
+      - name: Upload target release assets
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: ecocorridor-installer-${{ matrix.target }}
+          path: ${{ runner.temp }}/release-assets
+          if-no-files-found: error
+          retention-days: 30
+
+  publish-release:
+    name: Assemble and publish release evidence
+    needs:
+      - release-prerequisites
+      - build-signed-installers
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment:
+      name: ecocorridor-release
+    permissions:
+      contents: write
+    steps:
+      - name: Check out release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Download target and prerequisite evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: ecocorridor-installer-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Download verified public prerequisite summaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ecocorridor-release-prerequisites
+          path: ${{ runner.temp }}/verified-prerequisites
+
+      - name: Create SBOM, update metadata, and release evidence
+        shell: bash
+        env:
+          ECO_UPDATE_PUBLIC_KEY: ${{ vars.ECOCORRIDOR_UPDATE_PUBLIC_KEY }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          test -n "${ECO_UPDATE_PUBLIC_KEY}" || {
+            echo "::error::The updater public key is unavailable."
+            exit 1
+          }
+          python3 scripts/create_ecocorridor_sbom.py \
+            --output release-assets/ecocorridor-sbom.cdx.json \
+            --version "${RELEASE_TAG#v}" \
+            --native-inventory-directory release-assets
+          python3 scripts/create_ecocorridor_update_manifest.py \
+            --assets release-assets \
+            --output release-assets/latest.json \
+            --repository "${GITHUB_REPOSITORY}" \
+            --tag "${RELEASE_TAG}" \
+            --version "${RELEASE_TAG}" \
+            --updater-public-key "${ECO_UPDATE_PUBLIC_KEY}"
+          cp NOTICE release-assets/NOTICE
+          cp THIRD_PARTY_NOTICES.md release-assets/THIRD_PARTY_NOTICES.md
+          cp benchmarks/ecocorridor/data-manifest.json \
+            release-assets/ecological-data-manifest.json
+          cp benchmarks/ecocorridor/ridgeway/direct-evidence-manifest.json \
+            release-assets/ridgeway-direct-evidence-manifest.json
+          cp benchmarks/ecocorridor/ridgeway/ui_projection.json \
+            release-assets/ridgeway-ui-projection.json
+          cp apps/ecocorridor-desktop/src/data/ridgewayReleaseTrust.json \
+            release-assets/ridgeway-release-trust.json
+          reference_archive="$(python3 -c \
+            'import json; print(json.load(open("benchmarks/ecocorridor/ridgeway/direct-evidence-manifest.json", encoding="utf-8"))["evidence_bundle"]["filename"])')"
+          [[ "${reference_archive}" =~ ^ridgeway-direct-evidence-[0-9a-f]{12}\.tar\.gz$ ]] || {
+            echo "::error::Reference Ridgeway archive filename is invalid."
+            exit 1
+          }
+          cp "benchmarks/ecocorridor/ridgeway/${reference_archive}" \
+            "release-assets/${reference_archive}"
+          cp benchmarks/ecocorridor/search/release-gate.json \
+            release-assets/search-benchmark-release-gate.json
+          cp benchmarks/ecocorridor/search/release-gate.resources.json \
+            release-assets/search-benchmark-resource-observation.json
+          cp "${RUNNER_TEMP}/verified-prerequisites/practitioner-acceptance.json" \
+            release-assets/practitioner-acceptance.json
+          cp "${RUNNER_TEMP}/verified-prerequisites/practitioner-acceptance.sig" \
+            release-assets/practitioner-acceptance.sig
+          cp "${RUNNER_TEMP}/verified-prerequisites/observability/ecocorridor-assistant-evaluation.json" \
+            release-assets/assistant-evaluation.json
+          cp "${RUNNER_TEMP}/verified-prerequisites/assistant-evaluation-refinalized.json" \
+            release-assets/assistant-evaluation-refinalized.json
+          cp "${RUNNER_TEMP}/verified-prerequisites/observability/ecocorridor-assistant-evaluation-cases.json" \
+            release-assets/assistant-evaluation-cases.json
+          cp "${RUNNER_TEMP}/verified-prerequisites/observability/ecocorridor-assistant-evaluation-pending.json" \
+            release-assets/assistant-evaluation-pending.json
+          cp "${RUNNER_TEMP}/verified-prerequisites/observability/ecocorridor-assistant-evaluation-source-provenance.json" \
+            release-assets/assistant-evaluation-source-provenance.json
+          cp "${RUNNER_TEMP}/verified-prerequisites/observability/ecocorridor-assistant-evaluation-producer-identity.json" \
+            release-assets/assistant-evaluation-producer-identity.json
+          cp "${RUNNER_TEMP}/verified-prerequisites/assistant-stage-one-recheck-provenance.json" \
+            release-assets/assistant-stage-one-recheck-provenance.json
+          cp "${RUNNER_TEMP}/verified-prerequisites/observability-finalization-provenance.json" \
+            release-assets/assistant-finalization-provenance.json
+          cp "${RUNNER_TEMP}/verified-prerequisites/observability/ecocorridor-observability-finalization-producer-identity.json" \
+            release-assets/assistant-finalization-producer-identity.json
+          cp "${RUNNER_TEMP}/verified-prerequisites/observability/ecocorridor-assistant-ratings.json" \
+            release-assets/assistant-ratings.json
+          cp "${RUNNER_TEMP}/verified-prerequisites/observability/ecocorridor-assistant-ratings.sig" \
+            release-assets/assistant-ratings.sig
+          cp "${RUNNER_TEMP}/verified-prerequisites/observability/ecocorridor-assistant-ratings-public-key.bin" \
+            release-assets/assistant-ratings-public-key.bin
+          cp "${RUNNER_TEMP}/verified-prerequisites/observability/ecocorridor-observability-release-gate.json" \
+            release-assets/observability-release-gate.json
+          cp "${RUNNER_TEMP}/verified-prerequisites/source-ci/provenance.json" \
+            release-assets/eco-ci-provenance.json
+          cp "${RUNNER_TEMP}/verified-prerequisites/general-ci/provenance.json" \
+            release-assets/general-ci-provenance.json
+          cp "${RUNNER_TEMP}/verified-prerequisites/pages/provenance.json" \
+            release-assets/public-replay-pages-provenance.json
+          cp "${RUNNER_TEMP}/verified-prerequisites/pages/ecocorridor-pages-producer-identity.json" \
+            release-assets/public-replay-pages-producer-identity.json
+          cp "${RUNNER_TEMP}/verified-prerequisites/pages/public-replay-manifest.json" \
+            release-assets/public-replay-manifest.json
+          cp "${RUNNER_TEMP}/verified-prerequisites/ridgeway-producer/ridgeway-protected-producer-attestation.json" \
+            release-assets/ridgeway-protected-producer-attestation.json
+          cp "${RUNNER_TEMP}/verified-prerequisites/ridgeway-producer/ridgeway-protected-rerun-differential.json" \
+            release-assets/ridgeway-protected-rerun-differential.json
+          cp "${RUNNER_TEMP}/verified-prerequisites/ridgeway-producer/ridgeway-producer-identity.json" \
+            release-assets/ridgeway-producer-identity.json
+          cp "${RUNNER_TEMP}/verified-prerequisites/ridgeway-producer/provenance.json" \
+            release-assets/ridgeway-producer-provenance.json
+          producer_root="${RUNNER_TEMP}/verified-prerequisites/ridgeway-producer"
+          cp "${producer_root}/ridgeway/direct-evidence-manifest.json" \
+            release-assets/ridgeway-protected-rerun-direct-evidence-manifest.json
+          cp "${producer_root}/ridgeway/ui_projection.json" \
+            release-assets/ridgeway-protected-rerun-ui-projection.json
+          cp "${producer_root}/desktop/ridgewayReleaseTrust.json" \
+            release-assets/ridgeway-protected-rerun-release-trust.json
+          producer_archive="$(PRODUCER_MANIFEST="${producer_root}/ridgeway/direct-evidence-manifest.json" \
+            python3 -c 'import json,os; print(json.load(open(os.environ["PRODUCER_MANIFEST"], encoding="utf-8"))["evidence_bundle"]["filename"])')"
+          [[ "${producer_archive}" =~ ^ridgeway-direct-evidence-[0-9a-f]{12}\.tar\.gz$ ]] || {
+            echo "::error::Protected rerun archive filename is invalid."
+            exit 1
+          }
+          if [[ "${producer_archive}" = "${reference_archive}" ]]; then
+            cmp "${producer_root}/ridgeway/${producer_archive}" \
+              "release-assets/${reference_archive}"
+          else
+            cp "${producer_root}/ridgeway/${producer_archive}" \
+              "release-assets/${producer_archive}"
+          fi
+          checksum_file="${RUNNER_TEMP}/ecocorridor-SHA256SUMS"
+          (
+            cd release-assets || exit 1
+            find . -type f ! -name SHA256SUMS -print0 \
+              | sort -z \
+              | xargs -0 sha256sum
+          ) > "${checksum_file}"
+          mv "${checksum_file}" release-assets/SHA256SUMS
+
+      - name: Preserve complete release candidate
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: ecocorridor-complete-release-candidate
+          path: release-assets
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Publish immutable GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_POLICY_TOKEN: ${{ secrets.ECOCORRIDOR_RELEASE_POLICY_TOKEN }}
+          RELEASE_TAG_RULESET_ID: ${{ vars.ECOCORRIDOR_RELEASE_TAG_RULESET_ID }}
+        run: |
+          test -n "${RELEASE_POLICY_TOKEN:-}" || {
+            echo "::error::Missing admin-read token for immutable release policy."
+            exit 1
+          }
+          [[ "${RELEASE_TAG_RULESET_ID:-}" =~ ^[1-9][0-9]*$ ]] || {
+            echo "::error::Release tag ruleset ID must be a positive integer."
+            exit 1
+          }
+          expected_assets="${RUNNER_TEMP}/ecocorridor-expected-release-assets.json"
+          python3 scripts/verify_github_release_assets.py create \
+            --assets-directory release-assets \
+            --output "${expected_assets}"
+
+          fetch_release_policy() {
+            local label="$1"
+            local policy_root="${RUNNER_TEMP}/ecocorridor-release-policy-${label}"
+            mkdir -p "${policy_root}"
+            GH_TOKEN="${RELEASE_POLICY_TOKEN}" gh api \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2026-03-10" \
+              "/repos/${GITHUB_REPOSITORY}/immutable-releases" \
+              > "${policy_root}/immutable-releases.json"
+            GH_TOKEN="${RELEASE_POLICY_TOKEN}" gh api \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2026-03-10" \
+              "/repos/${GITHUB_REPOSITORY}/rulesets/${RELEASE_TAG_RULESET_ID}?includes_parents=true" \
+              > "${policy_root}/tag-ruleset.json"
+            python3 scripts/validate_github_release_policy.py \
+              --immutable-releases-json "${policy_root}/immutable-releases.json" \
+              --ruleset-json "${policy_root}/tag-ruleset.json" \
+              --expected-ruleset-id "${RELEASE_TAG_RULESET_ID}" \
+              --output "${policy_root}/validated-policy.json"
+          }
+
+          verify_tag_ref() {
+            TAG_REF_PATH="$1" \
+            EXPECTED_TAG="${RELEASE_TAG}" \
+            EXPECTED_SHA="${GITHUB_SHA}" \
+            python3 - <<'PY'
+          import json
+          import os
+
+          with open(os.environ["TAG_REF_PATH"], encoding="utf-8") as stream:
+              payload = json.load(stream)
+          target = payload.get("object")
+          assert payload.get("ref") == f"refs/tags/{os.environ['EXPECTED_TAG']}", payload
+          assert isinstance(target, dict), payload
+          assert target.get("type") == "commit", payload
+          assert target.get("sha") == os.environ["EXPECTED_SHA"], payload
+          PY
+          }
+
+          fetch_release_policy before-draft
+          if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "::error::Release or draft already exists; manual review is required."
+            exit 1
+          fi
+          tag_ref_path="${RUNNER_TEMP}/ecocorridor-release-tag-ref.json"
+          if ! gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" \
+            > "${tag_ref_path}"
+          then
+            gh api \
+              --method POST \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "/repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f ref="refs/tags/${RELEASE_TAG}" \
+              -f sha="${GITHUB_SHA}" \
+              > "${tag_ref_path}"
+          fi
+          verify_tag_ref "${tag_ref_path}"
+          gh release create "${RELEASE_TAG}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --draft \
+            --verify-tag \
+            --title "EcoCorridor Scenario Studio ${RELEASE_TAG}" \
+            --notes-file docs/ecocorridor/release-gates.md \
+            release-assets/*
+
+          draft_view="${RUNNER_TEMP}/ecocorridor-draft-release-view.json"
+          gh release view "${RELEASE_TAG}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --json databaseId,isDraft,isPrerelease,tagName,url \
+            > "${draft_view}"
+          release_id="$(DRAFT_VIEW="${draft_view}" python3 -c \
+            'import json,os; value=json.load(open(os.environ["DRAFT_VIEW"], encoding="utf-8"))["databaseId"]; assert isinstance(value, int) and value > 0; print(value)')"
+          gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            "/repos/${GITHUB_REPOSITORY}/releases/${release_id}" \
+            > "${RUNNER_TEMP}/ecocorridor-draft-release.json"
+          python3 scripts/verify_github_release_assets.py verify \
+            --manifest "${expected_assets}" \
+            --release-json "${RUNNER_TEMP}/ecocorridor-draft-release.json" \
+            --expected-tag "${RELEASE_TAG}" \
+            --expected-draft true
+
+          fetch_release_policy before-publish
+          gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            "/repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" \
+            > "${RUNNER_TEMP}/ecocorridor-prepublish-tag-ref.json"
+          verify_tag_ref "${RUNNER_TEMP}/ecocorridor-prepublish-tag-ref.json"
+          gh release edit "${RELEASE_TAG}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --draft=false \
+            --verify-tag
+
+          gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            "/repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" \
+            > "${RUNNER_TEMP}/ecocorridor-published-tag-ref.json"
+          verify_tag_ref "${RUNNER_TEMP}/ecocorridor-published-tag-ref.json"
+          gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            "/repos/${GITHUB_REPOSITORY}/releases/${release_id}" \
+            > "${RUNNER_TEMP}/ecocorridor-published-release.json"
+          python3 scripts/verify_github_release_assets.py verify \
+            --manifest "${expected_assets}" \
+            --release-json "${RUNNER_TEMP}/ecocorridor-published-release.json" \
+            --expected-tag "${RELEASE_TAG}" \
+            --expected-draft false
+          RELEASE_PATH="${RUNNER_TEMP}/ecocorridor-published-release.json" \
+          EXPECTED_TAG="${RELEASE_TAG}" \
+          python3 - <<'PY'
+          import json
+          import os
+
+          with open(os.environ["RELEASE_PATH"], encoding="utf-8") as stream:
+              release = json.load(stream)
+          assert release.get("tag_name") == os.environ["EXPECTED_TAG"], release
+          assert release.get("draft") is False, release
+          assert release.get("prerelease") is False, release
+          assert release.get("immutable") is True, release
+          PY
+          fetch_release_policy after-publish

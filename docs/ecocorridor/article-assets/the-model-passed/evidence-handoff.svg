@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="432pt" height="720pt" viewBox="0 0 432 720" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:format>image/svg+xml</dc:format>
+    <dc:creator>
+     <cc:Agent>
+      <dc:title>EcoCorridor Scenario Studio</dc:title>
+     </cc:Agent>
+    </dc:creator>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 720
+L 432 720
+L 432 0
+L 0 0
+z
+" style="fill: #fafcfa"/>
+  </g>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path d="M 34.4736 216.144
+L 397.5264 216.144
+Q 401.8464 216.144 401.8464 208.944
+L 401.8464 100.656
+Q 401.8464 93.456 397.5264 93.456
+L 34.4736 93.456
+Q 30.1536 93.456 30.1536 100.656
+L 30.1536 208.944
+Q 30.1536 216.144 34.4736 216.144
+z
+" clip-path="url(#p8e37964798)" style="fill: #dceef0; stroke: #b8c7c2; stroke-width: 1.5; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_3">
+    <path d="M 216 221.602588
+Q 216 230.761792 216 238.243946
+" clip-path="url(#p8e37964798)" style="fill: none; stroke: #4b5357; stroke-width: 1.5; stroke-linecap: round"/>
+    <path d="M 219 232.243946
+L 216 238.243946
+L 213 232.243946
+z
+" clip-path="url(#p8e37964798)" style="fill: #4b5357; stroke: #4b5357; stroke-width: 1.5; stroke-linecap: round"/>
+   </g>
+   <g id="patch_4">
+    <path d="M 34.4736 381.744
+L 397.5264 381.744
+Q 401.8464 381.744 401.8464 374.544
+L 401.8464 251.856
+Q 401.8464 244.656 397.5264 244.656
+L 34.4736 244.656
+Q 30.1536 244.656 30.1536 251.856
+L 30.1536 374.544
+Q 30.1536 381.744 34.4736 381.744
+z
+" clip-path="url(#p8e37964798)" style="fill: #edf2ee; stroke: #b8c7c2; stroke-width: 1.5; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_5">
+    <path d="M 216 387.202588
+Q 216 396.361792 216 403.843946
+" clip-path="url(#p8e37964798)" style="fill: none; stroke: #4b5357; stroke-width: 1.5; stroke-linecap: round"/>
+    <path d="M 219 397.843946
+L 216 403.843946
+L 213 397.843946
+z
+" clip-path="url(#p8e37964798)" style="fill: #4b5357; stroke: #4b5357; stroke-width: 1.5; stroke-linecap: round"/>
+   </g>
+   <g id="patch_6">
+    <path d="M 34.4736 597.744
+L 397.5264 597.744
+Q 401.8464 597.744 401.8464 590.544
+L 401.8464 417.456
+Q 401.8464 410.256 397.5264 410.256
+L 34.4736 410.256
+Q 30.1536 410.256 30.1536 417.456
+L 30.1536 590.544
+Q 30.1536 597.744 34.4736 597.744
+z
+" clip-path="url(#p8e37964798)" style="fill: #dceef0; stroke: #b8c7c2; stroke-width: 1.5; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_7">
+    <path d="M 216 603.202588
+Q 216 612.361792 216 619.843946
+" clip-path="url(#p8e37964798)" style="fill: none; stroke: #4b5357; stroke-width: 1.5; stroke-linecap: round"/>
+    <path d="M 219 613.843946
+L 216 619.843946
+L 213 613.843946
+z
+" clip-path="url(#p8e37964798)" style="fill: #4b5357; stroke: #4b5357; stroke-width: 1.5; stroke-linecap: round"/>
+   </g>
+   <g id="patch_8">
+    <path d="M 34.4736 705.744
+L 397.5264 705.744
+Q 401.8464 705.744 401.8464 698.544
+L 401.8464 633.456
+Q 401.8464 626.256 397.5264 626.256
+L 34.4736 626.256
+Q 30.1536 626.256 30.1536 633.456
+L 30.1536 698.544
+Q 30.1536 705.744 34.4736 705.744
+z
+" clip-path="url(#p8e37964798)" style="fill: #f6e4cc; stroke: #b8c7c2; stroke-width: 1.5; stroke-linejoin: miter"/>
+   </g>
+   <g id="text_1">
+    <text style="font-weight: 700; font-size: 18px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #172b2b" x="30.24" y="35.277187" transform="rotate(-0 30.24 35.277187)">Preparing a review brief</text>
+   </g>
+   <g id="text_2">
+    <text style="font-size: 14px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #4b5357" x="30.24" y="64.637812" transform="rotate(-0 30.24 64.637812)">Historical agent workflow</text>
+   </g>
+   <g id="text_3">
+    <text style="font-weight: 700; font-size: 15px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #172b2b" x="43.2" y="119.397656" transform="rotate(-0 43.2 119.397656)">1. Authorize direct evidence</text>
+   </g>
+   <g id="text_4">
+    <text style="font-size: 13.5px; font-family: 'DejaVu Sans'; fill: #4b5357" transform="translate(43.2 147.477656)">Check scope, revision, and complete</text>
+    <text style="font-size: 13.5px; font-family: 'DejaVu Sans'; fill: #4b5357" transform="translate(43.2 167.010469)">scenario evidence.</text>
+   </g>
+   <g id="text_5">
+    <text style="font-weight: 700; font-size: 12.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #a33f5b" x="43.2" y="202.458047" transform="rotate(-0 43.2 202.458047)">Missing or unauthorized → no draft</text>
+   </g>
+   <g id="text_6">
+    <text style="font-weight: 700; font-size: 15px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #172b2b" x="43.2" y="270.597656" transform="rotate(-0 43.2 270.597656)">2. Provider + read-only tools</text>
+   </g>
+   <g id="text_7">
+    <text style="font-size: 13.5px; font-family: 'DejaVu Sans'; fill: #4b5357" transform="translate(43.2 298.677656)">The tested agent followed a fixed</text>
+    <text style="font-size: 13.5px; font-family: 'DejaVu Sans'; fill: #4b5357" transform="translate(43.2 316.902656)">tool sequence. It returned finding</text>
+    <text style="font-size: 13.5px; font-family: 'DejaVu Sans'; fill: #4b5357" transform="translate(43.2 335.127656)">selections, not report prose.</text>
+   </g>
+   <g id="text_8">
+    <text style="font-weight: 700; font-size: 12.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #a33f5b" x="43.2" y="368.778047" transform="rotate(-0 43.2 368.778047)">Provider or tool failure → no draft</text>
+   </g>
+   <g id="text_9">
+    <text style="font-weight: 700; font-size: 15px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #172b2b" x="43.2" y="436.197656" transform="rotate(-0 43.2 436.197656)">3. Required release checks</text>
+   </g>
+   <g id="text_10">
+    <text style="font-size: 13.5px; font-family: 'DejaVu Sans'; fill: #4b5357" transform="translate(43.2 465.585469)">Read back the exact Weave trace.</text>
+    <text style="font-size: 13.5px; font-family: 'DejaVu Sans'; fill: #4b5357" transform="translate(43.2 482.502656)">Recheck the source and permissions.</text>
+    <text style="font-size: 13.5px; font-family: 'DejaVu Sans'; fill: #4b5357" transform="translate(43.2 501.346758)">Validate selections; render words and</text>
+    <text style="font-size: 13.5px; font-family: 'DejaVu Sans'; fill: #4b5357" transform="translate(43.2 520.260469)">numbers from local evidence.</text>
+   </g>
+   <g id="text_11">
+    <text style="font-weight: 700; font-size: 12.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #a33f5b" x="43.2" y="584.058047" transform="rotate(-0 43.2 584.058047)">Any check fails → no saved draft</text>
+   </g>
+   <g id="text_12">
+    <text style="font-weight: 700; font-size: 15px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #172b2b" x="43.2" y="652.197656" transform="rotate(-0 43.2 652.197656)">4. Save UNCONFIRMED draft</text>
+   </g>
+   <g id="text_13">
+    <text style="font-size: 13.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #4b5357" x="43.2" y="680.277656" transform="rotate(-0 43.2 680.277656)">No portfolio approval or model edits.</text>
+   </g>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="p8e37964798">
+   <rect x="0" y="0" width="432" height="720"/>
+  </clipPath>
+ </defs>
+</svg>

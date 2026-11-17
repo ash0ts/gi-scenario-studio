@@ -1,0 +1,126 @@
+{
+  "$defs": {
+    "NeighborRule": {
+      "enum": [
+        "FOUR",
+        "EIGHT"
+      ],
+      "title": "NeighborRule",
+      "type": "string"
+    },
+    "ResistanceAverage": {
+      "enum": [
+        "ARITHMETIC",
+        "HARMONIC"
+      ],
+      "title": "ResistanceAverage",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.ecocorridor.local/1.0/ConnectivityScenario.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "blas_threads": {
+      "const": 1,
+      "default": 1,
+      "title": "Blas Threads",
+      "type": "integer"
+    },
+    "engine_mode": {
+      "const": "RASTER_PAIRWISE",
+      "default": "RASTER_PAIRWISE",
+      "title": "Engine Mode",
+      "type": "string"
+    },
+    "focal_set_id": {
+      "title": "Focal Set Id",
+      "type": "string"
+    },
+    "future_condition": {
+      "title": "Future Condition",
+      "type": "string"
+    },
+    "grid_id": {
+      "title": "Grid Id",
+      "type": "string"
+    },
+    "guild_id": {
+      "title": "Guild Id",
+      "type": "string"
+    },
+    "included_pair_ids": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Included Pair Ids",
+      "type": "array"
+    },
+    "julia_threads": {
+      "const": 1,
+      "default": 1,
+      "title": "Julia Threads",
+      "type": "integer"
+    },
+    "life_stage": {
+      "title": "Life Stage",
+      "type": "string"
+    },
+    "maturity_horizon": {
+      "title": "Maturity Horizon",
+      "type": "string"
+    },
+    "neighbor_rule": {
+      "$ref": "#/$defs/NeighborRule",
+      "default": "EIGHT"
+    },
+    "precision": {
+      "const": "double",
+      "default": "double",
+      "title": "Precision",
+      "type": "string"
+    },
+    "raster_semantics": {
+      "const": "RESISTANCE",
+      "default": "RESISTANCE",
+      "title": "Raster Semantics",
+      "type": "string"
+    },
+    "resistance_average": {
+      "$ref": "#/$defs/ResistanceAverage",
+      "default": "ARITHMETIC"
+    },
+    "resistance_hypothesis_id": {
+      "title": "Resistance Hypothesis Id",
+      "type": "string"
+    },
+    "safeguard": {
+      "default": false,
+      "title": "Safeguard",
+      "type": "boolean"
+    },
+    "scenario_id": {
+      "title": "Scenario Id",
+      "type": "string"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    }
+  },
+  "required": [
+    "scenario_id",
+    "title",
+    "guild_id",
+    "life_stage",
+    "resistance_hypothesis_id",
+    "focal_set_id",
+    "future_condition",
+    "maturity_horizon",
+    "included_pair_ids",
+    "grid_id"
+  ],
+  "title": "ConnectivityScenario",
+  "type": "object"
+}

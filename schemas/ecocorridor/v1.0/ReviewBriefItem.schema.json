@@ -1,0 +1,165 @@
+{
+  "$defs": {
+    "ReviewBriefActionKind": {
+      "enum": [
+        "INSPECT_EVIDENCE",
+        "FIELD_VERIFY",
+        "OBTAIN_QUALIFIED_REVIEW",
+        "RESOLVE_LAND_OR_OWNERSHIP",
+        "RESOLVE_AUTHORIZATION",
+        "COMPLETE_COST_BASIS",
+        "REVISE_MODEL_AND_RERUN"
+      ],
+      "title": "ReviewBriefActionKind",
+      "type": "string"
+    },
+    "ReviewBriefFindingKind": {
+      "enum": [
+        "RULE_FAILURE",
+        "SURVEY_FIRST",
+        "SAFEGUARD",
+        "REVIEW_MASK",
+        "FEASIBILITY_GAP",
+        "MODEL_FITNESS",
+        "QA",
+        "ASSUMPTION",
+        "COST",
+        "REFERENCE",
+        "AUTHORIZATION"
+      ],
+      "title": "ReviewBriefFindingKind",
+      "type": "string"
+    },
+    "ReviewBriefPriority": {
+      "enum": [
+        "BLOCKING",
+        "BEFORE_FEASIBILITY",
+        "FOLLOW_UP"
+      ],
+      "title": "ReviewBriefPriority",
+      "type": "string"
+    },
+    "ReviewBriefTopic": {
+      "description": "Closed, non-narrative facet used to route a finding to the right review.",
+      "enum": [
+        "REQUIRED_RULE",
+        "SURVEY_OR_FIELD_DATA",
+        "SAFEGUARD_REVIEW",
+        "CURRENT_REDISTRIBUTION_MASK",
+        "GENERAL_FEASIBILITY",
+        "LAND_ACCESS_OR_OWNERSHIP",
+        "MAINTENANCE_RESPONSIBILITY",
+        "CULTURAL_REVIEW",
+        "PERMITTING_REVIEW",
+        "TRAFFIC_OR_STRUCTURAL_FEASIBILITY",
+        "ECOLOGICAL_FIELD_RISK",
+        "MODEL_FITNESS_BASIS",
+        "DIRECT_RUN_QA",
+        "ECOLOGICAL_ASSUMPTION",
+        "COST_BASIS",
+        "REFERENCE_COMPARISON",
+        "DATA_AUTHORIZATION"
+      ],
+      "title": "ReviewBriefTopic",
+      "type": "string"
+    },
+    "ReviewerDiscipline": {
+      "enum": [
+        "ECOLOGY",
+        "FIELD",
+        "ENGINEERING",
+        "LAND",
+        "MAINTENANCE",
+        "CULTURAL",
+        "PERMITTING",
+        "COST"
+      ],
+      "title": "ReviewerDiscipline",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.ecocorridor.local/1.0/ReviewBriefItem.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "action_kind": {
+      "$ref": "#/$defs/ReviewBriefActionKind"
+    },
+    "direct_run_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Direct Run Ids",
+      "type": "array"
+    },
+    "evidence_claim_ids": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Evidence Claim Ids",
+      "type": "array"
+    },
+    "finding_kind": {
+      "$ref": "#/$defs/ReviewBriefFindingKind"
+    },
+    "item_id": {
+      "minLength": 1,
+      "title": "Item Id",
+      "type": "string"
+    },
+    "priority": {
+      "$ref": "#/$defs/ReviewBriefPriority"
+    },
+    "rendered_text": {
+      "minLength": 1,
+      "title": "Rendered Text",
+      "type": "string"
+    },
+    "review_topic": {
+      "$ref": "#/$defs/ReviewBriefTopic"
+    },
+    "reviewer_disciplines": {
+      "items": {
+        "$ref": "#/$defs/ReviewerDiscipline"
+      },
+      "minItems": 1,
+      "title": "Reviewer Disciplines",
+      "type": "array"
+    },
+    "scenario_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Scenario Ids",
+      "type": "array"
+    },
+    "selection_source": {
+      "default": "AGENT_SELECTED",
+      "enum": [
+        "AGENT_SELECTED",
+        "DETERMINISTIC_COMPLETION"
+      ],
+      "title": "Selection Source",
+      "type": "string"
+    },
+    "state": {
+      "const": "OPEN",
+      "default": "OPEN",
+      "title": "State",
+      "type": "string"
+    }
+  },
+  "required": [
+    "item_id",
+    "finding_kind",
+    "review_topic",
+    "priority",
+    "action_kind",
+    "reviewer_disciplines",
+    "evidence_claim_ids",
+    "rendered_text"
+  ],
+  "title": "ReviewBriefItem",
+  "type": "object"
+}

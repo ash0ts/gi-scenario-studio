@@ -1,0 +1,99 @@
+{
+  "$defs": {
+    "ReferenceMetricTolerance": {
+      "additionalProperties": false,
+      "description": "Declared comparison policy for one supported reference metric.\n\nRelative tolerance is a dimensionless fraction, not a percentage.  The\napproved reference value is deliberately the scale term so comparison\nbehavior cannot vary with argument order or an implementation default.",
+      "properties": {
+        "absolute_tolerance": {
+          "minimum": 0,
+          "title": "Absolute Tolerance",
+          "type": "number"
+        },
+        "comparison_formula": {
+          "const": "ABS_OBSERVED_MINUS_REFERENCE_LE_ABSOLUTE_PLUS_RELATIVE_TIMES_ABS_REFERENCE",
+          "default": "ABS_OBSERVED_MINUS_REFERENCE_LE_ABSOLUTE_PLUS_RELATIVE_TIMES_ABS_REFERENCE",
+          "title": "Comparison Formula",
+          "type": "string"
+        },
+        "metric": {
+          "const": "EFFECTIVE_RESISTANCE",
+          "default": "EFFECTIVE_RESISTANCE",
+          "title": "Metric",
+          "type": "string"
+        },
+        "relative_tolerance": {
+          "minimum": 0,
+          "title": "Relative Tolerance",
+          "type": "number"
+        },
+        "units": {
+          "const": "effective_resistance",
+          "default": "effective_resistance",
+          "title": "Units",
+          "type": "string"
+        }
+      },
+      "required": [
+        "absolute_tolerance",
+        "relative_tolerance"
+      ],
+      "title": "ReferenceMetricTolerance",
+      "type": "object"
+    }
+  },
+  "$id": "https://schemas.ecocorridor.local/1.0/ReferencePairComparison.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One auditable effective-resistance comparison against approved bytes.",
+  "properties": {
+    "absolute_difference": {
+      "minimum": 0,
+      "title": "Absolute Difference",
+      "type": "number"
+    },
+    "allowed_difference": {
+      "minimum": 0,
+      "title": "Allowed Difference",
+      "type": "number"
+    },
+    "observed_effective_resistance": {
+      "exclusiveMinimum": 0,
+      "title": "Observed Effective Resistance",
+      "type": "number"
+    },
+    "pair_id": {
+      "minLength": 1,
+      "title": "Pair Id",
+      "type": "string"
+    },
+    "reference_effective_resistance": {
+      "exclusiveMinimum": 0,
+      "title": "Reference Effective Resistance",
+      "type": "number"
+    },
+    "relative_difference": {
+      "minimum": 0,
+      "title": "Relative Difference",
+      "type": "number"
+    },
+    "tolerance": {
+      "$ref": "#/$defs/ReferenceMetricTolerance"
+    },
+    "within_tolerance": {
+      "title": "Within Tolerance",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "pair_id",
+    "reference_effective_resistance",
+    "observed_effective_resistance",
+    "tolerance",
+    "absolute_difference",
+    "relative_difference",
+    "allowed_difference",
+    "within_tolerance"
+  ],
+  "title": "ReferencePairComparison",
+  "type": "object"
+}

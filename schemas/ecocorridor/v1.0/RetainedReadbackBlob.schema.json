@@ -1,0 +1,39 @@
+{
+  "$id": "https://schemas.ecocorridor.local/1.0/RetainedReadbackBlob.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Exact downloaded JSON bytes retained for offline evidence verification.",
+  "properties": {
+    "byte_count": {
+      "exclusiveMinimum": 0,
+      "maximum": 16777216,
+      "title": "Byte Count",
+      "type": "integer"
+    },
+    "content_base64": {
+      "minLength": 4,
+      "title": "Content Base64",
+      "type": "string"
+    },
+    "content_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Content Sha256",
+      "type": "string"
+    },
+    "media_type": {
+      "const": "application/json",
+      "default": "application/json",
+      "title": "Media Type",
+      "type": "string"
+    }
+  },
+  "required": [
+    "content_base64",
+    "byte_count",
+    "content_sha256"
+  ],
+  "title": "RetainedReadbackBlob",
+  "type": "object"
+}

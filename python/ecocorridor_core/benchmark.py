@@ -1,0 +1,1883 @@
+"""Leak-resistant search benchmarks over immutable direct Circuitscape tables.
+
+The benchmark is an *offline replay*.  A search method receives portfolio
+identities and categorical choices, but it sees an outcome only after spending
+one complete portfolio evaluation.  Stored outcomes are never used as
+surrogate predictions and are never exposed by the benchmark result contract.
+
+The release campaign compares random sampling, scrambled Sobol sampling, and
+Sobol plus ExtraTrees at two or more declared budgets over at least three CC0
+synthetic landscapes and ten seeds.  Passing the scientific thresholds is
+necessary but insufficient for production: the exact report must also be
+pinned as an immutable W&B artifact version.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import math
+import os
+import random
+import re
+import statistics
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Literal
+
+from scenario_platform.storage import atomic_write_bytes
+
+from .contracts import (
+    ComputationalResourceObservation,
+    ResourceObservationBoundary,
+    ResourceObservationStatus,
+)
+from .interventions import portfolio_cost, unresolved_portfolio_concerns
+from .resource_observability import ProcessResourceRecorder
+from .ridgeway import build_ridgeway_fixture
+from .search import BenchmarkGateResult, ScientificSearchDependencyError
+
+BENCHMARK_SCHEMA_VERSION = "ecocorridor-search-table/v1.0"
+CAMPAIGN_SCHEMA_VERSION = "ecocorridor-search-gate/v1.0"
+ALGORITHM_VERSION = "ecocorridor-hidden-oracle/v1.0"
+RESOURCE_EXECUTION_SCHEMA_VERSION = "ecocorridor-search-resource-observation/v1.0"
+HISTORICAL_PROVENANCE_SCHEMA_VERSION = "ecocorridor-search-historical-provenance/v1.0"
+DEFAULT_BUDGETS = (80, 112)
+DEFAULT_SEED_COUNT = 10
+INITIAL_SOBOL_COUNT = 64
+ADAPTIVE_BATCH_SIZE = 16
+EXPLORATION_FRACTION = 0.25
+EXTRATREES_ESTIMATORS = 128
+
+Method = Literal["random", "sobol", "sobol_extratrees"]
+_METHODS: tuple[Method, ...] = ("random", "sobol", "sobol_extratrees")
+_IMMUTABLE_WANDB_REF = re.compile(r"^wandb-artifact://[^/]+/[^/]+/[^:]+:v[0-9]+$")
+
+
+def _canonical_json(value: object) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+def _canonical_sha256(value: object) -> str:
+    return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _require_sha256(value: object, label: str) -> str:
+    parsed = str(value)
+    if len(parsed) != 64 or any(character not in "0123456789abcdef" for character in parsed):
+        raise ValueError(f"{label} must be a lowercase SHA-256 digest")
+    return parsed
+
+
+def _dataset_digest(payload: Mapping[str, Any]) -> str:
+    return _canonical_sha256(
+        {key: value for key, value in payload.items() if key != "dataset_sha256"}
+    )
+
+
+def finalize_dataset_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a detached copy with a digest over every scientific field."""
+
+    finalized = json.loads(json.dumps(dict(payload)))
+    finalized.pop("dataset_sha256", None)
+    finalized["dataset_sha256"] = _dataset_digest(finalized)
+    return finalized
+
+
+@dataclass(frozen=True, slots=True)
+class BenchmarkCandidate:
+    """Outcome-free identity available to a search method."""
+
+    portfolio_id: str
+    vector: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class DirectPairObservation:
+    scenario_id: str
+    guild_id: str
+    safeguard: bool
+    pair_id: str
+    baseline_effective_resistance: float
+    portfolio_effective_resistance: float
+    baseline_relative_reduction_percent: float
+    direct_run_id: str
+    direct_result_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class DirectBenchmarkRow:
+    portfolio_id: str
+    vector: tuple[int, ...]
+    objective_values: tuple[float, float]
+    feasible: bool
+    safeguard_adverse: bool
+    direct_run_ids: tuple[str, ...]
+    direct_result_sha256s: tuple[str, ...]
+    observed_scenario_pair_metrics: tuple[DirectPairObservation, ...]
+
+    @property
+    def candidate(self) -> BenchmarkCandidate:
+        return BenchmarkCandidate(self.portfolio_id, self.vector)
+
+
+@dataclass(frozen=True, slots=True)
+class DirectBenchmarkDataset:
+    dataset_id: str
+    landscape_id: str
+    title: str
+    dataset_sha256: str
+    landscape_sha256: str
+    engine_manifest_sha256: str
+    source_evidence_index_sha256: str
+    baseline_portfolio_id: str
+    scenario_count: int
+    objective_names: tuple[str, str]
+    site_ids: tuple[str, ...]
+    option_ids_by_site: tuple[tuple[str, ...], ...]
+    rows: tuple[DirectBenchmarkRow, ...]
+
+    @property
+    def cardinalities(self) -> tuple[int, ...]:
+        return tuple(len(options) for options in self.option_ids_by_site)
+
+    @property
+    def candidates(self) -> tuple[BenchmarkCandidate, ...]:
+        return tuple(row.candidate for row in self.rows)
+
+
+class HiddenDirectOracle:
+    """Reveal a direct row only after a unique portfolio request.
+
+    The public catalog intentionally contains no metrics, feasibility labels,
+    safeguard labels, or evidence payloads.  Selection code receives only this
+    catalog and previously revealed rows.
+    """
+
+    def __init__(self, rows: Iterable[DirectBenchmarkRow]) -> None:
+        parsed = tuple(rows)
+        if not parsed:
+            raise ValueError("benchmark dataset contains no direct rows")
+        self._rows = {row.portfolio_id: row for row in parsed}
+        if len(self._rows) != len(parsed):
+            raise ValueError("benchmark dataset contains duplicate portfolio IDs")
+        self._catalog = tuple(row.candidate for row in parsed)
+        self._revealed: list[DirectBenchmarkRow] = []
+        self._seen: set[str] = set()
+
+    @property
+    def catalog(self) -> tuple[BenchmarkCandidate, ...]:
+        return self._catalog
+
+    @property
+    def revealed(self) -> tuple[DirectBenchmarkRow, ...]:
+        return tuple(self._revealed)
+
+    @property
+    def spent(self) -> int:
+        return len(self._revealed)
+
+    def evaluate(self, portfolio_id: str) -> DirectBenchmarkRow:
+        if portfolio_id in self._seen:
+            raise ValueError(f"portfolio was requested twice: {portfolio_id}")
+        try:
+            row = self._rows[portfolio_id]
+        except KeyError as error:
+            raise ValueError(
+                f"portfolio is outside the immutable universe: {portfolio_id}"
+            ) from error
+        self._seen.add(portfolio_id)
+        self._revealed.append(row)
+        return row
+
+
+def _strict_keys(
+    raw: Mapping[str, Any], required: set[str], optional: set[str], label: str
+) -> None:
+    keys = set(raw)
+    missing = required - keys
+    unknown = keys - required - optional
+    if missing:
+        raise ValueError(f"{label} is missing fields: {sorted(missing)}")
+    if unknown:
+        raise ValueError(f"{label} contains unknown fields: {sorted(unknown)}")
+
+
+def load_benchmark_dataset(path: str | Path) -> DirectBenchmarkDataset:
+    source = Path(path)
+    payload = json.loads(source.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise TypeError("benchmark dataset must be a JSON object")
+    _strict_keys(
+        payload,
+        {
+            "schema_version",
+            "dataset_id",
+            "landscape_id",
+            "title",
+            "license",
+            "synthetic",
+            "intended_use",
+            "evidence_source",
+            "baseline_portfolio_id",
+            "scenario_count",
+            "objective_directions",
+            "feasibility_definition",
+            "safeguard_adverse_definition",
+            "site_options",
+            "universe_size",
+            "rows",
+            "dataset_sha256",
+        },
+        set(),
+        "benchmark dataset",
+    )
+    if payload["schema_version"] != BENCHMARK_SCHEMA_VERSION:
+        raise ValueError(f"benchmark schema_version must be {BENCHMARK_SCHEMA_VERSION}")
+    if payload["license"] != "CC0-1.0" or payload["synthetic"] is not True:
+        raise ValueError("release benchmark datasets must be explicitly synthetic CC0-1.0")
+    if payload["intended_use"] != "ALGORITHM_RELEASE_GATE_ONLY":
+        raise ValueError("benchmark data may not be presented as ecological decision evidence")
+    if payload["dataset_sha256"] != _dataset_digest(payload):
+        raise ValueError("benchmark dataset digest does not match its contents")
+
+    evidence = payload["evidence_source"]
+    if not isinstance(evidence, dict):
+        raise TypeError("evidence_source must be an object")
+    _strict_keys(
+        evidence,
+        {
+            "kind",
+            "engine_name",
+            "engine_manifest_sha256",
+            "workflow_manifest_sha256",
+            "source_evidence_index_sha256",
+            "model_sha256",
+            "landscape_sha256",
+            "scenario_ids",
+        },
+        set(),
+        "evidence_source",
+    )
+    if evidence["kind"] != "DIRECT_CIRCUITSCAPE" or evidence["engine_name"] != "Circuitscape":
+        raise ValueError("release benchmark rows require direct Circuitscape evidence")
+    engine_sha = _require_sha256(evidence["engine_manifest_sha256"], "engine manifest digest")
+    _require_sha256(evidence["workflow_manifest_sha256"], "workflow manifest digest")
+    index_sha = _require_sha256(evidence["source_evidence_index_sha256"], "evidence index digest")
+    _require_sha256(evidence["model_sha256"], "model digest")
+    landscape_sha = _require_sha256(evidence["landscape_sha256"], "landscape digest")
+    scenario_ids = evidence["scenario_ids"]
+    if (
+        not isinstance(scenario_ids, list)
+        or not scenario_ids
+        or len(scenario_ids) != len(set(scenario_ids))
+    ):
+        raise ValueError("evidence_source scenario_ids must be a unique nonempty list")
+    scenario_count = int(payload["scenario_count"])
+    if scenario_count != len(scenario_ids):
+        raise ValueError("scenario_count differs from the direct evidence ensemble")
+
+    directions = payload["objective_directions"]
+    if not isinstance(directions, dict) or len(directions) != 2:
+        raise ValueError("benchmark requires exactly two declared objectives")
+    if any(direction != "minimize" for direction in directions.values()):
+        raise ValueError("benchmark objective values must be normalized to minimization")
+    objective_names = tuple(directions)
+    if (
+        not str(payload["feasibility_definition"]).strip()
+        or not str(payload["safeguard_adverse_definition"]).strip()
+    ):
+        raise ValueError("benchmark disposition definitions must be explicit")
+
+    site_options = payload["site_options"]
+    if not isinstance(site_options, list) or not site_options:
+        raise ValueError("benchmark requires categorical site options")
+    site_ids: list[str] = []
+    option_ids_by_site: list[tuple[str, ...]] = []
+    for index, item in enumerate(site_options):
+        if not isinstance(item, dict):
+            raise TypeError(f"site_options[{index}] must be an object")
+        _strict_keys(item, {"site_id", "option_ids"}, set(), f"site_options[{index}]")
+        site_id = str(item["site_id"])
+        option_ids = tuple(str(value) for value in item["option_ids"])
+        if not site_id or not option_ids or len(option_ids) != len(set(option_ids)):
+            raise ValueError("each site requires unique stable option IDs")
+        site_ids.append(site_id)
+        option_ids_by_site.append(option_ids)
+    if site_ids != sorted(site_ids) or len(site_ids) != len(set(site_ids)):
+        raise ValueError("site IDs must be unique and canonically sorted")
+
+    raw_rows = payload["rows"]
+    if not isinstance(raw_rows, list) or len(raw_rows) != int(payload["universe_size"]):
+        raise ValueError("universe_size differs from the immutable direct row table")
+    if len(raw_rows) < INITIAL_SOBOL_COUNT:
+        raise ValueError("release benchmark tables require at least 64 direct portfolios")
+    rows: list[DirectBenchmarkRow] = []
+    all_direct_run_ids: list[str] = []
+    for index, raw in enumerate(raw_rows):
+        if not isinstance(raw, dict):
+            raise TypeError(f"rows[{index}] must be an object")
+        _strict_keys(
+            raw,
+            {
+                "portfolio_id",
+                "vector",
+                "objective_values",
+                "feasible",
+                "safeguard_adverse",
+                "direct_run_ids",
+                "direct_result_sha256s",
+                "observed_scenario_pair_metrics",
+            },
+            set(),
+            f"rows[{index}]",
+        )
+        vector = tuple(int(value) for value in raw["vector"])
+        if len(vector) != len(site_ids) or any(
+            value < 0 or value >= len(options)
+            for value, options in zip(vector, option_ids_by_site, strict=True)
+        ):
+            raise ValueError(f"rows[{index}] contains an invalid categorical vector")
+        objective_map = raw["objective_values"]
+        if not isinstance(objective_map, dict) or tuple(objective_map) != objective_names:
+            raise ValueError("row objective order must match objective_directions")
+        objective_values = tuple(float(objective_map[name]) for name in objective_names)
+        if any(not math.isfinite(value) for value in objective_values):
+            raise ValueError("benchmark objectives must be finite")
+        if not isinstance(raw["feasible"], bool) or not isinstance(raw["safeguard_adverse"], bool):
+            raise TypeError("row feasibility and safeguard/adverse labels must be booleans")
+        direct_run_ids = tuple(str(value) for value in raw["direct_run_ids"])
+        direct_result_shas = tuple(str(value) for value in raw["direct_result_sha256s"])
+        if len(direct_run_ids) != scenario_count or len(set(direct_run_ids)) != scenario_count:
+            raise ValueError("every row requires one unique direct run per scenario")
+        if len(direct_result_shas) != scenario_count:
+            raise ValueError("every direct run requires an immutable result digest")
+        for digest in direct_result_shas:
+            _require_sha256(digest, "direct result digest")
+        digest_by_run_id = dict(zip(direct_run_ids, direct_result_shas, strict=True))
+        metric_observations: list[DirectPairObservation] = []
+        raw_observations = raw["observed_scenario_pair_metrics"]
+        if not isinstance(raw_observations, list) or not raw_observations:
+            raise ValueError("every benchmark row must retain direct scenario/pair observations")
+        for observation_index, observation in enumerate(raw_observations):
+            if not isinstance(observation, dict):
+                raise TypeError("direct scenario/pair observation must be an object")
+            _strict_keys(
+                observation,
+                {
+                    "scenario_id",
+                    "guild_id",
+                    "safeguard",
+                    "pair_id",
+                    "baseline_effective_resistance",
+                    "portfolio_effective_resistance",
+                    "baseline_relative_reduction_percent",
+                    "direct_run_id",
+                    "direct_result_sha256",
+                },
+                set(),
+                f"rows[{index}].observed_scenario_pair_metrics[{observation_index}]",
+            )
+            scenario_id = str(observation["scenario_id"])
+            guild_id = str(observation["guild_id"])
+            pair_id = str(observation["pair_id"])
+            direct_run_id = str(observation["direct_run_id"])
+            direct_result_sha = _require_sha256(
+                observation["direct_result_sha256"], "direct pair-observation result digest"
+            )
+            if scenario_id not in scenario_ids:
+                raise ValueError("direct pair observation references an undeclared scenario")
+            if not guild_id or not pair_id or not direct_run_id:
+                raise ValueError("direct pair observation identities must be nonempty")
+            if digest_by_run_id.get(direct_run_id) != direct_result_sha:
+                raise ValueError("direct pair observation is detached from its row evidence")
+            if not isinstance(observation["safeguard"], bool):
+                raise TypeError("direct pair observation safeguard must be a boolean")
+            baseline_resistance = float(observation["baseline_effective_resistance"])
+            portfolio_resistance = float(observation["portfolio_effective_resistance"])
+            reduction = float(observation["baseline_relative_reduction_percent"])
+            if (
+                baseline_resistance <= 0
+                or portfolio_resistance <= 0
+                or not all(
+                    math.isfinite(value)
+                    for value in (baseline_resistance, portfolio_resistance, reduction)
+                )
+            ):
+                raise ValueError("direct pair observations require finite positive resistances")
+            recomputed = (baseline_resistance - portfolio_resistance) / baseline_resistance * 100
+            if not math.isclose(reduction, recomputed, rel_tol=1e-10, abs_tol=1e-10):
+                raise ValueError("direct pair reduction differs from its retained resistances")
+            metric_observations.append(
+                DirectPairObservation(
+                    scenario_id=scenario_id,
+                    guild_id=guild_id,
+                    safeguard=observation["safeguard"],
+                    pair_id=pair_id,
+                    baseline_effective_resistance=baseline_resistance,
+                    portfolio_effective_resistance=portfolio_resistance,
+                    baseline_relative_reduction_percent=reduction,
+                    direct_run_id=direct_run_id,
+                    direct_result_sha256=direct_result_sha,
+                )
+            )
+        observed_scenarios = {item.scenario_id for item in metric_observations}
+        if observed_scenarios != set(scenario_ids):
+            raise ValueError(
+                "every row must retain pair observations for its complete scenario ensemble"
+            )
+        if {item.direct_run_id for item in metric_observations} != set(direct_run_ids):
+            raise ValueError("every direct run must retain at least one pair observation")
+        observation_ids = [(item.scenario_id, item.pair_id) for item in metric_observations]
+        if len(observation_ids) != len(set(observation_ids)):
+            raise ValueError("direct scenario/pair observations must be unique")
+        if objective_names == (
+            "cost_usd",
+            "negative_worst_target_reduction_percent",
+        ):
+            target_reductions = [
+                item.baseline_relative_reduction_percent
+                for item in metric_observations
+                if not item.safeguard
+            ]
+            if not target_reductions or not math.isclose(
+                objective_values[1],
+                -min(target_reductions),
+                rel_tol=1e-10,
+                abs_tol=1e-10,
+            ):
+                raise ValueError("target reducer differs from retained direct scenario/pair values")
+        all_direct_run_ids.extend(direct_run_ids)
+        rows.append(
+            DirectBenchmarkRow(
+                portfolio_id=str(raw["portfolio_id"]),
+                vector=vector,
+                objective_values=(objective_values[0], objective_values[1]),
+                feasible=raw["feasible"] is True,
+                safeguard_adverse=raw["safeguard_adverse"] is True,
+                direct_run_ids=direct_run_ids,
+                direct_result_sha256s=direct_result_shas,
+                observed_scenario_pair_metrics=tuple(metric_observations),
+            )
+        )
+    portfolio_ids = [row.portfolio_id for row in rows]
+    vectors = [row.vector for row in rows]
+    if len(portfolio_ids) != len(set(portfolio_ids)) or len(vectors) != len(set(vectors)):
+        raise ValueError("benchmark rows require unique portfolio IDs and categorical vectors")
+    if len(all_direct_run_ids) != len(set(all_direct_run_ids)):
+        raise ValueError("a direct run may support only one benchmark portfolio/scenario row")
+    if portfolio_ids != sorted(portfolio_ids):
+        raise ValueError("benchmark rows must be canonically sorted by portfolio_id")
+    if not any(row.feasible for row in rows):
+        raise ValueError("benchmark table has no feasible direct alternative")
+    adverse_labels = {row.safeguard_adverse for row in rows}
+    if adverse_labels != {False, True}:
+        raise ValueError("benchmark table requires both adverse and non-adverse direct outcomes")
+    baseline_id = str(payload["baseline_portfolio_id"])
+    if baseline_id not in set(portfolio_ids):
+        raise ValueError("baseline portfolio is absent from the benchmark universe")
+    return DirectBenchmarkDataset(
+        dataset_id=str(payload["dataset_id"]),
+        landscape_id=str(payload["landscape_id"]),
+        title=str(payload["title"]),
+        dataset_sha256=str(payload["dataset_sha256"]),
+        landscape_sha256=landscape_sha,
+        engine_manifest_sha256=engine_sha,
+        source_evidence_index_sha256=index_sha,
+        baseline_portfolio_id=baseline_id,
+        scenario_count=scenario_count,
+        objective_names=(str(objective_names[0]), str(objective_names[1])),
+        site_ids=tuple(site_ids),
+        option_ids_by_site=tuple(option_ids_by_site),
+        rows=tuple(rows),
+    )
+
+
+def _nondominated(rows: Sequence[DirectBenchmarkRow]) -> list[DirectBenchmarkRow]:
+    feasible = [row for row in rows if row.feasible]
+    front: list[DirectBenchmarkRow] = []
+    for row in feasible:
+        if any(
+            all(
+                left <= right
+                for left, right in zip(other.objective_values, row.objective_values, strict=True)
+            )
+            and any(
+                left < right
+                for left, right in zip(other.objective_values, row.objective_values, strict=True)
+            )
+            for other in feasible
+            if other.portfolio_id != row.portfolio_id
+        ):
+            continue
+        front.append(row)
+    return sorted(front, key=lambda row: (row.objective_values, row.portfolio_id))
+
+
+def _reference_point(truth: Sequence[DirectBenchmarkRow]) -> tuple[float, float]:
+    feasible = [row.objective_values for row in truth if row.feasible]
+    if not feasible:
+        return (1.0, 1.0)
+    first = [point[0] for point in feasible]
+    second = [point[1] for point in feasible]
+    first_span = max(first) - min(first) or max(abs(first[0]), 1.0)
+    second_span = max(second) - min(second) or max(abs(second[0]), 1.0)
+    return max(first) + 0.05 * first_span, max(second) + 0.05 * second_span
+
+
+def _hypervolume_2d(rows: Sequence[DirectBenchmarkRow], reference: tuple[float, float]) -> float:
+    points = sorted({row.objective_values for row in _nondominated(rows)})
+    area = 0.0
+    best_second = reference[1]
+    for first, second in points:
+        if first >= reference[0] or second >= best_second:
+            continue
+        area += (reference[0] - first) * (best_second - second)
+        best_second = second
+    return max(0.0, area)
+
+
+def score_observed(
+    truth: Sequence[DirectBenchmarkRow],
+    observed: Sequence[DirectBenchmarkRow],
+    *,
+    scenario_count: int,
+) -> dict[str, float | int]:
+    reference = _reference_point(truth)
+    truth_hypervolume = _hypervolume_2d(truth, reference)
+    observed_hypervolume = _hypervolume_2d(observed, reference)
+    observed_ids = {row.portfolio_id for row in observed}
+    feasible_ids = {row.portfolio_id for row in truth if row.feasible}
+    adverse_ids = {row.portfolio_id for row in truth if row.safeguard_adverse}
+    return {
+        "evaluated_portfolios": len(observed),
+        "exact_job_equivalent": len(observed) * scenario_count,
+        "observed_frontier_size": len(_nondominated(observed)),
+        "hypervolume_ratio": round(
+            1.0 if truth_hypervolume == 0 else min(1.0, observed_hypervolume / truth_hypervolume),
+            12,
+        ),
+        "feasible_recall": round(
+            1.0 if not feasible_ids else len(feasible_ids & observed_ids) / len(feasible_ids), 12
+        ),
+        "safeguard_adverse_recall": round(
+            1.0 if not adverse_ids else len(adverse_ids & observed_ids) / len(adverse_ids), 12
+        ),
+    }
+
+
+def _random_order(
+    candidates: Sequence[BenchmarkCandidate], baseline_id: str, seed: int
+) -> list[BenchmarkCandidate]:
+    baseline = next(candidate for candidate in candidates if candidate.portfolio_id == baseline_id)
+    remainder = [candidate for candidate in candidates if candidate.portfolio_id != baseline_id]
+    random.Random(seed).shuffle(remainder)
+    return [baseline, *remainder]
+
+
+def _sobol_order(
+    candidates: Sequence[BenchmarkCandidate],
+    cardinalities: Sequence[int],
+    baseline_id: str,
+    seed: int,
+) -> list[BenchmarkCandidate]:
+    try:
+        from scipy.stats import qmc
+    except ImportError as error:  # pragma: no cover - packaging gate
+        raise ScientificSearchDependencyError(
+            "benchmark Sobol search requires the pinned SciPy science dependency"
+        ) from error
+    baseline = next(candidate for candidate in candidates if candidate.portfolio_id == baseline_id)
+    unseen = {
+        candidate.portfolio_id: candidate for candidate in candidates if candidate != baseline
+    }
+    exponent = max(6, math.ceil(math.log2(max(1, len(unseen)))))
+    points = qmc.Sobol(d=len(cardinalities), scramble=True, seed=seed).random_base2(exponent)
+    order = [baseline]
+    for point in points:
+        if not unseen:
+            break
+        chosen = min(
+            unseen.values(),
+            key=lambda candidate: (
+                sum(
+                    ((value + 0.5) / cardinality - float(coordinate)) ** 2
+                    for value, cardinality, coordinate in zip(
+                        candidate.vector, cardinalities, point, strict=True
+                    )
+                ),
+                candidate.portfolio_id,
+            ),
+        )
+        order.append(chosen)
+        del unseen[chosen.portfolio_id]
+    if unseen:
+        # Power-of-two generation above always supplies at least as many points
+        # as candidates.  Keep the failure explicit if a future implementation
+        # changes that arithmetic.
+        raise RuntimeError("scrambled Sobol ordering did not cover the immutable universe")
+    return order
+
+
+def _encode_candidates(
+    candidates: Sequence[BenchmarkCandidate], cardinalities: Sequence[int]
+) -> list[list[float]]:
+    offsets: list[int] = []
+    cursor = 0
+    for cardinality in cardinalities:
+        offsets.append(cursor)
+        cursor += cardinality
+    encoded: list[list[float]] = []
+    for candidate in candidates:
+        row = [0.0] * cursor
+        for site_index, option_index in enumerate(candidate.vector):
+            row[offsets[site_index] + option_index] = 1.0
+        encoded.append(row)
+    return encoded
+
+
+def _adaptive_batch(
+    *,
+    observed: Sequence[DirectBenchmarkRow],
+    unseen: Sequence[BenchmarkCandidate],
+    sobol_remaining: Sequence[BenchmarkCandidate],
+    cardinalities: Sequence[int],
+    batch_size: int,
+    seed: int,
+) -> tuple[list[BenchmarkCandidate], dict[str, int]]:
+    if len({row.portfolio_id for row in observed}) < INITIAL_SOBOL_COUNT:
+        raise ValueError("ExtraTrees benchmark acquisition requires 64 direct portfolios")
+    if batch_size <= 0:
+        return [], {"adaptive": 0, "exploration": 0}
+    try:
+        import numpy as np
+        from sklearn.ensemble import ExtraTreesClassifier, ExtraTreesRegressor
+    except ImportError as error:  # pragma: no cover - packaging gate
+        raise ScientificSearchDependencyError(
+            "benchmark ExtraTrees requires the pinned NumPy/scikit-learn science dependency"
+        ) from error
+
+    observed_candidates = [row.candidate for row in observed]
+    train_x = np.asarray(_encode_candidates(observed_candidates, cardinalities), dtype=float)
+    candidate_x = np.asarray(_encode_candidates(unseen, cardinalities), dtype=float)
+    train_y = np.asarray([row.objective_values for row in observed], dtype=float)
+    predicted_columns: list[Any] = []
+    uncertainty_columns: list[Any] = []
+    for column in range(2):
+        regressor = ExtraTreesRegressor(
+            n_estimators=EXTRATREES_ESTIMATORS,
+            random_state=seed + column,
+            n_jobs=1,
+        )
+        regressor.fit(train_x, train_y[:, column])
+        trees = np.asarray([tree.predict(candidate_x) for tree in regressor.estimators_])
+        predicted_columns.append(trees.mean(axis=0))
+        uncertainty_columns.append(trees.std(axis=0))
+    predicted = np.column_stack(predicted_columns)
+    uncertainty = np.column_stack(uncertainty_columns).mean(axis=1)
+
+    def positive_probability(values: Sequence[bool], offset: int) -> Any:
+        labels = np.asarray(values, dtype=int)
+        if len(set(labels.tolist())) == 1:
+            return np.full(len(unseen), float(labels[0]))
+        classifier = ExtraTreesClassifier(
+            n_estimators=EXTRATREES_ESTIMATORS,
+            random_state=seed + offset,
+            n_jobs=1,
+        )
+        classifier.fit(train_x, labels)
+        positive_index = list(classifier.classes_).index(1)
+        return classifier.predict_proba(candidate_x)[:, positive_index]
+
+    feasible_probability = positive_probability([row.feasible for row in observed], 1000)
+    adverse_probability = positive_probability([row.safeguard_adverse for row in observed], 2000)
+    predicted_front: set[int] = set()
+    for index, row in enumerate(predicted):
+        dominated = any(
+            all(left <= right for left, right in zip(other, row, strict=True))
+            and any(left < right for left, right in zip(other, row, strict=True))
+            for other_index, other in enumerate(predicted)
+            if other_index != index
+        )
+        if not dominated:
+            predicted_front.add(index)
+
+    exploration_count = max(1, math.ceil(batch_size * EXPLORATION_FRACTION))
+    adaptive_count = batch_size - exploration_count
+    acquisition = sorted(
+        range(len(unseen)),
+        key=lambda index: (
+            index not in predicted_front,
+            -float(feasible_probability[index]),
+            -float(adverse_probability[index]),
+            -float(uncertainty[index]),
+            unseen[index].portfolio_id,
+        ),
+    )
+    adaptive = [unseen[index] for index in acquisition[:adaptive_count]]
+    selected = {candidate.portfolio_id for candidate in adaptive}
+    exploration = [
+        candidate for candidate in sobol_remaining if candidate.portfolio_id not in selected
+    ][:exploration_count]
+    if len(exploration) != exploration_count:
+        raise RuntimeError("adaptive benchmark exhausted its reserved Sobol exploration")
+    result = [*adaptive, *exploration]
+    if len(result) != batch_size or len({item.portfolio_id for item in result}) != batch_size:
+        raise RuntimeError("adaptive benchmark produced an incomplete or duplicate batch")
+    return result, {"adaptive": adaptive_count, "exploration": exploration_count}
+
+
+def _record_checkpoint(
+    dataset: DirectBenchmarkDataset,
+    observed: Sequence[DirectBenchmarkRow],
+    *,
+    exploration: int,
+    adaptive: int,
+) -> dict[str, Any]:
+    return {
+        "evaluated_portfolios": len(observed),
+        "selection_counts": {"exploration": exploration, "adaptive": adaptive},
+        **score_observed(dataset.rows, observed, scenario_count=dataset.scenario_count),
+    }
+
+
+def run_replay(
+    dataset: DirectBenchmarkDataset,
+    *,
+    method: Method,
+    seed: int,
+    budget: int,
+    checkpoints: Sequence[int] = (),
+) -> dict[str, Any]:
+    """Replay one search without allowing selection to inspect hidden outcomes."""
+
+    if method not in _METHODS:
+        raise ValueError(f"unsupported benchmark method: {method}")
+    if seed < 0:
+        raise ValueError("benchmark seed must be nonnegative")
+    if budget < 1 or budget > len(dataset.rows):
+        raise ValueError("benchmark budget must be within the immutable universe")
+    checkpoint_set = {int(value) for value in checkpoints if 1 <= int(value) <= budget}
+    checkpoint_set.add(budget)
+    oracle = HiddenDirectOracle(dataset.rows)
+    sobol_order = _sobol_order(
+        oracle.catalog, dataset.cardinalities, dataset.baseline_portfolio_id, seed
+    )
+    if method == "random":
+        fixed_order = _random_order(oracle.catalog, dataset.baseline_portfolio_id, seed)
+    else:
+        fixed_order = sobol_order
+
+    history: list[dict[str, Any]] = []
+    exploration = 0
+    adaptive = 0
+
+    def reveal(candidate: BenchmarkCandidate, source: str) -> None:
+        nonlocal exploration, adaptive
+        oracle.evaluate(candidate.portfolio_id)
+        if source == "adaptive":
+            adaptive += 1
+        else:
+            exploration += 1
+        if oracle.spent in checkpoint_set:
+            history.append(
+                _record_checkpoint(
+                    dataset, oracle.revealed, exploration=exploration, adaptive=adaptive
+                )
+            )
+
+    if method in {"random", "sobol"}:
+        for candidate in fixed_order[:budget]:
+            reveal(candidate, "exploration")
+    else:
+        initial_count = min(INITIAL_SOBOL_COUNT, budget)
+        for candidate in fixed_order[:initial_count]:
+            reveal(candidate, "exploration")
+        batch = 0
+        while oracle.spent < budget:
+            batch += 1
+            batch_count = min(ADAPTIVE_BATCH_SIZE, budget - oracle.spent)
+            seen = {row.portfolio_id for row in oracle.revealed}
+            unseen = sorted(
+                (candidate for candidate in oracle.catalog if candidate.portfolio_id not in seen),
+                key=lambda candidate: candidate.portfolio_id,
+            )
+            sobol_remaining = [
+                candidate for candidate in sobol_order if candidate.portfolio_id not in seen
+            ]
+            candidates, counts = _adaptive_batch(
+                observed=sorted(oracle.revealed, key=lambda row: row.portfolio_id),
+                unseen=unseen,
+                sobol_remaining=sobol_remaining,
+                cardinalities=dataset.cardinalities,
+                batch_size=batch_count,
+                seed=seed + batch,
+            )
+            for index, candidate in enumerate(candidates):
+                reveal(candidate, "adaptive" if index < counts["adaptive"] else "exploration")
+
+    result = {
+        "schema_version": "ecocorridor-search-replay/v1.0",
+        "algorithm_version": ALGORITHM_VERSION,
+        "dataset_id": dataset.dataset_id,
+        "dataset_sha256": dataset.dataset_sha256,
+        "landscape_id": dataset.landscape_id,
+        "method": method,
+        "seed": seed,
+        "budget": budget,
+        "scenario_count": dataset.scenario_count,
+        "selection_counts": {"exploration": exploration, "adaptive": adaptive},
+        "selected_portfolio_ids": [row.portfolio_id for row in oracle.revealed],
+        "history": history,
+        "summary": score_observed(
+            dataset.rows, oracle.revealed, scenario_count=dataset.scenario_count
+        ),
+        "reporting_boundary": (
+            "Selection-only replay. No predicted ecological map or connectivity value is emitted."
+        ),
+    }
+    result["trace_sha256"] = _canonical_sha256(result)
+    return result
+
+
+def _quantile(values: Sequence[float], probability: float) -> float:
+    if not values:
+        raise ValueError("cannot calculate a quantile from no values")
+    ordered = sorted(float(value) for value in values)
+    if len(ordered) == 1:
+        return ordered[0]
+    position = (len(ordered) - 1) * probability
+    lower = math.floor(position)
+    upper = math.ceil(position)
+    if lower == upper:
+        return ordered[lower]
+    fraction = position - lower
+    return ordered[lower] * (1 - fraction) + ordered[upper] * fraction
+
+
+def evaluate_gate(
+    run_records: Sequence[Mapping[str, Any]],
+    *,
+    landscape_count: int,
+    seeds_per_landscape: int,
+    budgets: Sequence[int],
+) -> BenchmarkGateResult:
+    improvements: dict[str, list[float]] = {str(budget): [] for budget in budgets}
+    tenth_regressions: list[float] = []
+    feasible_deltas: list[float] = []
+    maximum_budget_adverse: list[float] = []
+    maximum_budget = max(budgets)
+    for budget in budgets:
+        sobol_hypervolumes: list[float] = []
+        adaptive_hypervolumes: list[float] = []
+        grouped: dict[tuple[str, int], dict[str, Mapping[str, Any]]] = {}
+        for record in run_records:
+            if int(record["budget"]) != budget:
+                continue
+            grouped.setdefault((str(record["landscape_id"]), int(record["seed"])), {})[
+                str(record["method"])
+            ] = record
+        expected = landscape_count * seeds_per_landscape
+        if len(grouped) != expected:
+            raise ValueError(f"budget {budget} has {len(grouped)} paired runs; expected {expected}")
+        for key in sorted(grouped):
+            methods = grouped[key]
+            if set(methods) != set(_METHODS):
+                raise ValueError(f"benchmark pair {key} does not contain all required methods")
+            sobol = methods["sobol"]["score"]
+            adaptive = methods["sobol_extratrees"]["score"]
+            sobol_hv = float(sobol["hypervolume_ratio"])
+            adaptive_hv = float(adaptive["hypervolume_ratio"])
+            improvement = (
+                0.0 if abs(sobol_hv) <= 1e-12 else (adaptive_hv - sobol_hv) / abs(sobol_hv) * 100
+            )
+            improvements[str(budget)].append(improvement)
+            sobol_hypervolumes.append(sobol_hv)
+            adaptive_hypervolumes.append(adaptive_hv)
+            feasible_deltas.append(
+                (float(adaptive["feasible_recall"]) - float(sobol["feasible_recall"])) * 100
+            )
+            if budget == maximum_budget:
+                maximum_budget_adverse.append(float(adaptive["safeguard_adverse_recall"]) * 100)
+        sobol_tenth = _quantile(sobol_hypervolumes, 0.1)
+        adaptive_tenth = _quantile(adaptive_hypervolumes, 0.1)
+        tenth_regressions.append(
+            max(0.0, (sobol_tenth - adaptive_tenth) / max(abs(sobol_tenth), 1e-12) * 100)
+        )
+    return BenchmarkGateResult(
+        landscape_count=landscape_count,
+        seeds_per_landscape=seeds_per_landscape,
+        median_hypervolume_improvement_percent_by_budget={
+            budget: round(statistics.median(values), 12) for budget, values in improvements.items()
+        },
+        tenth_percentile_regression_percent=round(max(tenth_regressions), 12),
+        feasible_recall_delta_percent=round(min(feasible_deltas), 12),
+        safeguard_adverse_recall_percent=round(min(maximum_budget_adverse), 12),
+    )
+
+
+def _score_at_budget(replay: Mapping[str, Any], budget: int) -> dict[str, Any]:
+    for checkpoint in replay["history"]:
+        if int(checkpoint["evaluated_portfolios"]) == budget:
+            return {
+                key: value
+                for key, value in checkpoint.items()
+                if key not in {"evaluated_portfolios", "selection_counts"}
+            }
+    raise ValueError(f"replay has no declared checkpoint at budget {budget}")
+
+
+def run_campaign(
+    datasets: Sequence[DirectBenchmarkDataset],
+    *,
+    seeds: Sequence[int],
+    budgets: Sequence[int],
+    pinned_wandb_artifact: str | None = None,
+) -> dict[str, Any]:
+    if len(datasets) < 3:
+        raise ValueError("the release campaign requires at least three fixed landscapes")
+    if len({dataset.landscape_id for dataset in datasets}) != len(datasets):
+        raise ValueError("release benchmark landscape IDs must be unique")
+    if len({dataset.landscape_sha256 for dataset in datasets}) != len(datasets):
+        raise ValueError("release benchmark landscapes must have distinct source hashes")
+    if len(seeds) < 10 or len(set(seeds)) != len(seeds) or any(seed < 0 for seed in seeds):
+        raise ValueError("the release campaign requires at least ten unique nonnegative seeds")
+    normalized_budgets = tuple(sorted({int(value) for value in budgets}))
+    if len(normalized_budgets) < 2 or normalized_budgets[0] < INITIAL_SOBOL_COUNT:
+        raise ValueError("declare at least two budgets, each allowing 64 direct portfolios")
+    if any(
+        budget > INITIAL_SOBOL_COUNT and (budget - INITIAL_SOBOL_COUNT) % ADAPTIVE_BATCH_SIZE != 0
+        for budget in normalized_budgets
+    ):
+        raise ValueError("declared budgets must end at deterministic adaptive batch barriers")
+    if any(normalized_budgets[-1] > len(dataset.rows) for dataset in datasets):
+        raise ValueError("a declared budget exceeds a benchmark landscape universe")
+    if pinned_wandb_artifact and not _IMMUTABLE_WANDB_REF.fullmatch(pinned_wandb_artifact):
+        raise ValueError("W&B benchmark approval must reference an immutable artifact :vN version")
+
+    maximum_budget = normalized_budgets[-1]
+    records: list[dict[str, Any]] = []
+    traces: list[dict[str, Any]] = []
+    for dataset in sorted(datasets, key=lambda item: item.landscape_id):
+        for seed in sorted(seeds):
+            for method in _METHODS:
+                replay = run_replay(
+                    dataset,
+                    method=method,
+                    seed=seed,
+                    budget=maximum_budget,
+                    checkpoints=normalized_budgets,
+                )
+                traces.append(replay)
+                for budget in normalized_budgets:
+                    records.append(
+                        {
+                            "landscape_id": dataset.landscape_id,
+                            "dataset_sha256": dataset.dataset_sha256,
+                            "method": method,
+                            "seed": seed,
+                            "budget": budget,
+                            "score": _score_at_budget(replay, budget),
+                            "trace_sha256": replay["trace_sha256"],
+                        }
+                    )
+    records.sort(key=lambda row: (row["landscape_id"], row["seed"], row["budget"], row["method"]))
+    traces.sort(key=lambda row: (row["landscape_id"], row["seed"], row["method"]))
+    gate = evaluate_gate(
+        records,
+        landscape_count=len(datasets),
+        seeds_per_landscape=len(seeds),
+        budgets=normalized_budgets,
+    )
+    scientific_passed = gate.production_enabled
+    production_enabled = bool(scientific_passed and pinned_wandb_artifact)
+    blockers: list[str] = []
+    if not scientific_passed:
+        blockers.append("The deterministic scientific search thresholds did not all pass.")
+    if not pinned_wandb_artifact:
+        blockers.append("No immutable W&B benchmark artifact version is pinned.")
+    report = {
+        "schema_version": CAMPAIGN_SCHEMA_VERSION,
+        "algorithm_version": ALGORITHM_VERSION,
+        "methods": list(_METHODS),
+        "datasets": [
+            {
+                "dataset_id": dataset.dataset_id,
+                "dataset_sha256": dataset.dataset_sha256,
+                "landscape_id": dataset.landscape_id,
+                "landscape_sha256": dataset.landscape_sha256,
+                "scenario_count": dataset.scenario_count,
+                "universe_size": len(dataset.rows),
+                "engine_manifest_sha256": dataset.engine_manifest_sha256,
+            }
+            for dataset in sorted(datasets, key=lambda item: item.landscape_id)
+        ],
+        "seeds": sorted(seeds),
+        "budgets": list(normalized_budgets),
+        "method_configuration": {
+            "initial_sobol_portfolios": INITIAL_SOBOL_COUNT,
+            "adaptive_batch_size": ADAPTIVE_BATCH_SIZE,
+            "extra_trees_estimators": EXTRATREES_ESTIMATORS,
+            "minimum_sobol_exploration_fraction": EXPLORATION_FRACTION,
+            "batch_barrier": "complete_direct_ensemble_then_sort_by_portfolio_id",
+            "oracle_boundary": "outcome_revealed_only_after_unique_portfolio_request",
+        },
+        "run_records": records,
+        "traces": traces,
+        "gate_result": gate.model_dump(mode="json"),
+        "scientific_gate_passed": scientific_passed,
+        "pinned_wandb_artifact": pinned_wandb_artifact,
+        "production_adaptive_enabled": production_enabled,
+        "production_blockers": blockers,
+        "resource_observation": {
+            "status": "RECORDED_IN_EXECUTION_SIDECAR",
+            "explanation": (
+                "The deterministic scientific report excludes machine-dependent timing, memory, "
+                "and energy estimates from its campaign digest. The campaign CLI writes a "
+                "separately digested execution sidecar bound to this campaign SHA-256."
+            ),
+        },
+        "claim_boundary": (
+            "This is an algorithm-selection benchmark over direct synthetic results, not "
+            "ecological or professional decision evidence."
+        ),
+    }
+    report["campaign_sha256"] = _canonical_sha256(report)
+    return report
+
+
+def verify_campaign_report(
+    report_path: str | Path, dataset_paths: Sequence[str | Path]
+) -> dict[str, Any]:
+    report = json.loads(Path(report_path).read_text(encoding="utf-8"))
+    if report.get("schema_version") != CAMPAIGN_SCHEMA_VERSION:
+        raise ValueError("unexpected benchmark campaign schema")
+    expected_digest = _canonical_sha256(
+        {key: value for key, value in report.items() if key != "campaign_sha256"}
+    )
+    if report.get("campaign_sha256") != expected_digest:
+        raise ValueError("benchmark campaign digest does not match its contents")
+    datasets = [load_benchmark_dataset(path) for path in dataset_paths]
+    expected_datasets = {
+        (dataset.dataset_id, dataset.dataset_sha256, dataset.landscape_sha256)
+        for dataset in datasets
+    }
+    observed_datasets = {
+        (row["dataset_id"], row["dataset_sha256"], row["landscape_sha256"])
+        for row in report.get("datasets", [])
+    }
+    if observed_datasets != expected_datasets:
+        raise ValueError("benchmark report does not bind exactly to the supplied datasets")
+    gate = BenchmarkGateResult.model_validate(report["gate_result"])
+    pin = report.get("pinned_wandb_artifact")
+    expected_enabled = bool(
+        gate.production_enabled and pin and _IMMUTABLE_WANDB_REF.fullmatch(str(pin))
+    )
+    if report.get("scientific_gate_passed") is not gate.production_enabled:
+        raise ValueError("benchmark scientific gate disposition is inconsistent")
+    if report.get("production_adaptive_enabled") is not expected_enabled:
+        raise ValueError("benchmark production disposition is inconsistent or unpinned")
+    return report
+
+
+def verify_dataset_manifest(
+    manifest_path: str | Path, dataset_paths: Sequence[str | Path]
+) -> dict[str, Any]:
+    manifest_file = Path(manifest_path)
+    payload = json.loads(manifest_file.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise TypeError("search benchmark manifest must be an object")
+    _strict_keys(
+        payload,
+        {
+            "schema_version",
+            "intended_use",
+            "source_evidence_index_sha256",
+            "files",
+            "manifest_sha256",
+        },
+        set(),
+        "search benchmark manifest",
+    )
+    manifest_schema = payload["schema_version"]
+    if manifest_schema not in {
+        "ecocorridor-search-manifest/v1.0",
+        "ecocorridor-search-manifest/v1.1",
+    }:
+        raise ValueError("unexpected search benchmark manifest schema")
+    expected_manifest_sha = _canonical_sha256(
+        {key: value for key, value in payload.items() if key != "manifest_sha256"}
+    )
+    if payload["manifest_sha256"] != expected_manifest_sha:
+        raise ValueError("search benchmark manifest digest does not match its contents")
+    index_sha = _require_sha256(
+        payload["source_evidence_index_sha256"], "manifest evidence index digest"
+    )
+    datasets = {Path(path).name: load_benchmark_dataset(path) for path in dataset_paths}
+    if manifest_schema == "ecocorridor-search-manifest/v1.1" and any(
+        not dataset.dataset_id.endswith("_direct_v2") for dataset in datasets.values()
+    ):
+        raise ValueError("current search manifest requires v2 direct Ridgeway tables")
+    if manifest_schema == "ecocorridor-search-manifest/v1.0" and any(
+        dataset.dataset_id.endswith("_direct_v2") for dataset in datasets.values()
+    ):
+        raise ValueError("v2 direct Ridgeway tables cannot use the historical manifest schema")
+    if any(dataset.source_evidence_index_sha256 != index_sha for dataset in datasets.values()):
+        raise ValueError("search benchmark tables do not share the manifest evidence index")
+    records = payload["files"]
+    if not isinstance(records, list):
+        raise TypeError("search benchmark manifest files must be a list")
+    by_name: dict[str, Mapping[str, Any]] = {}
+    for record in records:
+        if not isinstance(record, dict):
+            raise TypeError("search benchmark manifest file record must be an object")
+        _strict_keys(
+            record,
+            {
+                "path",
+                "sha256",
+                "dataset_sha256",
+                "landscape_sha256",
+                "media_type",
+                "ownership",
+                "license",
+                "synthetic",
+                "sensitivity",
+                "public_replay_allowed",
+            },
+            set(),
+            "search benchmark manifest file",
+        )
+        name = str(record["path"])
+        if Path(name).name != name or name in by_name:
+            raise ValueError("search benchmark manifest paths must be unique basenames")
+        by_name[name] = record
+    if set(by_name) != set(datasets):
+        raise ValueError("search benchmark manifest does not bind exactly to supplied tables")
+    for name, dataset in datasets.items():
+        record = by_name[name]
+        path = next(Path(value) for value in dataset_paths if Path(value).name == name)
+        expected = {
+            "path": name,
+            "sha256": _file_sha256(path),
+            "dataset_sha256": dataset.dataset_sha256,
+            "landscape_sha256": dataset.landscape_sha256,
+            "media_type": "application/json",
+            "ownership": "EcoCorridor Scenario Studio contributors",
+            "license": "CC0-1.0",
+            "synthetic": True,
+            "sensitivity": "PUBLIC",
+            "public_replay_allowed": True,
+        }
+        if dict(record) != expected:
+            raise ValueError(f"search benchmark manifest record changed: {name}")
+    return payload
+
+
+def assert_adaptive_production_authorized(
+    report_path: str | Path,
+    dataset_paths: Sequence[str | Path],
+    *,
+    expected_campaign_sha256: str,
+    provenance_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Fail closed before any production ExtraTrees acquisition is permitted."""
+
+    report = verify_campaign_report(report_path, dataset_paths)
+    if report["campaign_sha256"] != _require_sha256(
+        expected_campaign_sha256, "expected campaign digest"
+    ):
+        raise PermissionError("adaptive benchmark report differs from the pinned release digest")
+    if not report["production_adaptive_enabled"]:
+        raise PermissionError("production adaptive search is disabled by the release gate")
+    if provenance_path is None:
+        raise PermissionError("production adaptive search requires explicit benchmark provenance")
+    provenance = verify_historical_search_provenance(
+        provenance_path,
+        expected_campaign_sha256=report["campaign_sha256"],
+    )
+    if (
+        provenance["dataset_disposition"] == "HISTORICAL_BENCHMARK_ONLY"
+        or provenance["production_authorization"] == "PROHIBITED"
+    ):
+        raise PermissionError(
+            "historical benchmark provenance prohibits production adaptive search"
+        )
+    raise PermissionError(
+        "benchmark provenance does not contain a supported production authorization"
+    )
+
+
+def verify_historical_search_provenance(
+    provenance_path: str | Path,
+    *,
+    expected_campaign_sha256: str,
+) -> dict[str, Any]:
+    """Verify the immutable, explicitly non-production search provenance contract.
+
+    This validates identity and disposition only. Repository archive traversal and
+    passive snapshot bytes are audited by the ecological data-manifest gate.
+    """
+
+    payload = json.loads(Path(provenance_path).read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise TypeError("historical search provenance must be an object")
+    _strict_keys(
+        payload,
+        {
+            "schema_version",
+            "dataset_disposition",
+            "production_authorization",
+            "claim_boundary",
+            "source_evidence",
+            "search_manifest",
+            "campaign",
+            "resource_report",
+            "generator_source_snapshots",
+            "limitations",
+            "provenance_sha256",
+        },
+        set(),
+        "historical search provenance",
+    )
+    if payload["schema_version"] != HISTORICAL_PROVENANCE_SCHEMA_VERSION:
+        raise ValueError("unexpected historical search provenance schema")
+    expected_digest = _canonical_sha256(
+        {key: value for key, value in payload.items() if key != "provenance_sha256"}
+    )
+    if payload["provenance_sha256"] != expected_digest:
+        raise ValueError("historical search provenance digest does not match its contents")
+    if (
+        payload["dataset_disposition"] != "HISTORICAL_BENCHMARK_ONLY"
+        or payload["production_authorization"] != "PROHIBITED"
+    ):
+        raise ValueError("historical search provenance must remain prohibited from production")
+    campaign = payload["campaign"]
+    if not isinstance(campaign, dict):
+        raise TypeError("historical search campaign provenance must be an object")
+    expected_campaign = _require_sha256(
+        expected_campaign_sha256, "expected historical campaign digest"
+    )
+    if campaign.get("campaign_sha256") != expected_campaign:
+        raise ValueError("historical search provenance belongs to another campaign")
+    snapshots = payload["generator_source_snapshots"]
+    if not isinstance(snapshots, dict) or set(snapshots) != {
+        "benchmark_sha256",
+        "resource_observability_sha256",
+    }:
+        raise ValueError("historical search provenance omits generator snapshots")
+    for identity, record in snapshots.items():
+        if not isinstance(record, dict) or set(record) != {"path", "sha256"}:
+            raise ValueError(f"historical generator snapshot is invalid: {identity}")
+        _require_sha256(record["sha256"], f"historical generator snapshot {identity}")
+    return payload
+
+
+def _pair_reductions(job: Mapping[str, Any], baseline: Mapping[str, Any]) -> list[float]:
+    baseline_by_pair = {
+        str(metric["pair_id"]): float(metric["effective_resistance"])
+        for metric in baseline["pair_metrics"]
+    }
+    reductions: list[float] = []
+    for metric in job["pair_metrics"]:
+        pair_id = str(metric["pair_id"])
+        if pair_id not in baseline_by_pair:
+            raise ValueError("direct job and baseline pair sets differ")
+        baseline_value = baseline_by_pair[pair_id]
+        value = float(metric["effective_resistance"])
+        if baseline_value <= 0 or value <= 0:
+            raise ValueError("direct effective resistance must be positive")
+        reductions.append((baseline_value - value) / baseline_value * 100)
+    if not reductions:
+        raise ValueError("direct benchmark jobs require pair metrics")
+    return reductions
+
+
+def derive_ridgeway_benchmark_tables(
+    evidence_index_path: str | Path,
+    output_directory: str | Path,
+) -> list[Path]:
+    """Derive four hypothesis-landscape tables from the complete Ridgeway study."""
+
+    evidence_path = Path(evidence_index_path)
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    evidence_schema = evidence.get("schema_version")
+    if evidence_schema not in {
+        "ridgeway-evidence-index/v1.0",
+        "ridgeway-evidence-index/v1.1",
+    }:
+        raise ValueError("Ridgeway evidence index has an unexpected schema")
+    current_evidence = evidence_schema == "ridgeway-evidence-index/v1.1"
+    fixture = build_ridgeway_fixture()
+    if evidence.get("model_sha256") != fixture.bundle.revision.model_sha256:
+        raise ValueError("Ridgeway evidence index belongs to another model revision")
+    engine_sha = _require_sha256(evidence.get("engine_manifest_sha256"), "engine manifest digest")
+    workflow_sha = _require_sha256(
+        evidence.get("workflow_manifest_sha256"), "workflow manifest digest"
+    )
+    physics_model_sha: str | None = None
+    engine_environment_sha: str | None = None
+    decision_snapshot_sha: str | None = None
+    if current_evidence:
+        physics_model_sha = _require_sha256(
+            evidence.get("physics_model_sha256"), "physics model digest"
+        )
+        engine_environment_sha = _require_sha256(
+            evidence.get("engine_environment_sha256"), "engine environment digest"
+        )
+        decision_snapshot_sha = _require_sha256(
+            evidence.get("decision_snapshot_sha256"), "decision snapshot digest"
+        )
+        process_summary = evidence.get("process_tree_exit_evidence")
+        expected_complete_job_count = (
+            fixture.direct_matrix_job_count + fixture.teaching_map_job_count
+        )
+        if (
+            not isinstance(process_summary, dict)
+            or process_summary.get("jobs_with_confirmed_tree_exit") != expected_complete_job_count
+            or process_summary.get("jobs_without_confirmed_tree_exit") != 0
+            or process_summary.get("unique_process_identities") != expected_complete_job_count
+            or process_summary.get("confirmation_methods")
+            != {"POSIX_PROCESS_GROUP_ABSENT_AFTER_NATURAL_EXIT": expected_complete_job_count}
+        ):
+            raise ValueError(
+                "current Ridgeway evidence requires complete confirmed process-tree exits"
+            )
+        map_jobs = evidence.get("map_jobs")
+        if not isinstance(map_jobs, list) or len(map_jobs) != fixture.teaching_map_job_count:
+            raise ValueError("current Ridgeway evidence requires all 60 retained map jobs")
+    index_sha = _file_sha256(evidence_path)
+    raw_jobs = evidence.get("matrix_jobs")
+    if not isinstance(raw_jobs, list) or len(raw_jobs) != fixture.direct_matrix_job_count:
+        raise ValueError("Ridgeway benchmark derivation requires all 1,536 matrix jobs")
+    jobs: dict[tuple[str, str], dict[str, Any]] = {}
+    direct_run_ids: set[str] = set()
+    process_identities: set[str] = set()
+    for raw in raw_jobs:
+        if not isinstance(raw, dict):
+            raise TypeError("Ridgeway matrix job must be an object")
+        identity = (str(raw.get("portfolio_id")), str(raw.get("scenario_id")))
+        if identity in jobs:
+            raise ValueError("Ridgeway evidence contains a duplicate portfolio/scenario job")
+        if (
+            raw.get("state") != "SUCCEEDED"
+            or raw.get("exact") is not True
+            or raw.get("engine_name") != "Circuitscape"
+            or raw.get("qa_status") not in {"ACCEPTED", "WARNING_ACCEPTED"}
+            or raw.get("test_only") is True
+            or raw.get("engine_manifest_sha256") != engine_sha
+        ):
+            raise ValueError("Ridgeway benchmark source contains non-release direct evidence")
+        direct_run_id = str(raw.get("direct_run_id", ""))
+        if not direct_run_id or direct_run_id in direct_run_ids:
+            raise ValueError("Ridgeway evidence requires unique direct-run identities")
+        direct_run_ids.add(direct_run_id)
+        if current_evidence:
+            process_exit = raw.get("process_exit_evidence")
+            if (
+                raw.get("phase") != "matrix"
+                or raw.get("workflow_manifest_sha256") != workflow_sha
+                or raw.get("physics_model_sha256") != physics_model_sha
+                or raw.get("engine_environment_sha256") != engine_environment_sha
+                or raw.get("decision_snapshot_sha256") != decision_snapshot_sha
+                or not isinstance(process_exit, dict)
+                or process_exit.get("tree_exit_confirmed") is not True
+                or process_exit.get("confirmation_method")
+                != "POSIX_PROCESS_GROUP_ABSENT_AFTER_NATURAL_EXIT"
+                or process_exit.get("termination_reason") != "natural_exit"
+            ):
+                raise ValueError(
+                    "current Ridgeway benchmark source lacks bound execution provenance"
+                )
+            process_identity = str(process_exit.get("process_identity", ""))
+            _require_sha256(process_identity, "direct process identity")
+            if process_identity in process_identities:
+                raise ValueError("current Ridgeway evidence reuses a process identity")
+            process_identities.add(process_identity)
+        _require_sha256(raw.get("result_sha256"), "direct result digest")
+        _require_sha256(raw.get("matrix_sha256"), "direct matrix digest")
+        jobs[identity] = raw
+    if current_evidence:
+        assert isinstance(map_jobs, list)
+        for raw in map_jobs:
+            if not isinstance(raw, dict):
+                raise TypeError("Ridgeway map job must be an object")
+            direct_run_id = str(raw.get("direct_run_id", ""))
+            process_exit = raw.get("process_exit_evidence")
+            if (
+                not direct_run_id
+                or direct_run_id in direct_run_ids
+                or raw.get("state") != "SUCCEEDED"
+                or raw.get("exact") is not True
+                or raw.get("engine_name") != "Circuitscape"
+                or raw.get("qa_status") not in {"ACCEPTED", "WARNING_ACCEPTED"}
+                or raw.get("test_only") is True
+                or raw.get("phase") != "map"
+                or raw.get("engine_manifest_sha256") != engine_sha
+                or raw.get("workflow_manifest_sha256") != workflow_sha
+                or raw.get("physics_model_sha256") != physics_model_sha
+                or raw.get("engine_environment_sha256") != engine_environment_sha
+                or raw.get("decision_snapshot_sha256") != decision_snapshot_sha
+                or not isinstance(process_exit, dict)
+                or process_exit.get("tree_exit_confirmed") is not True
+                or process_exit.get("confirmation_method")
+                != "POSIX_PROCESS_GROUP_ABSENT_AFTER_NATURAL_EXIT"
+                or process_exit.get("termination_reason") != "natural_exit"
+            ):
+                raise ValueError("current Ridgeway map evidence is incomplete or unbound")
+            direct_run_ids.add(direct_run_id)
+            process_identity = str(process_exit.get("process_identity", ""))
+            _require_sha256(process_identity, "map process identity")
+            if process_identity in process_identities:
+                raise ValueError("current Ridgeway evidence reuses a process identity")
+            process_identities.add(process_identity)
+            _require_sha256(raw.get("result_sha256"), "map result digest")
+            _require_sha256(raw.get("matrix_sha256"), "map matrix digest")
+            _require_sha256(raw.get("current_map_sha256"), "current-map digest")
+        if len(process_identities) != fixture.direct_matrix_job_count + len(map_jobs):
+            raise ValueError("current Ridgeway execution identities are incomplete")
+    expected = {
+        (portfolio.portfolio_id, scenario.scenario_id)
+        for portfolio in fixture.portfolios
+        for scenario in fixture.bundle.scenarios
+    }
+    if set(jobs) != expected:
+        raise ValueError("Ridgeway direct evidence is not a complete scenario ensemble")
+
+    sites = sorted(fixture.bundle.intervention_sites, key=lambda item: item.site_id)
+    site_options = [
+        {
+            "site_id": site.site_id,
+            "option_ids": sorted(
+                {portfolio.selections[site.site_id] for portfolio in fixture.portfolios}
+            ),
+        }
+        for site in sites
+    ]
+    option_index = {
+        (site["site_id"], option_id): index
+        for site in site_options
+        for index, option_id in enumerate(site["option_ids"])
+    }
+    baseline_by_scenario = {
+        scenario.scenario_id: jobs[(fixture.baseline_portfolio_id, scenario.scenario_id)]
+        for scenario in fixture.bundle.scenarios
+    }
+    budget = float(fixture.bundle.decision_brief.budget_amount or 0)
+    target_threshold = float(
+        next(
+            rule.threshold
+            for rule in fixture.bundle.decision_rules
+            if rule.rule_id == "rule_target_improvement"
+        )
+    )
+    output_root = Path(output_directory)
+    output_root.mkdir(parents=True, exist_ok=True)
+    outputs: list[Path] = []
+    manifest_files: list[dict[str, Any]] = []
+    for hypothesis in sorted(
+        fixture.bundle.resistance_hypotheses, key=lambda item: item.hypothesis_id
+    ):
+        scenarios = sorted(
+            (
+                scenario
+                for scenario in fixture.bundle.scenarios
+                if scenario.resistance_hypothesis_id == hypothesis.hypothesis_id
+            ),
+            key=lambda item: item.scenario_id,
+        )
+        if len(scenarios) < 2 or not any(item.safeguard for item in scenarios):
+            raise ValueError("each benchmark landscape requires target and safeguard scenarios")
+        rows: list[dict[str, Any]] = []
+        for portfolio in sorted(fixture.portfolios, key=lambda item: item.portfolio_id):
+            selected_jobs = [jobs[(portfolio.portfolio_id, item.scenario_id)] for item in scenarios]
+            target_reductions: list[float] = []
+            safeguard_reductions: list[float] = []
+            pair_observations: list[dict[str, Any]] = []
+            for scenario, job in zip(scenarios, selected_jobs, strict=True):
+                baseline_job = baseline_by_scenario[scenario.scenario_id]
+                reductions = _pair_reductions(job, baseline_job)
+                (safeguard_reductions if scenario.safeguard else target_reductions).extend(
+                    reductions
+                )
+                baseline_by_pair = {
+                    str(metric["pair_id"]): float(metric["effective_resistance"])
+                    for metric in baseline_job["pair_metrics"]
+                }
+                for metric, reduction in zip(job["pair_metrics"], reductions, strict=True):
+                    pair_id = str(metric["pair_id"])
+                    pair_observations.append(
+                        {
+                            "scenario_id": scenario.scenario_id,
+                            "guild_id": scenario.guild_id,
+                            "safeguard": scenario.safeguard,
+                            "pair_id": pair_id,
+                            "baseline_effective_resistance": baseline_by_pair[pair_id],
+                            "portfolio_effective_resistance": float(metric["effective_resistance"]),
+                            "baseline_relative_reduction_percent": round(reduction, 12),
+                            "direct_run_id": str(job["direct_run_id"]),
+                            "direct_result_sha256": str(job["result_sha256"]),
+                        }
+                    )
+            if not target_reductions or not safeguard_reductions:
+                raise ValueError("benchmark landscape lacks target or safeguard metrics")
+            cost, currency, _basis = portfolio_cost(portfolio, fixture.bundle.intervention_options)
+            if currency != "USD":
+                raise ValueError("Ridgeway benchmark cost basis changed currency")
+            unresolved = unresolved_portfolio_concerns(
+                portfolio, fixture.bundle.intervention_options
+            )
+            worst_target = min(target_reductions)
+            worst_safeguard = min(safeguard_reductions)
+            rows.append(
+                {
+                    "portfolio_id": portfolio.portfolio_id,
+                    "vector": [
+                        option_index[(site.site_id, portfolio.selections[site.site_id])]
+                        for site in sites
+                    ],
+                    "objective_values": {
+                        "cost_usd": round(float(cost), 8),
+                        "negative_worst_target_reduction_percent": round(-worst_target, 12),
+                    },
+                    "feasible": bool(
+                        worst_target >= target_threshold
+                        and worst_safeguard >= 0
+                        and cost <= budget
+                        and not unresolved
+                    ),
+                    "safeguard_adverse": bool(
+                        worst_safeguard < 0 or worst_target < target_threshold or unresolved
+                    ),
+                    "direct_run_ids": [str(job["direct_run_id"]) for job in selected_jobs],
+                    "direct_result_sha256s": [str(job["result_sha256"]) for job in selected_jobs],
+                    "observed_scenario_pair_metrics": pair_observations,
+                }
+            )
+        resistance_asset = next(
+            asset
+            for asset in fixture.bundle.assets
+            if asset.asset_id == hypothesis.resistance_asset_id
+        )
+        payload = finalize_dataset_payload(
+            {
+                "schema_version": BENCHMARK_SCHEMA_VERSION,
+                "dataset_id": (
+                    f"ridgeway_{hypothesis.hypothesis_id}_direct_v2"
+                    if current_evidence
+                    else f"ridgeway_{hypothesis.hypothesis_id}_direct_v1"
+                ),
+                "landscape_id": f"ridgeway_{hypothesis.hypothesis_id}",
+                "title": f"Ridgeway {hypothesis.title} direct search table",
+                "license": "CC0-1.0",
+                "synthetic": True,
+                "intended_use": "ALGORITHM_RELEASE_GATE_ONLY",
+                "evidence_source": {
+                    "kind": "DIRECT_CIRCUITSCAPE",
+                    "engine_name": "Circuitscape",
+                    "engine_manifest_sha256": engine_sha,
+                    "workflow_manifest_sha256": workflow_sha,
+                    "source_evidence_index_sha256": index_sha,
+                    "model_sha256": fixture.bundle.revision.model_sha256,
+                    "landscape_sha256": resistance_asset.sha256,
+                    "scenario_ids": [scenario.scenario_id for scenario in scenarios],
+                },
+                "baseline_portfolio_id": fixture.baseline_portfolio_id,
+                "scenario_count": len(scenarios),
+                "objective_directions": {
+                    "cost_usd": "minimize",
+                    "negative_worst_target_reduction_percent": "minimize",
+                },
+                "feasibility_definition": (
+                    "Within this resistance hypothesis: every target pair improves by at least "
+                    f"{target_threshold:g}%, every safeguard pair is nonregressing, synthetic "
+                    f"cost is at most {budget:g} USD, and no feasibility concern is unresolved."
+                ),
+                "safeguard_adverse_definition": (
+                    "Any target rule failure, safeguard regression, or unresolved feasibility "
+                    "concern in this complete direct scenario ensemble."
+                ),
+                "site_options": site_options,
+                "universe_size": len(rows),
+                "rows": rows,
+            }
+        )
+        destination = output_root / f"{hypothesis.hypothesis_id}.json"
+        atomic_write_bytes(
+            destination,
+            (json.dumps(payload, indent=2, sort_keys=False) + "\n").encode("utf-8"),
+            mode=0o644,
+        )
+        # Re-load through the strict release boundary before recording the file.
+        load_benchmark_dataset(destination)
+        outputs.append(destination)
+        manifest_files.append(
+            {
+                "path": destination.name,
+                "sha256": _file_sha256(destination),
+                "dataset_sha256": payload["dataset_sha256"],
+                "landscape_sha256": resistance_asset.sha256,
+                "media_type": "application/json",
+                "ownership": "EcoCorridor Scenario Studio contributors",
+                "license": "CC0-1.0",
+                "synthetic": True,
+                "sensitivity": "PUBLIC",
+                "public_replay_allowed": True,
+            }
+        )
+    manifest_payload = {
+        "schema_version": (
+            "ecocorridor-search-manifest/v1.1"
+            if current_evidence
+            else "ecocorridor-search-manifest/v1.0"
+        ),
+        "intended_use": "ALGORITHM_RELEASE_GATE_ONLY",
+        "source_evidence_index_sha256": index_sha,
+        "files": manifest_files,
+    }
+    manifest_payload["manifest_sha256"] = _canonical_sha256(manifest_payload)
+    atomic_write_bytes(
+        output_root / "manifest.json",
+        (json.dumps(manifest_payload, indent=2, sort_keys=True) + "\n").encode("utf-8"),
+        mode=0o644,
+    )
+    return outputs
+
+
+def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
+    atomic_write_bytes(
+        path,
+        (json.dumps(dict(payload), indent=2, sort_keys=True) + "\n").encode("utf-8"),
+        mode=0o644,
+    )
+
+
+def build_campaign_resource_report(
+    campaign: Mapping[str, Any], resource_observation: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Bind nondeterministic execution observations to a deterministic campaign."""
+
+    campaign_sha256 = _require_sha256(
+        campaign.get("campaign_sha256"), "campaign resource-report digest"
+    )
+    payload = {
+        "schema_version": RESOURCE_EXECUTION_SCHEMA_VERSION,
+        "campaign_sha256": campaign_sha256,
+        "boundary": (
+            "One local search-gate campaign process. Scientific scores and selection order are "
+            "outside this observation and remain bound by the deterministic campaign digest."
+        ),
+        "resource_observation": dict(resource_observation),
+        "execution_method_sources": {
+            "benchmark_sha256": _file_sha256(Path(__file__)),
+            "resource_observability_sha256": _file_sha256(
+                Path(__file__).with_name("resource_observability.py")
+            ),
+        },
+        "claim_boundary": (
+            "Energy is an active-duration proxy estimate with coefficient bounds, not measured "
+            "electricity or carbon. Peak memory is a sampled process lower bound."
+        ),
+    }
+    payload["report_sha256"] = _canonical_sha256(payload)
+    return payload
+
+
+def verify_campaign_resource_report(
+    resource_report_path: str | Path,
+    *,
+    expected_campaign_sha256: str,
+    expected_execution_method_sources: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    payload = json.loads(Path(resource_report_path).read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise TypeError("campaign resource report must be an object")
+    _strict_keys(
+        payload,
+        {
+            "schema_version",
+            "campaign_sha256",
+            "boundary",
+            "resource_observation",
+            "execution_method_sources",
+            "claim_boundary",
+            "report_sha256",
+        },
+        set(),
+        "campaign resource report",
+    )
+    if payload["schema_version"] != RESOURCE_EXECUTION_SCHEMA_VERSION:
+        raise ValueError("unexpected campaign resource-report schema")
+    if payload["campaign_sha256"] != _require_sha256(
+        expected_campaign_sha256, "expected campaign resource-report digest"
+    ):
+        raise ValueError("campaign resource report is bound to another scientific campaign")
+    expected_report_sha = _canonical_sha256(
+        {key: value for key, value in payload.items() if key != "report_sha256"}
+    )
+    if payload["report_sha256"] != expected_report_sha:
+        raise ValueError("campaign resource-report digest does not match its contents")
+    observation = ComputationalResourceObservation.model_validate(payload["resource_observation"])
+    expected_sources = (
+        {
+            "benchmark_sha256": _file_sha256(Path(__file__)),
+            "resource_observability_sha256": _file_sha256(
+                Path(__file__).with_name("resource_observability.py")
+            ),
+        }
+        if expected_execution_method_sources is None
+        else dict(expected_execution_method_sources)
+    )
+    if set(expected_sources) != {"benchmark_sha256", "resource_observability_sha256"}:
+        raise ValueError("campaign resource source identities have an unexpected contract")
+    for identity, source_sha in expected_sources.items():
+        _require_sha256(source_sha, f"campaign resource source {identity}")
+    sources = payload["execution_method_sources"]
+    if not isinstance(sources, dict) or sources != expected_sources:
+        raise ValueError("campaign resource report does not bind its declared observation sources")
+    if observation.boundary != ResourceObservationBoundary.SEARCH_PROPOSER:
+        raise ValueError("campaign resource report must describe the search proposer boundary")
+    if observation.energy_status != ResourceObservationStatus.ESTIMATED:
+        raise ValueError("campaign execution must retain its explicit energy proxy estimate")
+    if observation.peak_memory_status not in {
+        ResourceObservationStatus.MEASURED,
+        ResourceObservationStatus.NOT_MEASURED,
+    }:
+        raise ValueError("campaign peak memory must be sampled or explicitly unavailable")
+    if "carbon" not in str(payload["claim_boundary"]).casefold():
+        raise ValueError("campaign resource report must state its carbon-claim boundary")
+    return payload
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    replay = subparsers.add_parser("replay", help="replay one method against one direct table")
+    replay.add_argument("--dataset", required=True, type=Path)
+    replay.add_argument("--method", choices=_METHODS, required=True)
+    replay.add_argument("--seed", type=int, default=0)
+    replay.add_argument("--budget", type=int, required=True)
+    replay.add_argument("--output", type=Path, required=True)
+
+    campaign = subparsers.add_parser("campaign", help="run the complete scientific release gate")
+    campaign.add_argument("--dataset", action="append", required=True, type=Path)
+    campaign.add_argument("--budget", action="append", type=int, dest="budgets")
+    campaign.add_argument("--seed-start", type=int, default=0)
+    campaign.add_argument("--seed-count", type=int, default=DEFAULT_SEED_COUNT)
+    campaign.add_argument("--pinned-wandb-artifact")
+    campaign.add_argument("--output", type=Path, required=True)
+    campaign.add_argument(
+        "--resource-output",
+        type=Path,
+        help="nondeterministic resource sidecar (defaults beside --output)",
+    )
+
+    verify = subparsers.add_parser("verify", help="verify a committed gate artifact and datasets")
+    verify.add_argument("--report", required=True, type=Path)
+    verify.add_argument("--manifest", required=True, type=Path)
+    verify.add_argument("--dataset", action="append", required=True, type=Path)
+    verify.add_argument("--resource-report", required=True, type=Path)
+    verify.add_argument(
+        "--historical-provenance",
+        type=Path,
+        help="explicit non-production provenance and frozen source identities",
+    )
+
+    derive = subparsers.add_parser(
+        "derive-ridgeway", help="derive direct benchmark tables from a complete Ridgeway index"
+    )
+    derive.add_argument("--evidence-index", required=True, type=Path)
+    derive.add_argument("--output-directory", required=True, type=Path)
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    arguments = _parser().parse_args(argv)
+    if arguments.command == "replay":
+        dataset = load_benchmark_dataset(arguments.dataset)
+        result = run_replay(
+            dataset,
+            method=arguments.method,
+            seed=arguments.seed,
+            budget=arguments.budget,
+            checkpoints=[arguments.budget],
+        )
+        _write_json(arguments.output, result)
+        print(arguments.output)
+        return 0
+    if arguments.command == "campaign":
+        datasets = [load_benchmark_dataset(path) for path in arguments.dataset]
+        if arguments.seed_count < 1:
+            raise ValueError("seed-count must be positive")
+        seeds = list(range(arguments.seed_start, arguments.seed_start + arguments.seed_count))
+        recorder = ProcessResourceRecorder(
+            pid=os.getpid(),
+            observation_id="resource:search-release-campaign",
+            boundary=ResourceObservationBoundary.SEARCH_PROPOSER,
+            boundary_description=(
+                "One complete local search release-gate campaign, including random, Sobol, and "
+                "Sobol-plus-ExtraTrees proposal replays."
+            ),
+        )
+        try:
+            report = run_campaign(
+                datasets,
+                seeds=seeds,
+                budgets=arguments.budgets or list(DEFAULT_BUDGETS),
+                pinned_wandb_artifact=arguments.pinned_wandb_artifact,
+            )
+        finally:
+            resource_observation = recorder.finish()
+        _write_json(arguments.output, report)
+        resource_output = arguments.resource_output or arguments.output.with_suffix(
+            ".resources.json"
+        )
+        _write_json(
+            resource_output,
+            build_campaign_resource_report(report, resource_observation.model_dump(mode="json")),
+        )
+        print(arguments.output)
+        print(resource_output)
+        return 0
+    if arguments.command == "verify":
+        verify_dataset_manifest(arguments.manifest, arguments.dataset)
+        report = verify_campaign_report(arguments.report, arguments.dataset)
+        expected_sources = None
+        if arguments.historical_provenance is not None:
+            provenance = verify_historical_search_provenance(
+                arguments.historical_provenance,
+                expected_campaign_sha256=report["campaign_sha256"],
+            )
+            expected_sources = {
+                identity: str(record["sha256"])
+                for identity, record in provenance["generator_source_snapshots"].items()
+            }
+        verify_campaign_resource_report(
+            arguments.resource_report,
+            expected_campaign_sha256=report["campaign_sha256"],
+            expected_execution_method_sources=expected_sources,
+        )
+        print(report["campaign_sha256"])
+        return 0
+    if arguments.command == "derive-ridgeway":
+        for output in derive_ridgeway_benchmark_tables(
+            arguments.evidence_index, arguments.output_directory
+        ):
+            print(output)
+        return 0
+    raise AssertionError(f"unhandled command: {arguments.command}")
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())

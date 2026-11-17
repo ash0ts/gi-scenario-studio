@@ -1,0 +1,97 @@
+{
+  "assumption_ledger_sha256": "f589e24c238e298bfe1f3aec3aa2fdfc346d65dbd298a67dc37b0d823243e435",
+  "claim_safety_sha256": "7f0d951b1fc090246f85bcf61f253cdad5f84084401c831ba50acdb47eb8e34f",
+  "cost_basis_sha256": "7eaae1d47e6905fd126e73497534542b2de9a863d5f612e5f718c8b0910dd439",
+  "decision_snapshot_sha256": "95ec18ac16524f8d82d8b40128867ee0efdfde0e9776237c6a091d53b96045e7",
+  "engine_environment_sha256": "cd7d041f0067ac4cc252196c571e4f020b66bf7f0cb0778059a7125be225223f",
+  "engine_manifest_sha256": "4fdf058be0bb2e33bc014858e01decb808ecc7296e1fca78fce58f62331a7a86",
+  "evidence_bundle": {
+    "byte_size": 11789596,
+    "claim_safety_sha256": "7f0d951b1fc090246f85bcf61f253cdad5f84084401c831ba50acdb47eb8e34f",
+    "file_count": 19288,
+    "filename": "ridgeway-direct-evidence-a0dc6b763347.tar.gz",
+    "format": "tar+gzip",
+    "internal_index_path": "bundle-index.json",
+    "internal_index_sha256": "d1c9c46025cf4783e4aad454b8d8987765199a100dfa551609d961a9c7a1f536",
+    "packager_sha256": "744d4d96fb283de529292be0818cc4e8999a4ee506d4ab15bdc7b5fc636566f5",
+    "sha256": "a0dc6b7633475824d36cd9ab18ee38088208561ba680fed022fc7b6d65ac7168"
+  },
+  "evidence_index_sha256": "ecb2c163b880d048372fd60a5e5e33b1a0d04295d22c4de2514e089c57c3f3ab",
+  "fixture_version": "1.2.0",
+  "license": "CC0-1.0",
+  "map_job_count": 60,
+  "map_matrix_coherence": {
+    "absolute_tolerance": 1e-08,
+    "map_jobs_compared": 60,
+    "maximum_absolute_difference": 0.0,
+    "maximum_relative_difference": 0.0,
+    "pair_values_compared": 120,
+    "relative_tolerance": 1e-07,
+    "status": "WITHIN_TOLERANCE"
+  },
+  "matrix_job_count": 1536,
+  "model_sha256": "ba5483e16c4a8c051ccdb7b2d28102631f518dec65d8c715d350115bc1be9351",
+  "physics_model_sha256": "8981c2af8051c2cc19e130f181ff32569f4a55ebba2081340312eed96ba91cd3",
+  "process_tree_exit_evidence": {
+    "confirmation_methods": {
+      "POSIX_PROCESS_GROUP_ABSENT_AFTER_NATURAL_EXIT": 1596
+    },
+    "jobs_with_confirmed_tree_exit": 1596,
+    "jobs_without_confirmed_tree_exit": 0,
+    "unique_process_identities": 1596
+  },
+  "projection_contract": "RidgewayFixture/ecocorridor-replay/v1.2",
+  "release_replay_eligible": true,
+  "resource_observability": {
+    "directSolverWallSeconds": 41892.77147409617,
+    "energyStatus": "ESTIMATED",
+    "estimatedEnergyKwh": 0.1745532144754007,
+    "estimatedEnergyLowerKwh": 0.05818440482513357,
+    "estimatedEnergyUpperKwh": 0.46547523860106854,
+    "jobsWithObservations": 1596,
+    "jobsWithoutObservations": 0,
+    "limitation": "Energy values are active-duration proxy estimates with recorded coefficient bounds, not meter readings or carbon values. Memory is the maximum sampled single-process footprint and may miss between-sample peaks.",
+    "maximumObservedSingleProcessMemoryBytes": 827113472,
+    "peakMemoryIsSampledLowerBound": true,
+    "peakMemoryStatus": "MEASURED",
+    "proposerWallTimeStatus": "NOT_APPLICABLE_FIXED_ENUMERATION"
+  },
+  "retained_process_interval_overlap": {
+    "coincident_endpoint_policy": "COUNTED_AS_OVERLAPPING_AT_RETAINED_TIMESTAMP_RESOLUTION",
+    "limitation": "Derived only from retained post-spawn launched_at-to-confirmed_at measurement intervals. It may understate true process concurrency because launched_at is recorded after process creation, and coincident endpoints may overstate interval overlap at retained timestamp resolution. It is not the configured worker count, CPU utilization, or proof of simultaneous physical execution.",
+    "maximum_overlapping_retained_process_intervals": 12,
+    "observation_method": "MAXIMUM_OVERLAPPING_RETAINED_PROCESS_INTERVALS",
+    "retained_interval_count": 1596,
+    "schema_version": "ridgeway-retained-process-interval-overlap/v1.0",
+    "scientific_identity_role": "AUDIT_ONLY_EXCLUDED"
+  },
+  "schema_version": "ridgeway-direct-evidence/v1.2",
+  "teaching_selection": {
+    "carry_forward_portfolio_id": "portfolio_d3aa8b1e170ffd76b322",
+    "evidence_mode": "DIRECT_CIRCUITSCAPE",
+    "hypothesis_collapse_portfolio_id": "portfolio_3ae12008aed85b1fc1a6",
+    "low_cost_caution_portfolio_id": "portfolio_cef73d6212fedba4dcc6",
+    "map_rerun_portfolio_ids": [
+      "portfolio_7c18e581b57ca9363bb7",
+      "portfolio_cef73d6212fedba4dcc6",
+      "portfolio_d3aa8b1e170ffd76b322",
+      "portfolio_9b7cb6c531a53fcaffa6",
+      "portfolio_3ae12008aed85b1fc1a6"
+    ],
+    "observed_map_review_flags": {
+      "carry": true,
+      "caution": true,
+      "collapse": true,
+      "over": true
+    },
+    "over_budget_portfolio_id": "portfolio_9b7cb6c531a53fcaffa6",
+    "release_eligible": true,
+    "selection_notes": {
+      "carry_forward": "Passes all configured modeled connectivity rules across the 12 reviewed scenarios and is within the synthetic screening cost cap; a configured road-mask diagnostic review flag must be resolved before ecological, field, and engineering feasibility review.",
+      "hypothesis_collapse": "Has a strong observed target-resistance-reduction rank under one reviewed resistance hypothesis and a materially lower rank under another; no animal-use inference.",
+      "low_cost_caution": "Direct modeled result with a configured road-mask diagnostic review flag; no animal-use or road-safety inference.",
+      "over_budget": "Passes all configured modeled connectivity rules across the 12 reviewed scenarios but exceeds the synthetic screening cost cap."
+    }
+  },
+  "workflow_manifest_sha256": "a12e7c05308f211a3e58969e476162dd902b9307ddbd210cebe673815dc82f6f"
+}

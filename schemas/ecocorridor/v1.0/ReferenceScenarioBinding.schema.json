@@ -1,0 +1,136 @@
+{
+  "$defs": {
+    "ReferenceMetricTolerance": {
+      "additionalProperties": false,
+      "description": "Declared comparison policy for one supported reference metric.\n\nRelative tolerance is a dimensionless fraction, not a percentage.  The\napproved reference value is deliberately the scale term so comparison\nbehavior cannot vary with argument order or an implementation default.",
+      "properties": {
+        "absolute_tolerance": {
+          "minimum": 0,
+          "title": "Absolute Tolerance",
+          "type": "number"
+        },
+        "comparison_formula": {
+          "const": "ABS_OBSERVED_MINUS_REFERENCE_LE_ABSOLUTE_PLUS_RELATIVE_TIMES_ABS_REFERENCE",
+          "default": "ABS_OBSERVED_MINUS_REFERENCE_LE_ABSOLUTE_PLUS_RELATIVE_TIMES_ABS_REFERENCE",
+          "title": "Comparison Formula",
+          "type": "string"
+        },
+        "metric": {
+          "const": "EFFECTIVE_RESISTANCE",
+          "default": "EFFECTIVE_RESISTANCE",
+          "title": "Metric",
+          "type": "string"
+        },
+        "relative_tolerance": {
+          "minimum": 0,
+          "title": "Relative Tolerance",
+          "type": "number"
+        },
+        "units": {
+          "const": "effective_resistance",
+          "default": "effective_resistance",
+          "title": "Units",
+          "type": "string"
+        }
+      },
+      "required": [
+        "absolute_tolerance",
+        "relative_tolerance"
+      ],
+      "title": "ReferenceMetricTolerance",
+      "type": "object"
+    }
+  },
+  "$id": "https://schemas.ecocorridor.local/1.0/ReferenceScenarioBinding.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Bind approved reference bytes to one exact ecological scenario.\n\nA current raster may be retained for inspection, but v0.1 has no contract\nfor proving equivalence between independently produced current rasters.\nThe fixed disposition therefore prevents it from becoming validation\nevidence or influencing a matrix-comparison result.",
+  "properties": {
+    "binding_id": {
+      "minLength": 1,
+      "title": "Binding Id",
+      "type": "string"
+    },
+    "current_raster_disposition": {
+      "default": "NOT_PROVIDED",
+      "enum": [
+        "NOT_PROVIDED",
+        "DIAGNOSTIC_ONLY_NOT_NUMERICALLY_COMPARED_V0_1"
+      ],
+      "title": "Current Raster Disposition",
+      "type": "string"
+    },
+    "current_raster_numeric_comparison_allowed": {
+      "const": false,
+      "default": false,
+      "title": "Current Raster Numeric Comparison Allowed",
+      "type": "boolean"
+    },
+    "limitations": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Limitations",
+      "type": "array"
+    },
+    "matrix_format": {
+      "const": "CIRCUITSCAPE_THREE_COLUMN_MATRIX",
+      "default": "CIRCUITSCAPE_THREE_COLUMN_MATRIX",
+      "title": "Matrix Format",
+      "type": "string"
+    },
+    "reference_basis": {
+      "minLength": 1,
+      "title": "Reference Basis",
+      "type": "string"
+    },
+    "reference_current_asset_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reference Current Asset Id"
+    },
+    "reference_matrix_asset_id": {
+      "minLength": 1,
+      "title": "Reference Matrix Asset Id",
+      "type": "string"
+    },
+    "reviewed_at": {
+      "format": "date-time",
+      "title": "Reviewed At",
+      "type": "string"
+    },
+    "reviewed_by": {
+      "minLength": 1,
+      "title": "Reviewed By",
+      "type": "string"
+    },
+    "scenario_id": {
+      "minLength": 1,
+      "title": "Scenario Id",
+      "type": "string"
+    },
+    "tolerance": {
+      "$ref": "#/$defs/ReferenceMetricTolerance"
+    }
+  },
+  "required": [
+    "binding_id",
+    "scenario_id",
+    "reference_matrix_asset_id",
+    "tolerance",
+    "reference_basis",
+    "reviewed_by",
+    "reviewed_at",
+    "limitations"
+  ],
+  "title": "ReferenceScenarioBinding",
+  "type": "object"
+}

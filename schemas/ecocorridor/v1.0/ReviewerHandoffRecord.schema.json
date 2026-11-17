@@ -1,0 +1,203 @@
+{
+  "$defs": {
+    "PractitionerStratum": {
+      "enum": [
+        "STATE_DOT",
+        "WILDLIFE_AGENCY",
+        "ECOLOGICAL_CONSULTANT"
+      ],
+      "title": "PractitionerStratum",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.ecocorridor.local/1.0/ReviewerHandoffRecord.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Blinded dyad result for an independent evidence-package handoff.",
+  "properties": {
+    "adjudicated_outcome_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Adjudicated Outcome Sha256",
+      "type": "string"
+    },
+    "blinded_to_author": {
+      "const": true,
+      "default": true,
+      "title": "Blinded To Author",
+      "type": "boolean"
+    },
+    "case_manifest_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Case Manifest Sha256",
+      "type": "string"
+    },
+    "claim_chain_reconstructed": {
+      "title": "Claim Chain Reconstructed",
+      "type": "boolean"
+    },
+    "completed_at": {
+      "format": "date-time",
+      "title": "Completed At",
+      "type": "string"
+    },
+    "consent_record_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Consent Record Sha256",
+      "type": "string"
+    },
+    "consent_to_deidentified_export": {
+      "title": "Consent To Deidentified Export",
+      "type": "boolean"
+    },
+    "correct_next_action_identified": {
+      "title": "Correct Next Action Identified",
+      "type": "boolean"
+    },
+    "disposition_reproducible": {
+      "title": "Disposition Reproducible",
+      "type": "boolean"
+    },
+    "disposition_verified": {
+      "title": "Disposition Verified",
+      "type": "boolean"
+    },
+    "dyad_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Dyad Id",
+      "type": "string"
+    },
+    "evidence_package_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Evidence Package Sha256",
+      "type": "string"
+    },
+    "first_reviewer_pseudonym_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "First Reviewer Pseudonym Sha256",
+      "type": "string"
+    },
+    "first_reviewer_stratum": {
+      "$ref": "#/$defs/PractitionerStratum"
+    },
+    "handoff_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Handoff Id",
+      "type": "string"
+    },
+    "no_author_assistance": {
+      "const": true,
+      "default": true,
+      "title": "No Author Assistance",
+      "type": "boolean"
+    },
+    "organizational_review_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Organizational Review Sha256",
+      "type": "string"
+    },
+    "provenance_completeness": {
+      "maximum": 1,
+      "minimum": 0,
+      "title": "Provenance Completeness",
+      "type": "number"
+    },
+    "record_sha256": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Record Sha256"
+    },
+    "schema_version": {
+      "const": "ecocorridor-reviewer-handoff/v1",
+      "default": "ecocorridor-reviewer-handoff/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "second_reviewer_pseudonym_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Second Reviewer Pseudonym Sha256",
+      "type": "string"
+    },
+    "second_reviewer_stratum": {
+      "$ref": "#/$defs/PractitionerStratum"
+    },
+    "stale_artifact_found": {
+      "title": "Stale Artifact Found",
+      "type": "boolean"
+    },
+    "stale_artifact_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Stale Artifact Sha256",
+      "type": "string"
+    },
+    "unresolved_question_count": {
+      "minimum": 0,
+      "title": "Unresolved Question Count",
+      "type": "integer"
+    },
+    "verification_seconds": {
+      "exclusiveMinimum": 0,
+      "title": "Verification Seconds",
+      "type": "number"
+    },
+    "wrong_source_acceptance_count": {
+      "minimum": 0,
+      "title": "Wrong Source Acceptance Count",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "handoff_id",
+    "dyad_id",
+    "first_reviewer_pseudonym_sha256",
+    "second_reviewer_pseudonym_sha256",
+    "first_reviewer_stratum",
+    "second_reviewer_stratum",
+    "case_manifest_sha256",
+    "adjudicated_outcome_sha256",
+    "evidence_package_sha256",
+    "stale_artifact_sha256",
+    "consent_to_deidentified_export",
+    "consent_record_sha256",
+    "organizational_review_sha256",
+    "disposition_verified",
+    "claim_chain_reconstructed",
+    "stale_artifact_found",
+    "correct_next_action_identified",
+    "provenance_completeness",
+    "wrong_source_acceptance_count",
+    "unresolved_question_count",
+    "verification_seconds",
+    "disposition_reproducible",
+    "completed_at"
+  ],
+  "title": "ReviewerHandoffRecord",
+  "type": "object"
+}

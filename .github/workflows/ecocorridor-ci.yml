@@ -1,0 +1,553 @@
+name: EcoCorridor CI
+
+on:
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ecocorridor-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+  PNPM_VERSION: "11.9.0"
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  isolation-and-python:
+    name: Isolation, contracts, and Python
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out source with base history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python and uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install locked dependencies
+        run: >-
+          uv sync --locked
+          --extra dev
+          --extra science
+          --extra ecocorridor
+          --extra ecocorridor-agents
+          --extra ecocorridor-report
+          --extra export
+          --extra observability
+          --extra release
+
+      - name: Install lock-derived Eco geospatial runtime
+        run: >-
+          uv run --no-sync python
+          scripts/install_ecocorridor_geospatial_runtime.py
+
+      - name: Prove GI domain isolation
+        run: uv run --no-sync python scripts/check_gi_regression_lock.py
+
+      - name: Enforce ecological data classification
+        run: uv run --no-sync python scripts/check_ecological_data_manifest.py
+
+      - name: Recompute Ridgeway semantic evidence disposition
+        run: >-
+          uv run --no-sync python scripts/verify_ridgeway_release_evidence.py
+          --publish-directory benchmarks/ecocorridor/ridgeway
+          --desktop-fixture apps/ecocorridor-desktop/src/data/ridgewayFixture.json
+          --allow-historical-blocked
+
+      - name: Verify the committed multi-landscape search release gate
+        run: >-
+          uv run --no-sync ecocorridor-benchmark verify
+          --report benchmarks/ecocorridor/search/release-gate.json
+          --resource-report benchmarks/ecocorridor/search/release-gate.resources.json
+          --historical-provenance benchmarks/ecocorridor/search/historical-provenance.json
+          --manifest benchmarks/ecocorridor/search/manifest.json
+          --dataset benchmarks/ecocorridor/search/h1_low_barrier.json
+          --dataset benchmarks/ecocorridor/search/h2_moderate_barrier.json
+          --dataset benchmarks/ecocorridor/search/h3_high_barrier.json
+          --dataset benchmarks/ecocorridor/search/h4_future_pressure.json
+
+      - name: Enforce repository secret boundary
+        run: uv run --no-sync python scripts/check_repository_secrets.py
+
+      - name: Lint and format Python
+        run: |
+          uv run --no-sync ruff check python tests scripts
+          uv run --no-sync ruff format --check python tests scripts
+
+      - name: Run complete Python regression suite
+        run: uv run --no-sync pytest tests/python
+
+      - name: Regenerate Eco public contracts
+        run: uv run --no-sync python scripts/generate_ecocorridor_schemas.py
+
+      - name: Verify generated Eco contracts are current
+        run: >-
+          git diff --exit-code --
+          schemas/ecocorridor/v1.0
+          apps/ecocorridor-desktop/src/generated
+
+      - name: Build deterministic multi-ecosystem SBOM
+        run: >-
+          uv run --no-sync python scripts/create_ecocorridor_sbom.py
+          --output "${RUNNER_TEMP}/ecocorridor-sbom.cdx.json"
+          --version 0.1.0
+
+      - name: Preserve source-release SBOM
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: ecocorridor-source-sbom
+          path: ${{ runner.temp }}/ecocorridor-sbom.cdx.json
+          if-no-files-found: error
+          retention-days: 14
+
+  julia-dependency-security:
+    name: Julia dependency vulnerability policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Scan only the committed Julia environment
+        id: julia_vulnerability_scan
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-db:2
+          TRIVY_DISABLE_TELEMETRY: "true"
+        with:
+          cache: "false"
+          exit-code: "0"
+          format: json
+          hide-progress: "true"
+          ignore-unfixed: "false"
+          list-all-pkgs: "true"
+          output: ${{ runner.temp }}/ecocorridor-julia-vulnerabilities.json
+          scan-ref: julia/EcoCorridorEngine
+          scan-type: fs
+          scanners: vuln
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          timeout: 10m0s
+          version: v0.70.0
+          vuln-type: library
+
+      - name: Record scanner and live database metadata
+        id: julia_vulnerability_metadata
+        if: always()
+        continue-on-error: true
+        shell: bash
+        env:
+          TRIVY_CACHE_DIR: ${{ github.workspace }}/.cache/trivy
+        run: trivy --version > "${RUNNER_TEMP}/ecocorridor-trivy-version.txt"
+
+      - name: Validate the target and enforce zero findings
+        id: julia_vulnerability_policy
+        if: always()
+        continue-on-error: true
+        run: >-
+          python3 scripts/validate_julia_vulnerability_report.py
+          "${RUNNER_TEMP}/ecocorridor-julia-vulnerabilities.json"
+          --metadata "${RUNNER_TEMP}/ecocorridor-trivy-version.txt"
+          --expected-scanner 0.70.0
+          --expected-artifact julia/EcoCorridorEngine
+
+      - name: Preserve Julia vulnerability evidence
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: ecocorridor-julia-vulnerability-evidence
+          path: |
+            ${{ runner.temp }}/ecocorridor-julia-vulnerabilities.json
+            ${{ runner.temp }}/ecocorridor-trivy-version.txt
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Fail closed on scanner, metadata, or policy failure
+        if: always()
+        shell: bash
+        env:
+          METADATA_OUTCOME: ${{ steps.julia_vulnerability_metadata.outcome }}
+          POLICY_OUTCOME: ${{ steps.julia_vulnerability_policy.outcome }}
+          SCAN_OUTCOME: ${{ steps.julia_vulnerability_scan.outcome }}
+        run: |
+          if [[ "${SCAN_OUTCOME}" != "success" || \
+                "${METADATA_OUTCOME}" != "success" || \
+                "${POLICY_OUTCOME}" != "success" ]]; then
+            echo "::error::Julia dependency vulnerability evidence did not pass fail-closed policy."
+            exit 1
+          fi
+
+  connectivity-engine:
+    name: Julia and Circuitscape boundary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install checksum-verified Julia 1.12.6
+        run: bash scripts/install_ci_julia.sh
+
+      - name: Instantiate the committed Circuitscape environment
+        shell: bash
+        env:
+          JULIA_DEPOT_PATH: ${{ runner.temp }}/julia-depot
+          JULIA_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          OMP_NUM_THREADS: "1"
+        run: |
+          julia --project=julia/EcoCorridorEngine \
+            --startup-file=no --history-file=no \
+            -e 'using Pkg; Pkg.instantiate()'
+          julia --project=julia/EcoCorridorEngine \
+            --startup-file=no --history-file=no \
+            julia/EcoCorridorEngine/scripts/verify_manifest.jl
+          julia --project=julia/EcoCorridorEngine \
+            --startup-file=no --history-file=no \
+            -e 'using Pkg; Pkg.precompile()'
+
+      - name: Run wrapper and hand-calculated landscape tests
+        env:
+          JULIA_DEPOT_PATH: ${{ runner.temp }}/julia-depot
+          JULIA_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          OMP_NUM_THREADS: "1"
+        run: >-
+          julia --project=julia/EcoCorridorEngine
+          --startup-file=no --history-file=no
+          julia/EcoCorridorEngine/test/runtests.jl
+
+  packaged-scientific-boundary:
+    name: Packaged worker to Circuitscape smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python and uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install locked packaging dependencies
+        run: >-
+          uv sync --locked
+          --extra science
+          --extra ecocorridor
+          --extra ecocorridor-agents
+          --extra ecocorridor-report
+          --extra export
+          --extra observability
+          --extra release
+
+      - name: Install lock-derived Eco geospatial runtime
+        run: >-
+          uv run --no-sync python
+          scripts/install_ecocorridor_geospatial_runtime.py
+
+      - name: Install checksum-verified Julia 1.12.6
+        run: bash scripts/install_ci_julia.sh
+
+      - name: Instantiate the committed Circuitscape environment
+        shell: bash
+        env:
+          JULIA_DEPOT_PATH: ${{ runner.temp }}/julia-depot
+          JULIA_NUM_THREADS: "1"
+          JULIA_NUM_PRECOMPILE_TASKS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          OMP_NUM_THREADS: "1"
+        run: |
+          julia --project=julia/EcoCorridorEngine \
+            --startup-file=no --history-file=no \
+            -e 'using Pkg; Pkg.instantiate()'
+          julia --project=julia/EcoCorridorEngine \
+            --startup-file=no --history-file=no \
+            julia/EcoCorridorEngine/scripts/verify_manifest.jl
+          julia --project=julia/EcoCorridorEngine \
+            --startup-file=no --history-file=no \
+            -e 'using Pkg; Pkg.precompile()'
+
+      - name: Provision bounded PackageCompiler swap
+        shell: bash
+        run: |
+          set -euo pipefail
+          swap_path="${RUNNER_TEMP}/ecocorridor-packagecompiler.swap"
+          if [[ -e "${swap_path}" || -L "${swap_path}" ]]; then
+            echo "::error::Refusing to replace an existing PackageCompiler swap path."
+            exit 1
+          fi
+          sudo fallocate --length 4G "${swap_path}"
+          sudo chmod 600 "${swap_path}"
+          sudo mkswap "${swap_path}"
+          sudo swapon "${swap_path}"
+          sudo swapon --show --bytes
+
+      - name: Build target-native engine application
+        shell: bash
+        env:
+          ECOCORRIDOR_ENGINE_OUTPUT: ${{ runner.temp }}/ecocorridor-engine
+          JULIA_DEPOT_PATH: ${{ runner.temp }}/julia-depot
+          JULIA_NUM_THREADS: "1"
+          JULIA_NUM_PRECOMPILE_TASKS: "1"
+          # Image compilation is a packaging concern, not a scientific-run
+          # setting. Use both hosted-runner cores while retaining one-thread
+          # execution in the staged worker smoke and every direct run.
+          JULIA_IMAGE_THREADS: "2"
+          JULIA_IMAGE_TIMINGS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          OMP_NUM_THREADS: "1"
+        run: |
+          bash scripts/run_with_progress_heartbeat.sh \
+            --interval-seconds 60 \
+            --label "PackageCompiler application build" \
+            -- \
+            julia --project=julia/EcoCorridorEngine \
+            --startup-file=no --history-file=no \
+            scripts/build_ecocorridor_engine.jl
+
+      - name: Build target-native worker
+        run: >-
+          uv run --no-sync python scripts/build_ecocorridor_worker.py
+          --dist "${RUNNER_TEMP}/worker"
+          --work "${RUNNER_TEMP}/pyinstaller"
+
+      - name: Stage packaged resources
+        run: |
+          uv run --no-sync python scripts/stage_ecocorridor_release.py \
+            --stage apps/ecocorridor-desktop/src-tauri/release-generated \
+            --worker "${RUNNER_TEMP}/worker/ecocorridor-worker" \
+            --engine-app "${RUNNER_TEMP}/ecocorridor-engine" \
+            --target linux-x64 \
+            --application-version 0.1.0 \
+            --source-commit "${GITHUB_SHA}"
+          uv run --no-sync python scripts/create_ecocorridor_engine_manifest.py \
+            --output apps/ecocorridor-desktop/src-tauri/release-generated/engine-manifest.json \
+            --manifest-id ecocorridor-ci-linux-x64 \
+            --julia-runtime apps/ecocorridor-desktop/src-tauri/release-generated/engine \
+            --julia-project julia/EcoCorridorEngine \
+            --native-artifacts apps/ecocorridor-desktop/src-tauri/release-generated/engine \
+            --wrapper julia/EcoCorridorEngine/src/EcoCorridorEngine.jl \
+            --parser python/ecocorridor_core/engine.py \
+            --metric-definitions python/ecocorridor_core/metrics.py \
+            --neighbor-rule EIGHT \
+            --resistance-average ARITHMETIC \
+            --platform linux-x64 \
+            --executable apps/ecocorridor-desktop/src-tauri/release-generated/engine/bin/ecocorridor-engine
+
+      - name: Sign resource manifest with an ephemeral CI key
+        run: |
+          seed_path="${RUNNER_TEMP}/ci-resource-key.seed.hex"
+          cleanup_ci_resource_seed() {
+            rm -f -- "${seed_path}"
+          }
+          trap cleanup_ci_resource_seed EXIT HUP INT TERM
+          if [[ -e "${seed_path}" || -L "${seed_path}" ]]; then
+            echo "::error::Refusing to replace an existing ephemeral CI signing seed."
+            exit 1
+          fi
+          umask 077
+          uv run --no-sync python -c 'import sys; from pathlib import Path; from nacl.signing import SigningKey; key=SigningKey.generate(); Path(sys.argv[1]).write_text(key.encode().hex() + "\n", encoding="ascii")' "${seed_path}"
+          uv run --no-sync python scripts/create_ecocorridor_release_manifest.py \
+            --root apps/ecocorridor-desktop/src-tauri/release-generated \
+            --output apps/ecocorridor-desktop/src-tauri/release-generated/release-manifest.json \
+            --signature-output apps/ecocorridor-desktop/src-tauri/release-generated/release-manifest.sig \
+            --public-key-output "${RUNNER_TEMP}/ci-resource-public-key.hex" \
+            --signing-key "${seed_path}" \
+            --application-version 0.1.0 \
+            --source-commit "${GITHUB_SHA}" \
+            --target linux-x64 \
+            --executable bin/ecocorridor-worker \
+            --executable engine/bin/ecocorridor-engine
+          cleanup_ci_resource_seed
+          if [[ -e "${seed_path}" || -L "${seed_path}" ]]; then
+            echo "::error::Ephemeral CI signing seed cleanup did not complete."
+            exit 1
+          fi
+          trap - EXIT HUP INT TERM
+
+      - name: Execute staged scientific boundary offline
+        run: >-
+          uv run --no-sync python scripts/smoke_ecocorridor_release_bundle.py
+          --release-root apps/ecocorridor-desktop/src-tauri/release-generated
+          --public-key "${RUNNER_TEMP}/ci-resource-public-key.hex"
+          --expected-version 0.1.0
+          --expected-source-commit "${GITHUB_SHA}"
+          --expected-target linux-x64
+          --disposition-output "${RUNNER_TEMP}/ecocorridor-packaged-boundary-smoke.json"
+
+      - name: Preserve packaged-boundary evidence
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: ecocorridor-packaged-scientific-boundary
+          path: |
+            apps/ecocorridor-desktop/src-tauri/release-generated/release-manifest.json
+            apps/ecocorridor-desktop/src-tauri/release-generated/release-manifest.sig
+            apps/ecocorridor-desktop/src-tauri/release-generated/engine-manifest.json
+            apps/ecocorridor-desktop/src-tauri/release-generated/dependency-inventory.json
+            ${{ runner.temp }}/ci-resource-public-key.hex
+            ${{ runner.temp }}/ecocorridor-packaged-boundary-smoke.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove PackageCompiler swap
+        if: always()
+        shell: bash
+        run: |
+          swap_path="${RUNNER_TEMP}/ecocorridor-packagecompiler.swap"
+          sudo swapoff "${swap_path}" || true
+          sudo rm -f -- "${swap_path}"
+
+  eco-frontend:
+    name: Eco desktop and public replay
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Set up Python and uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install minimal locked replay-policy dependencies
+        run: uv sync --locked --no-dev --no-install-project
+
+      - name: Install locked frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Test, type-check, and build both Eco surfaces
+        run: |
+          pnpm test:eco
+          pnpm build:eco
+
+      - name: Enforce the synthetic public-replay boundary
+        env:
+          PYTHONPATH: python
+        run: >-
+          uv run --no-sync python scripts/check_ecocorridor_public_replay.py
+          --root apps/ecocorridor-replay/dist
+          --source-sha "${GITHUB_SHA}"
+          --fixture apps/ecocorridor-desktop/src/data/ridgewayFixture.json
+          --projection benchmarks/ecocorridor/ridgeway/ui_projection.json
+          --trust-record apps/ecocorridor-desktop/src/data/ridgewayReleaseTrust.json
+          --data-manifest benchmarks/ecocorridor/data-manifest.json
+
+      - name: Install Playwright Chromium
+        run: pnpm --dir apps/ecocorridor-desktop exec playwright install --with-deps chromium
+
+      - name: Crawl policy-safe production replay copy
+        run: pnpm --dir apps/ecocorridor-replay test:rendered-copy
+
+      - name: Run accessibility and screenshot acceptance
+        run: pnpm --dir apps/ecocorridor-desktop test:e2e
+
+      - name: Preserve visual evidence
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: ecocorridor-visual-evidence
+          path: |
+            apps/ecocorridor-desktop/playwright-report
+            apps/ecocorridor-desktop/test-results
+            apps/ecocorridor-replay/playwright-report
+            apps/ecocorridor-replay/test-results
+          if-no-files-found: warn
+          retention-days: 14
+
+  native-host:
+    name: Eco native security host
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install Tauri Linux prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libwebkit2gtk-4.1-dev
+
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
+        with:
+          toolchain: 1.88.0
+          components: rustfmt, clippy
+          cache-workspaces: |
+            crates/scenario-host -> target
+            apps/ecocorridor-desktop/src-tauri -> target
+
+      - name: Check scenario host
+        run: |
+          cargo fmt --manifest-path crates/scenario-host/Cargo.toml --check
+          cargo clippy --manifest-path crates/scenario-host/Cargo.toml --locked --all-targets -- -D warnings
+          cargo test --manifest-path crates/scenario-host/Cargo.toml --locked --all-targets
+
+      - name: Check Eco Tauri host
+        run: |
+          cargo fmt --manifest-path apps/ecocorridor-desktop/src-tauri/Cargo.toml --check
+          cargo clippy --manifest-path apps/ecocorridor-desktop/src-tauri/Cargo.toml --locked --all-targets -- -D warnings
+          cargo test --manifest-path apps/ecocorridor-desktop/src-tauri/Cargo.toml --locked --all-targets
+
+  workflow-policy:
+    name: Workflow policy and actionlint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Run repository workflow policy
+        run: python3 scripts/check_workflows.py
+
+      - name: Install pinned actionlint
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+
+      - name: Validate GitHub Actions workflows
+        run: '"${HOME}/go/bin/actionlint"'

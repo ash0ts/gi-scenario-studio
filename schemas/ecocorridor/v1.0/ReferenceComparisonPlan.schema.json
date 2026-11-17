@@ -1,0 +1,447 @@
+{
+  "$defs": {
+    "ComputationalResourceObservation": {
+      "additionalProperties": false,
+      "description": "Auditable compute observation without implied carbon accounting.\n\nWall-clock durations are measured with a monotonic process clock.  Memory\nand energy values are present only when an identified sampler or meter\nactually measured them, or when an explicit estimation method was used.\nA missing measurement is never represented as zero.",
+      "properties": {
+        "assumptions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Assumptions",
+          "type": "array"
+        },
+        "boundary": {
+          "$ref": "#/$defs/ResourceObservationBoundary"
+        },
+        "boundary_description": {
+          "title": "Boundary Description",
+          "type": "string"
+        },
+        "cache_lookup_wall_seconds": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cache Lookup Wall Seconds"
+        },
+        "energy_estimate_lower_kwh": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Energy Estimate Lower Kwh"
+        },
+        "energy_estimate_lower_watts": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Energy Estimate Lower Watts"
+        },
+        "energy_estimate_upper_kwh": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Energy Estimate Upper Kwh"
+        },
+        "energy_estimate_upper_watts": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Energy Estimate Upper Watts"
+        },
+        "energy_estimate_watts": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Energy Estimate Watts"
+        },
+        "energy_kwh": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Energy Kwh"
+        },
+        "energy_method": {
+          "title": "Energy Method",
+          "type": "string"
+        },
+        "energy_status": {
+          "$ref": "#/$defs/ResourceObservationStatus"
+        },
+        "exclusions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Exclusions",
+          "type": "array"
+        },
+        "hardware": {
+          "title": "Hardware",
+          "type": "string"
+        },
+        "observation_id": {
+          "title": "Observation Id",
+          "type": "string"
+        },
+        "peak_memory_bytes": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Peak Memory Bytes"
+        },
+        "peak_memory_is_lower_bound": {
+          "default": true,
+          "title": "Peak Memory Is Lower Bound",
+          "type": "boolean"
+        },
+        "peak_memory_method": {
+          "title": "Peak Memory Method",
+          "type": "string"
+        },
+        "peak_memory_sample_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Peak Memory Sample Count",
+          "type": "integer"
+        },
+        "peak_memory_sampling_interval_seconds": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Peak Memory Sampling Interval Seconds"
+        },
+        "peak_memory_status": {
+          "$ref": "#/$defs/ResourceObservationStatus"
+        },
+        "proposer_wall_seconds": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Proposer Wall Seconds"
+        },
+        "solver_wall_seconds": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Solver Wall Seconds"
+        }
+      },
+      "required": [
+        "observation_id",
+        "boundary",
+        "peak_memory_status",
+        "peak_memory_method",
+        "energy_status",
+        "energy_method",
+        "hardware",
+        "boundary_description"
+      ],
+      "title": "ComputationalResourceObservation",
+      "type": "object"
+    },
+    "ConnectivityRunPlan": {
+      "additionalProperties": false,
+      "properties": {
+        "analysis_id": {
+          "title": "Analysis Id",
+          "type": "string"
+        },
+        "baseline_portfolio_id": {
+          "title": "Baseline Portfolio Id",
+          "type": "string"
+        },
+        "current_maps_for_portfolio_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Current Maps For Portfolio Ids",
+          "type": "array"
+        },
+        "direct_job_count": {
+          "exclusiveMinimum": 0,
+          "title": "Direct Job Count",
+          "type": "integer"
+        },
+        "engine_manifest_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Engine Manifest Sha256",
+          "type": "string"
+        },
+        "portfolios": {
+          "items": {
+            "$ref": "#/$defs/PortfolioSelection"
+          },
+          "minItems": 1,
+          "title": "Portfolios",
+          "type": "array"
+        },
+        "revision_id": {
+          "title": "Revision Id",
+          "type": "string"
+        },
+        "scenario_ids": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Scenario Ids",
+          "type": "array"
+        },
+        "search_method": {
+          "enum": [
+            "ENUMERATION",
+            "SOBOL",
+            "SOBOL_EXTRATREES"
+          ],
+          "title": "Search Method",
+          "type": "string"
+        },
+        "search_resource_observation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ComputationalResourceObservation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "seed": {
+          "minimum": 0,
+          "title": "Seed",
+          "type": "integer"
+        },
+        "solver_job_cap": {
+          "exclusiveMinimum": 0,
+          "title": "Solver Job Cap",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "analysis_id",
+        "revision_id",
+        "scenario_ids",
+        "portfolios",
+        "baseline_portfolio_id",
+        "direct_job_count",
+        "solver_job_cap",
+        "search_method",
+        "seed",
+        "engine_manifest_sha256"
+      ],
+      "title": "ConnectivityRunPlan",
+      "type": "object"
+    },
+    "PortfolioSelection": {
+      "additionalProperties": false,
+      "properties": {
+        "canonical_option_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Canonical Option Ids",
+          "type": "array"
+        },
+        "contains_survey_first": {
+          "default": false,
+          "title": "Contains Survey First",
+          "type": "boolean"
+        },
+        "portfolio_id": {
+          "title": "Portfolio Id",
+          "type": "string"
+        },
+        "selections": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Selections",
+          "type": "object"
+        }
+      },
+      "required": [
+        "portfolio_id",
+        "selections",
+        "canonical_option_ids"
+      ],
+      "title": "PortfolioSelection",
+      "type": "object"
+    },
+    "ResourceObservationBoundary": {
+      "enum": [
+        "DIRECT_SOLVER",
+        "CACHE_REUSE",
+        "SEARCH_PROPOSER"
+      ],
+      "title": "ResourceObservationBoundary",
+      "type": "string"
+    },
+    "ResourceObservationStatus": {
+      "description": "How a computational resource value was obtained.\n\n``NOT_MEASURED`` is a first-class state.  It prevents the application from\nturning a missing energy meter or process-memory sampler into a zero.",
+      "enum": [
+        "MEASURED",
+        "ESTIMATED",
+        "NOT_MEASURED"
+      ],
+      "title": "ResourceObservationStatus",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.ecocorridor.local/1.0/ReferenceComparisonPlan.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Immutable baseline-only direct-run plan for supplied reference matrices.",
+  "properties": {
+    "analysis_id": {
+      "minLength": 1,
+      "title": "Analysis Id",
+      "type": "string"
+    },
+    "binding_ids": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Binding Ids",
+      "type": "array"
+    },
+    "bound_scenario_ids": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Bound Scenario Ids",
+      "type": "array"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "engine_manifest_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Engine Manifest Sha256",
+      "type": "string"
+    },
+    "exact_direct_evidence_only": {
+      "const": true,
+      "default": true,
+      "title": "Exact Direct Evidence Only",
+      "type": "boolean"
+    },
+    "model_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Model Sha256",
+      "type": "string"
+    },
+    "plan_id": {
+      "minLength": 1,
+      "title": "Plan Id",
+      "type": "string"
+    },
+    "revision_id": {
+      "minLength": 1,
+      "title": "Revision Id",
+      "type": "string"
+    },
+    "run_plan": {
+      "$ref": "#/$defs/ConnectivityRunPlan"
+    }
+  },
+  "required": [
+    "plan_id",
+    "analysis_id",
+    "revision_id",
+    "model_sha256",
+    "engine_manifest_sha256",
+    "binding_ids",
+    "bound_scenario_ids",
+    "run_plan",
+    "created_at"
+  ],
+  "title": "ReferenceComparisonPlan",
+  "type": "object"
+}

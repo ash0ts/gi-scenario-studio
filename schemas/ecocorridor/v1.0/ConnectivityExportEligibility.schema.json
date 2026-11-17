@@ -1,0 +1,70 @@
+{
+  "$id": "https://schemas.ecocorridor.local/1.0/ConnectivityExportEligibility.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "authorization_blockers": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Authorization Blockers",
+      "type": "array"
+    },
+    "complete_ensemble": {
+      "title": "Complete Ensemble",
+      "type": "boolean"
+    },
+    "eligible": {
+      "title": "Eligible",
+      "type": "boolean"
+    },
+    "exact_direct_evidence_only": {
+      "title": "Exact Direct Evidence Only",
+      "type": "boolean"
+    },
+    "fitness_blockers": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Fitness Blockers",
+      "type": "array"
+    },
+    "professional": {
+      "title": "Professional",
+      "type": "boolean"
+    },
+    "qa_blockers": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Qa Blockers",
+      "type": "array"
+    },
+    "required_notice": {
+      "const": "Conceptual connectivity screening \u2014 not observed animal movement, crossing use, collision reduction, population viability, or an approved corridor.",
+      "default": "Conceptual connectivity screening \u2014 not observed animal movement, crossing use, collision reduction, population viability, or an approved corridor.",
+      "title": "Required Notice",
+      "type": "string"
+    },
+    "sync_state": {
+      "enum": [
+        "CONNECTED",
+        "SYNCING",
+        "SYNC_QUEUED_OFFLINE",
+        "FAILED_RETRYING",
+        "BLOCKED"
+      ],
+      "title": "Sync State",
+      "type": "string"
+    }
+  },
+  "required": [
+    "eligible",
+    "professional",
+    "complete_ensemble",
+    "exact_direct_evidence_only",
+    "sync_state"
+  ],
+  "title": "ConnectivityExportEligibility",
+  "type": "object"
+}

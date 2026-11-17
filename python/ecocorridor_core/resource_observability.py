@@ -1,0 +1,769 @@
+"""Honest, low-overhead observations of EcoCorridor computation.
+
+The module intentionally separates observations from scientific results.  It
+samples the resident memory of one identified process and estimates energy
+only from an explicit active-power proxy.  The estimate is not a hardware
+meter, does not include a carbon conversion, and carries coefficient scenario
+bounds so it cannot be mistaken for measured electricity use.
+"""
+
+from __future__ import annotations
+
+import ctypes
+import ctypes.util
+import errno
+import hashlib
+import json
+import os
+import platform
+import signal
+import subprocess
+import threading
+import time
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+
+from .contracts import (
+    ComputationalResourceObservation,
+    ResourceObservationBoundary,
+    ResourceObservationStatus,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ActivePowerEstimatePolicy:
+    """Pinned scenario coefficients for an explicitly estimated energy value.
+
+    The defaults are deliberately broad.  They describe one active,
+    single-threaded solver/proposer process, not the host's wall-plug demand.
+    A deployment with a real meter should replace the estimate rather than
+    narrowing these bounds without evidence.
+    """
+
+    method_id: str = "SINGLE_THREAD_ACTIVE_POWER_PROXY_V1"
+    nominal_watts: float = 15.0
+    lower_watts: float = 5.0
+    upper_watts: float = 40.0
+
+    def __post_init__(self) -> None:
+        if not (0 < self.lower_watts <= self.nominal_watts <= self.upper_watts):
+            raise ValueError("energy coefficients must satisfy 0 < lower <= nominal <= upper")
+
+
+DEFAULT_ACTIVE_POWER_POLICY = ActivePowerEstimatePolicy()
+DEFAULT_SAMPLE_INTERVAL_SECONDS = 0.1
+DEFAULT_PROCESS_POLL_INTERVAL_SECONDS = 0.05
+DEFAULT_TERMINATION_GRACE_SECONDS = 0.5
+DEFAULT_KILL_WAIT_SECONDS = 1.0
+
+
+@dataclass(frozen=True, slots=True)
+class ProcessTreeExitEvidence:
+    """Local proof that one isolated solver process tree no longer exists."""
+
+    process_id: int
+    process_group_id: int | None
+    process_identity: str
+    launched_at: str
+    termination_reason: str
+    tree_exit_confirmed: bool
+    confirmation_method: str
+    confirmed_at: str
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "process_id": self.process_id,
+            "process_group_id": self.process_group_id,
+            "process_identity": self.process_identity,
+            "launched_at": self.launched_at,
+            "termination_reason": self.termination_reason,
+            "tree_exit_confirmed": self.tree_exit_confirmed,
+            "confirmation_method": self.confirmation_method,
+            "confirmed_at": self.confirmed_at,
+        }
+
+
+def _process_identity(
+    args: Sequence[str],
+    *,
+    process_id: int,
+    process_group_id: int | None,
+    launched_at: str,
+    launch_monotonic_ns: int,
+) -> str:
+    payload = json.dumps(
+        {
+            "argv_sha256": hashlib.sha256(
+                json.dumps(list(args), separators=(",", ":")).encode("utf-8")
+            ).hexdigest(),
+            "process_id": process_id,
+            "process_group_id": process_group_id,
+            "launched_at": launched_at,
+            "launch_monotonic_ns": launch_monotonic_ns,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _exit_evidence(
+    *,
+    process_id: int,
+    process_group_id: int | None,
+    process_identity: str,
+    launched_at: str,
+    termination_reason: str,
+    tree_exit_confirmed: bool,
+    confirmation_method: str,
+) -> ProcessTreeExitEvidence:
+    return ProcessTreeExitEvidence(
+        process_id=process_id,
+        process_group_id=process_group_id,
+        process_identity=process_identity,
+        launched_at=launched_at,
+        termination_reason=termination_reason,
+        tree_exit_confirmed=tree_exit_confirmed,
+        confirmation_method=confirmation_method,
+        confirmed_at=datetime.now(UTC).isoformat(),
+    )
+
+
+def generalized_hardware() -> str:
+    """Return useful, non-identifying hardware context."""
+
+    logical_cpus = os.cpu_count()
+    return (
+        f"os={platform.system()};arch={platform.machine()};"
+        f"logical_cpus={logical_cpus if logical_cpus is not None else 'unknown'}"
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _MemoryRead:
+    bytes: int
+    method: str
+
+
+def _linux_peak_rss(pid: int) -> _MemoryRead | None:
+    status = Path(f"/proc/{pid}/status")
+    try:
+        rows = status.read_text(encoding="utf-8").splitlines()
+    except (FileNotFoundError, PermissionError, ProcessLookupError, OSError):
+        return None
+    values: dict[str, int] = {}
+    for row in rows:
+        if row.startswith(("VmHWM:", "VmRSS:")):
+            label, raw = row.split(":", 1)
+            parts = raw.split()
+            if parts and parts[0].isdigit():
+                values[label] = int(parts[0]) * 1024
+    value = values.get("VmHWM") or values.get("VmRSS")
+    if value is None:
+        return None
+    return _MemoryRead(value, "LINUX_PROC_STATUS_VMHWM_SAMPLED")
+
+
+class _DarwinRusageInfoV2(ctypes.Structure):
+    _fields_ = [
+        ("ri_uuid", ctypes.c_ubyte * 16),
+        ("ri_user_time", ctypes.c_uint64),
+        ("ri_system_time", ctypes.c_uint64),
+        ("ri_pkg_idle_wkups", ctypes.c_uint64),
+        ("ri_interrupt_wkups", ctypes.c_uint64),
+        ("ri_pageins", ctypes.c_uint64),
+        ("ri_wired_size", ctypes.c_uint64),
+        ("ri_resident_size", ctypes.c_uint64),
+        ("ri_phys_footprint", ctypes.c_uint64),
+        ("ri_proc_start_abstime", ctypes.c_uint64),
+        ("ri_proc_exit_abstime", ctypes.c_uint64),
+        ("ri_child_user_time", ctypes.c_uint64),
+        ("ri_child_system_time", ctypes.c_uint64),
+        ("ri_child_pkg_idle_wkups", ctypes.c_uint64),
+        ("ri_child_interrupt_wkups", ctypes.c_uint64),
+        ("ri_child_pageins", ctypes.c_uint64),
+        ("ri_child_elapsed_abstime", ctypes.c_uint64),
+        ("ri_diskio_bytesread", ctypes.c_uint64),
+        ("ri_diskio_byteswritten", ctypes.c_uint64),
+    ]
+
+
+def _darwin_physical_footprint(pid: int) -> _MemoryRead | None:
+    library_name = ctypes.util.find_library("proc") or "/usr/lib/libproc.dylib"
+    try:
+        library = ctypes.CDLL(library_name, use_errno=True)
+        proc_pid_rusage = library.proc_pid_rusage
+        proc_pid_rusage.argtypes = [
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.POINTER(_DarwinRusageInfoV2),
+        ]
+        proc_pid_rusage.restype = ctypes.c_int
+        value = _DarwinRusageInfoV2()
+        if proc_pid_rusage(pid, 2, ctypes.byref(value)) != 0:
+            return None
+    except (AttributeError, OSError):
+        return None
+    footprint = int(value.ri_phys_footprint or value.ri_resident_size)
+    return (
+        _MemoryRead(footprint, "MACOS_PROC_PID_RUSAGE_V2_PHYS_FOOTPRINT_SAMPLED")
+        if footprint > 0
+        else None
+    )
+
+
+class _WindowsProcessMemoryCounters(ctypes.Structure):
+    _fields_ = [
+        ("cb", ctypes.c_ulong),
+        ("PageFaultCount", ctypes.c_ulong),
+        ("PeakWorkingSetSize", ctypes.c_size_t),
+        ("WorkingSetSize", ctypes.c_size_t),
+        ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+        ("PagefileUsage", ctypes.c_size_t),
+        ("PeakPagefileUsage", ctypes.c_size_t),
+    ]
+
+
+def _windows_peak_working_set(pid: int) -> _MemoryRead | None:
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        psapi = ctypes.WinDLL("psapi", use_last_error=True)
+    except (AttributeError, OSError):
+        return None
+    process_query_information = 0x0400
+    process_vm_read = 0x0010
+    kernel32.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+    kernel32.OpenProcess.restype = ctypes.c_void_p
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+    kernel32.CloseHandle.restype = ctypes.c_int
+    psapi.GetProcessMemoryInfo.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(_WindowsProcessMemoryCounters),
+        ctypes.c_ulong,
+    ]
+    psapi.GetProcessMemoryInfo.restype = ctypes.c_int
+    handle = kernel32.OpenProcess(
+        process_query_information | process_vm_read,
+        False,
+        pid,
+    )
+    if not handle:
+        return None
+    counters = _WindowsProcessMemoryCounters()
+    counters.cb = ctypes.sizeof(counters)
+    try:
+        ok = psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), ctypes.sizeof(counters))
+        if not ok or counters.PeakWorkingSetSize <= 0:
+            return None
+        return _MemoryRead(
+            int(counters.PeakWorkingSetSize),
+            "WINDOWS_PROCESS_MEMORY_COUNTERS_PEAK_WORKING_SET_SAMPLED",
+        )
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def read_process_memory(pid: int) -> _MemoryRead | None:
+    """Read a process-scoped resident-memory value without a third-party agent."""
+
+    system = platform.system()
+    if system == "Linux":
+        return _linux_peak_rss(pid)
+    if system == "Darwin":
+        return _darwin_physical_footprint(pid)
+    if system == "Windows":
+        return _windows_peak_working_set(pid)
+    return None
+
+
+class ProcessResourceRecorder:
+    """Sample one process over an explicit computation boundary."""
+
+    def __init__(
+        self,
+        *,
+        pid: int,
+        observation_id: str,
+        boundary: ResourceObservationBoundary,
+        boundary_description: str,
+        sample_interval_seconds: float = DEFAULT_SAMPLE_INTERVAL_SECONDS,
+        energy_policy: ActivePowerEstimatePolicy | None = DEFAULT_ACTIVE_POWER_POLICY,
+        memory_reader: Callable[[int], _MemoryRead | None] = read_process_memory,
+        hardware: str | None = None,
+    ) -> None:
+        if sample_interval_seconds <= 0:
+            raise ValueError("memory sampling interval must be positive")
+        self.pid = pid
+        self.observation_id = observation_id
+        self.boundary = boundary
+        self.boundary_description = boundary_description
+        self.sample_interval_seconds = sample_interval_seconds
+        self.energy_policy = energy_policy
+        self.memory_reader = memory_reader
+        self.hardware = hardware or generalized_hardware()
+        self._started = time.perf_counter()
+        self._peak_bytes: int | None = None
+        self._memory_method: str | None = None
+        self._sample_count = 0
+        self._stop = threading.Event()
+        # Capture an immediate reading so short-lived jobs do not automatically
+        # become unobserved merely because they complete within one interval.
+        self._sample_once()
+        self._thread = threading.Thread(target=self._sample, daemon=True)
+        self._thread.start()
+
+    def _sample_once(self) -> None:
+        reading = self.memory_reader(self.pid)
+        if reading is not None:
+            self._sample_count += 1
+            self._memory_method = reading.method
+            self._peak_bytes = max(self._peak_bytes or 0, reading.bytes)
+
+    def _sample(self) -> None:
+        while not self._stop.wait(self.sample_interval_seconds):
+            self._sample_once()
+
+    def finish(self) -> ComputationalResourceObservation:
+        self._stop.set()
+        self._thread.join(timeout=max(1.0, self.sample_interval_seconds * 3))
+        self._sample_once()
+        wall_seconds = max(0.0, time.perf_counter() - self._started)
+        timing_field = {
+            ResourceObservationBoundary.DIRECT_SOLVER: "solver_wall_seconds",
+            ResourceObservationBoundary.CACHE_REUSE: "cache_lookup_wall_seconds",
+            ResourceObservationBoundary.SEARCH_PROPOSER: "proposer_wall_seconds",
+        }[self.boundary]
+        timing = {timing_field: wall_seconds}
+        if self._peak_bytes is None:
+            memory = {
+                "peak_memory_status": ResourceObservationStatus.NOT_MEASURED,
+                "peak_memory_bytes": None,
+                "peak_memory_method": "PROCESS_MEMORY_API_UNAVAILABLE",
+                "peak_memory_sample_count": 0,
+                "peak_memory_sampling_interval_seconds": self.sample_interval_seconds,
+                "peak_memory_is_lower_bound": True,
+            }
+        else:
+            memory = {
+                "peak_memory_status": ResourceObservationStatus.MEASURED,
+                "peak_memory_bytes": self._peak_bytes,
+                "peak_memory_method": self._memory_method or "PROCESS_MEMORY_SAMPLED",
+                "peak_memory_sample_count": self._sample_count,
+                "peak_memory_sampling_interval_seconds": self.sample_interval_seconds,
+                # Sampling can miss a short-lived peak even when the platform
+                # API itself exposes a process high-water counter.
+                "peak_memory_is_lower_bound": True,
+            }
+        if self.energy_policy is None:
+            energy = {
+                "energy_status": ResourceObservationStatus.NOT_MEASURED,
+                "energy_kwh": None,
+                "energy_method": "NOT_COLLECTED_NO_ENERGY_METER_OR_APPROVED_ESTIMATOR",
+            }
+        else:
+            divisor = 3_600_000.0
+            energy = {
+                "energy_status": ResourceObservationStatus.ESTIMATED,
+                "energy_kwh": wall_seconds * self.energy_policy.nominal_watts / divisor,
+                "energy_method": self.energy_policy.method_id,
+                "energy_estimate_watts": self.energy_policy.nominal_watts,
+                "energy_estimate_lower_watts": self.energy_policy.lower_watts,
+                "energy_estimate_upper_watts": self.energy_policy.upper_watts,
+                "energy_estimate_lower_kwh": (
+                    wall_seconds * self.energy_policy.lower_watts / divisor
+                ),
+                "energy_estimate_upper_kwh": (
+                    wall_seconds * self.energy_policy.upper_watts / divisor
+                ),
+            }
+        process_assumption = (
+            "The observed process was configured for one Julia, BLAS, and OMP thread."
+            if self.boundary == ResourceObservationBoundary.DIRECT_SOLVER
+            else "The bounded proposer executes in one worker process; ExtraTrees uses n_jobs=1."
+        )
+        memory_boundary_assumption = (
+            "The isolated solver process has no unrelated application workload."
+            if self.boundary == ResourceObservationBoundary.DIRECT_SOLVER
+            else (
+                "Search memory is whole-worker resident memory during the boundary, not "
+                "incremental proposer allocation; unrelated concurrent worker activity may be "
+                "included."
+            )
+        )
+        return ComputationalResourceObservation(
+            observation_id=self.observation_id,
+            boundary=self.boundary,
+            **timing,
+            **memory,
+            **energy,
+            hardware=self.hardware,
+            boundary_description=self.boundary_description,
+            assumptions=[
+                process_assumption,
+                memory_boundary_assumption,
+                "The energy value is a wall-time power proxy, not a meter reading.",
+                "Concurrent jobs are estimated independently from their own active durations.",
+            ],
+            exclusions=[
+                "Python orchestration, file synchronization, display, networking, cooling, and embodied energy are outside the estimate boundary.",
+                "Sampled process memory may miss peaks between samples and is a lower bound.",
+                "No location-based electricity or carbon conversion is performed.",
+            ],
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ObservedCompletedProcess:
+    completed: subprocess.CompletedProcess[bytes]
+    observation: ComputationalResourceObservation
+    process_exit: ProcessTreeExitEvidence
+
+
+class ObservedProcessTimeout(subprocess.TimeoutExpired):
+    """Timeout that retains the observation made before process termination."""
+
+    def __init__(
+        self,
+        cmd: Sequence[str],
+        timeout: float,
+        *,
+        output: bytes,
+        stderr: bytes,
+        resource_observation: ComputationalResourceObservation,
+        process_exit: ProcessTreeExitEvidence,
+    ) -> None:
+        super().__init__(cmd, timeout, output=output, stderr=stderr)
+        self.resource_observation = resource_observation
+        self.process_exit = process_exit
+
+
+class ObservedProcessCancelled(subprocess.SubprocessError):
+    """Cancellation that retains output and the pre-termination observation."""
+
+    def __init__(
+        self,
+        cmd: Sequence[str],
+        *,
+        output: bytes,
+        stderr: bytes,
+        resource_observation: ComputationalResourceObservation,
+        process_exit: ProcessTreeExitEvidence,
+    ) -> None:
+        super().__init__(f"observed process was cancelled: {list(cmd)!r}")
+        self.cmd = list(cmd)
+        self.output = output
+        self.stdout = output
+        self.stderr = stderr
+        self.resource_observation = resource_observation
+        self.process_exit = process_exit
+
+
+def _group_launch_options() -> dict[str, object]:
+    """Return platform-native isolation flags for one child process tree."""
+
+    if os.name == "posix":
+        return {"start_new_session": True}
+    if os.name == "nt":
+        return {"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)}
+    return {}
+
+
+def _posix_group_exists(process_group_id: int) -> bool:
+    try:
+        os.killpg(process_group_id, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _wait_for_posix_group_exit(
+    process: subprocess.Popen[bytes], process_group_id: int, timeout_seconds: float
+) -> bool:
+    deadline = time.monotonic() + max(0.0, timeout_seconds)
+    while True:
+        # Reap the direct child as soon as it exits. A zombie group leader can
+        # otherwise make killpg(..., 0) look live for the full grace period.
+        process.poll()
+        if not _posix_group_exists(process_group_id):
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(0.02, remaining))
+
+
+def _windows_taskkill(process_id: int, *, force: bool, timeout_seconds: float) -> bool:
+    command = ["taskkill.exe", "/PID", str(process_id), "/T"]
+    if force:
+        command.append("/F")
+    try:
+        completed = subprocess.run(
+            command,
+            check=False,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=max(0.1, timeout_seconds),
+            shell=False,
+        )
+        return completed.returncode == 0
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        # Popen.terminate()/kill() below remain a direct-child fallback when a
+        # constrained Windows image does not expose taskkill.exe.
+        return False
+
+
+def _terminate_process_tree(
+    process: subprocess.Popen[bytes],
+    *,
+    grace_seconds: float,
+    kill_wait_seconds: float,
+) -> tuple[bool, str]:
+    """Terminate the isolated child tree, escalating after a bounded grace."""
+
+    if os.name == "posix":
+        process_group_id = process.pid
+        try:
+            os.killpg(process_group_id, signal.SIGTERM)
+        except OSError as exc:
+            if exc.errno != errno.ESRCH:
+                raise
+        if _wait_for_posix_group_exit(process, process_group_id, grace_seconds):
+            return True, "POSIX_PROCESS_GROUP_ABSENT_AFTER_SIGTERM"
+        try:
+            os.killpg(process_group_id, signal.SIGKILL)
+        except OSError as exc:
+            if exc.errno != errno.ESRCH:
+                raise
+        confirmed = _wait_for_posix_group_exit(process, process_group_id, kill_wait_seconds)
+        return confirmed, (
+            "POSIX_PROCESS_GROUP_ABSENT_AFTER_SIGKILL"
+            if confirmed
+            else "POSIX_PROCESS_GROUP_STILL_PRESENT_AFTER_SIGKILL"
+        )
+
+    if os.name == "nt":
+        # taskkill /T addresses the whole descendant tree. The first call is a
+        # graceful request; /F is the bounded escalation. CREATE_NEW_PROCESS_GROUP
+        # above also prevents the solver from sharing the host's console group.
+        graceful_tree = _windows_taskkill(process.pid, force=False, timeout_seconds=grace_seconds)
+        try:
+            process.wait(timeout=max(0.1, grace_seconds))
+        except subprocess.TimeoutExpired:
+            pass
+        if graceful_tree and process.poll() is not None:
+            return True, "WINDOWS_TASKKILL_TREE_CONFIRMED"
+        forced_tree = _windows_taskkill(process.pid, force=True, timeout_seconds=kill_wait_seconds)
+        if process.poll() is None:
+            process.kill()
+        try:
+            process.wait(timeout=max(0.1, kill_wait_seconds))
+        except subprocess.TimeoutExpired:
+            return False, "WINDOWS_PROCESS_TREE_EXIT_UNCONFIRMED"
+        return forced_tree, (
+            "WINDOWS_TASKKILL_FORCE_TREE_CONFIRMED"
+            if forced_tree
+            else "WINDOWS_DIRECT_CHILD_ONLY_EXIT"
+        )
+
+    process.terminate()
+    try:
+        process.wait(timeout=max(0.1, grace_seconds))
+    except subprocess.TimeoutExpired:
+        process.kill()
+        try:
+            process.wait(timeout=max(0.1, kill_wait_seconds))
+        except subprocess.TimeoutExpired:
+            pass
+    return False, "PLATFORM_PROCESS_TREE_CONFIRMATION_UNAVAILABLE"
+
+
+def _bounded_output_after_termination(
+    process: subprocess.Popen[bytes], *, timeout_seconds: float
+) -> tuple[bytes, bytes]:
+    try:
+        return process.communicate(timeout=max(0.1, timeout_seconds))
+    except subprocess.TimeoutExpired as error:
+        # The isolated tree has already received its hard-kill escalation. Do
+        # not let inherited or broken pipe handles block the worker forever.
+        if process.poll() is None:
+            process.kill()
+        try:
+            return process.communicate(timeout=max(0.1, timeout_seconds))
+        except subprocess.TimeoutExpired:
+            for stream in (process.stdout, process.stderr):
+                if stream is not None:
+                    stream.close()
+            try:
+                process.wait(timeout=max(0.1, timeout_seconds))
+            except subprocess.TimeoutExpired:
+                pass
+            return error.output or b"", error.stderr or b""
+
+
+def run_observed_process(
+    args: Sequence[str],
+    *,
+    cwd: Path,
+    env: Mapping[str, str],
+    timeout_seconds: float,
+    observation_id: str,
+    boundary_description: str,
+    energy_policy: ActivePowerEstimatePolicy | None = DEFAULT_ACTIVE_POWER_POLICY,
+    sample_interval_seconds: float = DEFAULT_SAMPLE_INTERVAL_SECONDS,
+    cancel_requested: Callable[[], bool] | None = None,
+    poll_interval_seconds: float = DEFAULT_PROCESS_POLL_INTERVAL_SECONDS,
+    termination_grace_seconds: float = DEFAULT_TERMINATION_GRACE_SECONDS,
+    kill_wait_seconds: float = DEFAULT_KILL_WAIT_SECONDS,
+) -> ObservedCompletedProcess:
+    """Run one child without a shell and capture its auditable resource boundary."""
+
+    if timeout_seconds <= 0:
+        raise ValueError("process timeout must be positive")
+    if poll_interval_seconds <= 0:
+        raise ValueError("process poll interval must be positive")
+    if termination_grace_seconds < 0 or kill_wait_seconds <= 0:
+        raise ValueError("process termination waits must be nonnegative and bounded")
+
+    process = subprocess.Popen(
+        list(args),
+        cwd=cwd,
+        env=dict(env),
+        shell=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        **_group_launch_options(),
+    )
+    launched_at = datetime.now(UTC).isoformat()
+    launch_monotonic_ns = time.monotonic_ns()
+    process_group_id = process.pid if os.name in {"posix", "nt"} else None
+    process_identity = _process_identity(
+        args,
+        process_id=process.pid,
+        process_group_id=process_group_id,
+        launched_at=launched_at,
+        launch_monotonic_ns=launch_monotonic_ns,
+    )
+    recorder = ProcessResourceRecorder(
+        pid=process.pid,
+        observation_id=observation_id,
+        boundary=ResourceObservationBoundary.DIRECT_SOLVER,
+        boundary_description=boundary_description,
+        sample_interval_seconds=sample_interval_seconds,
+        energy_policy=energy_policy,
+    )
+    termination_reason: str | None = None
+    tree_exit_confirmed = False
+    confirmation_method = "PROCESS_TREE_EXIT_NOT_CHECKED"
+    stdout = b""
+    stderr = b""
+    deadline = time.monotonic() + timeout_seconds
+    try:
+        while True:
+            if process.poll() is not None:
+                stdout, stderr = process.communicate()
+                break
+            if cancel_requested is not None and cancel_requested():
+                termination_reason = "cancelled"
+            elif time.monotonic() >= deadline:
+                termination_reason = "timeout"
+            if termination_reason is not None:
+                tree_exit_confirmed, confirmation_method = _terminate_process_tree(
+                    process,
+                    grace_seconds=termination_grace_seconds,
+                    kill_wait_seconds=kill_wait_seconds,
+                )
+                stdout, stderr = _bounded_output_after_termination(
+                    process, timeout_seconds=kill_wait_seconds
+                )
+                break
+            remaining = deadline - time.monotonic()
+            try:
+                stdout, stderr = process.communicate(
+                    timeout=min(poll_interval_seconds, max(0.001, remaining))
+                )
+                break
+            except subprocess.TimeoutExpired:
+                continue
+    finally:
+        observation = recorder.finish()
+    if termination_reason is None:
+        if os.name == "posix" and process_group_id is not None:
+            tree_exit_confirmed = _wait_for_posix_group_exit(
+                process, process_group_id, kill_wait_seconds
+            )
+            confirmation_method = (
+                "POSIX_PROCESS_GROUP_ABSENT_AFTER_NATURAL_EXIT"
+                if tree_exit_confirmed
+                else "POSIX_PROCESS_GROUP_STILL_PRESENT_AFTER_NATURAL_EXIT"
+            )
+        elif os.name == "nt":
+            tree_exit_confirmed = False
+            confirmation_method = "WINDOWS_NATURAL_DESCENDANT_EXIT_UNCONFIRMED"
+        else:
+            tree_exit_confirmed = False
+            confirmation_method = "PLATFORM_PROCESS_TREE_CONFIRMATION_UNAVAILABLE"
+    process_exit = _exit_evidence(
+        process_id=process.pid,
+        process_group_id=process_group_id,
+        process_identity=process_identity,
+        launched_at=launched_at,
+        termination_reason=termination_reason or "natural_exit",
+        tree_exit_confirmed=tree_exit_confirmed,
+        confirmation_method=confirmation_method,
+    )
+    if termination_reason == "timeout":
+        raise ObservedProcessTimeout(
+            list(args),
+            timeout_seconds,
+            output=stdout,
+            stderr=stderr,
+            resource_observation=observation,
+            process_exit=process_exit,
+        )
+    if termination_reason == "cancelled":
+        raise ObservedProcessCancelled(
+            list(args),
+            output=stdout,
+            stderr=stderr,
+            resource_observation=observation,
+            process_exit=process_exit,
+        )
+    completed = subprocess.CompletedProcess(list(args), process.returncode, stdout, stderr)
+    return ObservedCompletedProcess(
+        completed=completed,
+        observation=observation,
+        process_exit=process_exit,
+    )
+
+
+def unmeasured_cache_observation(
+    *, observation_id: str, wall_seconds: float
+) -> ComputationalResourceObservation:
+    """Record cache timing without attributing solver resources to cache reuse."""
+
+    return ComputationalResourceObservation(
+        observation_id=observation_id,
+        boundary=ResourceObservationBoundary.CACHE_REUSE,
+        cache_lookup_wall_seconds=max(0.0, wall_seconds),
+        peak_memory_status=ResourceObservationStatus.NOT_MEASURED,
+        peak_memory_method="NOT_ATTRIBUTED_CACHE_LOOKUP_SHARED_WORKER",
+        peak_memory_sample_count=0,
+        peak_memory_is_lower_bound=True,
+        energy_status=ResourceObservationStatus.NOT_MEASURED,
+        energy_method="NOT_ATTRIBUTED_CACHE_LOOKUP_SHARED_WORKER",
+        hardware=generalized_hardware(),
+        boundary_description="One in-process immutable physics-cache lookup.",
+        assumptions=[],
+        exclusions=[
+            "Shared worker memory and energy cannot be attributed to one cache lookup.",
+            "No carbon value is derived from this observation.",
+        ],
+    )

@@ -1,0 +1,96 @@
+{
+  "$defs": {
+    "EvidenceConfidence": {
+      "enum": [
+        "CONFIRMED",
+        "INFERRED",
+        "ASSUMED"
+      ],
+      "title": "EvidenceConfidence",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.ecocorridor.local/1.0/ResistanceHypothesis.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "confidence": {
+      "$ref": "#/$defs/EvidenceConfidence"
+    },
+    "derivation": {
+      "title": "Derivation",
+      "type": "string"
+    },
+    "evidence_citations": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Evidence Citations",
+      "type": "array"
+    },
+    "future_condition": {
+      "title": "Future Condition",
+      "type": "string"
+    },
+    "grid_id": {
+      "title": "Grid Id",
+      "type": "string"
+    },
+    "guild_id": {
+      "title": "Guild Id",
+      "type": "string"
+    },
+    "hypothesis_id": {
+      "title": "Hypothesis Id",
+      "type": "string"
+    },
+    "life_stage": {
+      "title": "Life Stage",
+      "type": "string"
+    },
+    "maturity_horizon": {
+      "title": "Maturity Horizon",
+      "type": "string"
+    },
+    "rationale": {
+      "title": "Rationale",
+      "type": "string"
+    },
+    "resistance_asset_id": {
+      "title": "Resistance Asset Id",
+      "type": "string"
+    },
+    "reviewed_at": {
+      "format": "date-time",
+      "title": "Reviewed At",
+      "type": "string"
+    },
+    "reviewed_by": {
+      "title": "Reviewed By",
+      "type": "string"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    }
+  },
+  "required": [
+    "hypothesis_id",
+    "title",
+    "guild_id",
+    "life_stage",
+    "future_condition",
+    "maturity_horizon",
+    "resistance_asset_id",
+    "grid_id",
+    "rationale",
+    "derivation",
+    "evidence_citations",
+    "confidence",
+    "reviewed_by",
+    "reviewed_at"
+  ],
+  "title": "ResistanceHypothesis",
+  "type": "object"
+}

@@ -1,0 +1,399 @@
+{
+  "$defs": {
+    "PractitionerStratum": {
+      "enum": [
+        "STATE_DOT",
+        "WILDLIFE_AGENCY",
+        "ECOLOGICAL_CONSULTANT"
+      ],
+      "title": "PractitionerStratum",
+      "type": "string"
+    },
+    "SessionStatus": {
+      "enum": [
+        "ASSIGNED",
+        "STARTED",
+        "COMPLETED",
+        "WITHDRAWN"
+      ],
+      "title": "SessionStatus",
+      "type": "string"
+    },
+    "StudyDisposition": {
+      "enum": [
+        "PASSES_SCREENING_RULES",
+        "FAILS_SCREENING_RULES",
+        "REVIEW_REQUIRED",
+        "SURVEY_FIRST",
+        "INCOMPLETE"
+      ],
+      "title": "StudyDisposition",
+      "type": "string"
+    },
+    "StudyPhase": {
+      "enum": [
+        "PILOT",
+        "CONFIRMATORY"
+      ],
+      "title": "StudyPhase",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.ecocorridor.local/1.0/PractitionerSession.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "arm_id": {
+      "maxLength": 96,
+      "minLength": 1,
+      "title": "Arm Id",
+      "type": "string"
+    },
+    "case_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Case Id",
+      "type": "string"
+    },
+    "complete_evidence_reconstruction": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Complete Evidence Reconstruction"
+    },
+    "completed_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Completed At"
+    },
+    "confidence": {
+      "anyOf": [
+        {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Confidence"
+    },
+    "consent_record_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Consent Record Sha256",
+      "type": "string"
+    },
+    "consent_to_deidentified_export": {
+      "title": "Consent To Deidentified Export",
+      "type": "boolean"
+    },
+    "conventional_pack_equivalence_receipt_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Conventional Pack Equivalence Receipt Sha256",
+      "type": "string"
+    },
+    "correct_disposition": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Correct Disposition"
+    },
+    "correct_next_action": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Correct Next Action"
+    },
+    "critical_safeguard_misses": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Critical Safeguard Misses"
+    },
+    "edit_count": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Edit Count"
+    },
+    "evidence_package_correct": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Evidence Package Correct"
+    },
+    "false_alarms": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "False Alarms"
+    },
+    "field_plan_seconds": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Field Plan Seconds"
+    },
+    "first_blocker_seconds": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "First Blocker Seconds"
+    },
+    "nasa_tlx": {
+      "anyOf": [
+        {
+          "maximum": 100,
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Nasa Tlx"
+    },
+    "organizational_review_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Organizational Review Sha256",
+      "type": "string"
+    },
+    "outcome_correct": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Outcome Correct"
+    },
+    "overconfidence_threshold": {
+      "const": 0.8,
+      "default": 0.8,
+      "title": "Overconfidence Threshold",
+      "type": "number"
+    },
+    "overconfident_error": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Overconfident Error"
+    },
+    "participant_pseudonym_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Participant Pseudonym Sha256",
+      "type": "string"
+    },
+    "period": {
+      "maximum": 3,
+      "minimum": 1,
+      "title": "Period",
+      "type": "integer"
+    },
+    "prohibited_claim_errors": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Prohibited Claim Errors"
+    },
+    "raw_notes_external": {
+      "const": true,
+      "default": true,
+      "title": "Raw Notes External",
+      "type": "boolean"
+    },
+    "recordings_external": {
+      "const": true,
+      "default": true,
+      "title": "Recordings External",
+      "type": "boolean"
+    },
+    "schema_version": {
+      "const": "ecocorridor-usefulness-study/v1.0",
+      "default": "ecocorridor-usefulness-study/v1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "selected_disposition": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/StudyDisposition"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "sequence_id": {
+      "maxLength": 32,
+      "minLength": 1,
+      "title": "Sequence Id",
+      "type": "string"
+    },
+    "session_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Session Id",
+      "type": "string"
+    },
+    "started_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Started At"
+    },
+    "status": {
+      "$ref": "#/$defs/SessionStatus"
+    },
+    "stratum": {
+      "$ref": "#/$defs/PractitionerStratum"
+    },
+    "study_phase": {
+      "$ref": "#/$defs/StudyPhase"
+    },
+    "usefulness_positive": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Usefulness Positive"
+    },
+    "verification_seconds": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Verification Seconds"
+    }
+  },
+  "required": [
+    "session_id",
+    "participant_pseudonym_sha256",
+    "study_phase",
+    "stratum",
+    "period",
+    "sequence_id",
+    "arm_id",
+    "case_id",
+    "status",
+    "conventional_pack_equivalence_receipt_sha256",
+    "consent_to_deidentified_export",
+    "consent_record_sha256",
+    "organizational_review_sha256"
+  ],
+  "title": "PractitionerSession",
+  "type": "object"
+}

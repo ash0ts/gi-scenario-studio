@@ -1,0 +1,200 @@
+{
+  "$id": "https://schemas.ecocorridor.local/1.0/OversizeSyncApproval.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Immutable, exact-plan consent for one oversized cloud projection.\n\nThe approval intentionally repeats the important identities behind the\nplan digest.  This makes an audit understandable without trusting a free-\nform W&B binding field, while the digest prevents reuse after any model,\npolicy, asset, estimate, or destination change.",
+  "properties": {
+    "acknowledgement": {
+      "const": "I approve synchronization of the exact oversized evidence plan identified by this digest.",
+      "default": "I approve synchronization of the exact oversized evidence plan identified by this digest.",
+      "title": "Acknowledgement",
+      "type": "string"
+    },
+    "approval_id": {
+      "title": "Approval Id",
+      "type": "string"
+    },
+    "approved_approval_audit_reservation_bytes": {
+      "minimum": 0,
+      "title": "Approved Approval Audit Reservation Bytes",
+      "type": "integer"
+    },
+    "approved_approval_audit_reservation_count": {
+      "minimum": 0,
+      "title": "Approved Approval Audit Reservation Count",
+      "type": "integer"
+    },
+    "approved_at": {
+      "format": "date-time",
+      "title": "Approved At",
+      "type": "string"
+    },
+    "approved_current_raster_bytes": {
+      "minimum": 0,
+      "title": "Approved Current Raster Bytes",
+      "type": "integer"
+    },
+    "approved_input_bytes": {
+      "minimum": 0,
+      "title": "Approved Input Bytes",
+      "type": "integer"
+    },
+    "approved_operational_metadata_reservation_bytes": {
+      "minimum": 0,
+      "title": "Approved Operational Metadata Reservation Bytes",
+      "type": "integer"
+    },
+    "approved_operational_metadata_reservation_count": {
+      "minimum": 0,
+      "title": "Approved Operational Metadata Reservation Count",
+      "type": "integer"
+    },
+    "approved_pending_current_raster_bytes": {
+      "minimum": 0,
+      "title": "Approved Pending Current Raster Bytes",
+      "type": "integer"
+    },
+    "approved_telemetry_artifact_count": {
+      "minimum": 0,
+      "title": "Approved Telemetry Artifact Count",
+      "type": "integer"
+    },
+    "approved_telemetry_projected_bytes": {
+      "minimum": 0,
+      "title": "Approved Telemetry Projected Bytes",
+      "type": "integer"
+    },
+    "approved_total_bytes": {
+      "exclusiveMinimum": 0,
+      "title": "Approved Total Bytes",
+      "type": "integer"
+    },
+    "binding_id": {
+      "title": "Binding Id",
+      "type": "string"
+    },
+    "bundle_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Bundle Sha256",
+      "type": "string"
+    },
+    "current_raster_estimate_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Current Raster Estimate Sha256",
+      "type": "string"
+    },
+    "destination": {
+      "enum": [
+        "WANDB_CLOUD",
+        "DEDICATED",
+        "SELF_MANAGED"
+      ],
+      "title": "Destination",
+      "type": "string"
+    },
+    "entity": {
+      "title": "Entity",
+      "type": "string"
+    },
+    "external_project_id": {
+      "title": "External Project Id",
+      "type": "string"
+    },
+    "model_revision_id": {
+      "title": "Model Revision Id",
+      "type": "string"
+    },
+    "model_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Model Sha256",
+      "type": "string"
+    },
+    "project": {
+      "title": "Project",
+      "type": "string"
+    },
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    },
+    "projection_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Projection Sha256",
+      "type": "string"
+    },
+    "resource_policy_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Resource Policy Sha256",
+      "type": "string"
+    },
+    "reviewed_by": {
+      "maxLength": 256,
+      "minLength": 1,
+      "title": "Reviewed By",
+      "type": "string"
+    },
+    "scope_evidence_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Scope Evidence Sha256",
+      "type": "string"
+    },
+    "sync_plan_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Sync Plan Sha256",
+      "type": "string"
+    },
+    "telemetry_inventory_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Telemetry Inventory Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "approval_id",
+    "project_id",
+    "binding_id",
+    "destination",
+    "entity",
+    "project",
+    "external_project_id",
+    "model_revision_id",
+    "model_sha256",
+    "bundle_sha256",
+    "resource_policy_sha256",
+    "projection_sha256",
+    "current_raster_estimate_sha256",
+    "scope_evidence_sha256",
+    "telemetry_inventory_sha256",
+    "sync_plan_sha256",
+    "approved_input_bytes",
+    "approved_current_raster_bytes",
+    "approved_pending_current_raster_bytes",
+    "approved_telemetry_projected_bytes",
+    "approved_telemetry_artifact_count",
+    "approved_approval_audit_reservation_bytes",
+    "approved_approval_audit_reservation_count",
+    "approved_operational_metadata_reservation_bytes",
+    "approved_operational_metadata_reservation_count",
+    "approved_total_bytes",
+    "reviewed_by",
+    "approved_at"
+  ],
+  "title": "OversizeSyncApproval",
+  "type": "object"
+}

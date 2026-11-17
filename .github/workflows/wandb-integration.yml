@@ -1,4 +1,4 @@
-name: W&B integration
+name: W&B integration (exact-scope blocked)
 
 on:
   workflow_dispatch:
@@ -20,22 +20,25 @@ env:
 
 jobs:
   restricted-project-roundtrip:
-    name: Restricted binding and artifact hash roundtrip
+    name: Exact-scope provider gate (uploads disabled)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment:
       name: wandb-integration
     env:
-      WANDB_API_KEY: ${{ secrets.WANDB_SERVICE_ACCOUNT_API_KEY }}
-      WANDB_ENTITY: ${{ secrets.WANDB_SERVICE_ACCOUNT_ENTITY }}
       WANDB_PROJECT: ${{ vars.WANDB_INTEGRATION_PROJECT }}
       WANDB_BASE_URL: ${{ vars.WANDB_BASE_URL || 'https://api.wandb.ai' }}
       WANDB_DEPLOYMENT: ${{ vars.WANDB_DEPLOYMENT || 'wandb_cloud' }}
       WANDB_MODE: online
-      WANDB_DIR: ${{ runner.temp }}/wandb/run
-      WANDB_CACHE_DIR: ${{ runner.temp }}/wandb/cache
-      WANDB_ARTIFACT_DIR: ${{ runner.temp }}/wandb/artifacts
     steps:
+      - name: Block until a documented exact-scope provider exists
+        shell: bash
+        run: |
+          echo "::error::GI Scenario Studio has no documented exact-scope provider for ${WANDB_DEPLOYMENT}."
+          echo "::error::SDK Project access fields and successful upload probes are not Restricted-scope evidence."
+          echo "::error::The protected integration is intentionally blocked before any W&B API or upload call."
+          exit 1
+
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -53,6 +56,9 @@ jobs:
 
       - name: Check protected integration configuration
         shell: bash
+        env:
+          WANDB_API_KEY: ${{ secrets.WANDB_SERVICE_ACCOUNT_API_KEY }}
+          WANDB_ENTITY: ${{ secrets.WANDB_SERVICE_ACCOUNT_ENTITY }}
         run: |
           test -n "${WANDB_API_KEY:-}" || {
             echo "::error::The protected environment has no W&B service-account key."
@@ -69,7 +75,17 @@ jobs:
 
       - name: Verify Restricted access and probe artifact hash
         shell: bash
+        env:
+          WANDB_API_KEY: ${{ secrets.WANDB_SERVICE_ACCOUNT_API_KEY }}
+          WANDB_ENTITY: ${{ secrets.WANDB_SERVICE_ACCOUNT_ENTITY }}
+          # `runner` is a step-scoped context. Keeping these paths here makes
+          # workflow validation deterministic and prevents the pre-job failure
+          # caused by using runner.temp in job-level env.
+          WANDB_DIR: ${{ runner.temp }}/wandb/run
+          WANDB_CACHE_DIR: ${{ runner.temp }}/wandb/cache
+          WANDB_ARTIFACT_DIR: ${{ runner.temp }}/wandb/artifacts
         run: |
+          mkdir -p "${WANDB_DIR}" "${WANDB_CACHE_DIR}" "${WANDB_ARTIFACT_DIR}"
           uv run --no-sync python - <<'PY'
           import json
           import os

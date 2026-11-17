@@ -1,0 +1,63 @@
+{
+  "$id": "https://schemas.ecocorridor.local/1.0/ReviewBriefValidation.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "evidence_ids_valid": {
+      "const": true,
+      "default": true,
+      "title": "Evidence Ids Valid",
+      "type": "boolean"
+    },
+    "numeric_and_unit_faithful": {
+      "const": true,
+      "default": true,
+      "title": "Numeric And Unit Faithful",
+      "type": "boolean"
+    },
+    "prohibited_claims": {
+      "const": 0,
+      "default": 0,
+      "title": "Prohibited Claims",
+      "type": "integer"
+    },
+    "required_limitations_present": {
+      "const": true,
+      "default": true,
+      "title": "Required Limitations Present",
+      "type": "boolean"
+    },
+    "sensitive_tokens": {
+      "const": 0,
+      "default": 0,
+      "title": "Sensitive Tokens",
+      "type": "integer"
+    },
+    "source_snapshot_revalidated": {
+      "const": true,
+      "default": true,
+      "title": "Source Snapshot Revalidated",
+      "type": "boolean"
+    },
+    "unauthorized_actions": {
+      "const": 0,
+      "default": 0,
+      "title": "Unauthorized Actions",
+      "type": "integer"
+    },
+    "unsupported_findings": {
+      "const": 0,
+      "default": 0,
+      "title": "Unsupported Findings",
+      "type": "integer"
+    },
+    "validator_version": {
+      "const": "review-brief-validator-v1",
+      "default": "review-brief-validator-v1",
+      "title": "Validator Version",
+      "type": "string"
+    }
+  },
+  "title": "ReviewBriefValidation",
+  "type": "object"
+}

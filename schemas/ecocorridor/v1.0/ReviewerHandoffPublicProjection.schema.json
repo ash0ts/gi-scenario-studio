@@ -1,0 +1,197 @@
+{
+  "$defs": {
+    "PractitionerStratum": {
+      "enum": [
+        "STATE_DOT",
+        "WILDLIFE_AGENCY",
+        "ECOLOGICAL_CONSULTANT"
+      ],
+      "title": "PractitionerStratum",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.ecocorridor.local/1.0/ReviewerHandoffPublicProjection.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Aggregate-only blinded handoff row; reviewer identities never leave local storage.",
+  "properties": {
+    "adjudicated_outcome_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Adjudicated Outcome Sha256",
+      "type": "string"
+    },
+    "case_manifest_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Case Manifest Sha256",
+      "type": "string"
+    },
+    "claim_chain_reconstructed": {
+      "title": "Claim Chain Reconstructed",
+      "type": "boolean"
+    },
+    "consent_record_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Consent Record Sha256",
+      "type": "string"
+    },
+    "consented_deidentified_projection": {
+      "const": true,
+      "default": true,
+      "title": "Consented Deidentified Projection",
+      "type": "boolean"
+    },
+    "correct_next_action_identified": {
+      "title": "Correct Next Action Identified",
+      "type": "boolean"
+    },
+    "disposition_reproducible": {
+      "title": "Disposition Reproducible",
+      "type": "boolean"
+    },
+    "disposition_verified": {
+      "title": "Disposition Verified",
+      "type": "boolean"
+    },
+    "dyad_study_key": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Dyad Study Key",
+      "type": "string"
+    },
+    "evidence_package_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Evidence Package Sha256",
+      "type": "string"
+    },
+    "first_reviewer_stratum": {
+      "$ref": "#/$defs/PractitionerStratum"
+    },
+    "handoff_key": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Handoff Key",
+      "type": "string"
+    },
+    "local_timing_verification_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Local Timing Verification Sha256",
+      "type": "string"
+    },
+    "organizational_review_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Organizational Review Sha256",
+      "type": "string"
+    },
+    "preregistration_receipt_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Preregistration Receipt Sha256",
+      "type": "string"
+    },
+    "projection_kind": {
+      "const": "REVIEWER_HANDOFF_AGGREGATE",
+      "default": "REVIEWER_HANDOFF_AGGREGATE",
+      "title": "Projection Kind",
+      "type": "string"
+    },
+    "provenance_completeness": {
+      "maximum": 1,
+      "minimum": 0,
+      "title": "Provenance Completeness",
+      "type": "number"
+    },
+    "raw_identifiers_excluded": {
+      "const": true,
+      "default": true,
+      "title": "Raw Identifiers Excluded",
+      "type": "boolean"
+    },
+    "raw_notes_excluded": {
+      "const": true,
+      "default": true,
+      "title": "Raw Notes Excluded",
+      "type": "boolean"
+    },
+    "raw_timestamps_excluded": {
+      "const": true,
+      "default": true,
+      "title": "Raw Timestamps Excluded",
+      "type": "boolean"
+    },
+    "schema_version": {
+      "const": "ecocorridor-usefulness-public-projection/v1.0",
+      "default": "ecocorridor-usefulness-public-projection/v1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "second_reviewer_stratum": {
+      "$ref": "#/$defs/PractitionerStratum"
+    },
+    "stale_artifact_found": {
+      "title": "Stale Artifact Found",
+      "type": "boolean"
+    },
+    "stale_artifact_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Stale Artifact Sha256",
+      "type": "string"
+    },
+    "unresolved_question_count": {
+      "minimum": 0,
+      "title": "Unresolved Question Count",
+      "type": "integer"
+    },
+    "verification_seconds": {
+      "exclusiveMinimum": 0,
+      "title": "Verification Seconds",
+      "type": "number"
+    },
+    "wrong_source_acceptance_count": {
+      "minimum": 0,
+      "title": "Wrong Source Acceptance Count",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "handoff_key",
+    "dyad_study_key",
+    "first_reviewer_stratum",
+    "second_reviewer_stratum",
+    "case_manifest_sha256",
+    "adjudicated_outcome_sha256",
+    "evidence_package_sha256",
+    "stale_artifact_sha256",
+    "disposition_verified",
+    "claim_chain_reconstructed",
+    "stale_artifact_found",
+    "correct_next_action_identified",
+    "provenance_completeness",
+    "wrong_source_acceptance_count",
+    "unresolved_question_count",
+    "verification_seconds",
+    "disposition_reproducible",
+    "preregistration_receipt_sha256",
+    "local_timing_verification_sha256",
+    "consent_record_sha256",
+    "organizational_review_sha256"
+  ],
+  "title": "ReviewerHandoffPublicProjection",
+  "type": "object"
+}

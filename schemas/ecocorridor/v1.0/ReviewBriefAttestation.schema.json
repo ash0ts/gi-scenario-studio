@@ -1,0 +1,53 @@
+{
+  "$id": "https://schemas.ecocorridor.local/1.0/ReviewBriefAttestation.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "acknowledged_at": {
+      "format": "date-time",
+      "title": "Acknowledged At",
+      "type": "string"
+    },
+    "acknowledgement_id": {
+      "minLength": 1,
+      "title": "Acknowledgement Id",
+      "type": "string"
+    },
+    "draft_id": {
+      "minLength": 1,
+      "title": "Draft Id",
+      "type": "string"
+    },
+    "model_unchanged": {
+      "const": true,
+      "default": true,
+      "title": "Model Unchanged",
+      "type": "boolean"
+    },
+    "portfolio_selected": {
+      "const": false,
+      "default": false,
+      "title": "Portfolio Selected",
+      "type": "boolean"
+    },
+    "reviewer": {
+      "minLength": 1,
+      "title": "Reviewer",
+      "type": "string"
+    },
+    "statement": {
+      "const": "I reviewed the cited evidence and limitations. This records review of the brief only; it does not select, approve, attest, or design a portfolio.",
+      "title": "Statement",
+      "type": "string"
+    }
+  },
+  "required": [
+    "acknowledgement_id",
+    "draft_id",
+    "reviewer",
+    "statement",
+    "acknowledged_at"
+  ],
+  "title": "ReviewBriefAttestation",
+  "type": "object"
+}

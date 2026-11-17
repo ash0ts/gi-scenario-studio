@@ -1,0 +1,115 @@
+{
+  "$defs": {
+    "CloudDisposition": {
+      "enum": [
+        "RAW_ALLOWED",
+        "GENERALIZED_DERIVATIVE_ONLY",
+        "DEDICATED_OR_SELF_MANAGED_ONLY",
+        "PROHIBITED"
+      ],
+      "title": "CloudDisposition",
+      "type": "string"
+    },
+    "SensitivityClass": {
+      "enum": [
+        "PUBLIC",
+        "INTERNAL",
+        "SENSITIVE_LOCATION",
+        "CRITICAL_INFRASTRUCTURE",
+        "TRIBAL_OR_CULTURAL",
+        "LICENSE_RESTRICTED"
+      ],
+      "title": "SensitivityClass",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.ecocorridor.local/1.0/SensitiveDataAuthorization.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "approved_deployments": {
+      "items": {
+        "enum": [
+          "WANDB_CLOUD",
+          "DEDICATED",
+          "SELF_MANAGED",
+          "LOCAL_ONLY"
+        ],
+        "type": "string"
+      },
+      "title": "Approved Deployments",
+      "type": "array"
+    },
+    "asset_id": {
+      "title": "Asset Id",
+      "type": "string"
+    },
+    "cloud_disposition": {
+      "$ref": "#/$defs/CloudDisposition"
+    },
+    "export_allowed": {
+      "title": "Export Allowed",
+      "type": "boolean"
+    },
+    "generalized_asset_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Generalized Asset Id"
+    },
+    "license_spdx_or_name": {
+      "title": "License Spdx Or Name",
+      "type": "string"
+    },
+    "notes": {
+      "default": "",
+      "title": "Notes",
+      "type": "string"
+    },
+    "ownership": {
+      "title": "Ownership",
+      "type": "string"
+    },
+    "retention_policy": {
+      "title": "Retention Policy",
+      "type": "string"
+    },
+    "reviewed_at": {
+      "format": "date-time",
+      "title": "Reviewed At",
+      "type": "string"
+    },
+    "reviewer": {
+      "title": "Reviewer",
+      "type": "string"
+    },
+    "sensitivity": {
+      "$ref": "#/$defs/SensitivityClass"
+    },
+    "spatial_redaction": {
+      "title": "Spatial Redaction",
+      "type": "string"
+    }
+  },
+  "required": [
+    "asset_id",
+    "ownership",
+    "license_spdx_or_name",
+    "sensitivity",
+    "cloud_disposition",
+    "export_allowed",
+    "retention_policy",
+    "spatial_redaction",
+    "approved_deployments",
+    "reviewer",
+    "reviewed_at"
+  ],
+  "title": "SensitiveDataAuthorization",
+  "type": "object"
+}

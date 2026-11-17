@@ -1,0 +1,60 @@
+{
+  "$id": "https://schemas.ecocorridor.local/1.0/ConnectivityCostBasis.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "assumptions": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Assumptions",
+      "type": "array"
+    },
+    "cost_basis_id": {
+      "title": "Cost Basis Id",
+      "type": "string"
+    },
+    "currency": {
+      "title": "Currency",
+      "type": "string"
+    },
+    "option_costs": {
+      "additionalProperties": {
+        "type": "number"
+      },
+      "minProperties": 1,
+      "title": "Option Costs",
+      "type": "object"
+    },
+    "reviewed_at": {
+      "format": "date-time",
+      "title": "Reviewed At",
+      "type": "string"
+    },
+    "reviewer": {
+      "title": "Reviewer",
+      "type": "string"
+    },
+    "source": {
+      "title": "Source",
+      "type": "string"
+    },
+    "vintage": {
+      "title": "Vintage",
+      "type": "string"
+    }
+  },
+  "required": [
+    "cost_basis_id",
+    "source",
+    "currency",
+    "vintage",
+    "reviewer",
+    "reviewed_at",
+    "option_costs",
+    "assumptions"
+  ],
+  "title": "ConnectivityCostBasis",
+  "type": "object"
+}

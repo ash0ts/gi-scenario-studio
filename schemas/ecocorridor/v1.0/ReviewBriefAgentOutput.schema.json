@@ -1,0 +1,361 @@
+{
+  "$defs": {
+    "ReviewBriefActionKind": {
+      "enum": [
+        "INSPECT_EVIDENCE",
+        "FIELD_VERIFY",
+        "OBTAIN_QUALIFIED_REVIEW",
+        "RESOLVE_LAND_OR_OWNERSHIP",
+        "RESOLVE_AUTHORIZATION",
+        "COMPLETE_COST_BASIS",
+        "REVISE_MODEL_AND_RERUN"
+      ],
+      "title": "ReviewBriefActionKind",
+      "type": "string"
+    },
+    "ReviewBriefFindingSelection": {
+      "additionalProperties": false,
+      "properties": {
+        "action_kind": {
+          "$ref": "#/$defs/ReviewBriefActionKind"
+        },
+        "finding_alias": {
+          "pattern": "^F[1-9][0-9]{0,3}$",
+          "title": "Finding Alias",
+          "type": "string"
+        },
+        "reviewer_disciplines": {
+          "items": {
+            "$ref": "#/$defs/ReviewerDiscipline"
+          },
+          "minItems": 1,
+          "title": "Reviewer Disciplines",
+          "type": "array"
+        }
+      },
+      "required": [
+        "finding_alias",
+        "action_kind",
+        "reviewer_disciplines"
+      ],
+      "title": "ReviewBriefFindingSelection",
+      "type": "object"
+    },
+    "ReviewBriefRetrievalObservation": {
+      "additionalProperties": false,
+      "description": "One locally revalidated, alias-only read made by the bounded agent.\n\nRelevance is deliberately not encoded here: evaluation ground truth owns\nthat classification.  These receipts retain exactly what was requested and\nreturned so a scorer can distinguish useful retrieval, duplicate retrieval,\nand irrelevant retrieval without exposing local evidence identities.",
+      "properties": {
+        "cumulative_context_bytes": {
+          "maximum": 65536,
+          "minimum": 2,
+          "title": "Cumulative Context Bytes",
+          "type": "integer"
+        },
+        "duplicate_evidence_alias_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Duplicate Evidence Alias Count",
+          "type": "integer"
+        },
+        "duplicate_finding_alias_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Duplicate Finding Alias Count",
+          "type": "integer"
+        },
+        "new_evidence_aliases": {
+          "items": {
+            "type": "string"
+          },
+          "title": "New Evidence Aliases",
+          "type": "array"
+        },
+        "new_finding_aliases": {
+          "items": {
+            "type": "string"
+          },
+          "title": "New Finding Aliases",
+          "type": "array"
+        },
+        "output_bytes": {
+          "maximum": 65536,
+          "minimum": 2,
+          "title": "Output Bytes",
+          "type": "integer"
+        },
+        "output_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Output Sha256",
+          "type": "string"
+        },
+        "requested_evidence_aliases": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Requested Evidence Aliases",
+          "type": "array"
+        },
+        "requested_finding_aliases": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Requested Finding Aliases",
+          "type": "array"
+        },
+        "returned_evidence_aliases": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Returned Evidence Aliases",
+          "type": "array"
+        },
+        "returned_finding_aliases": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Returned Finding Aliases",
+          "type": "array"
+        },
+        "sequence": {
+          "maximum": 8,
+          "minimum": 1,
+          "title": "Sequence",
+          "type": "integer"
+        },
+        "tool_name": {
+          "enum": [
+            "review_brief_get_scope",
+            "review_brief_list_findings",
+            "review_brief_get_findings",
+            "review_brief_list_option_constraints",
+            "review_brief_list_model_fitness_gaps",
+            "review_brief_resolve_evidence_aliases",
+            "review_brief_get_reference_status",
+            "review_brief_get_authorization_status"
+          ],
+          "title": "Tool Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sequence",
+        "tool_name",
+        "output_bytes",
+        "output_sha256",
+        "cumulative_context_bytes"
+      ],
+      "title": "ReviewBriefRetrievalObservation",
+      "type": "object"
+    },
+    "ReviewBriefTrace": {
+      "additionalProperties": false,
+      "properties": {
+        "association_id": {
+          "minLength": 1,
+          "title": "Association Id",
+          "type": "string"
+        },
+        "flushed": {
+          "const": true,
+          "default": true,
+          "title": "Flushed",
+          "type": "boolean"
+        },
+        "readback_verified": {
+          "const": true,
+          "default": true,
+          "title": "Readback Verified",
+          "type": "boolean"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "title": "Trace Id",
+          "type": "string"
+        },
+        "trace_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace Url"
+        },
+        "wandb_run_id": {
+          "minLength": 1,
+          "title": "Wandb Run Id",
+          "type": "string"
+        },
+        "weave_call_id": {
+          "minLength": 1,
+          "title": "Weave Call Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "trace_id",
+        "weave_call_id",
+        "association_id",
+        "wandb_run_id"
+      ],
+      "title": "ReviewBriefTrace",
+      "type": "object"
+    },
+    "ReviewerDiscipline": {
+      "enum": [
+        "ECOLOGY",
+        "FIELD",
+        "ENGINEERING",
+        "LAND",
+        "MAINTENANCE",
+        "CULTURAL",
+        "PERMITTING",
+        "COST"
+      ],
+      "title": "ReviewerDiscipline",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.ecocorridor.local/1.0/ReviewBriefAgentOutput.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "elapsed_ms": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Elapsed Ms"
+    },
+    "input_tokens": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Input Tokens"
+    },
+    "output_tokens": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Output Tokens"
+    },
+    "provider_call_id_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Provider Call Id Sha256",
+      "type": "string"
+    },
+    "provider_call_identity_kind": {
+      "enum": [
+        "PROVIDER_RESPONSE_ID",
+        "PROVIDER_REQUEST_ID",
+        "WEAVE_GENERATION_CALL_ID"
+      ],
+      "title": "Provider Call Identity Kind",
+      "type": "string"
+    },
+    "provider_model": {
+      "title": "Provider Model",
+      "type": "string"
+    },
+    "retrieval_observations": {
+      "items": {
+        "$ref": "#/$defs/ReviewBriefRetrievalObservation"
+      },
+      "title": "Retrieval Observations",
+      "type": "array"
+    },
+    "runner_kind": {
+      "const": "OPENAI_AGENTS_SDK",
+      "default": "OPENAI_AGENTS_SDK",
+      "title": "Runner Kind",
+      "type": "string"
+    },
+    "selections": {
+      "items": {
+        "$ref": "#/$defs/ReviewBriefFindingSelection"
+      },
+      "minItems": 1,
+      "title": "Selections",
+      "type": "array"
+    },
+    "snapshot_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Snapshot Sha256",
+      "type": "string"
+    },
+    "stop_reason": {
+      "default": "FORCED_EXHAUSTIVE_COMPLETE",
+      "enum": [
+        "SELECTION_READY",
+        "FORCED_EXHAUSTIVE_COMPLETE"
+      ],
+      "title": "Stop Reason",
+      "type": "string"
+    },
+    "tool_calls": {
+      "items": {
+        "enum": [
+          "review_brief_get_scope",
+          "review_brief_list_findings",
+          "review_brief_get_findings",
+          "review_brief_list_option_constraints",
+          "review_brief_list_model_fitness_gaps",
+          "review_brief_resolve_evidence_aliases",
+          "review_brief_get_reference_status",
+          "review_brief_get_authorization_status"
+        ],
+        "type": "string"
+      },
+      "maxItems": 8,
+      "minItems": 1,
+      "title": "Tool Calls",
+      "type": "array"
+    },
+    "trace": {
+      "$ref": "#/$defs/ReviewBriefTrace"
+    },
+    "traversal_mode": {
+      "default": "FORCED_EXHAUSTIVE",
+      "enum": [
+        "ADAPTIVE",
+        "FORCED_EXHAUSTIVE"
+      ],
+      "title": "Traversal Mode",
+      "type": "string"
+    }
+  },
+  "required": [
+    "snapshot_sha256",
+    "selections",
+    "provider_call_id_sha256",
+    "provider_call_identity_kind",
+    "provider_model",
+    "tool_calls",
+    "trace"
+  ],
+  "title": "ReviewBriefAgentOutput",
+  "type": "object"
+}

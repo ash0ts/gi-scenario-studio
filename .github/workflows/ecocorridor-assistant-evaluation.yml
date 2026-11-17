@@ -1,0 +1,202 @@
+name: Eco protected assistant evaluation candidate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ecocorridor-assistant-evaluation-candidate
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: "3.12"
+  WANDB_CONSOLE: "off"
+  WANDB_DISABLE_CODE: "true"
+  WANDB_DISABLE_GIT: "true"
+  WANDB_ERROR_REPORTING: "false"
+  WANDB_SHOW_RUN: "false"
+
+jobs:
+  provider-evaluation:
+    name: Generate immutable provider and Weave evidence
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment:
+      # Required reviewers control the service-account and provider credentials.
+      # This stage deliberately cannot receive practitioner ratings.
+      name: ecocorridor-observability-integration
+    env:
+      WANDB_PROJECT: ${{ vars.WANDB_INTEGRATION_PROJECT }}
+      WANDB_BASE_URL: ${{ vars.WANDB_BASE_URL }}
+      WANDB_WEB_BASE_URL: ${{ vars.WANDB_WEB_BASE_URL }}
+      WANDB_DEPLOYMENT: ${{ vars.WANDB_DEPLOYMENT }}
+      WANDB_MODE: online
+      ECOCORRIDOR_PROVIDER_BASE_URL: ${{ vars.ECOCORRIDOR_PROVIDER_BASE_URL }}
+      ECOCORRIDOR_PROVIDER_MODEL: ${{ vars.ECOCORRIDOR_PROVIDER_MODEL }}
+    steps:
+      - name: Require the exact protected main source
+        shell: bash
+        run: |
+          test "${GITHUB_REF}" = "refs/heads/main" || {
+            echo "::error::Protected assistant evaluation may run only from main."
+            exit 1
+          }
+          test "${GITHUB_WORKFLOW_SHA}" = "${GITHUB_SHA}" || {
+            echo "::error::Assistant workflow source differs from the checked-out commit."
+            exit 1
+          }
+
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python and uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install locked observability dependencies
+        run: >-
+          uv sync --locked --extra ecocorridor --extra ecocorridor-agents --extra observability --extra release --extra dev
+
+      - name: Validate protected configuration without printing secrets
+        shell: bash
+        env:
+          WANDB_API_KEY: ${{ secrets.WANDB_SERVICE_ACCOUNT_API_KEY }}
+          WANDB_ENTITY: ${{ secrets.WANDB_SERVICE_ACCOUNT_ENTITY }}
+          ECOCORRIDOR_PROVIDER_API_KEY: ${{ secrets.ECOCORRIDOR_PROVIDER_API_KEY }}
+        run: |
+          test -n "${WANDB_API_KEY:-}" || {
+            echo "::error::Missing protected W&B service-account key."
+            exit 1
+          }
+          test -n "${WANDB_ENTITY:-}" || {
+            echo "::error::Missing protected W&B service-account entity."
+            exit 1
+          }
+          test -n "${WANDB_PROJECT:-}" || {
+            echo "::error::Missing protected W&B project."
+            exit 1
+          }
+          test -n "${WANDB_BASE_URL:-}" || {
+            echo "::error::Missing W&B deployment base URL."
+            exit 1
+          }
+          test -n "${WANDB_WEB_BASE_URL:-}" || {
+            echo "::error::Missing W&B browser base URL."
+            exit 1
+          }
+          test -n "${WANDB_DEPLOYMENT:-}" || {
+            echo "::error::Missing W&B deployment kind."
+            exit 1
+          }
+          test -n "${ECOCORRIDOR_PROVIDER_API_KEY:-}" || {
+            echo "::error::Missing protected assistant provider credential."
+            exit 1
+          }
+          test -n "${ECOCORRIDOR_PROVIDER_BASE_URL:-}" || {
+            echo "::error::Missing assistant provider base URL."
+            exit 1
+          }
+          test -n "${ECOCORRIDOR_PROVIDER_MODEL:-}" || {
+            echo "::error::Missing immutable assistant provider model identifier."
+            exit 1
+          }
+
+      - name: Run deterministic local delivery tests
+        run: >-
+          uv run --no-sync pytest -q
+          tests/python/test_scenario_platform_cloud_sync.py
+          tests/python/test_ecocorridor_assistants.py
+
+      - name: Require authoritative Restricted scope before any upload
+        env:
+          WANDB_API_KEY: ${{ secrets.WANDB_SERVICE_ACCOUNT_API_KEY }}
+          WANDB_ENTITY: ${{ secrets.WANDB_SERVICE_ACCOUNT_ENTITY }}
+          # `runner` is available at step scope, not job-level env.
+          WANDB_DIR: ${{ runner.temp }}/ecocorridor/wandb/run
+          WANDB_CACHE_DIR: ${{ runner.temp }}/ecocorridor/wandb/cache
+          WANDB_ARTIFACT_DIR: ${{ runner.temp }}/ecocorridor/wandb/artifacts
+          WANDB_DATA_DIR: ${{ runner.temp }}/ecocorridor/wandb/offline
+        run: |
+          mkdir -p \
+            "${WANDB_DIR}" \
+            "${WANDB_CACHE_DIR}" \
+            "${WANDB_ARTIFACT_DIR}" \
+            "${WANDB_DATA_DIR}"
+          uv run --no-sync python scripts/run_ecocorridor_observability_integration.py \
+            --report "${RUNNER_TEMP}/ecocorridor-observability-release-gate.json"
+
+      - name: Generate provider-backed case records without usefulness ratings
+        env:
+          WANDB_API_KEY: ${{ secrets.WANDB_SERVICE_ACCOUNT_API_KEY }}
+          WANDB_ENTITY: ${{ secrets.WANDB_SERVICE_ACCOUNT_ENTITY }}
+          ECOCORRIDOR_PROVIDER_API_KEY: ${{ secrets.ECOCORRIDOR_PROVIDER_API_KEY }}
+          WANDB_DIR: ${{ runner.temp }}/ecocorridor/wandb/run
+          WANDB_CACHE_DIR: ${{ runner.temp }}/ecocorridor/wandb/cache
+          WANDB_ARTIFACT_DIR: ${{ runner.temp }}/ecocorridor/wandb/artifacts
+          WANDB_DATA_DIR: ${{ runner.temp }}/ecocorridor/wandb/offline
+        run: |
+          uv run --no-sync python scripts/run_ecocorridor_assistant_evaluation.py \
+            --evaluation-only \
+            --source-commit "${GITHUB_SHA}" \
+            --report "${RUNNER_TEMP}/ecocorridor-assistant-evaluation-pending.json" \
+            --case-records "${RUNNER_TEMP}/ecocorridor-assistant-evaluation-cases.json"
+
+      - name: Check immutable candidate identity before preservation
+        shell: bash
+        run: |
+          PENDING_REPORT="${RUNNER_TEMP}/ecocorridor-assistant-evaluation-pending.json" \
+          CASE_RECORDS="${RUNNER_TEMP}/ecocorridor-assistant-evaluation-cases.json" \
+          EXPECTED_SHA="${GITHUB_SHA}" \
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          pending_path = Path(os.environ["PENDING_REPORT"])
+          cases_path = Path(os.environ["CASE_RECORDS"])
+          pending = json.loads(pending_path.read_text(encoding="utf-8"))
+          cases_bytes = cases_path.read_bytes()
+          cases = json.loads(cases_bytes)
+          assert pending["schema_version"] == "ecocorridor-assistant-evaluation-pending/v1"
+          assert pending["source_commit_sha"] == os.environ["EXPECTED_SHA"]
+          assert pending["practitioner_usefulness_status"] == "NOT_COLLECTED"
+          assert pending["release_eligible"] is False
+          assert pending["case_records_sha256"] == hashlib.sha256(cases_bytes).hexdigest()
+          assert pending["evaluation_id"] == cases["evaluation_id"]
+          assert pending["dataset_id"] == cases["dataset_id"]
+          assert pending["dataset_sha256"] == cases["dataset_sha256"]
+          PY
+
+      - name: Bind candidate bytes to this exact producer attempt
+        shell: bash
+        run: |
+          python3 scripts/github_actions_producer_identity.py create \
+            --output "${RUNNER_TEMP}/ecocorridor-assistant-evaluation-producer-identity.json" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --run-id "${GITHUB_RUN_ID}" \
+            --run-attempt "${GITHUB_RUN_ATTEMPT}" \
+            --workflow-path .github/workflows/ecocorridor-assistant-evaluation.yml \
+            --git-ref "${GITHUB_REF}" \
+            --workflow-ref "${GITHUB_WORKFLOW_REF}" \
+            --workflow-sha "${GITHUB_WORKFLOW_SHA}" \
+            --head-sha "${GITHUB_SHA}"
+
+      - name: Preserve immutable evaluation candidate
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: ecocorridor-assistant-evaluation-candidate
+          path: |
+            ${{ runner.temp }}/ecocorridor-assistant-evaluation-producer-identity.json
+            ${{ runner.temp }}/ecocorridor-observability-release-gate.json
+            ${{ runner.temp }}/ecocorridor-assistant-evaluation-pending.json
+            ${{ runner.temp }}/ecocorridor-assistant-evaluation-cases.json
+          if-no-files-found: error
+          retention-days: 30

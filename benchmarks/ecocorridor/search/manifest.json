@@ -1,0 +1,56 @@
+{
+  "files": [
+    {
+      "dataset_sha256": "854dd36479c2665379e5d6632421dadc7acaf05103a3afe2129abcbc1dec73b2",
+      "landscape_sha256": "afad71e1f6af922a1c004338b368b85b56fe45efdbe6dd724cf2792022424488",
+      "license": "CC0-1.0",
+      "media_type": "application/json",
+      "ownership": "EcoCorridor Scenario Studio contributors",
+      "path": "h1_low_barrier.json",
+      "public_replay_allowed": true,
+      "sensitivity": "PUBLIC",
+      "sha256": "e649b780c63a592993405feac4b02804fe5aa861134458f6b28f4006289c7976",
+      "synthetic": true
+    },
+    {
+      "dataset_sha256": "cb998b4e5f12e004e8b410be897acdfcf44895cb1bad8ce98628e2f73b56ab1c",
+      "landscape_sha256": "96d90a7d74c0944f9cfac858b7b849cf530a523cc6a97dda001b69e9e401f71a",
+      "license": "CC0-1.0",
+      "media_type": "application/json",
+      "ownership": "EcoCorridor Scenario Studio contributors",
+      "path": "h2_moderate_barrier.json",
+      "public_replay_allowed": true,
+      "sensitivity": "PUBLIC",
+      "sha256": "e62f936028c36263577ae5607e5711c5cbb740d082a277dc098d243aba2e31dc",
+      "synthetic": true
+    },
+    {
+      "dataset_sha256": "82c8652061ada5010ab9a0bf65855e5a4eb0c6794971b5012edbdec29b489fda",
+      "landscape_sha256": "cb1642ec15ee804f24e3977a17d1b56da56845ee8f077c727e1636c424b9095a",
+      "license": "CC0-1.0",
+      "media_type": "application/json",
+      "ownership": "EcoCorridor Scenario Studio contributors",
+      "path": "h3_high_barrier.json",
+      "public_replay_allowed": true,
+      "sensitivity": "PUBLIC",
+      "sha256": "a5464c2a449ebdcc53cffba2c2a34826f43c633166f73e89d403489e8d942d0a",
+      "synthetic": true
+    },
+    {
+      "dataset_sha256": "66bc79ee5e584a4e935aa21341ab0bebd4c8f9298074a840988ac22c13113ab6",
+      "landscape_sha256": "a615017f4232b8d1ad4fb1ededc829e9ab7102d3ab192a4f11d232433e545747",
+      "license": "CC0-1.0",
+      "media_type": "application/json",
+      "ownership": "EcoCorridor Scenario Studio contributors",
+      "path": "h4_future_pressure.json",
+      "public_replay_allowed": true,
+      "sensitivity": "PUBLIC",
+      "sha256": "a2078759ce3cc3c4a43c7df7d5784fb072111faeb4f3d53d5cd05b46cf90ecd4",
+      "synthetic": true
+    }
+  ],
+  "intended_use": "ALGORITHM_RELEASE_GATE_ONLY",
+  "manifest_sha256": "76797d9115ed772ccbf2c2ba9ae14635699710f825b3aed0e38b826ce34e88f8",
+  "schema_version": "ecocorridor-search-manifest/v1.0",
+  "source_evidence_index_sha256": "2652b47d17f92a0458fde8272237b571453435d35503eeddd282af2b3a6cd17d"
+}

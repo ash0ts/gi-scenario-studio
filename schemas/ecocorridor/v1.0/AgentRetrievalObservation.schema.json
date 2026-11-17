@@ -1,0 +1,198 @@
+{
+  "$defs": {
+    "RetrievalStopReason": {
+      "enum": [
+        "CONTINUE",
+        "SUFFICIENT_EVIDENCE",
+        "MAX_TURNS",
+        "AUTHORIZATION_BLOCK",
+        "VALIDATION_BLOCK"
+      ],
+      "title": "RetrievalStopReason",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.ecocorridor.local/1.0/AgentRetrievalObservation.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "arm_id": {
+      "maxLength": 96,
+      "minLength": 1,
+      "title": "Arm Id",
+      "type": "string"
+    },
+    "available_aliases": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Available Aliases",
+      "type": "array"
+    },
+    "case_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Case Id",
+      "type": "string"
+    },
+    "context_bytes_after": {
+      "maximum": 65536,
+      "minimum": 0,
+      "title": "Context Bytes After",
+      "type": "integer"
+    },
+    "context_bytes_before": {
+      "maximum": 65536,
+      "minimum": 0,
+      "title": "Context Bytes Before",
+      "type": "integer"
+    },
+    "cost_usd": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cost Usd"
+    },
+    "duplicate_aliases": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Duplicate Aliases",
+      "type": "array"
+    },
+    "invocation_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Invocation Id",
+      "type": "string"
+    },
+    "irrelevant_aliases": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Irrelevant Aliases",
+      "type": "array"
+    },
+    "latency_ms": {
+      "minimum": 0,
+      "title": "Latency Ms",
+      "type": "number"
+    },
+    "model_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Model Id",
+      "type": "string"
+    },
+    "provider_input_tokens": {
+      "minimum": 0,
+      "title": "Provider Input Tokens",
+      "type": "integer"
+    },
+    "provider_output_tokens": {
+      "minimum": 0,
+      "title": "Provider Output Tokens",
+      "type": "integer"
+    },
+    "relevant_aliases": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Relevant Aliases",
+      "type": "array"
+    },
+    "requested_aliases": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Requested Aliases",
+      "type": "array"
+    },
+    "returned_aliases": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Returned Aliases",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "ecocorridor-usefulness-study/v1.0",
+      "default": "ecocorridor-usefulness-study/v1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "seen_before_aliases": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Seen Before Aliases",
+      "type": "array"
+    },
+    "stop_reason": {
+      "$ref": "#/$defs/RetrievalStopReason"
+    },
+    "tool_call_index": {
+      "maximum": 8,
+      "minimum": 1,
+      "title": "Tool Call Index",
+      "type": "integer"
+    },
+    "tool_name": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Tool Name",
+      "type": "string"
+    },
+    "tool_result_bytes": {
+      "maximum": 65536,
+      "minimum": 0,
+      "title": "Tool Result Bytes",
+      "type": "integer"
+    },
+    "turn_index": {
+      "maximum": 8,
+      "minimum": 1,
+      "title": "Turn Index",
+      "type": "integer"
+    },
+    "weave_trace_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Weave Trace Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "invocation_id",
+    "case_id",
+    "arm_id",
+    "model_id",
+    "turn_index",
+    "tool_call_index",
+    "tool_name",
+    "available_aliases",
+    "requested_aliases",
+    "returned_aliases",
+    "relevant_aliases",
+    "irrelevant_aliases",
+    "context_bytes_before",
+    "context_bytes_after",
+    "tool_result_bytes",
+    "provider_input_tokens",
+    "provider_output_tokens",
+    "latency_ms",
+    "stop_reason",
+    "weave_trace_id"
+  ],
+  "title": "AgentRetrievalObservation",
+  "type": "object"
+}

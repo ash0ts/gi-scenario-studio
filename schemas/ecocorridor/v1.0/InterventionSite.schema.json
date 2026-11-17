@@ -1,0 +1,53 @@
+{
+  "$id": "https://schemas.ecocorridor.local/1.0/InterventionSite.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "footprint_asset_id": {
+      "title": "Footprint Asset Id",
+      "type": "string"
+    },
+    "known_constraints": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Known Constraints",
+      "type": "array"
+    },
+    "option_ids": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Option Ids",
+      "type": "array"
+    },
+    "reviewed_at": {
+      "format": "date-time",
+      "title": "Reviewed At",
+      "type": "string"
+    },
+    "reviewed_by": {
+      "title": "Reviewed By",
+      "type": "string"
+    },
+    "site_id": {
+      "title": "Site Id",
+      "type": "string"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    }
+  },
+  "required": [
+    "site_id",
+    "title",
+    "footprint_asset_id",
+    "option_ids",
+    "reviewed_by",
+    "reviewed_at"
+  ],
+  "title": "InterventionSite",
+  "type": "object"
+}

@@ -1,0 +1,247 @@
+{
+  "$defs": {
+    "ReadbackVerifierProvenance": {
+      "additionalProperties": false,
+      "description": "Version and source identity of the code that performed cloud readback.",
+      "properties": {
+        "verified_at": {
+          "format": "date-time",
+          "title": "Verified At",
+          "type": "string"
+        },
+        "verifier_source_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Verifier Source Sha256",
+          "type": "string"
+        },
+        "verifier_version": {
+          "const": "ecocorridor-campaign-readback-verifier/v1.0",
+          "default": "ecocorridor-campaign-readback-verifier/v1.0",
+          "title": "Verifier Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "verifier_source_sha256",
+        "verified_at"
+      ],
+      "title": "ReadbackVerifierProvenance",
+      "type": "object"
+    },
+    "RetainedReadbackBlob": {
+      "additionalProperties": false,
+      "description": "Exact downloaded JSON bytes retained for offline evidence verification.",
+      "properties": {
+        "byte_count": {
+          "exclusiveMinimum": 0,
+          "maximum": 16777216,
+          "title": "Byte Count",
+          "type": "integer"
+        },
+        "content_base64": {
+          "minLength": 4,
+          "title": "Content Base64",
+          "type": "string"
+        },
+        "content_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Content Sha256",
+          "type": "string"
+        },
+        "media_type": {
+          "const": "application/json",
+          "default": "application/json",
+          "title": "Media Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content_base64",
+        "byte_count",
+        "content_sha256"
+      ],
+      "title": "RetainedReadbackBlob",
+      "type": "object"
+    },
+    "WandbCampaignReadback": {
+      "additionalProperties": false,
+      "description": "Immutable W&B run/artifact identity retained with downloaded raw bytes.",
+      "properties": {
+        "artifact_committed_at": {
+          "format": "date-time",
+          "title": "Artifact Committed At",
+          "type": "string"
+        },
+        "artifact_manifest_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Artifact Manifest Sha256",
+          "type": "string"
+        },
+        "artifact_ref": {
+          "pattern": "^[^/\\s]+/[^/\\s]+/[^:\\s]+:v[0-9]+$",
+          "title": "Artifact Ref",
+          "type": "string"
+        },
+        "artifact_state": {
+          "const": "COMMITTED",
+          "default": "COMMITTED",
+          "title": "Artifact State",
+          "type": "string"
+        },
+        "artifact_url": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Artifact Url",
+          "type": "string"
+        },
+        "readback_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Readback Sha256",
+          "type": "string"
+        },
+        "retained_artifact_manifest_response": {
+          "$ref": "#/$defs/RetainedReadbackBlob"
+        },
+        "retained_run_response": {
+          "$ref": "#/$defs/RetainedReadbackBlob"
+        },
+        "run_finished_at": {
+          "format": "date-time",
+          "title": "Run Finished At",
+          "type": "string"
+        },
+        "run_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Run Id",
+          "type": "string"
+        },
+        "run_started_at": {
+          "format": "date-time",
+          "title": "Run Started At",
+          "type": "string"
+        },
+        "run_state": {
+          "const": "FINISHED",
+          "default": "FINISHED",
+          "title": "Run State",
+          "type": "string"
+        },
+        "run_summary_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Run Summary Sha256",
+          "type": "string"
+        },
+        "run_url": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Run Url",
+          "type": "string"
+        },
+        "verifier": {
+          "$ref": "#/$defs/ReadbackVerifierProvenance"
+        }
+      },
+      "required": [
+        "run_id",
+        "run_url",
+        "run_started_at",
+        "run_finished_at",
+        "run_summary_sha256",
+        "artifact_ref",
+        "artifact_url",
+        "artifact_committed_at",
+        "artifact_manifest_sha256",
+        "retained_run_response",
+        "retained_artifact_manifest_response",
+        "verifier",
+        "readback_sha256"
+      ],
+      "title": "WandbCampaignReadback",
+      "type": "object"
+    }
+  },
+  "$id": "https://schemas.ecocorridor.local/1.0/PreregistrationPublicationReceipt.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Read-back proof that frozen study inputs were public before scoring began.",
+  "properties": {
+    "frozen_plan_sha256s": {
+      "additionalProperties": {
+        "maxLength": 64,
+        "minLength": 64,
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "title": "Frozen Plan Sha256S",
+      "type": "object"
+    },
+    "protocol_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Protocol Sha256",
+      "type": "string"
+    },
+    "published_at": {
+      "format": "date-time",
+      "title": "Published At",
+      "type": "string"
+    },
+    "published_protocol": {
+      "$ref": "#/$defs/RetainedReadbackBlob"
+    },
+    "receipt_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Receipt Sha256",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "ecocorridor-preregistration-publication/v1.0",
+      "default": "ecocorridor-preregistration-publication/v1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "source_commit": {
+      "pattern": "^[0-9a-f]{40,64}$",
+      "title": "Source Commit",
+      "type": "string"
+    },
+    "source_repository": {
+      "maxLength": 240,
+      "minLength": 3,
+      "title": "Source Repository",
+      "type": "string"
+    },
+    "verifier": {
+      "$ref": "#/$defs/ReadbackVerifierProvenance"
+    },
+    "wandb": {
+      "$ref": "#/$defs/WandbCampaignReadback"
+    }
+  },
+  "required": [
+    "protocol_sha256",
+    "source_repository",
+    "source_commit",
+    "published_at",
+    "published_protocol",
+    "wandb",
+    "verifier",
+    "receipt_sha256"
+  ],
+  "title": "PreregistrationPublicationReceipt",
+  "type": "object"
+}

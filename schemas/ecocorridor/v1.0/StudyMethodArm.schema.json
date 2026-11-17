@@ -1,0 +1,78 @@
+{
+  "$defs": {
+    "StudyArmKind": {
+      "enum": [
+        "CONVENTIONAL_EVIDENCE_PACK",
+        "ECOCORRIDOR_DETERMINISTIC",
+        "ECOCORRIDOR_AGENT",
+        "DETERMINISTIC_CHECKLIST",
+        "FULL_CONTEXT_SINGLE_SHOT",
+        "ADAPTIVE_READ_ONLY_AGENT",
+        "FORCED_EXHAUSTIVE_AGENT",
+        "ORACLE_MINIMAL_CONTEXT"
+      ],
+      "title": "StudyArmKind",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.ecocorridor.local/1.0/StudyMethodArm.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "agentic": {
+      "title": "Agentic",
+      "type": "boolean"
+    },
+    "arm_id": {
+      "maxLength": 96,
+      "minLength": 1,
+      "title": "Arm Id",
+      "type": "string"
+    },
+    "diagnostic_control": {
+      "default": false,
+      "title": "Diagnostic Control",
+      "type": "boolean"
+    },
+    "kind": {
+      "$ref": "#/$defs/StudyArmKind"
+    },
+    "provider_backed": {
+      "title": "Provider Backed",
+      "type": "boolean"
+    },
+    "purpose": {
+      "maxLength": 1000,
+      "minLength": 1,
+      "title": "Purpose",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "ecocorridor-usefulness-study/v1.0",
+      "default": "ecocorridor-usefulness-study/v1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "title": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Title",
+      "type": "string"
+    },
+    "weave_trace_required": {
+      "title": "Weave Trace Required",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "arm_id",
+    "title",
+    "kind",
+    "purpose",
+    "provider_backed",
+    "agentic",
+    "weave_trace_required"
+  ],
+  "title": "StudyMethodArm",
+  "type": "object"
+}
