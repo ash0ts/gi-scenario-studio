@@ -97,7 +97,7 @@ We built a bounded Review Brief Agent around read-only tools. The worker supplie
 
 That last choice limits the writing freedom of the model. It also lets us check whether the brief contains only supported material. We did not need an LLM to rewrite −1.6031% in a more persuasive voice.
 
-For the calls themselves, we used the OpenAI Agents SDK integration with **W&B Weave**, which records the model turns and tool calls in its Agents view. The worker requires a successful readback of the exact trace before saving a draft. An invalid selection, changed source, missing authorization, or failed trace check leaves a rejection record and no saved draft.
+For the calls themselves, we used the OpenAI Agents SDK integration with **W&B Weave** and **CoreWeave Agent Lens**, which records the model turns and tool calls as grouped conversations. The worker requires a successful readback of the exact trace before saving a draft. An invalid selection, changed source, missing authorization, or failed trace check leaves a rejection record and no saved draft.
 
 <!-- ECOVIS:evidence-handoff -->
 ![A downward flow follows authorized evidence into bounded provider and read-only tool work. Required release checks combine exact Weave trace readback, current authorization, local validation, and deterministic rendering before an unconfirmed draft is saved. Missing evidence, provider or tool failure, and failed release checks each exit to no draft.](../article-assets/the-model-passed/evidence-handoff.png)
@@ -132,7 +132,7 @@ _Across the four teaching-portfolio cases, the historical agent used 256 fewer i
 
 The campaign still established something narrower. Its 42 scored records comprise 14 local deterministic controls, 22 provider-backed conversations with retained Weave traces, and six cases blocked before a provider call. The recorded calls could be read back and reconciled, and the tested rejection paths produced no saved draft. Some safety cases used explicit local guards or injected downstream failures; those results are evidence about those controls, not proof that the model resisted the attacks by itself.
 
-That is why I want the [historical run](https://wandb.ai/wandb/ecocorridor-scenario-studio/runs/review-brief-realistic-120b-5dad47c-v5) to remain available with its limitations. The traces let us inspect what executed, while the campaign artifact keeps the dataset, scoring, and result together. Correcting the next comparison should not make the old one disappear.
+That is why I want the [historical run](https://forge.coreweave.com/wandb/wandb/ecocorridor-scenario-studio/runs/review-brief-realistic-120b-5dad47c-v5) to remain available with its limitations. The traces let us inspect what executed, while the campaign artifact keeps the dataset, scoring, and result together. Correcting the next comparison should not make the old one disappear.
 
 The source now separates adaptive traversal from an explicitly exhaustive control and removes the expected-answer hints from the full-context method. Those are repairs to the experiment setup. They are not new evidence that the agent helps, and this article does not report a completed fair usefulness campaign.
 
@@ -152,9 +152,9 @@ For now, I would start with the deterministic review and ask someone who does th
 
 ## Inspect the work
 
-- [Historical Review Brief campaign](https://wandb.ai/wandb/ecocorridor-scenario-studio/runs/review-brief-realistic-120b-5dad47c-v5) and its [versioned evidence artifact](https://wandb.ai/wandb/ecocorridor-scenario-studio/artifacts/evaluation-bundle/ecocorridor-review-brief-33f5f7be9aee/v0).
-- [Original technical Report](https://wandb.ai/wandb/ecocorridor-scenario-studio/reports/EcoCorridor-historical-search-benchmark--VmlldzoxNzY1OTU0MQ==), preserving the earlier experiment record.
+- [Historical Review Brief campaign](https://forge.coreweave.com/wandb/wandb/ecocorridor-scenario-studio/runs/review-brief-realistic-120b-5dad47c-v5) and its [versioned evidence artifact](https://forge.coreweave.com/wandb/wandb/ecocorridor-scenario-studio/artifacts/evaluation-bundle/ecocorridor-review-brief-33f5f7be9aee/v0).
+- [Original technical Report](https://forge.coreweave.com/wandb/wandb/ecocorridor-scenario-studio/reports/EcoCorridor-historical-search-benchmark--VmlldzoxNzY1OTU0MQ==), preserving the earlier experiment record.
 - [EcoCorridor implementation and review history](https://github.com/ash0ts/gi-scenario-studio/pull/13).
-- [Circuitscape documentation](https://docs.circuitscape.org/Circuitscape.jl/latest/usage/) and [W&B's Weave Agents integration](https://docs.wandb.ai/weave/guides/integrations/agents/openai-agents-sdk).
+- [Circuitscape documentation](https://docs.circuitscape.org/Circuitscape.jl/latest/usage/) and the [CoreWeave Agent Lens OpenAI Agents SDK integration](https://docs.coreweave.com/products/agent-lens/integrations/openai-agents-sdk).
 
 _Ridgeway Crossing is synthetic CC0 teaching material. This article interprets retained direct Circuitscape evidence and the historical Review Brief campaign; the rewrite adds no experiment result._
